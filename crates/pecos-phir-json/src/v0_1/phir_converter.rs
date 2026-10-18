@@ -299,7 +299,7 @@ impl ImprovedConverter {
     fn classical_value(&self, name: &str) -> Result<SSAValue, PecosError> {
         self.environment.classical_info(name)?;
         self.variable_map.get(name).copied().map(SSAValue::new).ok_or_else(|| PecosError::Input(format!(
-            "Result or measurement: unknown classical variable {name:?}; declare it with cvar_define before use"
+            "Result or measurement: unknown classical variable {}; declare it with cvar_define before use", serde_json::json!(name)
         )))
     }
 
@@ -325,11 +325,13 @@ impl ImprovedConverter {
         instructions: &mut Vec<Instruction>,
     ) -> Result<(), PecosError> {
         for (name, writes) in std::mem::take(&mut self.bit_indexed_writes) {
+            for write in &writes {
+                self.environment
+                    .validate_measurement_write(&name, write.bit_index as usize)?;
+            }
             let mut current = self.classical_value(&name)?;
             let value_type = Self::storage_type(self.environment.classical_info(&name)?);
             for write in writes {
-                self.environment
-                    .validate_measurement_write(&name, write.bit_index as usize)?;
                 current = self.replace_bit(current, &write, &value_type, instructions)?;
             }
             self.variable_map.insert(name, current.id);
@@ -708,8 +710,8 @@ impl ImprovedConverter {
         }
         let shift = u32::try_from(64 - width).map_err(|_| {
             PecosError::Input(format!(
-                "Result: register {:?} has invalid width {width}; use at most 64 bits",
-                info.name
+                "Result: register {} has invalid width {width}; use at most 64 bits",
+                serde_json::json!(info.name)
             ))
         })?;
         let storage = Type::Int(IntWidth::I64);

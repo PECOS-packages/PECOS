@@ -753,10 +753,18 @@ impl Environment {
 
     /// Resolve a declared classical register for Result or measurement operations.
     pub(crate) fn classical_info(&self, name: &str) -> Result<&VariableInfo, PecosError> {
+        self.classical_info_for(name, "Result or measurement")
+    }
+
+    pub(crate) fn classical_info_for(
+        &self,
+        name: &str,
+        operation: &str,
+    ) -> Result<&VariableInfo, PecosError> {
         self.get_variable_info_opt(name)
             .filter(|info| info.data_type != DataType::Qubits)
             .ok_or_else(|| PecosError::Input(format!(
-                "Result or measurement: unknown classical variable {}; declare it with cvar_define before use", serde_json::json!(name)
+                "{operation}: unknown classical variable {}; declare it with cvar_define before use", serde_json::json!(name)
             )))
     }
 
@@ -775,7 +783,7 @@ impl Environment {
         index: usize,
         operation: &str,
     ) -> Result<(), PecosError> {
-        let size = self.classical_info(name)?.size;
+        let size = self.classical_info_for(name, operation)?.size;
         if index >= size {
             return Err(PecosError::Input(format!(
                 "{operation} write {name}[{index}] is out of range for a register of declared size {size}; use an index below {size}"
@@ -791,7 +799,7 @@ impl Environment {
         for target in returns {
             match target {
                 super::ast::ArgItem::Simple(name) => {
-                    self.classical_info(name)?;
+                    self.classical_info_for(name, "Assignment")?;
                 }
                 super::ast::ArgItem::Indexed((name, index)) => {
                     self.validate_classical_write(name, *index, "Assignment")?;

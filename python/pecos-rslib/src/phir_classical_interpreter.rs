@@ -1066,6 +1066,10 @@ fn build_noise_model(
 ///
 /// Returns a dict of `{register_name: [bitstring, ...]}` matching
 /// `HybridEngine.run()` output format.
+///
+/// # Errors
+/// Ordinary parse failures raise `ValueError` with `Failed to parse PHIR:`.
+/// Malformed Result references use the shared `TypeError`/`ValueError` mapping.
 #[pyfunction]
 #[pyo3(signature = (phir_json, *, shots=1, seed=None, quantum="stabilizer", foreign_object=None, noise_model=None))]
 pub fn run_phir_sim(
@@ -1086,7 +1090,13 @@ pub fn run_phir_sim(
     use pecos_phir_json::v0_1::engine::PhirJsonEngine;
 
     // Parse and create the classical engine
-    let mut engine = PhirJsonEngine::from_json(phir_json).map_err(pecos_error_to_pyerr)?;
+    let mut engine = PhirJsonEngine::from_json(phir_json).map_err(|error| {
+        if crate::errors::result_reference_error(&error).is_some() {
+            pecos_error_to_pyerr(error)
+        } else {
+            pyo3::exceptions::PyValueError::new_err(format!("Failed to parse PHIR: {error}"))
+        }
+    })?;
 
     // Set foreign object if provided (WASM or Python ForeignObjectProtocol)
     if let Some(fo) = foreign_object {
@@ -1245,6 +1255,21 @@ pub fn validate_phir_classical_declaration(
 #[cfg(test)]
 mod validation_tests {
     use super::*;
+
+    #[test]
+    fn parse_errors_keep_legacy_value_error_context() {
+        Python::initialize();
+        Python::attach(|py| {
+            let error = run_phir_sim(py, "{", 1, None, "stabilizer", None, None).unwrap_err();
+            assert!(error.is_instance_of::<pyo3::exceptions::PyValueError>(py));
+            assert!(
+                error
+                    .to_string()
+                    .starts_with("ValueError: Failed to parse PHIR:"),
+                "{error}"
+            );
+        });
+    }
 
     #[test]
     fn classical_validation_preserves_python_error_categories() {

@@ -24,11 +24,11 @@ from typing import TYPE_CHECKING, Any
 
 from pecos_rslib import (
     validate_phir_classical_declaration,
-    validate_phir_classical_inputs,
     validate_phir_result_counts,
     validate_phir_result_reference,
 )
 
+from pecos._phir_declarations import validate_classical_inputs
 from pecos.reps.pyphir import PyPHIR, signed_data_types, unsigned_data_types
 from pecos.reps.pyphir import types as pt
 from pecos.typing import PhirModel
@@ -135,7 +135,7 @@ class PhirClassicalInterpreter:
             self.program = self.program.to_phir_dict()
 
         if isinstance(self.program, dict):
-            validate_phir_classical_inputs(json.dumps(self.program))
+            validate_classical_inputs(self.program)
 
         # Assume PHIR dict format, validate PHIR
         if isinstance(self.program, dict) and self.phir_validate:
@@ -157,6 +157,12 @@ class PhirClassicalInterpreter:
 
         self.csym2id = dict(self.program.csym2id)
         self.cvar_meta = list(self.program.cvar_meta)
+        self._measurement_targets = {}
+        for cid, cvar in enumerate(self.cvar_meta):
+            dtype = data_type_map[cvar.data_type]
+            self._check_register_width(cvar.variable, cvar.data_type, cvar.size, dtype.itemsize * 8)
+            self._register_measurement_targets(cvar.variable, cid, cvar.size)
+        self._validate_measurement_operations(self.program.ops)
 
         self.initialize_cenv()
 
@@ -220,7 +226,6 @@ class PhirClassicalInterpreter:
             for cvar in self.cvar_meta:
                 cvar: pt.data.CVarDefine
                 dtype = data_type_map[cvar.data_type]
-                self._check_register_width(cvar.variable, cvar.data_type, cvar.size, dtype.itemsize * 8)
                 self.cenv.append(dtype(0))
                 self.cid2dtype.append(dtype)
 
@@ -231,6 +236,7 @@ class PhirClassicalInterpreter:
             self._check_register_width(cvar, data_type, size, dtype.itemsize * 8)
             cid = len(self.csym2id)
             self.csym2id[cvar] = cid
+            self._register_measurement_targets(cvar, cid, size)
             self.cenv.append(dtype(0))
             self.cid2dtype.append(dtype)
             self.cvar_meta.append(
@@ -241,6 +247,8 @@ class PhirClassicalInterpreter:
                     variable=cvar,
                 ),
             )
+            for reference in self._pending_measurement_targets.pop(cvar, []):
+                self._measurement_target(reference)
 
     def _flatten_blocks(self, seq: Sequence) -> Generator[Any, None, None]:
         """Flattens the ops of blocks to be processed by the execute() method."""
@@ -473,7 +481,10 @@ class PhirClassicalInterpreter:
             cvar, i = cvar
 
         self._validate_assignment_target(cvar if i is None else (cvar, i))
-        cid = self.csym2id[cvar]
+        self._assign_value(self.csym2id[cvar], i, val)
+
+    def _assign_value(self, cid: int, i: int | None, val: int) -> None:
+        """Store a value at an already validated classical destination."""
         dtype = self.cid2dtype[cid]
         cval = int(self.cenv[cid])
         val = int(val)
@@ -497,7 +508,7 @@ class PhirClassicalInterpreter:
     def _validate_assignment_target(self, target: str | list | tuple) -> None:
         """Reject undeclared targets and bit writes beyond the declared size."""
         name, index = (target, None) if isinstance(target, str) else target
-        meta = self._classical_meta(name)
+        meta = self._classical_meta(name, "Assignment")
         if index is not None and not 0 <= index < meta.size:
             msg = (
                 f"PHIR interpreter failed: Assignment write {name}[{index}] is out of range "
@@ -573,11 +584,11 @@ class PhirClassicalInterpreter:
             msg = f"Unsupported COp: {op}"
             raise Exception(msg)
 
-    def _classical_meta(self, name: str) -> pt.data.CVarDefine:
+    def _classical_meta(self, name: str, operation: str = "Result or measurement") -> pt.data.CVarDefine:
         """Resolve a declared classical Result or measurement register."""
         if name not in self.csym2id:
             msg = (
-                "PHIR interpreter failed: Result or measurement: unknown classical variable "
+                f"PHIR interpreter failed: {operation}: unknown classical variable "
                 f"{json.dumps(name, ensure_ascii=False)}; "
                 "declare it with cvar_define before use"
             )
@@ -600,19 +611,87 @@ class PhirClassicalInterpreter:
             )
             raise ValueError(msg)
 
+    def _register_measurement_targets(self, name: str, cid: int, size: int) -> None:
+        """Cache whole-register and bit destinations when a register is declared."""
+        self._measurement_targets[name] = (cid, None)
+        for index in range(size):
+            self._measurement_targets[name, index] = (cid, index)
+
+    @staticmethod
+    def _measurement_reference(reference: str | tuple | list) -> tuple[str, int | None]:
+        """Decode a measurement key without a Result diagnostic or an FFI call."""
+        if isinstance(reference, str):
+            name, index = reference, None
+        elif (
+            isinstance(reference, tuple | list)
+            and len(reference) == 2
+            and isinstance(reference[0], str)
+            and isinstance(reference[1], int)
+            and not isinstance(reference[1], bool)
+        ):
+            name, index = reference
+        else:
+            msg = (
+                f"PHIR interpreter failed: Measurement: invalid destination {reference!r}; "
+                "use a declared classical name or [name, integer bit index]"
+            )
+            raise TypeError(msg)
+        return name, index
+
+    def _measurement_target(self, reference: str | tuple | list) -> tuple[int, int | None]:
+        """Validate measurement destinations at load, or diagnose invalid results."""
+        name, index = self._measurement_reference(reference)
+        meta = self._classical_meta(name, "Measurement")
+        if index is not None and not 0 <= index < meta.size:
+            msg = (
+                f"PHIR interpreter failed: Measurement write {name}[{index}] is out of range "
+                f"for a register of declared size {meta.size}; use an index below {meta.size}"
+            )
+            raise ValueError(msg)
+        return self.csym2id[name], index
+
+    @staticmethod
+    def _all_operations(operations: list) -> Generator:
+        """Visit every branch without evaluating classical conditions."""
+        for operation in operations:
+            if isinstance(operation, pt.block.SeqBlock):
+                yield from PhirClassicalInterpreter._all_operations(operation.ops)
+            elif isinstance(operation, pt.block.IfBlock):
+                yield from PhirClassicalInterpreter._all_operations(operation.true_branch)
+                yield from PhirClassicalInterpreter._all_operations(operation.false_branch or [])
+            else:
+                yield operation
+
+    def _validate_measurement_operations(self, operations: list) -> None:
+        """Check declared destinations now, and Result-created ones at declaration."""
+        operations = list(self._all_operations(operations))
+        result_names = {
+            self._result_reference(reference)[0]
+            for operation in operations
+            if isinstance(operation, pt.opt.COp) and operation.name == "Result"
+            for reference in operation.returns or []
+        }
+        self._pending_measurement_targets = {}
+        for operation in operations:
+            if isinstance(operation, pt.opt.QOp) and operation.name == "Measure":
+                for reference in operation.returns or []:
+                    name, _ = self._measurement_reference(reference)
+                    if name not in self.csym2id and name in result_names:
+                        self._pending_measurement_targets.setdefault(name, []).append(reference)
+                    else:
+                        self._measurement_target(reference)
+
     def receive_results(self, qsim_results: list[dict]) -> None:
-        """Receive measurement results and assign as needed."""
+        """Assign measurement results using destinations validated at load."""
         for meas in qsim_results:
             for cvar, val in meas.items():
-                name, index = self._result_reference(cvar)
-                meta = self._classical_meta(name)
-                if index is not None and not 0 <= index < meta.size:
-                    msg = (
-                        f"PHIR interpreter failed: Measurement write {name}[{index}] is out of range "
-                        f"for a register of declared size {meta.size}; use an index below {meta.size}"
-                    )
-                    raise ValueError(msg)
-                self.assign_int(cvar, val)
+                if cvar not in self._measurement_targets:
+                    # Only invalid/external results reach this diagnostic path.
+                    self._measurement_target(cvar)
+                    msg = f"Measurement destination {cvar!r} was not registered at declaration"
+                    raise RuntimeError(msg)
+                cid, index = self._measurement_targets[cvar]
+                self._assign_value(cid, index, val)
 
     def results(self, *, return_int: bool = True) -> dict:
         """Dumps program final results."""

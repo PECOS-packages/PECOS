@@ -1,6 +1,6 @@
 //! Shared JSON validation for classical declarations and Result references.
 use super::{
-    ast::ArgItem,
+    ast::{ArgItem, infer_size},
     environment::{DataType, Environment},
 };
 use pecos_core::errors::PecosError;
@@ -26,6 +26,10 @@ impl std::error::Error for ResultReferenceError {}
 /// # Errors
 /// Rejects wrong types and invalid indices with a named, actionable error.
 pub fn result_reference(value: &Value, field: &str) -> Result<ArgItem, PecosError> {
+    decode_result_reference(value, field).map_err(|error| PecosError::Input(error.to_string()))
+}
+
+fn decode_result_reference(value: &Value, field: &str) -> Result<ArgItem, ResultReferenceError> {
     if let Some(name) = value.as_str() {
         return Ok(ArgItem::Simple(name.to_string()));
     }
@@ -43,12 +47,29 @@ pub fn result_reference(value: &Value, field: &str) -> Result<ArgItem, PecosErro
             wrong_type = false;
         }
     }
-    Err(PecosError::External(Box::new(ResultReferenceError {
+    Err(ResultReferenceError {
         wrong_type,
         message: format!(
             "Result: invalid {field} entry {value}; supply a variable name or [name, integer bit index from 0 to 63]"
         ),
-    })))
+    })
+}
+
+impl ResultReferenceError {
+    /// Recover the type/value distinction from a canonical Input diagnostic.
+    ///
+    /// `PecosError::Input` owns a string. Decode only this validator's exact
+    /// diagnostic, reusing its rules instead of classifying JSON types again.
+    #[must_use]
+    pub fn from_input_message(message: &str) -> Option<Self> {
+        let body = message.strip_prefix("Result: invalid ")?;
+        let (field, body) = body.split_once(" entry ")?;
+        let encoded = body
+            .strip_suffix("; supply a variable name or [name, integer bit index from 0 to 63]")?;
+        let value: Value = serde_json::from_str(encoded).ok()?;
+        let error = decode_result_reference(&value, field).err()?;
+        (error.to_string() == message).then_some(error)
+    }
 }
 
 pub(crate) fn result_field(op: &Value, field: &str) -> Result<Vec<ArgItem>, PecosError> {
@@ -84,7 +105,7 @@ pub fn validate_classical_inputs(program: &Value) -> Result<(), PecosError> {
                 && let Some(name) = op.get("variable").and_then(Value::as_str)
             {
                 let size = match op.get("size") {
-                    None => 1,
+                    None => infer_size("bool", None),
                     Some(value) => value
                         .as_u64()
                         .and_then(|size| usize::try_from(size).ok())

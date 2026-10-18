@@ -524,7 +524,7 @@ impl PhirClassicalInterpreter {
     /// bit width, so no manual masking is needed.
     fn assign_int_var(&mut self, name: &str, val: u64) -> Result<(), PecosError> {
         // Measurement destinations must already be declared classical registers.
-        self.environment.classical_info(name)?;
+        self.environment.classical_info_for(name, "Measurement")?;
         self.environment.set_raw(name, val)
     }
 

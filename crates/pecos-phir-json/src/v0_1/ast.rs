@@ -500,12 +500,16 @@ pub(crate) fn declaration_size(
 /// For types like "i32", "u64", extracts the bit width from the name. A signed
 /// type defaults to `N - 1` because a signed size-S register is an `i(S+1)`
 /// integer, so the full backing type `iN` holds `N - 1` data bits plus a sign
-/// bit. Unsigned types default to their full `N` bits. For "qubits", returns 0
+/// bit. Unsigned types default to their full `N` bits; bool defaults to 1.
+/// For "qubits", returns 0
 /// (size must be explicit).
 #[must_use]
 pub fn infer_size(data_type: &str, explicit_size: Option<usize>) -> usize {
     if let Some(s) = explicit_size {
         return s;
+    }
+    if data_type == "bool" {
+        return 1;
     }
     // Try to extract bit width from type name (e.g., "i32" -> 32, "u64" -> 64)
     let digits: String = data_type.chars().filter(char::is_ascii_digit).collect();

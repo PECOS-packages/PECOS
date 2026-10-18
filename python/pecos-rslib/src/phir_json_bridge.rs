@@ -28,7 +28,7 @@ impl Clone for PhirJsonEngine {
 }
 
 fn python_error(error: PecosError) -> PyErr {
-    if matches!(error, PecosError::External(_)) {
+    if crate::errors::result_reference_error(&error).is_some() {
         return crate::errors::simulation_error(error, "PHIR interpreter failed");
     }
     PyValueError::new_err(format!(
@@ -41,7 +41,8 @@ impl PhirJsonEngine {
     /// Create an engine using native PHIR-JSON validation.
     ///
     /// # Errors
-    /// Returns ValueError for invalid PHIR-JSON.
+    /// Returns `ValueError` for invalid PHIR-JSON and `TypeError` for malformed
+    /// Result references with a wrong JSON type.
     #[new]
     pub fn py_new(phir_json: &str) -> PyResult<Self> {
         Ok(Self {
@@ -55,7 +56,8 @@ impl PhirJsonEngine {
     /// Native validation always applies.
     ///
     /// # Errors
-    /// Returns ValueError for invalid PHIR-JSON.
+    /// Returns `ValueError` for invalid PHIR-JSON and `TypeError` for malformed
+    /// Result references with a wrong JSON type.
     #[staticmethod]
     pub fn create_with_validation_disabled(phir_json: &str) -> PyResult<Self> {
         Self::py_new(phir_json)
@@ -212,6 +214,22 @@ impl Engine for PhirJsonEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn external_errors_keep_legacy_value_error() {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
+            let error = python_error(PecosError::External(Box::new(std::io::Error::other(
+                "foreign failure",
+            ))));
+            assert!(error.is_instance_of::<pyo3::exceptions::PyValueError>(py));
+            assert!(
+                error
+                    .to_string()
+                    .contains("foreign failure; supply a valid program")
+            );
+        });
+    }
 
     #[test]
     fn legacy_commands_and_results_match_native() {

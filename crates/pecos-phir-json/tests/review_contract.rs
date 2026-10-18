@@ -529,3 +529,41 @@ fn result_and_assignment_sign_extend_identically() {
         }
     }
 }
+
+#[test]
+fn malformed_result_references_are_input_errors() {
+    use pecos_core::errors::PecosError;
+    for entry in [json!(7), json!(["a", -1]), json!(["a", true])] {
+        let source = program(&json!({"cop":"Result","args":[entry],"returns":["out"]}));
+        let error = PhirJsonEngine::from_json(&source).unwrap_err();
+        assert!(matches!(error, PecosError::Input(_)), "{error:?}");
+        assert!(
+            error
+                .to_string()
+                .starts_with("Input error: Result: invalid args entry")
+        );
+        assert!(matches!(
+            phir_json_to_module(&source),
+            Err(PecosError::Input(_))
+        ));
+    }
+}
+
+#[test]
+fn assignment_unknown_target_names_the_operation() {
+    use pecos_phir_json::v0_1::{ast::ArgItem, operations::OperationProcessor};
+    let mut processor = OperationProcessor::new();
+    let error = processor
+        .handle_classical_op(
+            "=",
+            &[ArgItem::Integer(1)],
+            &[ArgItem::Simple("非ASCII".into())],
+            &[],
+            0,
+        )
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "Input error: Assignment: unknown classical variable \"非ASCII\"; declare it with cvar_define before use"
+    );
+}

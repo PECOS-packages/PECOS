@@ -255,6 +255,19 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Python bug fixes
 
+- PHIR bool declarations without a size use one bit on all execution paths.
+  The Python interpreter checks declarations and measurement destinations at
+  load (or when Result declares a destination), avoiding JSON/FFI validation
+  per measured bit and per shot reset. Measurement and assignment errors name
+  the relevant operation.
+- PyPHIR classical-input validation leaves angles and metadata untouched,
+  accepting Rust scalar values in parsed PHIR dictionaries without requiring
+  the entire program to be JSON-serializable.
+- `run_phir_sim` retains `ValueError("Failed to parse PHIR: ...")` for ordinary
+  parse failures. The legacy bridge retains ValueError for unrelated external
+  failures; only malformed Result references use the documented shared
+  TypeError/ValueError classification.
+
 - PyPHIR parses bool declarations, and the Python interpreter supports their
   one-bit measurement and assignment storage. Optional schema validation accepts
   bool declarations and valid indexed Result references.
@@ -486,6 +499,13 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   with ties away from zero on the signed principal representative.
 
 ### Rust bug fixes
+
+- Omitted-size bool declarations infer one bit in the native PHIR-JSON engine,
+  Rust interpreter and JSON-to-module converter. Shared input validation uses
+  the same size inference. Malformed Result references are `PecosError::Input`
+  (with the standard `Input error:` display prefix), preserving Python's
+  wrong-type/bad-value distinction. Register names use consistent JSON quoting;
+  assignment and measurement diagnostics name their operation.
 
 - The PHIR processor stores U8/U16 integer results and evaluates their shifts
   and bitwise operations. JSON-to-module measurements and Result narrowing now

@@ -443,3 +443,30 @@ fn result_copies_sign_extend_to_i64_when_widened() {
         }
     }
 }
+
+#[test]
+fn omitted_bool_size_supports_measurement_on_every_rust_path() {
+    use pecos_phir_json::v0_1::classical_interpreter::{
+        MeasKey, PhirClassicalInterpreter, ResultValue,
+    };
+    let source = json!({"format":"PHIR/JSON","version":"0.1.0","ops":[
+        {"data":"qvar_define","variable":"q","size":1},
+        {"data":"cvar_define","data_type":"bool","variable":"flag"},
+        {"qop":"X","args":[["q",0]]},
+        {"qop":"Measure","args":[["q",0]],"returns":[["flag",0]]}
+    ]})
+    .to_string();
+    let mut native = PhirJsonEngine::from_json(&source).unwrap();
+    let mut converted = PhirEngine::new(phir_json_to_module(&source).unwrap()).unwrap();
+    assert_eq!(run(&mut native).data["flag"].as_u32(), Some(1));
+    assert_eq!(run(&mut converted).data["flag"].as_u32(), Some(1));
+    let mut interpreter = PhirClassicalInterpreter::new();
+    interpreter.init(&source, None).unwrap();
+    interpreter
+        .receive_results(&[[(MeasKey::Bit("flag".into(), 0), 1)].into()])
+        .unwrap();
+    assert!(matches!(
+        interpreter.results(true)["flag"],
+        ResultValue::UInt(1, _) | ResultValue::Int(1, _)
+    ));
+}

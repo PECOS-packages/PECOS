@@ -264,6 +264,11 @@ writes below the declared size. Whole signed Result copies sign-extend to i64
 before destination-width masking, independently of the source backing type,
 matching `=`. Malformed Result entries report the offending JSON value; Python
 uses TypeError for wrong types and ValueError for invalid integer indices.
+Rust classifies these as `PecosError::Input`. The Python interpreter validates
+measurement destinations and declarations at load, or when a Result creates a
+new destination; shot resets and valid measurement writes reuse that validation.
+PyPHIR's classical-input validation does not serialize unrelated angles or
+metadata in parsed Python programs.
 Exports use U32 through 32 bits and U64 for wider registers.
 Without Result mappings, all declared classical registers are exported.
 CPhase is not a PHIR v0.1 gate and must be lowered before emitting PHIR JSON.

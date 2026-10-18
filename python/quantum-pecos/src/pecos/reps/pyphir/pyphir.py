@@ -21,10 +21,10 @@ import json
 import math
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from pecos_rslib import validate_phir_classical_inputs, validate_phir_qop
+from pecos_rslib import validate_phir_qop
 
 import pecos as pc
-from pecos._phir_declarations import validate_declaration_names
+from pecos._phir_declarations import validate_classical_inputs, validate_declaration_names
 from pecos.reps.pyphir import block_types as blk
 from pecos.reps.pyphir import data_types as d
 from pecos.reps.pyphir import op_types as op
@@ -293,7 +293,7 @@ class PyPHIR:
             name_resolver=name_resolver,
         )
 
-        validate_phir_classical_inputs(json.dumps(phir))
+        validate_classical_inputs(phir)
         validate_declaration_names(phir["ops"])
 
         next_qvar_int = 0

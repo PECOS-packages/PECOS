@@ -19,17 +19,18 @@ pub(crate) fn simulation_error(error: PecosError, context: &str) -> PyErr {
     }
 }
 
-fn result_reference_error(
+pub(crate) fn result_reference_error(
     error: &PecosError,
-) -> Option<&pecos_phir_json::v0_1::classical_validation::ResultReferenceError> {
+) -> Option<pecos_phir_json::v0_1::classical_validation::ResultReferenceError> {
     match error {
-        PecosError::External(source) | PecosError::WithContext { source, .. } => source
-            .downcast_ref::<pecos_phir_json::v0_1::classical_validation::ResultReferenceError>()
-            .or_else(|| {
-                source
-                    .downcast_ref::<PecosError>()
-                    .and_then(result_reference_error)
-            }),
+        PecosError::Input(message) => {
+            pecos_phir_json::v0_1::classical_validation::ResultReferenceError::from_input_message(
+                message,
+            )
+        }
+        PecosError::WithContext { source, .. } => source
+            .downcast_ref::<PecosError>()
+            .and_then(result_reference_error),
         _ => None,
     }
 }

@@ -11,6 +11,10 @@
 
 """The program-wide declaration namespace specified by PHIR-JSON v0.1."""
 
+import json
+
+from pecos_rslib import validate_phir_classical_inputs
+
 
 def validate_declaration_names(operations: list[dict]) -> None:
     """Reject a name declared more than once, regardless of declaration kind."""
@@ -33,3 +37,25 @@ def validate_declaration_names(operations: list[dict]) -> None:
                     register_names(node.get(field) or [])
 
     register_names(operations)
+
+
+def validate_classical_inputs(program: dict) -> None:
+    """Validate classical fields without serializing quantum data or metadata.
+
+    QuantumCircuit dictionaries may carry Rust scalar angles and arbitrary
+    metadata. Neither is part of classical declaration/Result validation.
+    """
+    inputs = []
+
+    def collect(operations: list[dict]) -> None:
+        for node in operations:
+            if node.get("cop") == "Result":
+                inputs.append({key: node[key] for key in ("cop", "args", "returns") if key in node})
+            elif node.get("data") == "cvar_define" and node.get("data_type") == "bool":
+                inputs.append({key: node[key] for key in ("data", "data_type", "variable", "size") if key in node})
+            if "block" in node:
+                for field in ("ops", "true_branch", "false_branch"):
+                    collect(node.get(field) or [])
+
+    collect(program.get("ops", []))
+    validate_phir_classical_inputs(json.dumps({"ops": inputs}))

@@ -315,3 +315,66 @@ attributes #0 = { "EntryPoint" }
         result = built.run(shots).to_dict()
         assert result["measurement_0"] == [int(not reverse)] * shots
         assert result["measurement_1"] == [int(reverse)] * shots
+
+
+@pytest.mark.parametrize("events", [False, True])
+@pytest.mark.parametrize("negative", [False, True])
+def test_angle_scaling_through_live_runtime(tmp_path, scheduled_support, events, negative):
+    import pecos_rslib as pr
+
+    library, _ = scheduled_support.build_runtime(tmp_path, 0, coalesce_queued=True)
+    angle = "0xBFF921FB54442D18" if negative else "0x3FF921FB54442D18"
+    program = """
+declare i64 @___qalloc()
+declare void @___qfree(i64)
+declare void @___rzz(i64, i64, double)
+declare i64 @___lazy_measure(i64)
+declare void @setup(i64)
+declare i64 @teardown()
+define i64 @qmain(i64 %arg) #0 {
+  call void @setup(i64 %arg)
+  %a = call i64 @___qalloc()
+  %b = call i64 @___qalloc()
+  call void @___rzz(i64 %a, i64 %b, double ANGLE)
+  %ma = call i64 @___lazy_measure(i64 %a)
+  %mb = call i64 @___lazy_measure(i64 %b)
+  call void @___qfree(i64 %a)
+  call void @___qfree(i64 %b)
+  %end = call i64 @teardown()
+  ret i64 %end
+}
+attributes #0 = { "EntryPoint" }
+""".replace("ANGLE", angle)
+    profile = pr.scheduled_local_noise(
+        pr.scheduled_idle_noise(2),
+        p2=1.0,
+        p2_pauli_model={"XI": 1.0},
+        p2_angle_params=(0.0, 1.0, 0.0, 0.0),
+        p2_angle_power=2.0,
+    )
+    built = simulation(library, program, profile, events, qubits=2).build()
+    for shots in (4, 6):
+        result = built.run(shots).to_dict()
+        assert result["measurement_0"] == [int(negative)] * shots
+        assert result["measurement_1"] == [0] * shots
+
+
+@pytest.mark.parametrize(
+    "keywords",
+    [
+        {"p2_angle_params": (math.nan, 1.0, 0.0, 1.0)},
+        {"p2_angle_params": (0.0, math.inf, 0.0, 1.0)},
+        {"p2_angle_params": (0.0, 1.0, -math.inf, 1.0)},
+        {"p2_angle_power": 0.0},
+        {"p2_angle_power": -1.0},
+        {"p2_angle_power": math.nan},
+        {"p2_angle_power": math.inf},
+        {"p2_angle_params": (1.0, 1.0, 0.0, 1.0), "p2": 1.0},
+        {"p2_angle_params": (0.0, 0.0, 0.0, -0.1), "p2": 1.0},
+    ],
+)
+def test_invalid_angle_configuration_fails_at_construction(keywords):
+    import pecos_rslib as pr
+
+    with pytest.raises(ValueError, match=r"angle|RZZ power"):
+        pr.scheduled_local_noise(pr.scheduled_idle_noise(2), **keywords)

@@ -138,7 +138,8 @@ The v7 [event adapter](scheduled-event-adapters.md) can use the same profile via
 ## Local gate, preparation and readout faults
 
 `scheduled_local_noise(idle, *, p1=0, p2=0, prep=0, meas0=0, meas1=0,
-prep_leak_ratio=0, p2_pauli_model=None)` adds a checked subset of
+prep_leak_ratio=0, p2_pauli_model=None, p2_angle_params=None, p2_angle_power=None)`
+adds a checked subset of
 `GeneralNoiseModel` to an existing `scheduled_idle_noise()` profile:
 
 - `p1`: a uniform X/Y/Z fault after an emitted single-qubit gate, including `RZ`.
@@ -146,7 +147,8 @@ prep_leak_ratio=0, p2_pauli_model=None)` adds a checked subset of
   must be resolved by the runtime/adapter without emitting a physical `RZ`; there
   is no per-gate noiseless override in this profile.
 - `p2`: probability of a nonidentity two-qubit Pauli fault after a two-qubit gate.
-  This event probability is independent of rotation angle.
+  This event probability is independent of rotation angle unless angle scaling
+  is supplied.
 - `p2_pauli_model`: optional conditional distribution over the fifteen nonidentity
   I/X/Y/Z pairs. Omit it or use `None` for the existing uniform distribution.
   The first character acts on the emitted gate's first operand and the second
@@ -157,6 +159,19 @@ prep_leak_ratio=0, p2_pauli_model=None)` adds a checked subset of
   one within 1e-10. Empty/all-zero maps, `II`, leakage entries and invalid keys
   are rejected even when `p2=0`. Weights select the fault type and do not rescale
   `p2`; values near unit sum follow the existing general-model sampler.
+- `p2_angle_params`: optional `(a, b, c, d)` coefficients from `GeneralNoiseModel`.
+  For signed principal angle `theta` in `(-pi, pi]` and `x = abs(theta)/pi`,
+  the event probability is `p2 * (a*x**power+b)` for negative angles,
+  `p2 * (c*x**power+d)` for positive angles, and `p2*(b+d)/2` at zero.
+  Both half-turn endpoints use the positive branch. Omit it or use `None` for
+  constant coefficients `(0, 1, 0, 1)`. This applies to the admitted `RZZ` and
+  `RXYXY2Q` operations.
+- `p2_angle_power`: optional finite positive exponent; the default is one.
+  Combined probabilities must remain finite and in [0, 1] over the full
+  principal-angle range. Validation reuses the general model's checks and
+  rejects invalid/nonfinite settings even when `p2=0`.
+  Coefficients scale the event probability, not the conditional Pauli weights.
+  Scaling uses emitted gate angles without rewriting operations or timing.
 - `prep`: probability of a fault after preparation resets the qubit and clears
   prior leakage.
 - `prep_leak_ratio`: conditional probability that a preparation fault causes leakage;
@@ -171,8 +186,8 @@ must expose that operation to model its fault. No hidden preparation is inserted
 
 All probabilities and the leakage ratio must be finite and in [0, 1], even when
 `prep=0`. These are event probabilities, not average gate infidelities.
-Gate-induced emission/leakage, seepage, other custom fault maps, angle-dependent
-rates, crosstalk, repumping and automatic post-two-qubit idle injection are not
+Gate-induced emission/leakage, seepage, other custom fault maps,
+crosstalk, repumping and automatic post-two-qubit idle injection are not
 configurable. Unsupported Python keywords raise rather than being silently ignored.
 Existing idle leakage remains supported: leakage-aware readout returns 2 without
 readout flips, whereas ordinary leaked readout starts at 1 and is subject to `meas1`.
@@ -203,11 +218,14 @@ invented examples. Rust exposes `ScheduledLocalNoise::new(idle, p1, p2, prep,
 meas0, meas1)` and `ScheduledEventNoise::new(local, factory)`. Unlike Python, the
 Rust constructor accepts a carrier that already contains local faults: it replaces
 all five local probabilities, resets the preparation leakage ratio to zero and
-restores the uniform two-qubit distribution while preserving idle configuration.
+restores uniform two-qubit faults and constant angle scaling while preserving
+idle configuration.
 Opt into preparation leakage with `.with_prep_leak_ratio(ratio)?` and select an
 ordered Pauli map with `.with_p2_pauli_model(distribution)?`. Each setter replaces
-only its own setting; conversion to `ScheduledNoise` preserves both for timed and
-event batches. The canonical Rust carrier is `ScheduledNoise`; `ScheduledIdleNoise`
+only its own setting. Rust also exposes `.with_p2_angle_params(a, b, c, d)?`
+and `.with_p2_angle_power(power)?`. Conversion to `ScheduledNoise` preserves all
+these settings for timed and event batches. The canonical Rust carrier is
+`ScheduledNoise`; `ScheduledIdleNoise`
 is a compatibility alias that retains the entire configuration, including local
 faults. `ScheduledEventIdleZ` and `ScheduledEventIdleNoise` likewise alias
 `ScheduledEventNoise`. The Python idle and local factories retain their distinct

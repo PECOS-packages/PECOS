@@ -125,9 +125,21 @@ while Selene reports the unsigned value; compare the bit pattern at these ABI
 edges rather than requiring identical exception strings.
 
 ```python
+from guppylang import guppy
+from guppylang.std.platform import exit as guppy_exit
+from guppylang.std.qsystem.utils import get_current_shot
+from pecos import Guppy, selene_engine, sim
+
+
+@guppy
+def program() -> None:
+    if get_current_shot() == 1:
+        guppy_exit("done", 1)
+
+
 shots = sim(Guppy(program)).classical(selene_engine()).qubits(1).run(4)
 print(shots.program_exits)
-# Example: [None, {"code": 1, "message": "done"}, None, None]
+assert shots.program_exits == [None, {"code": 1, "message": "done"}, None, None]
 ```
 
 `program_exits` has one entry per result row, in the same order as the shot data.

@@ -378,3 +378,104 @@ def test_invalid_angle_configuration_fails_at_construction(keywords):
 
     with pytest.raises(ValueError, match=r"angle|RZZ power"):
         pr.scheduled_local_noise(pr.scheduled_idle_noise(2), **keywords)
+
+
+@pytest.mark.parametrize("events", [False, True])
+@pytest.mark.parametrize("two_qubit", [False, True])
+@pytest.mark.parametrize("seepage", [0.0, 1.0])
+def test_emission_and_seepage_resume_live_integer_feedback(
+    tmp_path,
+    scheduled_support,
+    events,
+    two_qubit,
+    seepage,
+):
+    import pecos_rslib as pr
+
+    library, _ = scheduled_support.build_runtime(tmp_path, 0, coalesce_queued=True)
+    gate = (
+        "call void @___rzz(i64 %q, i64 %b, double 0x3FF921FB54442D18)"
+        if two_qubit
+        else "call void @___rxy(i64 %q, double 0x400921FB54442D18, double 0.0)"
+    )
+    program = """
+declare i64 @___qalloc()
+declare void @___qfree(i64)
+declare void @___reset(i64)
+declare void @___rxy(i64, double, double)
+declare void @___rzz(i64, i64, double)
+declare i64 @___lazy_measure_leaked(i64)
+declare i64 @___read_future_uint(i64)
+declare void @setup(i64)
+declare i64 @teardown()
+define i64 @qmain(i64 %arg) #0 {
+  call void @setup(i64 %arg)
+  %q = call i64 @___qalloc()
+  %b = call i64 @___qalloc()
+  %clean = call i64 @___lazy_measure_leaked(i64 %q)
+  GATE
+  %first = call i64 @___lazy_measure_leaked(i64 %q)
+  %value = call i64 @___read_future_uint(i64 %first)
+  %leaked = icmp eq i64 %value, 2
+  br i1 %leaked, label %recover, label %done
+recover:
+  GATE
+  %second = call i64 @___lazy_measure_leaked(i64 %q)
+  call void @___reset(i64 %q)
+  %reset = call i64 @___lazy_measure_leaked(i64 %q)
+  br label %done
+done:
+  call void @___qfree(i64 %q)
+  call void @___qfree(i64 %b)
+  %end = call i64 @teardown()
+  ret i64 %end
+}
+attributes #0 = { "EntryPoint" }
+""".replace("GATE", gate)
+    faults = (
+        {"p2": 1.0, "p2_emission_ratio": 1.0, "p2_emission_model": {"LI": 1.0}, "p2_seepage_prob": seepage}
+        if two_qubit
+        else {"p1": 1.0, "p1_emission_ratio": 1.0, "p1_emission_model": {"L": 1.0}, "p1_seepage_prob": seepage}
+    )
+    profile = pr.scheduled_local_noise(pr.scheduled_idle_noise(2), **faults)
+    built = simulation(library, program, profile, events, qubits=2).build()
+    for shots in (8, 12):
+        result = built.run(shots).to_dict()
+        assert result["measurement_0"] == [0] * shots
+        assert result["measurement_1"] == [2] * shots
+        if seepage:
+            assert len(result["measurement_2"]) == shots
+            assert all(value in (0, 1) for value in result["measurement_2"])
+        else:
+            assert result["measurement_2"] == [2] * shots
+        assert result["measurement_3"] == [0] * shots
+
+
+@pytest.mark.parametrize("parameter", ["p1_emission_ratio", "p2_emission_ratio", "p1_seepage_prob", "p2_seepage_prob"])
+@pytest.mark.parametrize("value", [-0.1, 1.1, math.inf, math.nan])
+def test_invalid_emission_probability_is_rejected_when_disabled(parameter, value):
+    import pecos_rslib as pr
+
+    with pytest.raises(ValueError, match="Probability must be between"):
+        pr.scheduled_local_noise(pr.scheduled_idle_noise(2), **{parameter: value})
+
+
+@pytest.mark.parametrize(
+    ("parameter", "distribution"),
+    [
+        ("p1_emission_model", {}),
+        ("p1_emission_model", {"I": 1.0}),
+        ("p1_emission_model", {"L": math.nan}),
+        ("p1_emission_model", {"L": 0.8}),
+        ("p2_emission_model", {}),
+        ("p2_emission_model", {"II": 1.0}),
+        ("p2_emission_model", {"L": 1.0}),
+        ("p2_emission_model", {"LL": math.inf}),
+        ("p2_emission_model", {"IL": -0.1, "LI": 1.1}),
+    ],
+)
+def test_invalid_emission_distribution_is_rejected_when_disabled(parameter, distribution):
+    import pecos_rslib as pr
+
+    with pytest.raises(ValueError, match="Sampler"):
+        pr.scheduled_local_noise(pr.scheduled_idle_noise(2), **{parameter: distribution})

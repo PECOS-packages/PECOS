@@ -67,14 +67,14 @@ pub struct ScheduledNoise {
     sine_model: BTreeMap<String, f64>,
     coherent_model: BTreeMap<String, f64>,
 }
-/// Checked local Pauli gate faults, preparation faults and asymmetric readout.
-/// Idle channels use the supplied profile. Single-qubit faults are uniform over
-/// X/Y/Z; two-qubit faults default to uniform nonidentity Pauli pairs and accept
+/// Checked local gate faults, preparation faults and asymmetric readout.
+/// Idle channels use the supplied profile. The single-qubit Pauli branch is uniform
+/// over X/Y/Z; two-qubit Pauli faults default to uniform nonidentity pairs and accept
 /// a checked distribution. Two-qubit rotation faults can use checked angle scaling.
 /// Emitted RZ gates receive single-qubit faults too; virtual frame updates must
 /// be resolved by the runtime/adapter rather than represented as physical RZ.
-/// Preparation faults can leak or flip the qubit. Gate emission/leakage, seepage
-/// and crosstalk are disabled.
+/// Preparation faults can leak or flip the qubit. Gate faults optionally select
+/// emission models and seepage using the general model. Crosstalk is disabled.
 /// Capacity remains 1..=16 with a state-vector engine. Measurements capture
 /// leakage before subsequent operations, allowing same-batch reset and reuse.
 #[derive(Clone, Debug)]
@@ -91,6 +91,12 @@ struct LocalFaults {
     p2_pauli_model: Option<BTreeMap<String, f64>>,
     p2_angle_params: Option<(f64, f64, f64, f64)>,
     p2_angle_power: Option<f64>,
+    p1_emission_ratio: f64,
+    p1_emission_model: Option<BTreeMap<String, f64>>,
+    p1_seepage_prob: f64,
+    p2_emission_ratio: f64,
+    p2_emission_model: Option<BTreeMap<String, f64>>,
+    p2_seepage_prob: f64,
     meas0: f64,
     meas1: f64,
 }
@@ -98,7 +104,8 @@ impl ScheduledLocalNoise {
     /// Set local fault probabilities while preserving the supplied idle channels.
     /// Replaces all existing local fault probabilities if the profile already has them,
     /// including resetting preparation leakage to zero, two-qubit faults to uniform,
-    /// and two-qubit angle scaling to its constant-rate defaults.
+    /// two-qubit angle scaling to its constant-rate defaults, and all gate emission
+    /// and seepage settings to their disabled/default values.
     /// # Errors
     /// Every probability must be finite and in [0, 1].
     pub fn new(
@@ -127,10 +134,84 @@ impl ScheduledLocalNoise {
                 p2_pauli_model: None,
                 p2_angle_params: None,
                 p2_angle_power: None,
+                p1_emission_ratio: 0.0,
+                p1_emission_model: None,
+                p1_seepage_prob: 0.0,
+                p2_emission_ratio: 0.0,
+                p2_emission_model: None,
+                p2_seepage_prob: 0.0,
                 meas0,
                 meas1,
             },
         })
+    }
+    /// Set the fraction of single-qubit faults that select spontaneous emission.
+    /// Emission replaces the ideal gate. For an already leaked operand, it attempts
+    /// seepage instead of sampling a fresh emission fault. The default is zero.
+    /// # Errors
+    /// Rejects nonfinite ratios or values outside [0, 1], even when p1 is zero.
+    pub fn with_p1_emission_ratio(mut self, ratio: f64) -> Result<Self, PecosError> {
+        self.local.p1_emission_ratio = ratio;
+        self.local.validate()?;
+        Ok(self)
+    }
+    /// Set the conditional single-qubit emission distribution.
+    /// Keys are X/Y/Z/L, where L leaks the operand.
+    /// Omission uses the general model's uniform nonidentity Pauli distribution.
+    /// This replaces only the distribution, preserving other local and idle faults.
+    /// # Errors
+    /// Uses the general model's checked key/weight validation, including when disabled.
+    pub fn with_p1_emission_model(
+        mut self,
+        model: BTreeMap<String, f64>,
+    ) -> Result<Self, PecosError> {
+        self.local.p1_emission_model = Some(model);
+        self.local.validate()?;
+        Ok(self)
+    }
+    /// Set the conditional seepage probability for an already leaked operand.
+    /// It is attempted only when a single-qubit fault selects emission, and returns
+    /// the operand to a random computational basis state. The default is zero.
+    /// # Errors
+    /// Rejects nonfinite probabilities or values outside [0, 1], even when disabled.
+    pub fn with_p1_seepage_prob(mut self, probability: f64) -> Result<Self, PecosError> {
+        self.local.p1_seepage_prob = probability;
+        self.local.validate()?;
+        Ok(self)
+    }
+    /// Set the fraction of two-qubit faults that select spontaneous emission.
+    /// Emission replaces the ideal gate. For an already leaked operand, it attempts
+    /// seepage instead of sampling a fresh emission fault. The default is zero.
+    /// # Errors
+    /// Rejects nonfinite ratios or values outside [0, 1], even when p2 is zero.
+    pub fn with_p2_emission_ratio(mut self, ratio: f64) -> Result<Self, PecosError> {
+        self.local.p2_emission_ratio = ratio;
+        self.local.validate()?;
+        Ok(self)
+    }
+    /// Set the conditional two-qubit emission distribution.
+    /// Keys are ordered I/X/Y/Z/L pairs except II; L leaks that operand.
+    /// Omission uses the general model's uniform nonidentity Pauli distribution.
+    /// This replaces only the distribution, preserving other local and idle faults.
+    /// # Errors
+    /// Uses the general model's checked key/weight validation, including when disabled.
+    pub fn with_p2_emission_model(
+        mut self,
+        model: BTreeMap<String, f64>,
+    ) -> Result<Self, PecosError> {
+        self.local.p2_emission_model = Some(model);
+        self.local.validate()?;
+        Ok(self)
+    }
+    /// Set the conditional seepage probability for an already leaked operand.
+    /// It is attempted only when a two-qubit fault selects emission, and returns
+    /// the operand to a random computational basis state. The default is zero.
+    /// # Errors
+    /// Rejects nonfinite probabilities or values outside [0, 1], even when disabled.
+    pub fn with_p2_seepage_prob(mut self, probability: f64) -> Result<Self, PecosError> {
+        self.local.p2_seepage_prob = probability;
+        self.local.validate()?;
+        Ok(self)
     }
     /// Set signed principal-angle coefficients using the existing general model.
     /// For `x = |theta|/pi`, the multiplier is `a*x^power+b` for negative angles,
@@ -149,7 +230,7 @@ impl ScheduledLocalNoise {
         d: f64,
     ) -> Result<Self, PecosError> {
         self.local.p2_angle_params = Some((a, b, c, d));
-        self.local.validate_angles()?;
+        self.local.validate()?;
         Ok(self)
     }
     /// Set a finite positive angle exponent, preserving all other settings.
@@ -158,7 +239,7 @@ impl ScheduledLocalNoise {
     /// Rejects nonfinite/nonpositive powers and invalid combined probabilities.
     pub fn with_p2_angle_power(mut self, power: f64) -> Result<Self, PecosError> {
         self.local.p2_angle_power = Some(power);
-        self.local.validate_angles()?;
+        self.local.validate()?;
         Ok(self)
     }
     /// Set the conditional distribution of a two-qubit Pauli fault.
@@ -211,7 +292,27 @@ impl ScheduledLocalNoise {
     }
 }
 impl LocalFaults {
-    fn configure_angles(&self, mut builder: GeneralNoiseModelBuilder) -> GeneralNoiseModelBuilder {
+    fn configure(&self, mut builder: GeneralNoiseModelBuilder) -> GeneralNoiseModelBuilder {
+        builder = builder
+            .with_p1(self.p1)
+            .with_p2(self.p2)
+            .with_p_prep(self.prep)
+            .with_prep_leak_ratio(self.prep_leak_ratio)
+            .with_p_meas_0(self.meas0)
+            .with_p_meas_1(self.meas1)
+            .with_p1_emission_ratio(self.p1_emission_ratio)
+            .with_p1_seepage_prob(self.p1_seepage_prob)
+            .with_p2_emission_ratio(self.p2_emission_ratio)
+            .with_p2_seepage_prob(self.p2_seepage_prob);
+        if let Some(model) = &self.p2_pauli_model {
+            builder = builder.with_p2_pauli_model(model);
+        }
+        if let Some(model) = &self.p1_emission_model {
+            builder = builder.with_p1_emission_model(model);
+        }
+        if let Some(model) = &self.p2_emission_model {
+            builder = builder.with_p2_emission_model(model);
+        }
         if let Some((a, b, c, d)) = self.p2_angle_params {
             builder = builder.with_p2_angle_params(a, b, c, d);
         }
@@ -220,8 +321,8 @@ impl LocalFaults {
         }
         builder
     }
-    fn validate_angles(&self) -> Result<(), PecosError> {
-        self.configure_angles(GeneralNoiseModelBuilder::new().with_p2(self.p2))
+    fn validate(&self) -> Result<(), PecosError> {
+        self.configure(GeneralNoiseModelBuilder::new())
             .validate_configuration()
             .map_err(PecosError::Input)
     }
@@ -355,17 +456,7 @@ impl ScheduledNoise {
             .with_p_idle_sin_squared(self.sine, &self.sine_model)
             .with_p_idle_coherent(self.coherent, &self.coherent_model);
         if let Some(local) = &self.local {
-            builder = builder
-                .with_p1(local.p1)
-                .with_p2(local.p2)
-                .with_p_prep(local.prep)
-                .with_prep_leak_ratio(local.prep_leak_ratio)
-                .with_p_meas_0(local.meas0)
-                .with_p_meas_1(local.meas1);
-            if let Some(model) = &local.p2_pauli_model {
-                builder = builder.with_p2_pauli_model(model);
-            }
-            builder = local.configure_angles(builder);
+            builder = local.configure(builder);
         }
         let inner = builder.build();
         ScheduledIdleModel {

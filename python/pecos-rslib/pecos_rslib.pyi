@@ -4409,7 +4409,7 @@ def scheduled_event_idle_noise(
 ) -> ScheduledEventIdleNoise: ...
 
 class ScheduledLocalNoise:
-    """Checked Pauli gate, preparation X/leakage and asymmetric readout faults."""
+    """Checked gate Pauli/emission/seepage, preparation and readout faults."""
 
 def scheduled_local_noise(
     idle: ScheduledIdleNoise,
@@ -4423,6 +4423,12 @@ def scheduled_local_noise(
     p2_pauli_model: dict[str, float] | None = None,
     p2_angle_params: tuple[float, float, float, float] | None = None,
     p2_angle_power: float | None = None,
+    p1_emission_ratio: float = 0.0,
+    p1_emission_model: dict[str, float] | None = None,
+    p1_seepage_prob: float = 0.0,
+    p2_emission_ratio: float = 0.0,
+    p2_emission_model: dict[str, float] | None = None,
+    p2_seepage_prob: float = 0.0,
 ) -> ScheduledLocalNoise:
     """Configure preparation leakage and optional ordered two-qubit Pauli weights.
 
@@ -4430,6 +4436,10 @@ def scheduled_local_noise(
     nonidentity I/X/Y/Z pairs to finite nonnegative weights summing to one.
     Optional angle coefficients (a, b, c, d) and a positive exponent scale p2
     using signed principal angles; combined event probabilities must stay in [0, 1].
+    Emission ratios select gate-replacing faults. Models map X/Y/Z/L (one qubit)
+    or ordered I/X/Y/Z/L pairs except II (two qubits) to normalized weights.
+    Seepage is conditional on emission for an already leaked operand.
+    All ratios/probabilities and distributions are checked even when disabled.
     """
     ...
 

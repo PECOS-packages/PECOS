@@ -1373,11 +1373,12 @@ pub struct PyScheduledLocalNoise {
 /// p2_pauli_model optionally selects ordered nonidentity I/X/Y/Z pair weights.
 /// prep_leak_ratio is the conditional leakage probability given a preparation fault.
 /// p2_angle_params and p2_angle_power opt into the general model's signed angle scaling.
+/// Optional p1/p2 emission ratios, models and seepage use the existing general model.
 /// The idle base must come from scheduled_idle_noise(), not scheduled_idle_z().
 /// For Z-only channels, scheduled_idle_noise() uses Z models by default.
 /// Probabilities are event probabilities in [0, 1], not average gate infidelities.
 #[pyfunction]
-#[pyo3(signature = (idle, *, p1 = 0.0, p2 = 0.0, prep = 0.0, meas0 = 0.0, meas1 = 0.0, prep_leak_ratio = 0.0, p2_pauli_model = None, p2_angle_params = None, p2_angle_power = None))]
+#[pyo3(signature = (idle, *, p1 = 0.0, p2 = 0.0, prep = 0.0, meas0 = 0.0, meas1 = 0.0, prep_leak_ratio = 0.0, p2_pauli_model = None, p2_angle_params = None, p2_angle_power = None, p1_emission_ratio = 0.0, p1_emission_model = None, p1_seepage_prob = 0.0, p2_emission_ratio = 0.0, p2_emission_model = None, p2_seepage_prob = 0.0))]
 pub fn scheduled_local_noise(
     idle: PyScheduledIdleNoise,
     p1: f64,
@@ -1389,6 +1390,12 @@ pub fn scheduled_local_noise(
     p2_pauli_model: Option<std::collections::BTreeMap<String, f64>>,
     p2_angle_params: Option<(f64, f64, f64, f64)>,
     p2_angle_power: Option<f64>,
+    p1_emission_ratio: f64,
+    p1_emission_model: Option<std::collections::BTreeMap<String, f64>>,
+    p1_seepage_prob: f64,
+    p2_emission_ratio: f64,
+    p2_emission_model: Option<std::collections::BTreeMap<String, f64>>,
+    p2_seepage_prob: f64,
 ) -> PyResult<PyScheduledLocalNoise> {
     Ok(PyScheduledLocalNoise {
         inner: pecos_engines::scheduled_frame::ScheduledLocalNoise::new(
@@ -1405,6 +1412,18 @@ pub fn scheduled_local_noise(
         })
         .and_then(|profile| match p2_angle_power {
             Some(power) => profile.with_p2_angle_power(power),
+            None => Ok(profile),
+        })
+        .and_then(|profile| profile.with_p1_emission_ratio(p1_emission_ratio))
+        .and_then(|profile| profile.with_p1_seepage_prob(p1_seepage_prob))
+        .and_then(|profile| match p1_emission_model {
+            Some(model) => profile.with_p1_emission_model(model),
+            None => Ok(profile),
+        })
+        .and_then(|profile| profile.with_p2_emission_ratio(p2_emission_ratio))
+        .and_then(|profile| profile.with_p2_seepage_prob(p2_seepage_prob))
+        .and_then(|profile| match p2_emission_model {
+            Some(model) => profile.with_p2_emission_model(model),
             None => Ok(profile),
         })
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?,

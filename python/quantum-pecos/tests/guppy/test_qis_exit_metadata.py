@@ -33,7 +33,7 @@ def reference(program: object, shots: int) -> list[dict]:
         instance.delete_files()
 
 
-@pytest.mark.parametrize("code", [0, 1])
+@pytest.mark.parametrize("code", [0, 1, 999])
 @pytest.mark.parametrize("workers", [1, 3])
 @pytest.mark.parametrize("feedback", [False, True])
 def test_exit_metadata_matches_selene_without_changing_outputs(code: int, workers: int, feedback: bool) -> None:
@@ -133,18 +133,36 @@ def test_exit_like_output_names_are_not_metadata() -> None:
     assert shots.program_exits == [{"code": 1, "message": "done"}]
 
 
-def test_exit_code_1000_records_existing_reference_boundary_difference() -> None:
-    """Adding metadata preserves PECOS's existing inclusive exit boundary."""
+@pytest.mark.parametrize("code", [1000, 1001, 2**31 - 1, 2**31, 2**32 - 1, -1, -(2**31)])
+@pytest.mark.parametrize("workers", [1, 3])
+@pytest.mark.parametrize("feedback", [False, True])
+def test_fatal_termination_matches_selene_and_reset_recovers(code: int, workers: int, feedback: bool) -> None:
+    """The boundary and raw 32-bit ABI edges fail the job on both routes."""
 
     @guppy
     def program() -> None:
-        guppy_exit("boundary", 1000)
+        index = get_current_shot()
+        result("shot", index)
+        if feedback:
+            result("m", measure(qubit()).read())
+        if index == 1:
+            guppy_exit("boundary", code)
+        result("after", 7)
 
-    shots = sim(Guppy(program)).classical(selene_engine()).qubits(1).run(2)
-    assert shots.program_exits == [{"code": 1000, "message": "boundary"}] * 2
-    assert shots.to_dict() == {}
-    # Live Selene 0.3.4/0.3.5 classifies 1000 as a panic despite its >1000 docs.
-    # This is a documented compatibility gap, not a claimed parity result.
+    simulation = sim(Guppy(program)).classical(selene_engine()).qubits(1).workers(workers).build()
+    # QIS exposes a signed i32 code; Selene's adapter/stream uses the same bits
+    # as u32. The classification and bits must agree, not signed formatting.
+    unsigned_code = code % (2**32)
+    signed_code = unsigned_code if unsigned_code < 2**31 else unsigned_code - 2**32
+    with pytest.raises(RuntimeError, match=rf"code={signed_code}.*boundary"):
+        simulation.run(3)
     with pytest.raises(SelenePanicError) as error:
-        reference(program, 2)
-    assert error.value.code == 1000
+        reference(program, 3)
+    assert error.value.code == unsigned_code
+    simulation.reset()
+    recovered = simulation.run(1)
+    expected = {"shot": [0], "after": [7]}
+    if feedback:
+        expected["m"] = [0]
+    assert recovered.to_dict() == expected
+    assert recovered.program_exits == [None]

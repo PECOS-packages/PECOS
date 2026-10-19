@@ -1433,7 +1433,7 @@ mod tests {
                 1
             );
             assert!(json.is_null());
-            for code in [0, 1, 1000] {
+            for code in [0, 1, 999] {
                 let expected = ProgramError::Exit {
                     code,
                     message: "done\0é".into(),

@@ -157,7 +157,7 @@ def test_mixed_types_fail() -> None:
         sim(Guppy(mixed_results)).classical(pecos.selene_engine()).qubits(1).run(1)
 
 
-@pytest.mark.parametrize("signal", [0, 3, 1000])
+@pytest.mark.parametrize("signal", [0, 3, 999])
 def test_exit_preserves_results_and_continues_shots(signal: int) -> None:
     """Normal exits retain this shot's results and allow subsequent shots."""
 

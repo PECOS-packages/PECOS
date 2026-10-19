@@ -108,13 +108,21 @@ Known limitations and intentional validation differences:
 
 ## Per-shot program exits
 
-Ordinary Guppy exits (QIS codes 0 through 1000) finish the current shot and preserve
-its outputs recorded before the exit. They do not abort the simulation job.
-Panics and other execution failures still raise an error. The inclusive upper
-boundary preserves PECOS's existing contract: the tested live Selene version
-instead treats code 1000 as a panic. Metadata support does not resolve that
-termination-policy difference; it is tracked in
-[issue #1372](https://github.com/PECOS-packages/PECOS/issues/1372).
+Ordinary Guppy exits (QIS codes 0 through 999) finish the current shot and preserve
+its outputs recorded before the exit. Codes 1000 and above fail the job, matching
+Selene's launcher and result parser. Panics and other execution failures raise an
+error; they do not return an ordinary-exit metadata entry.
+
+**Compatibility change:** code 1000 previously finished a shot in PECOS. It now
+fails the job. Programs that intentionally request a recoverable exit must use a
+code below 1000. Guppy's prose documents signals through 1000, but live Selene
+0.3.4/0.3.5 and the inspected Selene source use the strict boundary. See
+[the launcher](https://github.com/Quantinuum/selene/blob/458d640dc4cf84a7a7988ea65ce5a9f7bcb8c511/selene-ext/interfaces/helios_qis/c/src/interface.c#L63)
+and [issue #1372](https://github.com/PECOS-packages/PECOS/issues/1372).
+Negative QIS codes also fail: the C adapter passes their 32-bit pattern to Selene
+as an unsigned value. PECOS retains the signed QIS code in its exception text,
+while Selene reports the unsigned value; compare the bit pattern at these ABI
+edges rather than requiring identical exception strings.
 
 ```python
 from guppylang import guppy

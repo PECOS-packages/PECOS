@@ -3348,7 +3348,16 @@ attributes #0 = { "EntryPoint" }
             let free: Symbol<FreeNamedResultsJsonFn> =
                 ffi.get(b"pecos_free_named_results_json\0").expect("free");
             // No wrapper has installed a handler: record without jumping into an invalid buffer.
-            for code in [0, 1, 1000, 1001] {
+            for code in [
+                0,
+                1,
+                999,
+                1000,
+                1001,
+                i32::MAX.cast_unsigned(),
+                1 << 31,
+                u32::MAX,
+            ] {
                 clear();
                 assert_eq!(
                     panic(std::ptr::null_mut(), tag(b"outside"), code).error_code,
@@ -3361,7 +3370,7 @@ attributes #0 = { "EntryPoint" }
                 };
                 // The host reader must not depend on the worker's TLS registration.
                 register(std::ptr::null_mut());
-                if code <= 1000 {
+                if code < 1000 {
                     assert_eq!(
                         handle.get_program_exit().unwrap(),
                         Some(pecos_engines::shot_results::ProgramExit {
@@ -3377,7 +3386,7 @@ attributes #0 = { "EntryPoint" }
                     serde_json::from_slice(std::ffi::CStr::from_ptr(ptr).to_bytes())
                         .expect("termination JSON");
                 free(ptr);
-                let expected = if code <= 1000 {
+                let expected = if code < 1000 {
                     ProgramError::Exit {
                         code: code.cast_signed(),
                         message: "outside".to_string(),
@@ -4059,7 +4068,7 @@ attributes #0 = { "EntryPoint" }
             ("main", "void", "", "void"),
         ] {
             let mut interface = QisHeliosInterface::new();
-            for code in [0, 1, 999, 1000, 1001, 1002, -1] {
+            for code in [0, 1, 999, 1000, 1001, 1002, -1, i32::MIN, i32::MAX] {
                 let program = format!(
                     r#"
                     @message = private constant [6 x i8] c"\05hello"
@@ -4073,7 +4082,7 @@ attributes #0 = { "EntryPoint" }
                 interface
                     .load_program(program.as_bytes(), ProgramFormat::LlvmIrText)
                     .expect("load panic program");
-                if (0..=1000).contains(&code) {
+                if (0..1000).contains(&code) {
                     interface.collect_operations().expect("exit must succeed");
                 } else {
                     let error = interface.collect_operations().expect_err("panic must fail");

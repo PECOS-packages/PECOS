@@ -1140,12 +1140,11 @@ pub unsafe extern "C-unwind" fn pecos_record_program_panic(
         String::from_utf8_lossy(unsafe { std::slice::from_raw_parts(message, len) }).into_owned()
     };
     if let Some(ctx) = crate::get_execution_context() {
-        // guppylang std/platform.py's exit/panic convention lowers to exit
-        // codes 0..=1000 and panic codes signal + 1000. Apply it at the C ABI
-        // to every producer, independently of the source function's name.
-        // Guppy documents supported signals 1..=1000. panic(msg, 0) lowers
-        // to 1000 (an exit here), but signal 0 is outside that contract.
-        let termination = if (0..=1000).contains(&code) {
+        // Match Selene's launcher and result parser: only raw codes below
+        // 1000 finish an individual shot. Code 1000 and above stop the job.
+        // Negative QIS i32 values arrive at Selene as large u32 codes, so they
+        // are fatal too. Keep the original signed code in PECOS diagnostics.
+        let termination = if (0..1000).contains(&code) {
             crate::ProgramError::Exit { code, message }
         } else {
             crate::ProgramError::Panic { code, message }

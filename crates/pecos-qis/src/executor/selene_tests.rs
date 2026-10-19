@@ -306,6 +306,9 @@ unsafe extern "C-unwind" fn adapter_entry() {
             2 => {
                 (adapters.panic)(instance, message, 1001);
             }
+            6 => {
+                (adapters.panic)(instance, message, 1000);
+            }
             3 => {
                 (adapters.invalid)(instance, u64::MAX, 0.2, 0.3);
             }
@@ -374,6 +377,7 @@ fn run_adapter_transfers() {
                 (0, None),
                 (1, Some("Exit")),
                 (2, Some("Panic")),
+                (6, Some("Panic")),
                 (3, Some("-1")),
                 (4, Some("random_seed")),
             ] {

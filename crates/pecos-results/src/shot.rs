@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 /// An ordinary early program exit, separate from user output registers.
 ///
 /// This is diagnostic metadata, not a job failure. QIS classifies codes 0 through
-/// 1000 as ordinary exits; panics continue to fail execution instead.
+/// 999 as ordinary exits; panics continue to fail execution instead.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProgramExit {
     /// The program's exit code.

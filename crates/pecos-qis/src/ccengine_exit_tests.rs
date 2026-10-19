@@ -47,7 +47,7 @@ fn exits_preserve_identity_partial_results_and_worker_isolation() {
     use pecos_engines::scheduled_frame::ScheduledIdleZ;
     let _lock = crate::test_env::ENV_MUTEX.lock().unwrap();
     for scheduled in [false, true] {
-        for code in [0, 1, 1000] {
+        for code in [0, 1, 999] {
             let mut builder = MonteCarloEngine::builder()
                 .with_classical_engine(Box::new(engine(scheduled, code)))
                 .with_quantum_engine(Box::new(StateVecEngine::new(1)))
@@ -103,7 +103,7 @@ fn exit_metadata_clears_on_reset_and_clone() {
 #[test]
 fn panic_still_fails_and_reset_recovers() {
     let _lock = crate::test_env::ENV_MUTEX.lock().unwrap();
-    for code in [-1, 1001] {
+    for code in [-1, 1000, 1001, i32::MIN, i32::MAX] {
         let mut engine = engine(false, code);
         engine.set_num_qubits_hint(1);
         engine.set_program_shot(1);

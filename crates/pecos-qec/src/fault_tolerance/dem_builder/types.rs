@@ -5353,36 +5353,27 @@ impl DetectorErrorModel {
     /// Returns each detector's X/Z family, indexed by detector id, for the XZ
     /// views in [`pecos_decoder_core::dem_views`].
     ///
-    /// The family is read from the detector's fault sector, which CSS
-    /// generators label `"X"` or `"Z"`. For a Clifford-deformed CSS code the
-    /// label is the undeformed family, so the views' initialization basis must
-    /// be given in that frame too.
+    /// The mask covers the detectors of [`Self::to_structured_decoder_dem`],
+    /// which includes ids that mechanisms target without a definition, so its
+    /// length always matches the structured model the views consume. The family
+    /// is read from the detector's fault sector, which CSS generators label `"X"`
+    /// or `"Z"`. For a Clifford-deformed CSS code the label is the undeformed
+    /// family, so the views' initialization basis must be given in that frame too.
     ///
     /// # Errors
-    /// Returns an invalid-configuration error for a detector id outside
-    /// `0..num_detectors()`, or for the first id in that range that is
-    /// undefined, has no fault sector, or has a fault sector other than `"X"`
-    /// or `"Z"`.
+    /// Returns the structured conversion's error, or an invalid-configuration
+    /// error for the first detector that is undefined, has no fault sector, or
+    /// has a fault sector other than `"X"` or `"Z"`.
     pub fn detector_bases(
         &self,
     ) -> Result<Vec<DetectorBasis>, pecos_decoder_core::errors::DecoderError> {
         use pecos_decoder_core::errors::DecoderError;
 
-        let num_detectors = self.num_detectors();
-        let mut sectors = vec![None; num_detectors];
-        for detector in &self.detectors {
-            let Some(slot) = sectors.get_mut(detector.id as usize) else {
-                return Err(DecoderError::InvalidConfiguration(format!(
-                    "detector D{} is outside the ids of the model's {num_detectors} detector definitions",
-                    detector.id
-                )));
-            };
-            *slot = detector.fault_sector.as_deref();
-        }
-        sectors
-            .into_iter()
+        self.to_structured_decoder_dem()?
+            .detector_fault_sectors
+            .iter()
             .enumerate()
-            .map(|(id, sector)| match sector {
+            .map(|(id, sector)| match sector.as_deref() {
                 Some("X") => Ok(DetectorBasis::X),
                 Some("Z") => Ok(DetectorBasis::Z),
                 Some(other) => Err(DecoderError::InvalidConfiguration(format!(

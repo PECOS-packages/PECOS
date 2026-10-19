@@ -138,15 +138,19 @@ The v7 [event adapter](scheduled-event-adapters.md) can use the same profile via
 ## Local gate, preparation and readout faults
 
 `scheduled_local_noise(idle, *, p1=0, p2=0, prep=0, meas0=0, meas1=0,
-prep_leak_ratio=0, p2_pauli_model=None, p2_angle_params=None, p2_angle_power=None)`
+prep_leak_ratio=0, p2_pauli_model=None, p2_angle_params=None, p2_angle_power=None,
+p1_emission_ratio=0, p1_emission_model=None, p1_seepage_prob=0,
+p2_emission_ratio=0, p2_emission_model=None, p2_seepage_prob=0)`
 adds a checked subset of
 `GeneralNoiseModel` to an existing `scheduled_idle_noise()` profile:
 
-- `p1`: a uniform X/Y/Z fault after an emitted single-qubit gate, including `RZ`.
+- `p1`: probability of a fault at an emitted single-qubit gate, including `RZ`.
+  Without emission, this applies a uniform X/Y/Z fault after the gate.
   The profile treats emitted `RZ` as a physical operation. A virtual frame update
   must be resolved by the runtime/adapter without emitting a physical `RZ`; there
   is no per-gate noiseless override in this profile.
-- `p2`: probability of a nonidentity two-qubit Pauli fault after a two-qubit gate.
+- `p2`: probability of a fault at a two-qubit gate. Without emission, this applies
+  a nonidentity Pauli pair after the gate.
   This event probability is independent of rotation angle unless angle scaling
   is supplied.
 - `p2_pauli_model`: optional conditional distribution over the fifteen nonidentity
@@ -170,8 +174,27 @@ adds a checked subset of
   Combined probabilities must remain finite and in [0, 1] over the full
   principal-angle range. Validation reuses the general model's checks and
   rejects invalid/nonfinite settings even when `p2=0`.
-  Coefficients scale the event probability, not the conditional Pauli weights.
+  Coefficients scale the event probability, not the conditional fault distributions.
   Scaling uses emitted gate angles without rewriting operations or timing.
+- `p1_emission_ratio`, `p2_emission_ratio`: conditional fraction of gate faults
+  that select spontaneous emission instead of the ordinary Pauli branch. Defaults
+  are zero. For healthy operands, emission **replaces** the ideal gate; it does
+  not append a fault to that gate. Angle scaling changes the entire two-qubit
+  fault probability, before this branch is selected.
+- `p1_emission_model`, `p2_emission_model`: conditional emission distributions.
+  Single-qubit keys are X/Y/Z/L. Two-qubit keys are ordered I/X/Y/Z/L pairs except
+  II; the first character acts on the first emitted operand. L marks that operand
+  leaked. Missing keys have zero weight. Omission/`None` uses the general model's
+  uniform nonidentity Pauli distribution, which contains no leakage. Explicit
+  empty maps, invalid keys, negative/nonfinite weights and unnormalized maps
+  are rejected, even when emission is disabled. Validation/normalization uses
+  the general model's existing sampler tolerance (1e-5).
+- `p1_seepage_prob`, `p2_seepage_prob`: conditional probability that an already
+  leaked operand returns to a random computational basis state when a gate fault
+  selects emission. Defaults are zero. The ideal gate remains suppressed for
+  that event. If either two-qubit operand is leaked, the model attempts seepage
+  only on leaked operands; it does not sample a new emission fault on the healthy
+  partner. This is the existing general-model convention, not a repump channel.
 - `prep`: probability of a fault after preparation resets the qubit and clears
   prior leakage.
 - `prep_leak_ratio`: conditional probability that a preparation fault causes leakage;
@@ -184,10 +207,10 @@ Preparation faults apply to emitted reset-Z operations. Allocation by itself doe
 not imply a reset in the scheduled stream; runtimes that prepare on allocation
 must expose that operation to model its fault. No hidden preparation is inserted.
 
-All probabilities and the leakage ratio must be finite and in [0, 1], even when
-`prep=0`. These are event probabilities, not average gate infidelities.
-Gate-induced emission/leakage, seepage, other custom fault maps,
-crosstalk, repumping and automatic post-two-qubit idle injection are not
+All probabilities and ratios must be finite and in [0, 1], even when their
+associated fault probability is zero. These are event probabilities, not average gate infidelities.
+Other custom fault maps, transition hooks, crosstalk, repumping and automatic
+post-two-qubit idle injection are not
 configurable. Unsupported Python keywords raise rather than being silently ignored.
 Existing idle leakage remains supported: leakage-aware readout returns 2 without
 readout flips, whereas ordinary leaked readout starts at 1 and is subject to `meas1`.
@@ -244,13 +267,13 @@ Readout faults retain the general model's batch-level sampling order: gate and
 idle faults are sampled first, then readout faults in measurement order. Capturing
 leakage consumes no randomness. The general controller also records leakage per
 measurement on legacy inputs. Scheduled profiles remain bounded and exclude
-measurement-conditioned crosstalk, emission and seepage. Measurement results still
+measurement-conditioned crosstalk and transition hooks. Measurement results still
 return to the live runtime to resume program feedback.
 
 Each prepared batch retains one noise-controller lifecycle. Inserted idle commands
 are included in an expansion budget of sixteen output commands per prepared
-command (the admitted channels emit at most eight per idle target and three per
-gate). Output bytes and command counts are checked before simulator execution.
+command (the admitted channels emit at most eight per idle target and four per
+gate, including seepage of both two-qubit operands). Output bytes and command counts are checked before simulator execution.
 No second simulator call is allowed for a scheduled batch; an unexpected
 continuation fails and poisons the shot. These limits bound admitted noise
 expansion, not native extraction or arbitrary adapter allocations. Existing

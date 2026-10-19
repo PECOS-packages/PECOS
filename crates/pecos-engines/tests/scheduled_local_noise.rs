@@ -1089,3 +1089,484 @@ fn explicit_constant_angle_defaults_preserve_seeded_behavior() {
         }
     }
 }
+
+#[test]
+fn emission_configuration_is_checked_even_when_gate_faults_are_disabled() {
+    let fresh = || {
+        ScheduledLocalNoise::new(ScheduledIdleNoise::new(2).unwrap(), 0.0, 0.0, 0.0, 0.0, 0.0)
+            .unwrap()
+    };
+    for value in [-0.1, 1.1, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        assert!(fresh().with_p1_emission_ratio(value).is_err());
+        assert!(fresh().with_p2_emission_ratio(value).is_err());
+        assert!(fresh().with_p1_seepage_prob(value).is_err());
+        assert!(fresh().with_p2_seepage_prob(value).is_err());
+    }
+    for entries in [
+        vec![],
+        vec![("I", 1.0)],
+        vec![("XX", 1.0)],
+        vec![("L", 0.0)],
+        vec![("L", 0.7)],
+        vec![("L", f64::NAN)],
+        vec![("X", -0.5), ("L", 1.5)],
+    ] {
+        assert!(fresh().with_p1_emission_model(model(&entries)).is_err());
+    }
+    for entries in [
+        vec![],
+        vec![("II", 1.0)],
+        vec![("L", 1.0)],
+        vec![("LZQ", 1.0)],
+        vec![("LL", 0.0)],
+        vec![("LL", 1.1)],
+        vec![("LL", f64::INFINITY)],
+        vec![("XI", -0.5), ("IL", 1.5)],
+    ] {
+        assert!(fresh().with_p2_emission_model(model(&entries)).is_err());
+    }
+    fresh()
+        .with_p1_emission_model(model(&[("L", 1.0)]))
+        .unwrap()
+        .with_p2_emission_model(model(&[("LL", 1.0)]))
+        .unwrap()
+        .with_p1_seepage_prob(1.0)
+        .unwrap()
+        .with_p2_seepage_prob(1.0)
+        .unwrap();
+}
+
+#[test]
+fn single_qubit_emission_replaces_the_gate_and_preserves_measurement_time_leakage() {
+    for events in [false, true] {
+        for gate in [
+            Gate::rxy1q(Angle64::HALF_TURN, Angle64::ZERO, &[0]),
+            Gate::rz(Angle64::HALF_TURN, &[0]),
+        ] {
+            for (key, expected) in [("Z", vec![0, 0, 0]), ("L", vec![2, 1, 0])] {
+                let local = ScheduledLocalNoise::new(
+                    ScheduledIdleNoise::new(2).unwrap(),
+                    1.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                )
+                .unwrap()
+                .with_p1_emission_ratio(1.0)
+                .unwrap()
+                .with_p1_emission_model(model(&[(key, 1.0)]))
+                .unwrap();
+                let mut sim = system(local.into(), events, 7);
+                let b = [batch(
+                    0,
+                    0,
+                    0,
+                    vec![
+                        Gate::pz(&[0]),
+                        gate.clone(),
+                        Gate::measure_leaked(&[0]),
+                        Gate::mz(&[0]),
+                        Gate::pz(&[0]),
+                        Gate::measure_leaked(&[0]),
+                    ],
+                )];
+                assert_eq!(run(&mut sim, &b, events), expected);
+                sim.reset().unwrap();
+                sim.begin_shot(context(1)).unwrap();
+                assert_eq!(run(&mut sim, &b, events), expected);
+            }
+        }
+    }
+}
+
+#[test]
+fn two_qubit_emission_uses_operand_order_and_seepage_is_conditional() {
+    for events in [false, true] {
+        for reversed in [false, true] {
+            for (key, first) in [("LX", vec![2, 1]), ("XL", vec![1, 2]), ("LL", vec![2, 2])] {
+                for seepage in [0.0, 1.0] {
+                    let (a, b) = if reversed { (1, 0) } else { (0, 1) };
+                    let local = ScheduledLocalNoise::new(
+                        ScheduledIdleNoise::new(2).unwrap(),
+                        0.0,
+                        1.0,
+                        0.0,
+                        0.0,
+                        0.0,
+                    )
+                    .unwrap()
+                    .with_p2_emission_ratio(1.0)
+                    .unwrap()
+                    .with_p2_emission_model(model(&[(key, 1.0)]))
+                    .unwrap()
+                    .with_p2_seepage_prob(seepage)
+                    .unwrap();
+                    let mut sim = system(local.into(), events, 17);
+                    let batches = [
+                        batch(
+                            0,
+                            0,
+                            0,
+                            vec![
+                                Gate::pz(&[0]),
+                                Gate::pz(&[1]),
+                                Gate::rzz(Angle64::ZERO, &[(a, b)]),
+                                Gate::measure_leaked(&[a]),
+                                Gate::measure_leaked(&[b]),
+                            ],
+                        ),
+                        batch(
+                            1,
+                            0,
+                            0,
+                            vec![
+                                Gate::rxyxy2q(Angle64::ZERO, Angle64::ZERO, &[(a, b)]),
+                                Gate::measure_leaked(&[a]),
+                                Gate::measure_leaked(&[b]),
+                            ],
+                        ),
+                    ];
+                    assert_eq!(run(&mut sim, &batches[..1], events), first);
+                    let second = run(&mut sim, &batches[1..], events);
+                    for i in 0..2 {
+                        if first[i] == 2 && seepage > 0.0 {
+                            assert!(second[i] < 2);
+                        } else {
+                            assert_eq!(second[i], first[i]);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn single_qubit_seepage_observes_idle_leakage_and_measurement_reset_order() {
+    for events in [false, true] {
+        for seepage in [0.0, 1.0] {
+            let idle = ScheduledIdleNoise::new(2)
+                .unwrap()
+                .with_linear(1.0, model(&[("L", 1.0)]))
+                .unwrap();
+            let local = ScheduledLocalNoise::new(idle, 1.0, 0.0, 0.0, 0.0, 0.0)
+                .unwrap()
+                .with_p1_emission_ratio(1.0)
+                .unwrap()
+                .with_p1_emission_model(model(&[("L", 1.0)]))
+                .unwrap()
+                .with_p1_seepage_prob(seepage)
+                .unwrap();
+            let mut sim = system(local.into(), events, 32);
+            let batches = [
+                batch(0, 0, 0, vec![Gate::pz(&[0])]),
+                batch(
+                    1,
+                    1_000_000_000,
+                    0,
+                    vec![
+                        Gate::measure_leaked(&[0]),
+                        Gate::rxy1q(Angle64::ZERO, Angle64::ZERO, &[0]),
+                        Gate::measure_leaked(&[0]),
+                        Gate::pz(&[0]),
+                        Gate::measure_leaked(&[0]),
+                    ],
+                ),
+            ];
+            let rows = run(&mut sim, &batches, events);
+            assert_eq!(rows[0], 2);
+            assert_eq!(rows[2], 0);
+            if seepage == 0.0 {
+                assert_eq!(rows[1], 2);
+            } else {
+                assert!(rows[1] < 2);
+            }
+        }
+    }
+}
+
+#[test]
+fn mixed_emission_and_angle_scaling_match_general_noise_results_and_rng() {
+    let one = model(&[("X", 0.2), ("L", 0.8)]);
+    let two = model(&[("LX", 0.3), ("ZL", 0.4), ("LL", 0.3)]);
+    let batches = [
+        batch(0, 0, 0, vec![Gate::pz(&[0]), Gate::pz(&[1])]),
+        batch(
+            1,
+            0,
+            0,
+            vec![
+                Gate::rxy1q(pecos_core::radians!(0.7), Angle64::ZERO, &[0]),
+                Gate::rzz(pecos_core::radians!(-0.3), &[(1, 0)]),
+                Gate::measure_leaked(&[0]),
+                Gate::mz(&[1]),
+                Gate::rxyxy2q(pecos_core::radians!(0.5), Angle64::ZERO, &[(0, 1)]),
+                Gate::rz(pecos_core::radians!(0.9), &[1]),
+                Gate::measure_leaked(&[1]),
+                Gate::pz(&[0]),
+                Gate::measure_leaked(&[0]),
+            ],
+        ),
+    ];
+    for events in [false, true] {
+        for seed in 0..64 {
+            let local = ScheduledLocalNoise::new(
+                ScheduledIdleNoise::new(2).unwrap(),
+                0.8,
+                0.7,
+                0.3,
+                0.1,
+                0.2,
+            )
+            .unwrap()
+            .with_prep_leak_ratio(0.5)
+            .unwrap()
+            .with_p2_angle_params(0.4, 0.3, 0.6, 0.2)
+            .unwrap()
+            .with_p2_angle_power(2.0)
+            .unwrap()
+            .with_p1_emission_ratio(0.8)
+            .unwrap()
+            .with_p1_emission_model(one.clone())
+            .unwrap()
+            .with_p1_seepage_prob(0.7)
+            .unwrap()
+            .with_p2_emission_ratio(0.9)
+            .unwrap()
+            .with_p2_emission_model(two.clone())
+            .unwrap()
+            .with_p2_seepage_prob(0.6)
+            .unwrap();
+            let mut actual = system(local.into(), events, seed);
+            let mut expected = QuantumSystem::new(
+                Box::new(
+                    GeneralNoiseModelBuilder::new()
+                        .with_p1(0.8)
+                        .with_p2(0.7)
+                        .with_p_prep(0.3)
+                        .with_prep_leak_ratio(0.5)
+                        .with_p_meas_0(0.1)
+                        .with_p_meas_1(0.2)
+                        .with_p2_angle_params(0.4, 0.3, 0.6, 0.2)
+                        .with_p2_angle_power(2.0)
+                        .with_p1_emission_ratio(0.8)
+                        .with_p1_emission_model(&one)
+                        .with_p1_seepage_prob(0.7)
+                        .with_p2_emission_ratio(0.9)
+                        .with_p2_emission_model(&two)
+                        .with_p2_seepage_prob(0.6)
+                        .build(),
+                ),
+                Box::new(StateVecEngine::new(2)),
+            );
+            expected.set_seed(seed);
+            for b in &batches {
+                let want = expected
+                    .process(
+                        ByteMessage::quantum_operations_builder()
+                            .add_gate_commands(&b.gates)
+                            .build(),
+                    )
+                    .unwrap()
+                    .outcomes()
+                    .unwrap();
+                assert_eq!(run(&mut actual, std::slice::from_ref(b), events), want);
+                assert_eq!(
+                    actual.controller().rng().clone().next_u64(),
+                    expected.controller().rng().clone().next_u64()
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn emission_defaults_clones_and_local_replacement_preserve_behavior() {
+    for events in [false, true] {
+        let idle = ScheduledIdleNoise::new(2).unwrap();
+        let plain = ScheduledLocalNoise::new(idle.clone(), 0.4, 0.6, 0.0, 0.0, 0.0).unwrap();
+        let explicit = plain
+            .clone()
+            .with_p1_emission_ratio(0.0)
+            .unwrap()
+            .with_p2_emission_ratio(0.0)
+            .unwrap()
+            .with_p1_seepage_prob(0.0)
+            .unwrap()
+            .with_p2_seepage_prob(0.0)
+            .unwrap();
+        let emitting = plain
+            .clone()
+            .with_p1_emission_ratio(1.0)
+            .unwrap()
+            .with_p1_emission_model(model(&[("L", 1.0)]))
+            .unwrap()
+            .with_p2_emission_ratio(1.0)
+            .unwrap()
+            .with_p2_emission_model(model(&[("LL", 1.0)]))
+            .unwrap()
+            .with_p1_seepage_prob(1.0)
+            .unwrap()
+            .with_p2_seepage_prob(1.0)
+            .unwrap();
+        let replacement =
+            ScheduledLocalNoise::new(emitting.into(), 0.4, 0.6, 0.0, 0.0, 0.0).unwrap();
+        let batches = [batch(
+            0,
+            0,
+            0,
+            vec![
+                Gate::rxy1q(Angle64::HALF_TURN, Angle64::ZERO, &[0]),
+                Gate::rzz(Angle64::QUARTER_TURN, &[(0, 1)]),
+                Gate::measure_leaked(&[0]),
+                Gate::measure_leaked(&[1]),
+            ],
+        )];
+        for seed in 0..32 {
+            let mut a = system(plain.clone().into(), events, seed);
+            let want = run(&mut a, &batches, events);
+            for profile in [explicit.clone(), replacement.clone()] {
+                let mut b = system(profile.into(), events, seed);
+                assert_eq!(run(&mut b, &batches, events), want);
+                assert_eq!(
+                    a.controller().rng().clone().next_u64(),
+                    b.controller().rng().clone().next_u64()
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn replacing_emission_models_preserves_profile_clones_and_host_reset() {
+    for events in [false, true] {
+        let original =
+            ScheduledLocalNoise::new(ScheduledIdleNoise::new(2).unwrap(), 1.0, 0.0, 0.0, 0.0, 0.0)
+                .unwrap()
+                .with_p1_emission_ratio(1.0)
+                .unwrap()
+                .with_p1_emission_model(model(&[("Z", 1.0)]))
+                .unwrap();
+        let leaking = original
+            .clone()
+            .with_p1_emission_model(model(&[("L", 1.0)]))
+            .unwrap();
+        let gate = batch(
+            0,
+            0,
+            0,
+            vec![Gate::rxy1q(Angle64::HALF_TURN, Angle64::ZERO, &[0])],
+        );
+        let read = batch(1, 0, 0, vec![Gate::measure_leaked(&[0])]);
+        assert_eq!(
+            run(
+                &mut system(original.into(), events, 3),
+                &[gate.clone(), read.clone()],
+                events
+            ),
+            vec![0]
+        );
+        let mut active = system(leaking.into(), events, 3);
+        run(&mut active, &[gate], events);
+        let mut cloned = active.clone();
+        assert!(
+            cloned
+                .process(message(std::slice::from_ref(&read), events))
+                .is_err()
+        );
+        assert_eq!(
+            run(&mut active, std::slice::from_ref(&read), events),
+            vec![2]
+        );
+        for host in [&mut active, &mut cloned] {
+            host.reset().unwrap();
+            host.begin_shot(context(1)).unwrap();
+            assert_eq!(
+                run(
+                    host,
+                    &[batch(0, 0, 0, vec![Gate::measure_leaked(&[0])])],
+                    events
+                ),
+                vec![0]
+            );
+            assert_eq!(
+                run(
+                    host,
+                    &[batch(
+                        1,
+                        0,
+                        0,
+                        vec![
+                            Gate::rxy1q(Angle64::HALF_TURN, Angle64::ZERO, &[0]),
+                            Gate::measure_leaked(&[0])
+                        ]
+                    )],
+                    events
+                ),
+                vec![2]
+            );
+        }
+    }
+}
+
+#[test]
+fn seepage_requires_both_a_gate_fault_and_its_emission_branch() {
+    for events in [false, true] {
+        for two_qubit in [false, true] {
+            for (probability, emission) in [(0.0, 1.0), (1.0, 0.0), (1.0, 1.0)] {
+                let local = ScheduledLocalNoise::new(
+                    ScheduledIdleNoise::new(2).unwrap(),
+                    probability,
+                    probability,
+                    1.0,
+                    0.0,
+                    0.0,
+                )
+                .unwrap()
+                .with_prep_leak_ratio(1.0)
+                .unwrap()
+                .with_p1_emission_ratio(emission)
+                .unwrap()
+                .with_p2_emission_ratio(emission)
+                .unwrap()
+                .with_p1_seepage_prob(1.0)
+                .unwrap()
+                .with_p2_seepage_prob(1.0)
+                .unwrap();
+                let gate = if two_qubit {
+                    Gate::rzz(Angle64::QUARTER_TURN, &[(0, 1)])
+                } else {
+                    Gate::rxy1q(Angle64::HALF_TURN, Angle64::ZERO, &[0])
+                };
+                let mut sim = system(local.into(), events, 11);
+                let rows = run(
+                    &mut sim,
+                    &[batch(
+                        0,
+                        0,
+                        0,
+                        vec![
+                            Gate::pz(&[0]),
+                            Gate::pz(&[1]),
+                            gate,
+                            Gate::measure_leaked(&[0]),
+                            Gate::measure_leaked(&[1]),
+                        ],
+                    )],
+                    events,
+                );
+                if probability > 0.0 && emission > 0.0 {
+                    assert!(rows[0] < 2);
+                    if two_qubit {
+                        assert!(rows[1] < 2);
+                    } else {
+                        assert_eq!(rows[1], 2);
+                    }
+                } else {
+                    assert_eq!(rows, vec![2, 2]);
+                }
+            }
+        }
+    }
+}

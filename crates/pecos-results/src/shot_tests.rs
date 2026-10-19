@@ -484,6 +484,25 @@ mod exit_metadata_tests {
     }
 
     #[test]
+    fn complex_register_exports_do_not_include_exit_metadata() {
+        let mut row = Shot::default();
+        row.data.insert(
+            "program_exit".into(),
+            Data::Json(serde_json::json!({"nested": [1, true, "value"]})),
+        );
+        let mut rows = ShotVec { shots: vec![row] };
+        let original = rows.to_compact_json();
+        rows.shots[0].program_exit = Some(exit());
+        // Preserve the legacy complex-register representation and user names.
+        assert_eq!(rows.to_compact_json(), original);
+        assert_eq!(rows.to_string(), original);
+        // Explicit serde serialization still persists the diagnostic.
+        let decoded: ShotVec =
+            serde_json::from_str(&serde_json::to_string(&rows).unwrap()).unwrap();
+        assert_eq!(decoded.shots[0].program_exit, Some(exit()));
+    }
+
+    #[test]
     fn no_output_shots_retain_count_and_exit_alignment() {
         for diagnostic in [None, Some(exit())] {
             let rows = ShotVec {

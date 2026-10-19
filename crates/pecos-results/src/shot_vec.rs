@@ -253,13 +253,22 @@ impl ShotVec {
             return "[]".to_string();
         }
 
-        // If we have complex JSON data, serialize the full shots
+        // Preserve the complex-register shape without exporting shot metadata.
         if self
             .shots
             .iter()
             .any(|shot| shot.data.values().any(|v| matches!(v, Data::Json(_))))
         {
-            serde_json::to_string(&self.shots).unwrap_or_else(|_| "[]".to_string())
+            #[derive(Serialize)]
+            struct RegisterData<'a> {
+                data: &'a BTreeMap<String, Data>,
+            }
+            let registers: Vec<_> = self
+                .shots
+                .iter()
+                .map(|shot| RegisterData { data: &shot.data })
+                .collect();
+            serde_json::to_string(&registers).unwrap_or_else(|_| "[]".to_string())
         } else {
             // Otherwise use the aggregated format
             let json_value = self.create_json_value();

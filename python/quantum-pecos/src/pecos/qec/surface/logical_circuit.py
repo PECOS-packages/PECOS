@@ -43,6 +43,7 @@ from pecos.qec.surface import gadgets
 from pecos.qec.surface.circuit_builder import OpType, QubitAllocation, _build_observable_descriptors
 
 if TYPE_CHECKING:
+    from pecos.qec import DetectorErrorModel
     from pecos.qec.surface.circuit_builder import SurfaceCircuitStep
     from pecos.qec.surface.patch import Stabilizer, SurfacePatch
 
@@ -2289,7 +2290,7 @@ class LogicalCircuitBuilder:
         p2: float = 0.001,
         p_meas: float = 0.001,
         p_prep: float = 0.0,
-    ) -> str:
+    ) -> DetectorErrorModel:
         """Generate a DEM using the PECOS-native fault analysis pipeline.
 
         TickCircuit -> DagCircuit -> DagFaultAnalyzer -> DemBuilder.
@@ -2305,7 +2306,9 @@ class LogicalCircuitBuilder:
             p_prep: Preparation error rate.
 
         Returns:
-            DEM string in Stim-compatible format.
+            DetectorErrorModel retaining detector ``fault_sector`` labels used by
+            graph decoders. ``str(dem)`` or ``dem.to_string()`` gives the
+            standard DEM text in Stim-compatible format.
         """
         cached = self._build_structured_dem_from_cached_slices(
             p1=p1,
@@ -2317,7 +2320,7 @@ class LogicalCircuitBuilder:
             dem, _, _ = self._build_structured_dem(p1=p1, p2=p2, p_meas=p_meas, p_prep=p_prep)
         else:
             dem, _ = cached
-        return str(dem)
+        return dem
 
     def build_sampler_and_decoder(
         self,
@@ -2667,7 +2670,7 @@ class LogicalCircuitBuilder:
             dem = circuit.detector_error_model(ignore_decomposition_failures=True).flattened()
             dem_str = str(dem)
         else:
-            dem_str = self.build_dem(p1=p1, p2=p2, p_meas=p_meas, p_prep=p_prep)
+            dem_str = str(self.build_dem(p1=p1, p2=p2, p_meas=p_meas, p_prep=p_prep))
 
         sc = self.stab_coords()
         decoder = LogicalSubgraphDecoder(dem_str, sc, inner_decoder)

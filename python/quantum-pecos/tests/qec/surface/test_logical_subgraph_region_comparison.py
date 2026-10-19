@@ -130,7 +130,7 @@ def test_from_membership_reproduces_coordinate_path():
     """Feeding the coordinate membership through from_membership reproduces the
     normal coordinate decoder exactly (the seam is behaviour-preserving)."""
     b = _cx_circuit()
-    dem = b.build_dem(p1=0.001, p2=0.001, p_meas=0.001)
+    dem = str(b.build_dem(p1=0.001, p2=0.001, p_meas=0.001))
     sc = b.stab_coords()
 
     coord = LogicalSubgraphDecoder(dem, sc, "pecos_uf:fast")
@@ -150,7 +150,7 @@ def test_coordinate_region_beats_raw_backprop_region():
     back-prop / co-flipped detector set -- group-fill is essential, not
     cosmetic."""
     b = _cx_circuit()
-    dem = b.build_dem(p1=0.001, p2=0.001, p_meas=0.001)
+    dem = str(b.build_dem(p1=0.001, p2=0.001, p_meas=0.001))
     sc = b.stab_coords()
 
     n = 20000
@@ -178,7 +178,7 @@ def test_coordinate_seeding_reproduces_shipping_path():
     coordinate membership exactly (validates the helper used for the broader
     back-prop comparison)."""
     b = _cx_circuit()
-    dem = b.build_dem(p1=0.001, p2=0.001, p_meas=0.001)
+    dem = str(b.build_dem(p1=0.001, p2=0.001, p_meas=0.001))
     sc = b.stab_coords()
     coord = LogicalSubgraphDecoder(dem, sc, "pecos_uf:fast")
     helper = _groupfill_membership(dem, sc, seed_all=False)
@@ -192,7 +192,7 @@ def test_coordinate_beats_backprop_seeded_groupfill():
     decodes worse -- confirming the boundary-edge seeding IS the right (faithful)
     back-propagation region, and broadening hurts."""
     b = _cx_circuit()
-    dem = b.build_dem(p1=0.001, p2=0.001, p_meas=0.001)
+    dem = str(b.build_dem(p1=0.001, p2=0.001, p_meas=0.001))
     sc = b.stab_coords()
 
     coord_membership = _groupfill_membership(dem, sc, seed_all=False)
@@ -217,7 +217,7 @@ def _mem_ler(d, p, n, seed, inner=None):
     b = LogicalCircuitBuilder()
     b.add_patch(patch, "A")
     b.add_memory("A", d, "Z")
-    dem = b.build_dem(p1=p, p2=p, p_meas=p)
+    dem = str(b.build_dem(p1=p, p2=p, p_meas=p))
     sc = b.stab_coords()
     batch = ParsedDem.from_string(dem).to_dem_sampler().sample_batch(n, seed=seed)
     dec = LogicalSubgraphDecoder(dem, sc) if inner is None else LogicalSubgraphDecoder(dem, sc, inner)
@@ -269,7 +269,7 @@ def _mem_dem_batch(d, p, n, seed):
     b = LogicalCircuitBuilder()
     b.add_patch(patch, "A")
     b.add_memory("A", d, "Z")
-    dem = b.build_dem(p1=p, p2=p, p_meas=p)
+    dem = str(b.build_dem(p1=p, p2=p, p_meas=p))
     sc = b.stab_coords()
     batch = ParsedDem.from_string(dem).to_dem_sampler().sample_batch(n, seed=seed)
     return dem, sc, batch
@@ -306,7 +306,7 @@ def _windowed_mem_ler(d, rounds, p, n, seed, step, buffer):
     b = LogicalCircuitBuilder()
     b.add_patch(patch, "A")
     b.add_memory("A", rounds, "Z")
-    dem = b.build_dem(p1=p, p2=p, p_meas=p)
+    dem = str(b.build_dem(p1=p, p2=p, p_meas=p))
     sc = b.stab_coords()
     batch = ParsedDem.from_string(dem).to_dem_sampler().sample_batch(n, seed=seed)
     dec = WindowedLogicalSubgraphDecoder(dem, sc, step, buffer)
@@ -318,7 +318,7 @@ def _nonwindowed_mem_ler(d, rounds, p, n, seed, inner):
     b = LogicalCircuitBuilder()
     b.add_patch(patch, "A")
     b.add_memory("A", rounds, "Z")
-    dem = b.build_dem(p1=p, p2=p, p_meas=p)
+    dem = str(b.build_dem(p1=p, p2=p, p_meas=p))
     sc = b.stab_coords()
     batch = ParsedDem.from_string(dem).to_dem_sampler().sample_batch(n, seed=seed)
     return LogicalSubgraphDecoder(dem, sc, inner).decode_count(batch) / n
@@ -381,7 +381,7 @@ def test_python_scored_predictions_match_the_rust_error_count():
     b = _cx_circuit()
     dem = b.build_dem(p1=0.001, p2=0.001, p_meas=0.001)
     n = 3000
-    batch = ParsedDem.from_string(dem).to_dem_sampler().sample_batch(n, seed=5)
+    batch = ParsedDem.from_string(str(dem)).to_dem_sampler().sample_batch(n, seed=5)
     # bp_osd, not a matching decoder: this DEM carries hyperedges, which a
     # graphlike decoder cannot represent.
     result = batch.decode(

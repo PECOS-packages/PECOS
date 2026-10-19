@@ -176,7 +176,7 @@ def test_multiple_teleportations_downstream(dx, dz):
     builder, _ = multiple_teleportations_builder(dx, dz)
     tc = builder.to_tick_circuit()
     assert builder.output_ids() == [entry["id"] for entry in json.loads(tc.get_meta("observables"))] == [0]
-    model = stim.DetectorErrorModel(builder.build_dem())
+    model = stim.DetectorErrorModel(str(builder.build_dem()))
     assert model.num_observables == 1
     exported = stim.Circuit(builder.to_stim())
     assert exported.detector_error_model().num_observables == 1
@@ -196,7 +196,7 @@ def test_multiple_teleportations_downstream(dx, dz):
 @pytest.mark.parametrize("distance", [3, 5])
 def test_teleported_observable_has_distance_one_mechanism(distance):
     builder, _ = readout_builder(distance)
-    model = stim.DetectorErrorModel(builder.build_dem(p1=0.001, p2=0.001, p_meas=0.001))
+    model = stim.DetectorErrorModel(str(builder.build_dem(p1=0.001, p2=0.001, p_meas=0.001)))
     undetected = [
         instruction
         for instruction in model.flattened()
@@ -215,7 +215,7 @@ def test_sparse_downstream_consumers(distance):
     descriptors = get_observable_descriptors_from_tick_circuit(tc, patch)
     assert [entry["observable_id"] for entry in descriptors] == [1, 2]
     assert [entry["basis"] for entry in descriptors] == ["Z", "X"]
-    model = stim.DetectorErrorModel(builder.build_dem())
+    model = stim.DetectorErrorModel(str(builder.build_dem()))
     assert model.num_observables == 3
     circuit = stim.Circuit(builder.to_stim(p1=0.001, p2=0.001, p_meas=0.001))
     assert circuit.detector_error_model().num_observables == 3

@@ -1604,6 +1604,14 @@ for factory, arguments in (
             raise AssertionError(f"{factory} unexpectedly accepted for a traced DEM")
 ```
 
+The logical-circuit builder's `build_dem()` returns a `DetectorErrorModel`
+object retaining detector `fault_sector` labels used by graph decoders. Pass
+the object directly to `batch.decode(dem, "pymatching")` or other decode APIs
+that accept it. Use `str(dem)` or `dem.to_string()` for standard DEM text
+(for example, for Stim or text-only decoders). `build_sampler_and_decoder()`
+still returns text as its third item, and `build_algorithm_descriptor()`
+keeps its `full_dem` field as text.
+
 ## Validating a gadget
 
 Four complementary checks validate a gadget: a literature citation for the

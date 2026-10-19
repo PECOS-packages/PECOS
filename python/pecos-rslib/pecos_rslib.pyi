@@ -4421,11 +4421,15 @@ def scheduled_local_noise(
     meas1: float = 0.0,
     prep_leak_ratio: float = 0.0,
     p2_pauli_model: dict[str, float] | None = None,
+    p2_angle_params: tuple[float, float, float, float] | None = None,
+    p2_angle_power: float | None = None,
 ) -> ScheduledLocalNoise:
     """Configure preparation leakage and optional ordered two-qubit Pauli weights.
 
     prep_leak_ratio is conditional on a preparation fault. p2_pauli_model maps
     nonidentity I/X/Y/Z pairs to finite nonnegative weights summing to one.
+    Optional angle coefficients (a, b, c, d) and a positive exponent scale p2
+    using signed principal angles; combined event probabilities must stay in [0, 1].
     """
     ...
 

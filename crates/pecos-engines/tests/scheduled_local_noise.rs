@@ -825,6 +825,10 @@ fn replacing_local_profile_restores_default_two_qubit_sampling() {
         ScheduledLocalNoise::new(ScheduledIdleNoise::new(2).unwrap(), 0.0, 1.0, 0.0, 0.0, 0.0)
             .unwrap()
             .with_p2_pauli_model(model(&[("XI", 1.0)]))
+            .unwrap()
+            .with_p2_angle_params(0.0, 0.0, 0.0, 0.0)
+            .unwrap()
+            .with_p2_angle_power(2.0)
             .unwrap();
     let replaced = ScheduledLocalNoise::new(custom.into(), 0.0, 0.8, 0.0, 0.0, 0.0).unwrap();
     let batches = [batch(
@@ -851,6 +855,237 @@ fn replacing_local_profile_restores_default_two_qubit_sampling() {
                 actual.controller().rng().clone().next_u64(),
                 expected.controller().rng().clone().next_u64()
             );
+        }
+    }
+}
+
+#[test]
+fn angle_scaling_preserves_mixed_faults_whole_batches_and_rng() {
+    let distribution = model(&[("IX", 0.15), ("XI", 0.25), ("YZ", 0.6), ("ZZ", 0.0)]);
+    let batches = [
+        batch(0, 0, 0, vec![Gate::pz(&[0]), Gate::pz(&[1])]),
+        batch(
+            1,
+            0,
+            0,
+            vec![
+                Gate::rxy1q(pecos_core::radians!(0.7), Angle64::ZERO, &[0]),
+                Gate::rzz(pecos_core::radians!(0.3), &[(1, 0)]),
+                Gate::rzz(Angle64::ZERO, &[(0, 1)]),
+                Gate::rzz(pecos_core::radians!(4.3), &[(1, 0)]),
+                Gate::mz(&[0]),
+                Gate::pz(&[0]),
+                Gate::rxyxy2q(
+                    pecos_core::radians!(-0.6),
+                    pecos_core::radians!(0.2),
+                    &[(0, 1)],
+                ),
+                Gate::measure_leaked(&[1]),
+                Gate::mz(&[0]),
+            ],
+        ),
+    ];
+    for events in [false, true] {
+        for seed in 0..32 {
+            let local = ScheduledLocalNoise::new(
+                ScheduledIdleNoise::new(2).unwrap(),
+                0.1,
+                0.8,
+                0.2,
+                0.1,
+                0.3,
+            )
+            .unwrap()
+            .with_prep_leak_ratio(0.4)
+            .unwrap()
+            .with_p2_pauli_model(distribution.clone())
+            .unwrap()
+            .with_p2_angle_params(0.7, 0.1, -0.3, 0.8)
+            .unwrap()
+            .with_p2_angle_power(1.7)
+            .unwrap();
+            let mut actual = system(local.into(), events, seed);
+            let mut expected = QuantumSystem::new(
+                Box::new(
+                    GeneralNoiseModelBuilder::new()
+                        .with_p1(0.1)
+                        .with_p2(0.8)
+                        .with_p_prep(0.2)
+                        .with_prep_leak_ratio(0.4)
+                        .with_p_meas_0(0.1)
+                        .with_p_meas_1(0.3)
+                        .with_p2_pauli_model(&distribution)
+                        .with_p2_angle_params(0.7, 0.1, -0.3, 0.8)
+                        .with_p2_angle_power(1.7)
+                        .build(),
+                ),
+                Box::new(StateVecEngine::new(2)),
+            );
+            expected.set_seed(seed);
+            for b in &batches {
+                let want = expected
+                    .process(
+                        ByteMessage::quantum_operations_builder()
+                            .add_gate_commands(&b.gates)
+                            .build(),
+                    )
+                    .unwrap()
+                    .outcomes()
+                    .unwrap();
+                assert_eq!(run(&mut actual, std::slice::from_ref(b), events), want);
+                assert_eq!(
+                    actual.controller().rng().clone().next_u64(),
+                    expected.controller().rng().clone().next_u64()
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn angle_admission_reuses_combined_general_model_validation() {
+    let local = |p2| {
+        ScheduledLocalNoise::new(ScheduledIdleNoise::new(2).unwrap(), 0.0, p2, 0.0, 0.0, 0.0)
+            .unwrap()
+    };
+    for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        for p2 in [0.0, 1.0] {
+            for slot in 0..4 {
+                let mut coefficients = [0.0, 1.0, 0.0, 1.0];
+                coefficients[slot] = bad;
+                let [a, b, c, d] = coefficients;
+                assert!(local(p2).with_p2_angle_params(a, b, c, d).is_err());
+            }
+        }
+    }
+    for power in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        assert!(local(0.0).with_p2_angle_power(power).is_err());
+    }
+    for (a, b, c, d) in [
+        (0.0, -0.1, 0.0, 1.0),
+        (1.0, 0.1, 0.0, 1.0),
+        (0.0, 0.0, -1.0, 0.5),
+        (0.0, 0.0, 0.0, 1.1),
+    ] {
+        assert!(local(1.0).with_p2_angle_params(a, b, c, d).is_err());
+    }
+    // Coefficients need not themselves be probabilities: scaled endpoints are.
+    assert!(local(0.5).with_p2_angle_params(-1.0, 2.0, 1.5, 0.5).is_ok());
+    assert!(
+        local(0.0)
+            .with_p2_angle_params(f64::MAX, f64::MAX, 0.0, 0.0)
+            .is_err()
+    );
+}
+
+#[test]
+fn angle_branches_follow_emitted_signed_angles_for_both_transports() {
+    use std::f64::consts::PI;
+    for events in [false, true] {
+        for xy in [false, true] {
+            for (angle, negative) in [
+                (-1.5 * PI, false),
+                (-PI, false),
+                (-PI / 2.0, true),
+                (PI / 2.0, false),
+                (PI, false),
+                (1.5 * PI, true),
+            ] {
+                for negative_only in [false, true] {
+                    let (b, d) = if negative_only {
+                        (1.0, 0.0)
+                    } else {
+                        (0.0, 1.0)
+                    };
+                    let local = ScheduledLocalNoise::new(
+                        ScheduledIdleNoise::new(2).unwrap(),
+                        0.0,
+                        1.0,
+                        0.0,
+                        0.0,
+                        0.0,
+                    )
+                    .unwrap()
+                    .with_p2_angle_params(0.0, b, 0.0, d)
+                    .unwrap()
+                    .with_p2_angle_power(2.0)
+                    .unwrap()
+                    .with_p2_pauli_model(model(&[("XI", 1.0)]))
+                    .unwrap();
+                    let a = Angle64::try_from_radians(angle).unwrap();
+                    let gate = if xy {
+                        Gate::rxyxy2q(a, Angle64::ZERO, &[(0, 1)])
+                    } else {
+                        Gate::rzz(a, &[(0, 1)])
+                    };
+                    let mut sim = system(local.into(), events, 17);
+                    let values = run(
+                        &mut sim,
+                        &[batch(
+                            0,
+                            0,
+                            0,
+                            vec![
+                                Gate::pz(&[0]),
+                                Gate::pz(&[1]),
+                                gate,
+                                Gate::mz(&[0]),
+                                Gate::mz(&[1]),
+                            ],
+                        )],
+                        events,
+                    );
+                    assert_eq!(values[0] ^ values[1], u32::from(negative == negative_only));
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn explicit_constant_angle_defaults_preserve_seeded_behavior() {
+    for events in [false, true] {
+        for seed in 0..32 {
+            let make = || {
+                ScheduledLocalNoise::new(
+                    ScheduledIdleNoise::new(2).unwrap(),
+                    0.2,
+                    0.6,
+                    0.1,
+                    0.2,
+                    0.3,
+                )
+                .unwrap()
+            };
+            let mut original = system(make().into(), events, seed);
+            let explicit = make()
+                .with_p2_angle_params(0.0, 1.0, 0.0, 1.0)
+                .unwrap()
+                .with_p2_angle_power(1.0)
+                .unwrap();
+            let mut changed = system(explicit.clone().into(), events, seed);
+            let mut cloned = system(explicit.into(), events, seed);
+            let batches = [batch(
+                0,
+                0,
+                0,
+                vec![
+                    Gate::pz(&[0]),
+                    Gate::pz(&[1]),
+                    Gate::rzz(Angle64::ZERO, &[(0, 1)]),
+                    Gate::rzz(pecos_core::radians!(-0.7), &[(1, 0)]),
+                    Gate::mz(&[0]),
+                    Gate::mz(&[1]),
+                ],
+            )];
+            let want = run(&mut original, &batches, events);
+            for host in [&mut changed, &mut cloned] {
+                assert_eq!(run(host, &batches, events), want);
+                assert_eq!(
+                    host.controller().rng().clone().next_u64(),
+                    original.controller().rng().clone().next_u64()
+                );
+            }
         }
     }
 }

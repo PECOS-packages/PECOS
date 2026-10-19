@@ -1372,11 +1372,12 @@ pub struct PyScheduledLocalNoise {
 /// Add Pauli gate faults, preparation faults and asymmetric readout.
 /// p2_pauli_model optionally selects ordered nonidentity I/X/Y/Z pair weights.
 /// prep_leak_ratio is the conditional leakage probability given a preparation fault.
+/// p2_angle_params and p2_angle_power opt into the general model's signed angle scaling.
 /// The idle base must come from scheduled_idle_noise(), not scheduled_idle_z().
 /// For Z-only channels, scheduled_idle_noise() uses Z models by default.
 /// Probabilities are event probabilities in [0, 1], not average gate infidelities.
 #[pyfunction]
-#[pyo3(signature = (idle, *, p1 = 0.0, p2 = 0.0, prep = 0.0, meas0 = 0.0, meas1 = 0.0, prep_leak_ratio = 0.0, p2_pauli_model = None))]
+#[pyo3(signature = (idle, *, p1 = 0.0, p2 = 0.0, prep = 0.0, meas0 = 0.0, meas1 = 0.0, prep_leak_ratio = 0.0, p2_pauli_model = None, p2_angle_params = None, p2_angle_power = None))]
 pub fn scheduled_local_noise(
     idle: PyScheduledIdleNoise,
     p1: f64,
@@ -1386,6 +1387,8 @@ pub fn scheduled_local_noise(
     meas1: f64,
     prep_leak_ratio: f64,
     p2_pauli_model: Option<std::collections::BTreeMap<String, f64>>,
+    p2_angle_params: Option<(f64, f64, f64, f64)>,
+    p2_angle_power: Option<f64>,
 ) -> PyResult<PyScheduledLocalNoise> {
     Ok(PyScheduledLocalNoise {
         inner: pecos_engines::scheduled_frame::ScheduledLocalNoise::new(
@@ -1394,6 +1397,14 @@ pub fn scheduled_local_noise(
         .and_then(|profile| profile.with_prep_leak_ratio(prep_leak_ratio))
         .and_then(|profile| match p2_pauli_model {
             Some(model) => profile.with_p2_pauli_model(model),
+            None => Ok(profile),
+        })
+        .and_then(|profile| match p2_angle_params {
+            Some((a, b, c, d)) => profile.with_p2_angle_params(a, b, c, d),
+            None => Ok(profile),
+        })
+        .and_then(|profile| match p2_angle_power {
+            Some(power) => profile.with_p2_angle_power(power),
             None => Ok(profile),
         })
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?,

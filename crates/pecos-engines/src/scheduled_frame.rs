@@ -70,7 +70,7 @@ pub struct ScheduledNoise {
 /// Checked local Pauli gate faults, preparation faults and asymmetric readout.
 /// Idle channels use the supplied profile. Single-qubit faults are uniform over
 /// X/Y/Z; two-qubit faults default to uniform nonidentity Pauli pairs and accept
-/// a checked distribution. Gate fault probability is independent of angle.
+/// a checked distribution. Two-qubit rotation faults can use checked angle scaling.
 /// Emitted RZ gates receive single-qubit faults too; virtual frame updates must
 /// be resolved by the runtime/adapter rather than represented as physical RZ.
 /// Preparation faults can leak or flip the qubit. Gate emission/leakage, seepage
@@ -89,13 +89,16 @@ struct LocalFaults {
     prep: f64,
     prep_leak_ratio: f64,
     p2_pauli_model: Option<BTreeMap<String, f64>>,
+    p2_angle_params: Option<(f64, f64, f64, f64)>,
+    p2_angle_power: Option<f64>,
     meas0: f64,
     meas1: f64,
 }
 impl ScheduledLocalNoise {
     /// Set local fault probabilities while preserving the supplied idle channels.
     /// Replaces all existing local fault probabilities if the profile already has them,
-    /// including resetting preparation leakage to zero and two-qubit faults to uniform.
+    /// including resetting preparation leakage to zero, two-qubit faults to uniform,
+    /// and two-qubit angle scaling to its constant-rate defaults.
     /// # Errors
     /// Every probability must be finite and in [0, 1].
     pub fn new(
@@ -122,10 +125,41 @@ impl ScheduledLocalNoise {
                 prep,
                 prep_leak_ratio: 0.0,
                 p2_pauli_model: None,
+                p2_angle_params: None,
+                p2_angle_power: None,
                 meas0,
                 meas1,
             },
         })
+    }
+    /// Set signed principal-angle coefficients using the existing general model.
+    /// For `x = |theta|/pi`, the multiplier is `a*x^power+b` for negative angles,
+    /// `c*x^power+d` for positive angles, and `(b+d)/2` at zero. Angles are reduced
+    /// to `(-pi, pi]`, with both half-turn endpoints on the positive branch.
+    /// This changes only the event probability, preserving the Pauli distribution
+    /// and all other faults. It does not rewrite gates or runtime timing.
+    /// # Errors
+    /// Rejects nonfinite coefficients or effective probabilities outside [0, 1]
+    /// anywhere in the principal-angle range, including when p2 is zero.
+    pub fn with_p2_angle_params(
+        mut self,
+        a: f64,
+        b: f64,
+        c: f64,
+        d: f64,
+    ) -> Result<Self, PecosError> {
+        self.local.p2_angle_params = Some((a, b, c, d));
+        self.local.validate_angles()?;
+        Ok(self)
+    }
+    /// Set a finite positive angle exponent, preserving all other settings.
+    /// The default exponent is one; with constant coefficients it has no effect.
+    /// # Errors
+    /// Rejects nonfinite/nonpositive powers and invalid combined probabilities.
+    pub fn with_p2_angle_power(mut self, power: f64) -> Result<Self, PecosError> {
+        self.local.p2_angle_power = Some(power);
+        self.local.validate_angles()?;
+        Ok(self)
     }
     /// Set the conditional distribution of a two-qubit Pauli fault.
     /// Keys are ordered pairs of I/X/Y/Z excluding II. The first character acts
@@ -174,6 +208,22 @@ impl ScheduledLocalNoise {
         }
         self.local.prep_leak_ratio = ratio;
         Ok(self)
+    }
+}
+impl LocalFaults {
+    fn configure_angles(&self, mut builder: GeneralNoiseModelBuilder) -> GeneralNoiseModelBuilder {
+        if let Some((a, b, c, d)) = self.p2_angle_params {
+            builder = builder.with_p2_angle_params(a, b, c, d);
+        }
+        if let Some(power) = self.p2_angle_power {
+            builder = builder.with_p2_angle_power(power);
+        }
+        builder
+    }
+    fn validate_angles(&self) -> Result<(), PecosError> {
+        self.configure_angles(GeneralNoiseModelBuilder::new().with_p2(self.p2))
+            .validate_configuration()
+            .map_err(PecosError::Input)
     }
 }
 /// Lossless conversion for scheduled transport composition; all configured faults remain enabled.
@@ -315,6 +365,7 @@ impl ScheduledNoise {
             if let Some(model) = &local.p2_pauli_model {
                 builder = builder.with_p2_pauli_model(model);
             }
+            builder = local.configure_angles(builder);
         }
         let inner = builder.build();
         ScheduledIdleModel {

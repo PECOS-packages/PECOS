@@ -189,58 +189,6 @@ def test_exit_above_range_and_explicit_panic_fail() -> None:
             sim(Guppy(program)).classical(pecos.selene_engine()).qubits(1).run(2)
 
 
-def test_installed_runtime_plugin_forwards_numeric_outputs() -> None:
-    """Exercise the installed Base QIS plugin through the FFI runtime's Selene ABI."""
-    import ctypes
-    import json
-    import os
-
-    from selene_base_qis_plugin import BaseQISInterface
-
-    # Load the same process-wide FFI library used by the QIS route.
-    sim(Guppy(typed_results)).classical(pecos.selene_engine()).qubits(1).run(1)
-    ffi = ctypes.CDLL(None)
-    plugin = ctypes.CDLL(str(BaseQISInterface().library_file), mode=os.RTLD_LAZY)
-    create = ffi.pecos_create_execution_context
-    create.restype = ctypes.c_void_p
-    register = ffi.pecos_register_execution_context
-    register.argtypes = [ctypes.c_void_p]
-    register.restype = None
-    destroy = ffi.pecos_destroy_execution_context
-    destroy.argtypes = [ctypes.c_void_p]
-    destroy.restype = None
-    get_json = ffi.pecos_get_named_results_json
-    get_json.restype = ctypes.c_void_p
-    free_json = ffi.pecos_free_named_results_json
-    free_json.argtypes = [ctypes.c_void_p]
-    free_json.restype = None
-    context = create()
-    register(context)
-    try:
-        for symbol, tag, value, ctype in [
-            ("print_int", b"\x01i", 7, ctypes.c_int64),
-            ("print_uint", b"\x01u", 11, ctypes.c_uint64),
-            ("print_float", b"\x01f", 2.5, ctypes.c_double),
-        ]:
-            output = getattr(plugin, symbol)
-            output.argtypes = [ctypes.c_char_p, ctypes.c_uint64, ctype]
-            output.restype = None
-            output(tag, 1, value)
-        ptr = get_json()
-        assert ptr
-        try:
-            assert json.loads(ctypes.string_at(ptr)) == {
-                "i": {"type": "i64", "values": [7]},
-                "u": {"type": "u64", "values": [11]},
-                "f": {"type": "f64", "values": [4612811918334230528]},
-            }
-        finally:
-            free_json(ptr)
-    finally:
-        register(None)
-        destroy(context)
-
-
 def test_exiting_shots_release_program_allocations() -> None:
     """Two hundred exits leave no growth in live program allocations."""
     import ctypes

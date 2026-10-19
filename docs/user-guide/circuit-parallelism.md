@@ -54,6 +54,9 @@ truthy `cond` metadata without repacking the remaining layers. These are static
 scenarios, not minimum and maximum bounds, probabilities, or expected values.
 
 ```python
+from pecos.analysis import circuit_parallelism
+from pecos.circuits import QuantumCircuit
+
 circuit = QuantumCircuit()
 circuit.append("CX", {(0, 1), (2, 3)})
 circuit.append("CX", {(4, 5)}, cond={"a": "flag", "op": "==", "b": 1})

@@ -328,7 +328,8 @@ unsafe extern "C-unwind" fn adapter_qentry(_arg: u64) -> u64 {
 
 fn run_adapter_transfers() {
     let ffi = QisHeliosInterface::get_qis_ffi_lib_singleton().expect("FFI library");
-    let context = QisHeliosInterface::create_execution_context(ffi.inner()).expect("context");
+    let context =
+        Arc::new(QisHeliosInterface::create_execution_context(ffi.inner()).expect("context"));
     unsafe {
         let register: Symbol<RegisterExecutionContextFn> = ffi
             .get(b"pecos_register_execution_context\0")
@@ -399,12 +400,21 @@ fn run_adapter_transfers() {
                 } else {
                     assert!(error.is_null());
                 }
+                let handle = HeliosSyncHandle {
+                    execution_context: Arc::clone(&context),
+                };
+                match mode {
+                    0 => assert_eq!(handle.get_program_exit().unwrap(), None),
+                    1 => assert_eq!(handle.get_program_exit().unwrap().unwrap().code, 3),
+                    _ => assert!(handle.get_program_exit().is_err()),
+                }
                 TRANSFER_MODE.set(5);
                 REACHED.set(false);
                 assert_eq!(invoke(is_void), 0);
                 assert!(REACHED.get());
                 assert_eq!(freed(), before + 2);
                 assert!(get_error().is_null());
+                assert_eq!(handle.get_program_exit().unwrap(), None);
                 assert!(std::ptr::fn_addr_eq(
                     get_handler().expect("restored handler"),
                     previous_handler as Handler

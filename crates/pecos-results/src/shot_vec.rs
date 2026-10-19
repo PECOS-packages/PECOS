@@ -168,7 +168,7 @@ impl ShotVec {
             }
         }
 
-        super::shot_map::ShotMap::new(columnar_map)
+        Ok(super::shot_map::ShotMap::new(columnar_map)?.with_shot_metadata(&self.shots))
     }
 
     /// Format results as binary strings for all registers

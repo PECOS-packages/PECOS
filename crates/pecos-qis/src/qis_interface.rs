@@ -333,6 +333,17 @@ pub trait DynamicSyncHandle: Send + Sync {
         &self,
     ) -> Result<std::collections::BTreeMap<String, pecos_qis_ffi_types::NamedResult>, InterfaceError>;
 
+    /// Get the ordinary exit diagnostic from the owned execution context.
+    /// Backends that do not report exits return `None`.
+    ///
+    /// # Errors
+    /// Returns an error if the context cannot be read or contains a fatal error.
+    fn get_program_exit(
+        &self,
+    ) -> Result<Option<pecos_engines::shot_results::ProgramExit>, InterfaceError> {
+        Ok(None)
+    }
+
     /// Get named result provenance from the execution context.
     ///
     /// Returns one record per bool output or scalar integer 0/1 call.

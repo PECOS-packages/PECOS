@@ -433,3 +433,88 @@ mod tests {
         assert_eq!(shot.register_to_binary_string("d"), Some("101".to_string()));
     }
 }
+
+#[cfg(test)]
+mod exit_metadata_tests {
+    use crate::{Data, ProgramExit, Shot, ShotMap, ShotVec};
+
+    fn exit() -> ProgramExit {
+        ProgramExit {
+            code: 1,
+            message: "done\0é".into(),
+        }
+    }
+
+    #[test]
+    fn exit_metadata_survives_rows_columns_and_serde_without_register_collisions() {
+        let mut first = Shot {
+            program_exit: Some(exit()),
+            ..Default::default()
+        };
+        first.data.insert("program_exit".into(), Data::I64(7));
+        let mut second = first.clone();
+        second.program_exit = None;
+        let rows = ShotVec {
+            shots: vec![first, second],
+        };
+        let columns = rows.try_as_shot_map().unwrap();
+        assert_eq!(columns.program_exits(), vec![Some(exit()), None]);
+        assert_eq!(columns.num_registers(), 1);
+        assert_eq!(columns.try_i64s("program_exit").unwrap(), vec![7, 7]);
+        let decoded: ShotVec =
+            serde_json::from_str(&serde_json::to_string(&rows).unwrap()).unwrap();
+        assert_eq!(
+            decoded
+                .shots
+                .iter()
+                .map(|s| s.program_exit.clone())
+                .collect::<Vec<_>>(),
+            vec![Some(exit()), None]
+        );
+        assert_eq!(decoded.create_json_value(), rows.create_json_value());
+        let decoded: ShotMap =
+            serde_json::from_str(&serde_json::to_string(&columns).unwrap()).unwrap();
+        assert_eq!(decoded.program_exits(), columns.program_exits());
+        assert_eq!(decoded.num_shots(), columns.num_shots());
+        // Presentation formats still contain only user registers.
+        assert_eq!(
+            rows.create_json_value(),
+            serde_json::json!([{"program_exit": 7}, {"program_exit": 7}])
+        );
+    }
+
+    #[test]
+    fn no_output_shots_retain_count_and_exit_alignment() {
+        for diagnostic in [None, Some(exit())] {
+            let rows = ShotVec {
+                shots: vec![
+                    Shot {
+                        program_exit: diagnostic.clone(),
+                        ..Default::default()
+                    };
+                    3
+                ],
+            };
+            let columns = rows.try_as_shot_map().unwrap();
+            assert_eq!(columns.num_shots(), 3);
+            assert_eq!(columns.num_registers(), 0);
+            assert_eq!(columns.program_exits(), vec![diagnostic; 3]);
+        }
+        assert_eq!(
+            ShotVec::new().try_as_shot_map().unwrap().program_exits(),
+            []
+        );
+    }
+
+    #[test]
+    fn legacy_serialized_results_remain_readable() {
+        let row: Shot = serde_json::from_str(r#"{"data": {}}"#).unwrap();
+        assert_eq!(row.program_exit, None);
+        assert_eq!(
+            serde_json::to_value(row).unwrap(),
+            serde_json::json!({"data": {}})
+        );
+        let columns: ShotMap = serde_json::from_str(r#"{"data": {}, "num_shots": 2}"#).unwrap();
+        assert_eq!(columns.program_exits(), vec![None, None]);
+    }
+}

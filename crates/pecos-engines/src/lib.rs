@@ -47,8 +47,8 @@ pub use quantum_system::QuantumSystem;
 pub use sampling::MonteCarloBuilder;
 pub use shot_results::data_vec::DataVecType;
 pub use shot_results::{
-    BitVecDisplayFormat, Data, DataVec, Shot, ShotMap, ShotMapDisplay, ShotMapDisplayExt,
-    ShotMapDisplayOptions, ShotVec,
+    BitVecDisplayFormat, Data, DataVec, ProgramExit, Shot, ShotMap, ShotMapDisplay,
+    ShotMapDisplayExt, ShotMapDisplayOptions, ShotVec,
 };
 pub use sim_builder::{
     BiasedDepolarizingNoise, DepolarizingNoise, PassThroughNoise, SimBuilder, SimConfig,

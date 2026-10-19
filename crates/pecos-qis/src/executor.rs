@@ -425,6 +425,53 @@ impl DynamicSyncHandle for HeliosSyncHandle {
         Ok(result)
     }
 
+    fn get_program_exit(
+        &self,
+    ) -> Result<Option<pecos_engines::shot_results::ProgramExit>, InterfaceError> {
+        let lib = Self::get_lib()?;
+        // Resolve both symbols before allocating the JSON buffer.
+        // SAFETY: Symbols have the declared explicit-context reader/deallocator ABI.
+        let (get, free) = unsafe {
+            let get = lib
+                .get::<GetNamedResultsJsonFn>(b"pecos_get_program_error_json_with_context\0")
+                .map_err(|e| {
+                    InterfaceError::ExecutionError(format!("Missing program error reader: {e}"))
+                })?;
+            let free = lib
+                .get::<FreeNamedResultsJsonFn>(b"pecos_free_named_results_json\0")
+                .map_err(|e| {
+                    InterfaceError::ExecutionError(format!("Missing JSON deallocator: {e}"))
+                })?;
+            (get, free)
+        };
+        let mut ptr = std::ptr::null_mut();
+        // SAFETY: This handle owns the live context; output is valid writable storage.
+        check_context_status(
+            unsafe { get(self.execution_context.0, &raw mut ptr) },
+            "read program exit",
+        )?;
+        if ptr.is_null() {
+            return Ok(None);
+        }
+        // SAFETY: Success returns an allocated, NUL-terminated JSON buffer.
+        let json = unsafe { std::ffi::CStr::from_ptr(ptr) }.to_bytes();
+        let error = serde_json::from_slice::<pecos_qis_ffi_types::ProgramError>(json);
+        // SAFETY: Parsing no longer borrows the buffer; release it exactly once.
+        unsafe { free(ptr) };
+        let error = error.map_err(|e| {
+            InterfaceError::ExecutionError(format!("Invalid program error JSON: {e}"))
+        })?;
+        match error {
+            pecos_qis_ffi_types::ProgramError::Exit { code, message } => {
+                Ok(Some(pecos_engines::shot_results::ProgramExit {
+                    code,
+                    message,
+                }))
+            }
+            error => Err(InterfaceError::ProgramError(error)),
+        }
+    }
+
     fn get_named_result_traces(
         &self,
     ) -> Result<Vec<pecos_qis_ffi_types::NamedResultTrace>, InterfaceError> {
@@ -3301,7 +3348,7 @@ attributes #0 = { "EntryPoint" }
             let free: Symbol<FreeNamedResultsJsonFn> =
                 ffi.get(b"pecos_free_named_results_json\0").expect("free");
             // No wrapper has installed a handler: record without jumping into an invalid buffer.
-            for code in [0, 1000, 1001] {
+            for code in [0, 1, 1000, 1001] {
                 clear();
                 assert_eq!(
                     panic(std::ptr::null_mut(), tag(b"outside"), code).error_code,
@@ -3309,6 +3356,23 @@ attributes #0 = { "EntryPoint" }
                 );
                 let ptr = get();
                 assert!(!ptr.is_null());
+                let handle = HeliosSyncHandle {
+                    execution_context: Arc::clone(&context),
+                };
+                // The host reader must not depend on the worker's TLS registration.
+                register(std::ptr::null_mut());
+                if code <= 1000 {
+                    assert_eq!(
+                        handle.get_program_exit().unwrap(),
+                        Some(pecos_engines::shot_results::ProgramExit {
+                            code: i32::try_from(code).unwrap(),
+                            message: "outside".into()
+                        })
+                    );
+                } else {
+                    assert!(handle.get_program_exit().is_err());
+                }
+                register(context.0);
                 let error: ProgramError =
                     serde_json::from_slice(std::ffi::CStr::from_ptr(ptr).to_bytes())
                         .expect("termination JSON");

@@ -2400,6 +2400,9 @@ impl ClassicalEngine for QisEngine {
         if let Some(state) = &self.dynamic_state
             && let Some(handle) = &state.sync_handle
         {
+            shot.program_exit = handle.get_program_exit().map_err(|error| {
+                PecosError::Generic(format!("Failed to get program exit: {error}"))
+            })?;
             let named_results = handle.get_named_results().map_err(|error| {
                 PecosError::Generic(format!("Failed to get named results: {error}"))
             })?;
@@ -5683,3 +5686,7 @@ mod shot_identity_tests;
 #[cfg(all(test, feature = "selene-runtimes"))]
 #[path = "ccengine_program_shot_tests.rs"]
 mod program_shot_tests;
+
+#[cfg(all(test, feature = "selene-runtimes"))]
+#[path = "ccengine_exit_tests.rs"]
+mod exit_metadata_tests;

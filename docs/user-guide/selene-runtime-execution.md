@@ -100,12 +100,65 @@ Known limitations and intentional validation differences:
   tested Selene versions, zero aborts the reference subprocess and negative
   bounds are reinterpreted as unsigned. Those reference behaviors are outside
   the valid input domain and are not a compatibility target.
-- Native Guppy PCG32 handles a zero bound by exiting the shot. PECOS terminates
-  the shot, but its result omits the exit reason/code that Selene exposes. This
-  diagnostic gap is tracked in [issue #1371](https://github.com/PECOS-packages/PECOS/issues/1371).
-  A missing sample is not evidence of a successful RNG draw.
+- Native Guppy PCG32 handles a zero bound by exiting the shot. PECOS exposes its
+  reason/code through `program_exits`, as described below. A missing sample is
+  not evidence of a successful RNG draw.
 - This suite does not establish exhaustive behavior for all invalid inputs,
   other dependency versions, WASM integration or simulation speed.
+
+## Per-shot program exits
+
+Ordinary Guppy exits (QIS codes 0 through 1000) finish the current shot and preserve
+its outputs recorded before the exit. They do not abort the simulation job.
+Panics and other execution failures still raise an error. The inclusive upper
+boundary preserves PECOS's existing contract: the tested live Selene version
+instead treats code 1000 as a panic. Metadata support does not resolve that
+termination-policy difference; it is tracked in
+[issue #1372](https://github.com/PECOS-packages/PECOS/issues/1372).
+
+```python
+from guppylang import guppy
+from guppylang.std.platform import exit as guppy_exit
+from guppylang.std.qsystem.utils import get_current_shot
+from pecos import Guppy, selene_engine, sim
+
+
+@guppy
+def program() -> None:
+    if get_current_shot() == 1:
+        guppy_exit("done", 1)
+
+
+shots = sim(Guppy(program)).classical(selene_engine()).qubits(1).run(4)
+print(shots.program_exits)
+assert shots.program_exits == [None, {"code": 1, "message": "done"}, None, None]
+```
+
+`program_exits` has one entry per result row, in the same order as the shot data.
+`None` means the engine reported no ordinary exit; it is not a capability claim
+for other engines. A dictionary contains the original integer code and message.
+The dictionaries are copies. Diagnostics remain available even if branch-dependent
+outputs make `to_dict()` or `to_shot_map()` reject inconsistent registers.
+Successful `to_shot_map()` conversions preserve `program_exits` and the shot count,
+including shots that produced no registers.
+
+Diagnostics are separate from named outputs. `to_dict()`, binary/display output,
+and register-oriented JSON export retain their existing data-only formats; no
+exit markers enter detector or observable columns. Selene presents an ordinary
+exit as `("exit: <message>", code)` in its per-shot results. Compare that marker
+with PECOS metadata rather than expecting identical result dictionaries.
+For example, native `seeded_pcg32(...).next_int_bounded(nat(0))` produces no sample
+and reports code 1 with message `PCG32.next_int_bounded: bound must be positive`.
+
+Rust callers use `Shot.program_exit: Option<ProgramExit>` or
+`ShotMap::program_exits()`. Serde serialization preserves this metadata; older
+serialized results without it remain readable. Rust struct literals that specify
+`Shot.data` must also initialize `program_exit` (or use `..Default::default()`).
+Reset, template cloning and subsequent shots do not inherit an earlier exit.
+Both the direct QIS termination entry and Selene's termination adapter report
+metadata. The standalone `selene_print_exit` diagnostic printer does not terminate
+a shot, and the `selene_exit` instance-teardown hook does not represent a program
+exit; their behavior is unchanged.
 
 ## Native gate lowering
 

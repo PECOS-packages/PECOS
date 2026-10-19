@@ -457,6 +457,41 @@ pub extern "C" fn pecos_get_program_error_json() -> *mut std::ffi::c_char {
     }
 }
 
+/// Read a program error from an explicit context, without consulting thread-local state.
+/// Returns 0 on success (null output when absent), 1 for a null context,
+/// 2 for a poisoned lock, or 3 for serialization failure.
+/// Free the output with `pecos_free_named_results_json`.
+///
+/// # Safety
+/// A non-null context must remain live throughout the call. The output pointer
+/// must be non-null, valid and writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pecos_get_program_error_json_with_context(
+    ctx: *mut ExecutionContext,
+    output: *mut *mut std::ffi::c_char,
+) -> i32 {
+    // SAFETY: The caller provides writable output and a live context.
+    unsafe { *output = std::ptr::null_mut() };
+    let Some(ctx) = (unsafe { ctx.as_ref() }) else {
+        return 1;
+    };
+    let Ok(error) = ctx.program_error.lock() else {
+        return 2;
+    };
+    let Some(error) = error.as_ref() else {
+        return 0;
+    };
+    let Ok(json) = serde_json::to_string(error) else {
+        return 3;
+    };
+    let Ok(json) = std::ffi::CString::new(json) else {
+        return 3;
+    };
+    // SAFETY: The caller provides writable output storage.
+    unsafe { *output = json.into_raw() };
+    0
+}
+
 /// Whether the current program terminated with a normal exit.
 #[unsafe(no_mangle)]
 pub extern "C" fn pecos_program_exited() -> bool {
@@ -1364,12 +1399,12 @@ pub extern "C" fn pecos_get_named_result_traces_json() -> *mut std::ffi::c_char 
 ///
 /// # Safety
 /// The pointer must have been allocated by `pecos_get_named_results_json`,
-/// `pecos_get_named_result_traces_json`, or `pecos_get_program_error_json`, and
-/// must not have been freed already.
+/// `pecos_get_named_result_traces_json`, `pecos_get_program_error_json`, or their
+/// explicit-context variants, and must not have been freed already.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pecos_free_named_results_json(ptr: *mut std::ffi::c_char) {
     if !ptr.is_null() {
-        // SAFETY: All three JSON exports allocate with CString::into_raw.
+        // SAFETY: These JSON exports allocate with CString::into_raw.
         drop(unsafe { std::ffi::CString::from_raw(ptr) });
     }
 }
@@ -1381,6 +1416,64 @@ mod tests {
     use std::thread;
 
     const TEST_SYNC_TIMEOUT_MS: u64 = 5_000;
+
+    #[test]
+    fn explicit_program_error_reader_isolated_reset_and_null() {
+        let registered = setup_context();
+        let owned = pecos_create_execution_context();
+        // SAFETY: Both contexts and the output storage live until cleanup.
+        unsafe {
+            (*registered).record_program_error(ProgramError::Exit {
+                code: 9,
+                message: "wrong context".into(),
+            });
+            let mut json = std::ptr::dangling_mut();
+            assert_eq!(
+                pecos_get_program_error_json_with_context(std::ptr::null_mut(), &raw mut json),
+                1
+            );
+            assert!(json.is_null());
+            for code in [0, 1, 1000] {
+                let expected = ProgramError::Exit {
+                    code,
+                    message: "done\0é".into(),
+                };
+                (*owned).record_program_error(expected.clone());
+                assert_eq!(
+                    pecos_get_program_error_json_with_context(owned, &raw mut json),
+                    0
+                );
+                let error: ProgramError =
+                    serde_json::from_slice(std::ffi::CStr::from_ptr(json).to_bytes()).unwrap();
+                pecos_free_named_results_json(json);
+                assert_eq!(error, expected);
+                (*owned).reset();
+                assert_eq!(
+                    pecos_get_program_error_json_with_context(owned, &raw mut json),
+                    0
+                );
+                assert!(json.is_null());
+            }
+            pecos_destroy_execution_context(owned);
+            teardown_context(registered);
+        }
+    }
+
+    #[test]
+    fn explicit_program_error_reader_reports_poison() {
+        let mut context = ExecutionContext::new();
+        let _ = std::panic::catch_unwind(|| {
+            let _lock = context.program_error.lock().unwrap();
+            panic!("poison diagnostic lock");
+        });
+        let mut json = std::ptr::dangling_mut();
+        // SAFETY: Context and writable output remain live during the call.
+        assert_eq!(
+            unsafe { pecos_get_program_error_json_with_context(&raw mut context, &raw mut json) },
+            2
+        );
+        assert!(json.is_null());
+    }
 
     /// Helper to create and register an execution context for tests
     fn setup_context() -> *mut ExecutionContext {

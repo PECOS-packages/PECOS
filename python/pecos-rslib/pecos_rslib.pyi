@@ -1427,14 +1427,20 @@ class ByteMessageBuilder:
     ...
 
 class ShotMap:
-    """Map of measurement outcomes."""
+    """Results with separate, shot-aligned exit diagnostics."""
 
-    ...
+    @property
+    def program_exits(self) -> list[dict[str, int | str] | None]:
+        """Each item is None or {"code": int, "message": str}."""
+        ...
 
 class ShotVec:
-    """Vector of measurement outcomes."""
+    """Results with separate, shot-aligned exit diagnostics."""
 
-    ...
+    @property
+    def program_exits(self) -> list[dict[str, int | str] | None]:
+        """Each item is None or {"code": int, "message": str}."""
+        ...
 
 # =============================================================================
 # Quantum Types

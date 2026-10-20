@@ -3,19 +3,35 @@ use super::*;
 use pecos_engines::{ClassicalControlEngineBuilder, MonteCarloEngine, StateVecEngine};
 use pecos_random::{PCG32_INIT_STATE, PCGRandom};
 
-const PROGRAM: &str = r#"
+fn program() -> String {
+    // SeleneU64Result is a 16-byte C struct. Windows returns it through a
+    // hidden output pointer; the other supported 64-bit targets use registers.
+    #[cfg(not(windows))]
+    let (declaration, call) = (
+        "declare { i32, i64 } @selene_get_current_shot(ptr)",
+        "%abi = call { i32, i64 } @selene_get_current_shot(ptr null)",
+    );
+    #[cfg(windows)]
+    let (declaration, call) = (
+        "declare void @selene_get_current_shot(ptr sret({ i32, i64 }), ptr)",
+        "%out = alloca { i32, i64 }\n\
+         call void @selene_get_current_shot(ptr sret({ i32, i64 }) %out, ptr null)\n\
+         %abi = load { i32, i64 }, ptr %out",
+    );
+    format!(
+        r#"
 @shot_label = private constant [4 x i8] c"shot"
 @abi_label = private constant [3 x i8] c"abi"
 @rng_label = private constant [3 x i8] c"rng"
 declare i64 @get_current_shot()
-declare { i32, i64 } @selene_get_current_shot(ptr)
+{declaration}
 declare void @print_uint_selene(ptr, i64, i64)
 declare void @random_seed(i64)
 declare i32 @random_int()
 declare void @__quantum__qis__x__body(i64)
 declare i32 @__quantum__qis__m__body(i64, i64)
 declare i1 @___read_future_bool(i64)
-define i64 @qmain(i64 %arg) #0 {
+define i64 @qmain(i64 %arg) #0 {{
     %shot = call i64 @get_current_shot()
     call void @print_uint_selene(ptr @shot_label, i64 4, i64 %shot)
     call void @random_seed(i64 %shot)
@@ -26,18 +42,20 @@ define i64 @qmain(i64 %arg) #0 {
     call void @__quantum__qis__x__body(i64 0)
     %m = call i32 @__quantum__qis__m__body(i64 0, i64 0)
     %read = call i1 @___read_future_bool(i64 0)
-    %abi = call { i32, i64 } @selene_get_current_shot(ptr null)
-    %id = extractvalue { i32, i64 } %abi, 1
+    {call}
+    %id = extractvalue {{ i32, i64 }} %abi, 1
     call void @print_uint_selene(ptr @abi_label, i64 3, i64 %id)
     ret i64 0
+}}
+attributes #0 = {{ "EntryPoint" }}
+"#
+    )
 }
-attributes #0 = { "EntryPoint" }
-"#;
 
 fn engine(scheduled: bool) -> QisEngine {
     crate::qis_engine()
         .interface(crate::helios_interface_builder())
-        .program(pecos_programs::Qis::from_string(PROGRAM))
+        .program(pecos_programs::Qis::from_string(program()))
         .runtime(crate::selene_simple_runtime().unwrap())
         .scheduled_batches(scheduled)
         .build()

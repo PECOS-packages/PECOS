@@ -429,3 +429,113 @@ fn invalid_typed_metadata_fails_before_runtime() {
         );
     }
 }
+
+#[test]
+fn every_partition_of_explicit_and_inferred_definitions_matches_the_parity_oracle() {
+    use pecos_decoder_core::obs_mask::ObsMask;
+
+    let mut circuit = TickCircuit::new();
+    circuit.tick().pz(&[0, 1, 2, 3]);
+    circuit.tick().h(&[0]);
+    circuit.tick().cx(&[(0, 1), (2, 3)]);
+    circuit.tick().mz(&[0, 1, 2, 3]);
+    pass::assign_missing_meas_ids(&mut circuit);
+    let detector_supports = [vec![1], vec![0, 2], vec![1, 2, 3], vec![0, 1, 2, 3]];
+    let observable_supports = [vec![0], vec![1, 3], vec![0, 2, 3], vec![0, 1, 2, 3]];
+    let observable_ids = [0, 1, 65, 70];
+    let raw_ids = vec![2, 0, 3, 1];
+    let parity = |record: usize, support: &[usize]| -> u8 {
+        support
+            .iter()
+            .fold(0, |value, &id| value ^ u8::from((record >> id) & 1 != 0))
+    };
+    let noise = NoiseConfig::new(0.001, 0.01, 0.02, 0.001);
+    let explicit = DetectorErrorModel::builder()
+        .with_circuit(circuit.clone())
+        .with_detectors(detector_supports.to_vec())
+        .with_observables_json(
+            serde_json::json!(
+                observable_ids
+                    .iter()
+                    .zip(&observable_supports)
+                    .map(|(id, ids)| serde_json::json!({"id": id, "meas_ids": ids}))
+                    .collect::<Vec<_>>()
+            )
+            .to_string(),
+        )
+        .with_noise(noise.clone())
+        .build()
+        .unwrap();
+    assert!(explicit.dem.to_string().contains("error("));
+
+    // All 256 source assignments, including both pure cases and role-wise mixing.
+    for partition in 0_usize..256 {
+        let mut definitions = [Vec::new(), Vec::new()];
+        let mut rows = [vec![Vec::new(); 16], vec![Vec::new(); 16]];
+        for (role, supports) in [&detector_supports, &observable_supports]
+            .iter()
+            .enumerate()
+        {
+            // Reverse definition order to decouple inference columns from output IDs.
+            for index in (0..4).rev() {
+                let id = if role == 0 {
+                    index
+                } else {
+                    observable_ids[index]
+                };
+                let definition = if partition & (1 << (4 * role + index)) != 0 {
+                    for (record, row) in rows[role].iter_mut().enumerate() {
+                        row.push(parity(record, &supports[index]));
+                    }
+                    DemDefinition::inferred(id, if role == 0 { "checks" } else { "logical" }, index)
+                } else {
+                    DemDefinition::explicit(id, supports[index].clone())
+                };
+                definitions[role].push(definition);
+            }
+        }
+        let [detectors, observables] = definitions;
+        let [detector_rows, observable_rows] = rows;
+        let mut builder = DetectorErrorModel::builder()
+            .with_circuit(circuit.clone())
+            .with_detector_definitions(detectors)
+            .with_observable_definitions(observables)
+            .with_noise(noise.clone())
+            .with_inference(DemInferenceSettings::default().with_validation_rows(2));
+        if partition != 0 {
+            builder = builder.with_inference_data(DemInferenceData {
+                raw_measurement_ids: raw_ids.clone(),
+                raw_rows: (0..16)
+                    .map(|record| raw_ids.iter().map(|&id| parity(record, &[id])).collect())
+                    .collect(),
+                detector_rows,
+                observable_rows,
+            });
+        }
+        let build = builder.build().unwrap();
+        assert_eq!(build.inference.is_some(), partition != 0);
+        assert_eq!(
+            build.dem.to_string(),
+            explicit.dem.to_string(),
+            "partition {partition}"
+        );
+        for record in 0..16 {
+            let bits: Vec<_> = (0..4).map(|id| parity(record, &[id])).collect();
+            let expected_detectors: Vec<_> = detector_supports
+                .iter()
+                .map(|ids| parity(record, ids))
+                .collect();
+            let mut expected_observables = ObsMask::new();
+            for (&id, support) in observable_ids.iter().zip(&observable_supports) {
+                if parity(record, support) != 0 {
+                    expected_observables.set(id);
+                }
+            }
+            assert_eq!(
+                build.evaluate_runtime_record(&bits).unwrap(),
+                (expected_detectors, expected_observables),
+                "partition {partition}, record {record}"
+            );
+        }
+    }
+}

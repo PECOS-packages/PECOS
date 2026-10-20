@@ -299,6 +299,17 @@ jobs:
         if: runner.os == 'Windows'
         run: cargo build --locked -p pecos-cli --release
 
+      # Run these before the broader suite so unrelated failures cannot hide
+      # native DEM results. The default suite does not enable pecos-qec/hugr.
+      - name: Build native DEM runtime libraries
+        run: cargo build --locked -p pecos-qis
+
+      - name: Test native DEM inference helpers
+        run: cargo test --locked -p pecos-qec --features hugr --lib dem_
+
+      - name: Test native DEM inference with optional HUGR compiler
+        run: cargo test --locked -p pecos-qec --features hugr --test dem_inference_builder --test dem_selene_builder
+
       - name: Run tests (macOS)
         if: matrix.os == 'macos-latest'
         env:
@@ -316,10 +327,3 @@ jobs:
       - name: Run tests (Windows)
         if: runner.os == 'Windows'
         run: .\target\release\pecos.exe rust test
-
-      - name: Test native DEM inference with optional HUGR compiler
-        # The default workspace suite does not enable pecos-qec/hugr.
-        run: |
-          cargo build --locked -p pecos-qis-ffi -p selene-simple-runtime -p selene-soft-rz-runtime
-          cargo test --locked -p pecos-qec --features hugr --lib dem_
-          cargo test --locked -p pecos-qec --features hugr --test dem_inference_builder --test dem_selene_builder

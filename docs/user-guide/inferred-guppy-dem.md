@@ -87,14 +87,18 @@ build = (
     DetectorErrorModel.builder()
     .with_program(program)
     .with_qubits(num_qubits)
-    .with_detectors([
-        Detector(rec[-2], rec[-1]),
-        Detector.inferred("checks", element=3),
-    ])
-    .with_observables([
-        Observable.inferred("logical", element=0, id=0),
-        Observable(rec[-1], id=1),
-    ])
+    .with_detectors(
+        [
+            Detector(rec[-2], rec[-1]),
+            Detector.inferred("checks", element=3),
+        ]
+    )
+    .with_observables(
+        [
+            Observable.inferred("logical", element=0, id=0),
+            Observable(rec[-1], id=1),
+        ]
+    )
     .with_inference(DemInferenceSettings().with_validation_rows(32))
     .build()
 )

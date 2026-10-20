@@ -8,6 +8,9 @@ use pecos_qec::dem_inference::{
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
+/// Detector supports followed by observable supports, using stable measurement IDs.
+type InferredSupports = (Vec<Vec<usize>>, Vec<Vec<usize>>);
+
 /// Fluent configuration for empirical detector/observable annotation inference.
 /// Setters return a new settings value; defaults use automatic probe sizing and
 /// require measurement provenance. Seed/runtime belong to the DEM builder.
@@ -107,7 +110,7 @@ impl PyDemInferenceSettings {
         raw_rows: Vec<Vec<u8>>,
         detector_rows: Vec<Vec<u8>>,
         observable_rows: Vec<Vec<u8>>,
-    ) -> PyResult<(Vec<Vec<usize>>, Vec<Vec<usize>>)> {
+    ) -> PyResult<InferredSupports> {
         let report = self
             .inner
             .infer(&DemInferenceData {

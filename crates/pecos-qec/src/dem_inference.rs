@@ -416,7 +416,7 @@ mod tests {
         let mut inputs = data();
         inputs.detector_rows = vec![vec![]; inputs.raw_rows.len()];
         let report = settings.infer(&inputs).unwrap();
-        assert!(report.detector_supports.is_empty());
+        assert_eq!(report.detector_supports, Vec::<Vec<usize>>::new());
         assert_eq!(report.observable_supports, vec![vec![5]]);
         inputs.observable_rows = vec![vec![]; inputs.raw_rows.len()];
         assert!(matches!(

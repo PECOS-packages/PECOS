@@ -211,3 +211,30 @@ def test_raw_tag_must_cover_canonical_qis_measurement_order() -> None:
             validation_rows=8,
             seed=3,
         )
+
+
+def test_direct_binding_reuses_fit_shots_for_schedule_validation(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pecos import tracing
+
+    original = tracing._capture_qis_operation_traces  # noqa: SLF001
+    captured_shots = []
+
+    def capture(*args: object, **kwargs: object) -> list[dict]:
+        captured_shots.append(kwargs["shots"])
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(tracing, "_capture_qis_operation_traces", capture)
+    inferred = infer_guppy_dem_annotations(
+        _direct_array_outputs,
+        num_qubits=3,
+        raw_tag="physical",
+        detector_tag="events",
+        observable_tags=("logical_z", "logical_x"),
+        probe_shots=40,
+        provenance_shots=100,
+        validation_rows=8,
+    )
+    assert captured_shots == [1, 40]
+    assert inferred.audit["provenance_shots"] == 0
+    assert inferred.audit["schedule_validation_shots"] == 40
+    assert inferred.detector_supports == ((0, 1),)

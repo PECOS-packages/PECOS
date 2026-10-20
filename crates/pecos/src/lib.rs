@@ -6,6 +6,8 @@
 //! - **`sim`**: Quantum simulation (includes core + num)
 //! - **`runtime`**: Full simulation with QASM + PHIR support
 //! - **`qis`**: QIS/LLVM IR execution (requires LLVM 21.1)
+//! - **`qec-selene`**: DEM construction from QIS through Selene
+//! - **`qec-hugr`**: Native HUGR lowering for DEM construction (requires LLVM 21.1)
 //! - **`quest`/`qulacs`/`cppsparsestab`**: Simulator backends
 //! - **`num`**: Numerical computing (scipy-like)
 //!
@@ -87,7 +89,7 @@ pub mod programs {
 }
 
 /// QIS runtime (Selene + Helios interface).
-#[cfg(feature = "qis")]
+#[cfg(any(feature = "qis", feature = "qec-selene"))]
 pub mod runtime {
     pub use pecos_qis::{ClassicalState, QisRuntime, RuntimeError};
     pub use pecos_qis::{
@@ -205,7 +207,7 @@ pub use pecos_phir_json::{PhirJsonEngineBuilder, phir_json_engine};
 pub use pecos_programs::{Program, Qasm, Qis};
 #[cfg(feature = "qasm")]
 pub use pecos_qasm::{QasmEngineBuilder, qasm_engine, run_qasm};
-#[cfg(feature = "qis")]
+#[cfg(any(feature = "qis", feature = "qec-selene"))]
 pub use pecos_qis::{
     HeliosInterfaceBuilder, QisHeliosInterface, SeleneRuntime, helios_interface_builder,
     selene_runtime_auto, selene_simple_runtime,

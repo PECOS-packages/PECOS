@@ -273,19 +273,13 @@ return to the live runtime to resume program feedback.
 Each prepared batch retains one noise-controller lifecycle. Inserted idle commands
 are included in an expansion budget of sixteen output commands per prepared
 command (the admitted channels emit at most eight per idle target and four per
-gate, including seepage of both two-qubit operands). Output bytes and command counts are checked before simulator execution.
-The internal executor accounts cumulatively for commands, serialized command
-bytes (including every message header), and simulator calls within that lifecycle.
-It forwards each simulator reply to the same controller exactly once and never
-restarts the controller on a continuation. Empty requests consume bytes and a
-call, so they cannot bypass the call limit.
+gate, including seepage of both two-qubit operands). Output bytes and command
+counts are checked before simulator execution.
 
-Current scheduled profiles still authorize only one simulator call per batch;
-a second request fails and poisons the shot. Internal continuation tests do not
-admit crosstalk payloads, transition hooks, or arbitrary noise controllers through
-the scheduled API. These limits bound dispatched noise expansion, not native
-extraction, allocations inside a model/adapter, or callback execution time.
-Existing shot context, clone and whole-host reset requirements still apply.
+Scheduled profiles authorize one simulator call per batch; a second request
+fails and poisons the shot. These limits bound dispatched noise expansion, not
+native extraction, allocations inside a model/adapter, or callback execution
+time. Existing shot context, clone and whole-host reset requirements still apply.
 
 ## Admission, identity and recovery
 

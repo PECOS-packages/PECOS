@@ -9,6 +9,53 @@ use std::{
 };
 
 #[test]
+fn byte_limit_rejects_one_oversized_command_before_execution() {
+    let mut system = QuantumSystem::new_without_noise(Box::new(crate::StabilizerEngine::new(33)));
+    // A valid legacy grouped gate has one command but a large payload. Such
+    // output is outside the checked profiles' <=2-target emission contract.
+    let commands = ByteMessage::quantum_operations_builder()
+        .x(&(0..33).collect::<Vec<_>>())
+        .build();
+    assert_eq!(commands.quantum_ops().unwrap().len(), 1);
+    assert!(commands.as_bytes().len() > 16 + 128);
+    let result = system.drive_scheduled(
+        crate::EngineStage::NeedsProcessing(commands),
+        ScheduledExecutionLimits::single_pass(1).unwrap(),
+    );
+    assert!(
+        result
+            .err()
+            .expect("byte limit must reject")
+            .to_string()
+            .contains("scheduled noise expansion limit")
+    );
+    let output = system
+        .drive_legacy(ByteMessage::quantum_operations_builder().mz(&[0]).build())
+        .unwrap();
+    assert_eq!(output.outcomes().unwrap(), vec![0]);
+}
+
+#[test]
+fn expanded_commands_reject_before_simulator_mutation() {
+    let mut system = QuantumSystem::new_without_noise(Box::new(crate::StateVecEngine::new(1)));
+    for budget in [0, 2, usize::MAX] {
+        let mut commands = ByteMessage::quantum_operations_builder();
+        commands.x(&[0]).x(&[0]).x(&[0]);
+        let result = ScheduledExecutionLimits::single_pass(budget).and_then(|limits| {
+            system.drive_scheduled(
+                crate::EngineStage::NeedsProcessing(commands.build()),
+                limits,
+            )
+        });
+        assert!(result.is_err());
+    }
+    let result = system
+        .drive_legacy(ByteMessage::quantum_operations_builder().mz(&[0]).build())
+        .unwrap();
+    assert_eq!(result.outcomes().unwrap(), vec![0]);
+}
+
+#[test]
 fn internal_measurements_resume_once_and_do_not_escape() {
     let model = GeneralNoiseModel::builder()
         .with_p_meas_crosstalk(1.0)
@@ -45,7 +92,8 @@ fn internal_measurements_resume_once_and_do_not_escape() {
         .unwrap();
     assert_eq!(output.outcomes().unwrap(), vec![1, 0]);
     // Completion consumes internal results while preserving the quantum state.
-    // The trailing X leaves |1>, so clearing the simulator at completion fails.
+    // The trailing X leaves |1>; if completion cleared the simulator, the next
+    // batch would read 0 and this assertion would fail.
     let stage = system
         .noise_model
         .as_any_mut()
@@ -168,7 +216,12 @@ fn cumulative_commands_reject_suffix_before_mutation() {
         )
         .err()
         .expect("expected rejection");
-    assert!(error.to_string().contains("operations"));
+    assert!(
+        error
+            .to_string()
+            .contains("(operations): request needs 1, 0 of 1 remain"),
+        "{error}"
+    );
     assert_eq!(script(&system).starts, 1);
     assert_eq!(script(&system).replies, 1);
     assert_eq!(measure(&mut system), vec![1]);
@@ -177,7 +230,8 @@ fn cumulative_commands_reject_suffix_before_mutation() {
 #[test]
 fn cumulative_bytes_reject_suffix_before_mutation() {
     let x = ByteMessage::quantum_operations_builder().x(&[0]).build();
-    let bytes = 2 * x.as_bytes().len() - 1;
+    let len = x.as_bytes().len();
+    let bytes = 2 * len - 1;
     let mut system = scripted(vec![x.clone()], false);
     let stage = system.noise_model.start(x).unwrap();
     let error = system
@@ -191,7 +245,13 @@ fn cumulative_bytes_reject_suffix_before_mutation() {
         )
         .err()
         .expect("expected rejection");
-    assert!(error.to_string().contains("bytes"));
+    assert!(
+        error.to_string().contains(&format!(
+            "(bytes): request needs {len}, {} of {bytes} remain",
+            len - 1
+        )),
+        "{error}"
+    );
     assert_eq!(script(&system).replies, 1);
     assert_eq!(measure(&mut system), vec![1]);
 }
@@ -256,7 +316,12 @@ fn existing_profiles_still_reject_a_second_call() {
         .drive_scheduled(stage, ScheduledExecutionLimits::single_pass(32).unwrap())
         .err()
         .expect("expected rejection");
-    assert!(error.to_string().contains("call limit"));
+    assert!(
+        error
+            .to_string()
+            .contains("call limit: batch allows 1 call(s)"),
+        "{error}"
+    );
     assert_eq!(script(&system).replies, 1);
     assert_eq!(measure(&mut system), vec![1]);
 }
@@ -361,11 +426,12 @@ fn bounded_driver_matches_unsplit_controller_rng_and_results() {
             assert_eq!(
                 actual.outcomes().unwrap(),
                 expected.outcomes().unwrap(),
-                "seed {seed}"
+                "outcomes, seed {seed}, batch {batch}"
             );
             assert_eq!(
                 bounded.noise_model.rng().clone().next_u64(),
-                reference.noise_model.rng().clone().next_u64()
+                reference.noise_model.rng().clone().next_u64(),
+                "noise RNG, seed {seed}, batch {batch}"
             );
             assert_eq!(
                 bounded
@@ -385,7 +451,8 @@ fn bounded_driver_matches_unsplit_controller_rng_and_results() {
                     .simulator()
                     .rng()
                     .clone()
-                    .next_u64()
+                    .next_u64(),
+                "simulator RNG, seed {seed}, batch {batch}"
             );
         }
     }

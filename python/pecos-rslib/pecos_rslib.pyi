@@ -4387,7 +4387,12 @@ class _ScheduledBatchAdapter(Protocol):
     """Structural callback protocol; not a runtime extension class."""
 
     def validate(self, batch: ScheduledEventBatch) -> None: ...
-    def translate(self, batch: ScheduledEventBatch) -> list[Gate | ScheduledCrosstalk]: ...
+    def translate(
+        self,
+        batch: ScheduledEventBatch,
+    ) -> list[Gate] | list[ScheduledCrosstalk] | list[Gate | ScheduledCrosstalk]:
+        """Return a list; homogeneous and mixed lists are all accepted."""
+        ...
 
 class ScheduledEventIdleZ:
     """Checked v7 profile returned by scheduled_event_idle_z()."""

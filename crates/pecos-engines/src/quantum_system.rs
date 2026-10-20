@@ -37,6 +37,30 @@ pub struct QuantumSystem {
     host_blocked: bool,
 }
 
+// Per native batch, across all internal simulator calls. Only checked profiles
+// choose these limits; neither a runtime nor a noise callback can replenish them.
+struct ScheduledExecutionLimits {
+    operations: usize,
+    bytes: usize,
+    simulator_calls: usize,
+}
+
+impl ScheduledExecutionLimits {
+    // Existing closed profiles still admit exactly one simulator call. Their
+    // emitted commands have at most two targets, fitting within 128 bytes each.
+    fn single_pass(operations: usize) -> Result<Self, PecosError> {
+        let bytes = operations
+            .checked_mul(128)
+            .and_then(|n| n.checked_add(16))
+            .ok_or_else(|| runtime_frame::processing_error("scheduled byte budget overflow"))?;
+        Ok(Self {
+            operations,
+            bytes,
+            simulator_calls: 1,
+        })
+    }
+}
+
 impl QuantumSystem {
     /// Create a new `QuantumSystem` with the given noise model and quantum engine
     ///
@@ -93,32 +117,39 @@ impl QuantumSystem {
 
     fn drive_scheduled(
         &mut self,
-        stage: crate::EngineStage<ByteMessage, ByteMessage>,
-        budget: usize,
+        mut stage: crate::EngineStage<ByteMessage, ByteMessage>,
+        mut remaining: ScheduledExecutionLimits,
     ) -> Result<ByteMessage, PecosError> {
-        match stage {
-            crate::EngineStage::Complete(output) => Ok(output),
-            crate::EngineStage::NeedsProcessing(commands) => {
-                // Check bytes before parsing/allocation, then the actual operation
-                // count before executing. Admitted scheduled outputs have <=2 targets.
-                let byte_limit = budget
-                    .checked_mul(128)
-                    .and_then(|n| n.checked_add(16))
-                    .ok_or_else(|| {
-                        runtime_frame::processing_error("scheduled byte budget overflow")
-                    })?;
-                if commands.as_bytes().len() > byte_limit || commands.quantum_ops()?.len() > budget
-                {
-                    return Err(runtime_frame::processing_error(
-                        "scheduled noise expansion limit",
-                    ));
-                }
-                let reply = self.quantum_engine.process(commands)?;
-                match self.noise_model.continue_processing(reply)? {
-                    crate::EngineStage::Complete(output) => Ok(output),
-                    crate::EngineStage::NeedsProcessing(_) => Err(runtime_frame::processing_error(
-                        "scheduled noise requested an unsupported continuation",
-                    )),
+        // The caller starts the controller once and latches shot poison before
+        // entering. A continuation is part of that lifecycle, never a new input.
+        loop {
+            match stage {
+                crate::EngineStage::Complete(output) => return Ok(output),
+                crate::EngineStage::NeedsProcessing(commands) => {
+                    remaining.simulator_calls =
+                        remaining.simulator_calls.checked_sub(1).ok_or_else(|| {
+                            runtime_frame::processing_error("scheduled simulator call limit")
+                        })?;
+                    // Bound bytes before parsing/allocation, then operations before
+                    // executing. Empty messages consume a call and their header bytes.
+                    remaining.bytes = remaining
+                        .bytes
+                        .checked_sub(commands.as_bytes().len())
+                        .ok_or_else(|| {
+                            runtime_frame::processing_error(
+                                "scheduled noise expansion limit (bytes)",
+                            )
+                        })?;
+                    remaining.operations = remaining
+                        .operations
+                        .checked_sub(commands.quantum_ops()?.len())
+                        .ok_or_else(|| {
+                            runtime_frame::processing_error(
+                                "scheduled noise expansion limit (operations)",
+                            )
+                        })?;
+                    let reply = self.quantum_engine.process(commands)?;
+                    stage = self.noise_model.continue_processing(reply)?;
                 }
             }
         }
@@ -236,8 +267,9 @@ impl QuantumSystem {
                 .len()
                 .checked_mul(16)
                 .ok_or_else(|| runtime_frame::error("scheduled expansion overflow"))?;
+            let limits = ScheduledExecutionLimits::single_pass(budget)?;
             let stage = self.scheduled_model_mut().start_admitted(&message)?;
-            let reply = self.drive_scheduled(stage, budget)?;
+            let reply = self.drive_scheduled(stage, limits)?;
             let values = reply.outcomes()?;
             if values.len() != expected {
                 return Err(runtime_frame::processing_error(
@@ -811,7 +843,10 @@ mod scheduled_limits {
             .build();
         assert_eq!(commands.quantum_ops().unwrap().len(), 1);
         assert!(commands.as_bytes().len() > 16 + 128);
-        let result = system.drive_scheduled(crate::EngineStage::NeedsProcessing(commands), 1);
+        let result = system.drive_scheduled(
+            crate::EngineStage::NeedsProcessing(commands),
+            ScheduledExecutionLimits::single_pass(1).unwrap(),
+        );
         assert!(
             result
                 .err()
@@ -830,10 +865,12 @@ mod scheduled_limits {
         for budget in [0, 2, usize::MAX] {
             let mut commands = ByteMessage::quantum_operations_builder();
             commands.x(&[0]).x(&[0]).x(&[0]);
-            let result = system.drive_scheduled(
-                crate::EngineStage::NeedsProcessing(commands.build()),
-                budget,
-            );
+            let result = ScheduledExecutionLimits::single_pass(budget).and_then(|limits| {
+                system.drive_scheduled(
+                    crate::EngineStage::NeedsProcessing(commands.build()),
+                    limits,
+                )
+            });
             assert!(result.is_err());
         }
         let result = system
@@ -842,3 +879,6 @@ mod scheduled_limits {
         assert_eq!(result.outcomes().unwrap(), vec![0]);
     }
 }
+
+#[cfg(test)]
+mod scheduled_continuations;

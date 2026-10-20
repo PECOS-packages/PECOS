@@ -33,10 +33,14 @@ pub enum DemDefinitionSource {
 }
 
 /// A definition with an explicit ID, independent of its preparation method.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct DemDefinition {
     pub id: usize,
     pub source: DemDefinitionSource,
+    /// Optional detector coordinates (x, y, t). Rejected for observables.
+    pub coords: Option<[f64; 3]>,
+    /// Additional JSON fields preserved in the circuit schema.
+    pub metadata: serde_json::Map<String, serde_json::Value>,
 }
 
 impl DemDefinition {
@@ -45,6 +49,8 @@ impl DemDefinition {
         Self {
             id,
             source: DemDefinitionSource::Measurements(measurement_ids),
+            coords: None,
+            metadata: serde_json::Map::new(),
         }
     }
     #[must_use]
@@ -55,7 +61,30 @@ impl DemDefinition {
                 tag: tag.into(),
                 element,
             }),
+            coords: None,
+            metadata: serde_json::Map::new(),
         }
+    }
+
+    /// Set detector coordinates (x, y, t); all values must be finite.
+    #[must_use]
+    pub fn with_coords(mut self, coords: [f64; 3]) -> Self {
+        self.coords = Some(coords);
+        self
+    }
+
+    /// Add or replace a custom JSON field, such as `label` or `reference`.
+    ///
+    /// Identity, support, coordinates and inference provenance fields are
+    /// reserved and rejected at build time, before runtime preparation.
+    #[must_use]
+    pub fn with_metadata(
+        mut self,
+        key: impl Into<String>,
+        value: impl Into<serde_json::Value>,
+    ) -> Self {
+        self.metadata.insert(key.into(), value.into());
+        self
     }
 }
 
@@ -638,6 +667,28 @@ fn requested_outputs(
     }
     let mut outputs = Vec::new();
     for definition in definitions {
+        if let Some(coords) = definition.coords {
+            if !detectors || coords.iter().any(|value| !value.is_finite()) {
+                return Err(DemBuildError::Configuration(
+                    "coordinates require a detector and three finite values".into(),
+                ));
+            }
+        }
+        for key in [
+            "id",
+            "records",
+            "meas_ids",
+            "result_tags",
+            "coords",
+            "inferred_from_result_tag",
+            "result_element",
+        ] {
+            if definition.metadata.contains_key(key) {
+                return Err(DemBuildError::Configuration(format!(
+                    "definition metadata uses reserved key: {key}"
+                )));
+            }
+        }
         if let DemDefinitionSource::Inferred(output) = &definition.source {
             if output.tag.is_empty() {
                 return Err(DemBuildError::Configuration(
@@ -689,12 +740,25 @@ fn resolve_definitions(
                     Some(output.clone()),
                 ),
             };
+            let mut entry = definition.metadata.clone();
+            entry.insert("id".into(), serde_json::json!(definition.id));
+            entry.insert("meas_ids".into(), serde_json::json!(ids));
+            if let Some(coords) = definition.coords {
+                entry.insert("coords".into(), serde_json::json!(coords));
+            }
+            if let Some(output) = &output {
+                entry.insert(
+                    "inferred_from_result_tag".into(),
+                    serde_json::json!(output.tag),
+                );
+                entry.insert("result_element".into(), serde_json::json!(output.element));
+            }
             origins.push(DemDefinitionOrigin {
                 role,
                 id: definition.id,
                 source: output.map_or(DemAnnotationOrigin::Explicit, DemAnnotationOrigin::Inferred),
             });
-            entries.push(serde_json::json!({"id":definition.id,"meas_ids":ids}));
+            entries.push(serde_json::Value::Object(entry));
         }
         return Ok(Some(serde_json::Value::Array(entries).to_string()));
     }

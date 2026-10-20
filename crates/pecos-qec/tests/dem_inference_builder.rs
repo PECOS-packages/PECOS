@@ -270,3 +270,162 @@ fn selected_probe_widths_and_repeated_role_setters_are_rejected() {
             .is_err()
     );
 }
+
+#[test]
+fn typed_metadata_survives_explicit_inferred_and_mixed_builds() {
+    use pecos_quantum::Attribute;
+    use serde_json::{Value, json};
+
+    // Exercise both pure paths and both choices of the inferred role in a mix.
+    for (infer_detector, infer_observable) in
+        [(false, false), (true, true), (false, true), (true, false)]
+    {
+        let detector = if infer_detector {
+            DemDefinition::inferred(0, "checks", 2)
+        } else {
+            DemDefinition::explicit(0, vec![0, 1])
+        }
+        .with_coords([1.0, 2.0, 3.0])
+        .with_metadata("label", "check")
+        .with_metadata("custom", json!({"round": 7, "tags": ["memory"]}));
+        let observable = if infer_observable {
+            DemDefinition::inferred(70, "logical", 3)
+        } else {
+            DemDefinition::explicit(70, vec![0])
+        }
+        .with_metadata("label", "logical bit")
+        .with_metadata("reference", 1)
+        .with_metadata("custom", json!([false, null, 3]));
+        let noise = NoiseConfig::new(0.001, 0.01, 0.02, 0.001);
+        let mut builder = DetectorErrorModel::builder()
+            .with_circuit(circuit())
+            .with_detector_definitions(vec![detector])
+            .with_observable_definitions(vec![observable])
+            .with_noise(noise.clone())
+            .with_inference(DemInferenceSettings::default().with_validation_rows(2));
+        if infer_detector || infer_observable {
+            builder = builder.with_inference_data(probes());
+        }
+        let build = builder.build().unwrap();
+        let explicit = DetectorErrorModel::builder()
+            .with_circuit(circuit())
+            .with_detectors_json(r#"[{"id":0,"meas_ids":[0,1],"coords":[1,2,3]}]"#)
+            .with_observables_json(r#"[{"id":70,"meas_ids":[0]}]"#)
+            .with_noise(noise)
+            .build()
+            .unwrap();
+        assert_eq!(build.dem.to_string(), explicit.dem.to_string());
+        assert_eq!(
+            build.evaluate_runtime_record(&[1, 0]).unwrap(),
+            explicit.evaluate_runtime_record(&[1, 0]).unwrap()
+        );
+        assert_eq!(
+            build.inference.is_some(),
+            infer_detector || infer_observable
+        );
+        assert_eq!(
+            build.definitions.detectors[0].coords,
+            Some(vec![1.0, 2.0, 3.0])
+        );
+        assert_eq!(
+            build.definitions.detectors[0].label.as_deref(),
+            Some("check")
+        );
+        assert_eq!(
+            build.definitions.observables[0].label.as_deref(),
+            Some("logical bit")
+        );
+        assert_eq!(build.definitions.observables[0].reference, Some(1));
+        for (role, inferred, tag, element, custom) in [
+            (
+                "detectors",
+                infer_detector,
+                "checks",
+                2,
+                json!({"round":7,"tags":["memory"]}),
+            ),
+            (
+                "observables",
+                infer_observable,
+                "logical",
+                3,
+                json!([false, null, 3]),
+            ),
+        ] {
+            let Some(Attribute::String(text)) = build.circuit.get_meta(role) else {
+                panic!("missing {role} metadata");
+            };
+            let entries: Value = serde_json::from_str(text).unwrap();
+            assert_eq!(entries[0]["custom"], custom);
+            if inferred {
+                assert_eq!(entries[0]["inferred_from_result_tag"], tag);
+                assert_eq!(entries[0]["result_element"], element);
+            } else {
+                assert!(entries[0].get("inferred_from_result_tag").is_none());
+                assert!(entries[0].get("result_element").is_none());
+            }
+        }
+    }
+}
+
+struct UnexpectedProgram;
+impl DemProgram for UnexpectedProgram {
+    fn prepare(&mut self, _: &DemProgramRequest<'_>) -> Result<DemBuildInput, DemBuildError> {
+        panic!("invalid definition should fail before preparing a program");
+    }
+}
+
+#[test]
+fn invalid_typed_metadata_fails_before_runtime() {
+    for inferred in [false, true] {
+        let definition = if inferred {
+            DemDefinition::inferred(0, "checks", 0)
+        } else {
+            DemDefinition::explicit(0, vec![0])
+        };
+        for key in [
+            "id",
+            "records",
+            "meas_ids",
+            "result_tags",
+            "coords",
+            "inferred_from_result_tag",
+            "result_element",
+        ] {
+            for detectors in [false, true] {
+                let builder = DetectorErrorModel::builder()
+                    .with_program(UnexpectedProgram)
+                    .with_qubits(2);
+                let definitions = vec![definition.clone().with_metadata(key, 0)];
+                let result = if detectors {
+                    builder.with_detector_definitions(definitions)
+                } else {
+                    builder.with_observable_definitions(definitions)
+                }
+                .build();
+                assert!(
+                    matches!(result, Err(DemBuildError::Configuration(message)) if message.contains("reserved key")),
+                    "{key}"
+                );
+            }
+        }
+        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let result = DetectorErrorModel::builder()
+                .with_program(UnexpectedProgram)
+                .with_qubits(2)
+                .with_detector_definitions(vec![definition.clone().with_coords([0.0, value, 0.0])])
+                .build();
+            assert!(
+                matches!(result, Err(DemBuildError::Configuration(message)) if message.contains("finite"))
+            );
+        }
+        let result = DetectorErrorModel::builder()
+            .with_program(UnexpectedProgram)
+            .with_qubits(2)
+            .with_observable_definitions(vec![definition.with_coords([0.0, 0.0, 0.0])])
+            .build();
+        assert!(
+            matches!(result, Err(DemBuildError::Configuration(message)) if message.contains("coordinates require a detector"))
+        );
+    }
+}

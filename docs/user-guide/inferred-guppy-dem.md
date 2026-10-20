@@ -213,8 +213,10 @@ let build = DetectorErrorModel::builder()
     .with_program(adapter)
     .with_qubits(7)
     .with_detector_definitions(vec![
-        DemDefinition::explicit(0, vec![2, 3]),
-        DemDefinition::inferred(1, "checks", 3),
+        DemDefinition::explicit(0, vec![2, 3]).with_coords([0.0, 0.0, 0.0]),
+        DemDefinition::inferred(1, "checks", 3)
+            .with_coords([1.0, 0.0, 0.0])
+            .with_metadata("label", "parity check"),
     ])
     .with_observable_definitions(vec![
         DemDefinition::inferred(0, "logical", 0),
@@ -222,6 +224,13 @@ let build = DetectorErrorModel::builder()
     .with_inference(DemInferenceSettings::default().with_validation_rows(32))
     .build()?;
 ```
+
+Both definition sources support `.with_coords([x, y, t])` for detectors and
+`.with_metadata(key, value)` for custom JSON fields. Metadata is retained in
+`build.circuit`; known fields such as labels and observable references also
+appear in `build.definitions`. Coordinates must be finite. Identity, support,
+coordinates, and inference provenance keys are reserved in custom metadata;
+invalid settings fail before running a program.
 
 `DemProgramRequest` supplies the required `detector_outputs` and
 `observable_outputs`. `Some([])` skips a role; `Some(selectors)` requests exactly

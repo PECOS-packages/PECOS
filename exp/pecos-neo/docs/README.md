@@ -13,7 +13,7 @@ let circuit = CommandBuilder::new()
     .build();
 
 let results = sim_neo(circuit).auto()
-    .depolarizing(0.01)
+    .depolarizing(0.01)?
     .sampling(monte_carlo(1000))
     .seed(42)
     .run();
@@ -30,7 +30,7 @@ Everything chains off `sim_neo()`. The sections below show what you can plug in.
 The simplest option -- uniform depolarizing noise:
 
 ```rust
-sim_neo(circuit).auto().depolarizing(0.01).sampling(monte_carlo(1000)).run();
+sim_neo(circuit).auto().depolarizing(0.01)?.sampling(monte_carlo(1000)).run();
 ```
 
 Need per-channel control (single-qubit, two-qubit, measurement)?
@@ -40,7 +40,7 @@ sim_neo(circuit).auto()
     .noise(GeneralNoiseModelBuilder::new()
         .with_p1(0.001)
         .with_p2(0.01)
-        .with_p_meas_symmetric(0.005))
+        .with_p_meas_symmetric(0.005).build()?)
     .sampling(monte_carlo(1000))
     .run();
 ```
@@ -65,7 +65,7 @@ sim_neo(circuit).quantum(state_vector()).sampling(monte_carlo(1000)).run();
 Add `.workers(n)` on the sampler -- works with or without noise:
 
 ```rust
-sim_neo(circuit).auto().depolarizing(0.01).sampling(monte_carlo(10000).workers(4)).seed(42).run();
+sim_neo(circuit).auto().depolarizing(0.01)?.sampling(monte_carlo(10000).workers(4)).seed(42).run();
 ```
 
 ### Estimate rare event probabilities

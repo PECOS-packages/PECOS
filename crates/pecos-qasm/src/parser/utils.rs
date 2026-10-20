@@ -18,15 +18,18 @@ use pecos_core::prelude::{Gate, GateType, QubitId};
 ///
 /// For rotation gates (RX, RY, RZ, RZZ, RXY1Q, RXYXY2Q, U), parameters are angles in radians.
 /// For other parameterized gates (like Idle), parameters are not angles.
-fn split_parameters(gate_type: GateType, parameters: &[f64]) -> (Vec<Angle64>, Vec<f64>) {
+fn split_parameters(
+    gate_type: GateType,
+    parameters: &[f64],
+) -> Result<(Vec<Angle64>, Vec<f64>), PecosError> {
     let angle_count = gate_type.angle_arity();
     let angles: Vec<Angle64> = parameters
         .iter()
         .take(angle_count)
-        .map(|&r| Angle64::from_radians(r))
-        .collect();
+        .map(|&r| Angle64::try_from_radians(r))
+        .collect::<Result<Vec<_>, _>>()?;
     let other_params: Vec<f64> = parameters.iter().skip(angle_count).copied().collect();
-    (angles, other_params)
+    Ok((angles, other_params))
 }
 
 /// Expand all gate operations in the program to native gates
@@ -35,6 +38,18 @@ fn split_parameters(gate_type: GateType, parameters: &[f64]) -> (Vec<Angle64>, V
 ///
 /// Returns an error if gate expansion fails (e.g., circular dependencies)
 pub fn expand_gates(program: &mut Program) -> Result<(), PecosError> {
+    expand_gates_with_parameters(program, false)
+}
+
+/// Expand for a float-based interchange format without quantizing its source parameters.
+pub(crate) fn expand_gates_for_export(program: &mut Program) -> Result<(), PecosError> {
+    expand_gates_with_parameters(program, true)
+}
+
+fn expand_gates_with_parameters(
+    program: &mut Program,
+    preserve_parameters: bool,
+) -> Result<(), PecosError> {
     let mut expanded_operations = Vec::new();
 
     for operation in &program.operations {
@@ -44,8 +59,13 @@ pub fn expand_gates(program: &mut Program) -> Result<(), PecosError> {
                 parameters,
                 qubits,
             } => {
-                let expanded =
-                    expand_gate_operation(name, parameters, qubits, &program.gate_definitions)?;
+                let expanded = expand_gate_operation(
+                    name,
+                    parameters,
+                    qubits,
+                    &program.gate_definitions,
+                    preserve_parameters,
+                )?;
                 expanded_operations.extend(expanded);
             }
             Operation::RegMeasure { q_reg, c_reg } => {
@@ -74,6 +94,7 @@ pub fn expand_gates(program: &mut Program) -> Result<(), PecosError> {
                             parameters,
                             qubits,
                             &program.gate_definitions,
+                            preserve_parameters,
                         )?;
                         // Create separate If operations for each expanded gate
                         for expanded_op in expanded_inner {
@@ -120,13 +141,20 @@ fn expand_gate_operation(
     parameters: &[f64],
     qubits: &[usize],
     gate_definitions: &BTreeMap<String, GateDefinition>,
+    preserve_parameters: bool,
 ) -> Result<Vec<Operation>, PecosError> {
     // First check if it's a user-defined gate - prioritize user-defined over native
     if let Some(gate_def) = gate_definitions.get(name) {
         // Use the existing expand_gate_call function
-        expand_gate_call(gate_def, parameters, qubits, gate_definitions)
+        expand_gate_call(
+            gate_def,
+            parameters,
+            qubits,
+            gate_definitions,
+            preserve_parameters,
+        )
     } else if let Some(gate_type) = parse_native_gate(name) {
-        lower_native_gate(name, gate_type, parameters, qubits)
+        lower_native_gate(name, gate_type, parameters, qubits, preserve_parameters)
     } else if is_native_operation(name) {
         lower_special_operation(name, qubits)
     } else {
@@ -141,68 +169,58 @@ fn lower_native_gate(
     gate_type: GateType,
     parameters: &[f64],
     qubits: &[usize],
+    preserve_parameters: bool,
 ) -> Result<Vec<Operation>, PecosError> {
-    // Native gates can be uppercase or lowercase - we'll use them as native either way
-
-    // Validate parameter count
     let expected_params = gate_type.classical_arity();
     if parameters.len() != expected_params {
         return Err(wrong_param_count(name, expected_params, parameters.len()));
     }
-
-    // Handle register expansion for native gates
-    match (gate_type.quantum_arity(), qubits.len()) {
-        (1, n) if n > 1 => {
-            // Single-qubit gate applied to multiple qubits
-            let (angles, params) = split_parameters(gate_type, parameters);
-            Ok(qubits
-                .iter()
-                .map(|&qubit| {
-                    Operation::NativeGate(Gate::new(
-                        gate_type,
-                        angles.clone(),
-                        params.clone(),
-                        vec![QubitId(qubit)],
-                    ))
-                })
-                .collect())
-        }
+    let arity = gate_type.quantum_arity();
+    match (arity, qubits.len()) {
+        (1, n) if n > 1 => {}
         (2, n) if n > 2 => {
-            // Two-qubit gate applied to multiple qubits
-            if n % 2 != 0 {
+            if !n.is_multiple_of(2) {
                 return Err(invalid_operation(format!(
-                    "Two-qubit gate '{name}' applied to {n} qubits (must be even number)"
+                    "Two-qubit gate '{name}' applied to {n} qubits (must be even number); supply complete qubit pairs"
                 )));
             }
-            let (angles, params) = split_parameters(gate_type, parameters);
-            Ok((0..n)
-                .step_by(2)
-                .map(|i| {
-                    Operation::NativeGate(Gate::new(
-                        gate_type,
-                        angles.clone(),
-                        params.clone(),
-                        vec![QubitId(qubits[i]), QubitId(qubits[i + 1])],
-                    ))
-                })
-                .collect())
         }
         (expected, actual) if expected != actual => {
-            // Wrong number of qubits
-            Err(wrong_qubit_count(name, expected, actual))
+            return Err(wrong_qubit_count(name, expected, actual));
         }
-        _ => {
-            // Correct number of qubits, no expansion needed
-            let (angles, params) = split_parameters(gate_type, parameters);
-            let gate = Gate::new(
-                gate_type,
-                angles,
-                params,
-                qubits.iter().map(|&q| QubitId(q)).collect::<GateQubits>(),
-            );
-            Ok(vec![Operation::NativeGate(gate)])
-        }
+        _ => {}
     }
+    // JSON owns its float representation. Keep evaluated source values intact
+    // until the receiving engine converts them to angles exactly once.
+    if preserve_parameters {
+        for &value in parameters.iter().take(gate_type.angle_arity()) {
+            if !value.is_finite() {
+                return Err(invalid_operation(format!(
+                    "gate {name} angle {value} is not finite; use finite radians"
+                )));
+            }
+        }
+        return Ok(qubits
+            .chunks(arity)
+            .map(|chunk| Operation::Gate {
+                name: gate_type.to_string(),
+                parameters: parameters.to_vec(),
+                qubits: chunk.to_vec(),
+            })
+            .collect());
+    }
+    let (angles, params) = split_parameters(gate_type, parameters)?;
+    Ok(qubits
+        .chunks(arity)
+        .map(|chunk| {
+            Operation::NativeGate(Gate::new(
+                gate_type,
+                angles.clone(),
+                params.clone(),
+                chunk.iter().copied().map(QubitId).collect::<GateQubits>(),
+            ))
+        })
+        .collect())
 }
 
 /// Lower special operations consistently at top level and within gate bodies.
@@ -309,6 +327,7 @@ fn expand_gate_call(
     parameters: &[f64],
     qubits: &[usize],
     all_definitions: &BTreeMap<String, GateDefinition>,
+    preserve_parameters: bool,
 ) -> Result<Vec<Operation>, PecosError> {
     // Check if this is a single-qubit gate being applied to multiple qubits
     if gate_def.qargs.len() == 1 && qubits.len() > 1 {
@@ -322,6 +341,7 @@ fn expand_gate_call(
                 &single_qubit,
                 all_definitions,
                 &mut vec![gate_def.name.clone()],
+                preserve_parameters,
             )?;
             expanded.extend(gate_expanded);
         }
@@ -347,6 +367,7 @@ fn expand_gate_call(
                 &pair,
                 all_definitions,
                 &mut vec![gate_def.name.clone()],
+                preserve_parameters,
             )?;
             expanded.extend(gate_expanded);
         }
@@ -359,6 +380,7 @@ fn expand_gate_call(
             qubits,
             all_definitions,
             &mut vec![gate_def.name.clone()],
+            preserve_parameters,
         )
     }
 }
@@ -369,6 +391,7 @@ fn expand_gate_call_with_stack(
     qubits: &[usize],
     all_definitions: &BTreeMap<String, GateDefinition>,
     expansion_stack: &mut Vec<String>,
+    preserve_parameters: bool,
 ) -> Result<Vec<Operation>, PecosError> {
     let mut expanded = Vec::new();
 
@@ -456,6 +479,7 @@ fn expand_gate_call_with_stack(
                 &new_qubits,
                 all_definitions,
                 expansion_stack,
+                preserve_parameters,
             )?;
 
             expansion_stack.pop();
@@ -466,6 +490,7 @@ fn expand_gate_call_with_stack(
                 gate_type,
                 &new_params,
                 &new_qubits,
+                preserve_parameters,
             )?);
         } else if is_native_operation(&mapped_name) {
             expanded.extend(lower_special_operation(&mapped_name, &new_qubits)?);

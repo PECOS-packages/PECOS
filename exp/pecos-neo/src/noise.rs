@@ -32,7 +32,8 @@
 //! let simple = NoiseModelBuilder::new()
 //!     .with_depolarizing(0.001, 0.01)
 //!     .with_measurement_error(0.02)
-//!     .build();
+//!     .build()?;
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
 //! Mixed approach (combine builder with custom channels):
@@ -40,11 +41,12 @@
 //! ```
 //! # use pecos_neo::noise::prelude::*;
 //! // Mixed: combine both approaches
-//! let custom_channel = MeasurementChannel::symmetric(0.02);
+//! let custom_channel = MeasurementChannel::symmetric(0.02)?;
 //! let mixed = NoiseModelBuilder::new()
 //!     .with_depolarizing(0.001, 0.01)
 //!     .with_channel(custom_channel)
-//!     .build();
+//!     .build()?;
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
 //! # Architecture
@@ -137,6 +139,7 @@ pub use preparation::PreparationChannel;
 pub use single_qubit::SingleQubitChannel;
 pub use two_qubit::{AngleScaling, TwoQubitChannel};
 
+use self::validation::{ValidationResult, validate_distribution, validate_probability};
 use crate::command::GateCommand;
 use crate::command::GateType;
 use crate::extensible::GateId;
@@ -843,11 +846,11 @@ pub trait NoiseChannel: Send + Sync {
 #[derive(Debug, Clone, Copy)]
 pub struct PauliWeights {
     /// Weight for X errors.
-    pub x: f64,
+    pub(crate) x: f64,
     /// Weight for Y errors.
-    pub y: f64,
+    pub(crate) y: f64,
     /// Weight for Z errors.
-    pub z: f64,
+    pub(crate) z: f64,
 }
 
 impl Default for PauliWeights {
@@ -857,6 +860,53 @@ impl Default for PauliWeights {
 }
 
 impl PauliWeights {
+    /// Return the validated `x` weight.
+    #[must_use]
+    pub fn x(&self) -> f64 {
+        self.x
+    }
+
+    /// Return the validated `y` weight.
+    #[must_use]
+    pub fn y(&self) -> f64 {
+        self.y
+    }
+
+    /// Return the validated `z` weight.
+    #[must_use]
+    pub fn z(&self) -> f64 {
+        self.z
+    }
+
+    /// Distribution containing only Z errors.
+    #[must_use]
+    pub fn z_only() -> Self {
+        Self {
+            x: 0.0,
+            y: 0.0,
+            z: 1.0,
+        }
+    }
+
+    /// Distribution containing only X errors.
+    #[must_use]
+    pub fn x_only() -> Self {
+        Self {
+            x: 1.0,
+            y: 0.0,
+            z: 0.0,
+        }
+    }
+
+    /// Validate this distribution before use by a noise channel.
+    ///
+    /// # Errors
+    /// Rejects invalid weights or a total other than one.
+    pub fn validate(&self) -> ValidationResult<()> {
+        validate_distribution(&[self.x, self.y, self.z], "PauliWeights")?;
+        Ok(())
+    }
+
     /// Uniform distribution (1/3 each).
     #[must_use]
     pub fn uniform() -> Self {
@@ -868,39 +918,40 @@ impl PauliWeights {
     }
 
     /// Z-biased distribution (mostly dephasing).
-    #[must_use]
-    pub fn z_biased(z_weight: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn z_biased(z_weight: f64) -> ValidationResult<Self> {
+        validate_probability(z_weight, "z_weight")?;
         let remaining = 1.0 - z_weight;
-        Self {
+        Ok(Self {
             x: remaining / 2.0,
             y: remaining / 2.0,
             z: z_weight,
-        }
+        })
     }
 
     /// X-biased distribution (mostly bit-flip).
-    #[must_use]
-    pub fn x_biased(x_weight: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn x_biased(x_weight: f64) -> ValidationResult<Self> {
+        validate_probability(x_weight, "x_weight")?;
         let remaining = 1.0 - x_weight;
-        Self {
+        Ok(Self {
             x: x_weight,
             y: remaining / 2.0,
             z: remaining / 2.0,
-        }
+        })
     }
 
     /// Custom distribution.
     ///
-    /// # Panics
-    /// Panics if weights don't sum to approximately 1.0.
-    #[must_use]
-    pub fn custom(x: f64, y: f64, z: f64) -> Self {
-        let total = x + y + z;
-        assert!(
-            (total - 1.0).abs() < 1e-6,
-            "Pauli weights must sum to 1.0, got {total}"
-        );
-        Self { x, y, z }
+    /// # Errors
+    /// Rejects invalid weights or a total other than one.
+    pub fn custom(x: f64, y: f64, z: f64) -> ValidationResult<Self> {
+        validate_distribution(&[x, y, z], "PauliWeights")?;
+        Ok(Self { x, y, z })
     }
 
     /// Sample a Pauli gate type based on the weights.
@@ -944,7 +995,7 @@ pub const TWO_QUBIT_PAULIS: [(GateType, GateType); 15] = [
 #[derive(Debug, Clone)]
 pub struct TwoQubitPauliWeights {
     /// Weights for each of the 15 two-qubit Pauli operators.
-    pub weights: [f64; 15],
+    pub(crate) weights: [f64; 15],
 }
 
 impl Default for TwoQubitPauliWeights {
@@ -954,6 +1005,21 @@ impl Default for TwoQubitPauliWeights {
 }
 
 impl TwoQubitPauliWeights {
+    /// Return the validated `weights` weight.
+    #[must_use]
+    pub fn weights(&self) -> [f64; 15] {
+        self.weights
+    }
+
+    /// Validate this distribution before use by a noise channel.
+    ///
+    /// # Errors
+    /// Rejects invalid weights or a total other than one.
+    pub fn validate(&self) -> ValidationResult<()> {
+        validate_distribution(&self.weights, "TwoQubitPauliWeights")?;
+        Ok(())
+    }
+
     /// Uniform distribution (1/15 each).
     #[must_use]
     pub fn uniform() -> Self {
@@ -964,28 +1030,26 @@ impl TwoQubitPauliWeights {
 
     /// Create from custom weights.
     ///
-    /// # Panics
-    /// Panics if weights don't sum to approximately 1.0.
-    #[must_use]
-    pub fn custom(weights: [f64; 15]) -> Self {
-        let total: f64 = weights.iter().sum();
-        assert!(
-            (total - 1.0).abs() < 1e-6,
-            "Two-qubit Pauli weights must sum to 1.0, got {total}"
-        );
-        Self { weights }
+    /// # Errors
+    /// Rejects invalid weights or a total other than one.
+    pub fn custom(weights: [f64; 15]) -> ValidationResult<Self> {
+        validate_distribution(&weights, "TwoQubitPauliWeights")?;
+        Ok(Self { weights })
     }
 
     /// Create Z-biased weights (more dephasing on both qubits).
     ///
     /// Weight for ZZ is `zz_weight`, remaining weight is distributed uniformly.
-    #[must_use]
-    pub fn zz_biased(zz_weight: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn zz_biased(zz_weight: f64) -> ValidationResult<Self> {
+        validate_probability(zz_weight, "zz_weight")?;
         let remaining = 1.0 - zz_weight;
         let other = remaining / 14.0;
         let mut weights = [other; 15];
         weights[14] = zz_weight; // ZZ is at index 14
-        Self { weights }
+        Ok(Self { weights })
     }
 
     /// Sample a two-qubit Pauli operator based on the weights.
@@ -1034,13 +1098,13 @@ pub enum SingleQubitEmissionResult {
 #[derive(Debug, Clone, Copy)]
 pub struct SingleQubitEmissionWeights {
     /// Weight for X errors.
-    pub x: f64,
+    pub(crate) x: f64,
     /// Weight for Y errors.
-    pub y: f64,
+    pub(crate) y: f64,
     /// Weight for Z errors.
-    pub z: f64,
+    pub(crate) z: f64,
     /// Weight for leakage.
-    pub leak: f64,
+    pub(crate) leak: f64,
 }
 
 impl Default for SingleQubitEmissionWeights {
@@ -1050,6 +1114,42 @@ impl Default for SingleQubitEmissionWeights {
 }
 
 impl SingleQubitEmissionWeights {
+    /// Return the validated `x` weight.
+    #[must_use]
+    pub fn x(&self) -> f64 {
+        self.x
+    }
+
+    /// Return the validated `y` weight.
+    #[must_use]
+    pub fn y(&self) -> f64 {
+        self.y
+    }
+
+    /// Return the validated `z` weight.
+    #[must_use]
+    pub fn z(&self) -> f64 {
+        self.z
+    }
+
+    /// Return the validated `leak` weight.
+    #[must_use]
+    pub fn leak(&self) -> f64 {
+        self.leak
+    }
+
+    /// Validate this distribution before use by a noise channel.
+    ///
+    /// # Errors
+    /// Rejects invalid weights or a total other than one.
+    pub fn validate(&self) -> ValidationResult<()> {
+        validate_distribution(
+            &[self.x, self.y, self.z, self.leak],
+            "SingleQubitEmissionWeights",
+        )?;
+        Ok(())
+    }
+
     /// Uniform distribution over Pauli errors (no leakage).
     #[must_use]
     pub fn uniform() -> Self {
@@ -1085,16 +1185,11 @@ impl SingleQubitEmissionWeights {
 
     /// Custom distribution.
     ///
-    /// # Panics
-    /// Panics if weights don't sum to approximately 1.0.
-    #[must_use]
-    pub fn custom(x: f64, y: f64, z: f64, leak: f64) -> Self {
-        let total = x + y + z + leak;
-        assert!(
-            (total - 1.0).abs() < 1e-6,
-            "Single-qubit emission weights must sum to 1.0, got {total}"
-        );
-        Self { x, y, z, leak }
+    /// # Errors
+    /// Rejects invalid weights or a total other than one.
+    pub fn custom(x: f64, y: f64, z: f64, leak: f64) -> ValidationResult<Self> {
+        validate_distribution(&[x, y, z, leak], "SingleQubitEmissionWeights")?;
+        Ok(Self { x, y, z, leak })
     }
 
     /// Sample an emission result based on the weights.
@@ -1180,7 +1275,7 @@ pub const TWO_QUBIT_EMISSION_OPS: [(char, char); 24] = [
 #[derive(Debug, Clone)]
 pub struct TwoQubitEmissionWeights {
     /// Weights for each of the 24 two-qubit emission operators.
-    pub weights: [f64; 24],
+    pub(crate) weights: [f64; 24],
 }
 
 impl Default for TwoQubitEmissionWeights {
@@ -1190,6 +1285,21 @@ impl Default for TwoQubitEmissionWeights {
 }
 
 impl TwoQubitEmissionWeights {
+    /// Return the validated `weights` weight.
+    #[must_use]
+    pub fn weights(&self) -> [f64; 24] {
+        self.weights
+    }
+
+    /// Validate this distribution before use by a noise channel.
+    ///
+    /// # Errors
+    /// Rejects invalid weights or a total other than one.
+    pub fn validate(&self) -> ValidationResult<()> {
+        validate_distribution(&self.weights, "TwoQubitEmissionWeights")?;
+        Ok(())
+    }
+
     /// Uniform distribution over Pauli errors only (no leakage).
     ///
     /// Matches the 15 non-identity two-qubit Pauli operators.
@@ -1214,16 +1324,11 @@ impl TwoQubitEmissionWeights {
 
     /// Create from custom weights.
     ///
-    /// # Panics
-    /// Panics if weights don't sum to approximately 1.0.
-    #[must_use]
-    pub fn custom(weights: [f64; 24]) -> Self {
-        let total: f64 = weights.iter().sum();
-        assert!(
-            (total - 1.0).abs() < 1e-6,
-            "Two-qubit emission weights must sum to 1.0, got {total}"
-        );
-        Self { weights }
+    /// # Errors
+    /// Rejects invalid weights or a total other than one.
+    pub fn custom(weights: [f64; 24]) -> ValidationResult<Self> {
+        validate_distribution(&weights, "TwoQubitEmissionWeights")?;
+        Ok(Self { weights })
     }
 
     /// Sample a two-qubit emission operator based on the weights.
@@ -1299,17 +1404,17 @@ pub enum CrosstalkResult {
 #[derive(Debug, Clone, Copy)]
 pub struct CrosstalkTransitions {
     /// Probability of staying at 0 when starting at 0.
-    pub from_0_stay: f64,
+    pub(crate) zero_stay: f64,
     /// Probability of flipping to 1 when starting at 0.
-    pub from_0_flip: f64,
+    pub(crate) zero_flip: f64,
     /// Probability of leaking when starting at 0.
-    pub from_0_leak: f64,
+    pub(crate) zero_leak: f64,
     /// Probability of staying at 1 when starting at 1.
-    pub from_1_stay: f64,
+    pub(crate) one_stay: f64,
     /// Probability of flipping to 0 when starting at 1.
-    pub from_1_flip: f64,
+    pub(crate) one_flip: f64,
     /// Probability of leaking when starting at 1.
-    pub from_1_leak: f64,
+    pub(crate) one_leak: f64,
 }
 
 impl Default for CrosstalkTransitions {
@@ -1319,16 +1424,68 @@ impl Default for CrosstalkTransitions {
 }
 
 impl CrosstalkTransitions {
+    /// Return the validated `from_0_stay` weight.
+    #[must_use]
+    pub fn from_0_stay(&self) -> f64 {
+        self.zero_stay
+    }
+
+    /// Return the validated `from_0_flip` weight.
+    #[must_use]
+    pub fn from_0_flip(&self) -> f64 {
+        self.zero_flip
+    }
+
+    /// Return the validated `from_0_leak` weight.
+    #[must_use]
+    pub fn from_0_leak(&self) -> f64 {
+        self.zero_leak
+    }
+
+    /// Return the validated `from_1_stay` weight.
+    #[must_use]
+    pub fn from_1_stay(&self) -> f64 {
+        self.one_stay
+    }
+
+    /// Return the validated `from_1_flip` weight.
+    #[must_use]
+    pub fn from_1_flip(&self) -> f64 {
+        self.one_flip
+    }
+
+    /// Return the validated `from_1_leak` weight.
+    #[must_use]
+    pub fn from_1_leak(&self) -> f64 {
+        self.one_leak
+    }
+
+    /// Validate this distribution before use by a noise channel.
+    ///
+    /// # Errors
+    /// Rejects invalid weights or a total other than one.
+    pub fn validate(&self) -> ValidationResult<()> {
+        validate_distribution(
+            &[self.zero_stay, self.zero_flip, self.zero_leak],
+            "CrosstalkTransitions from 0",
+        )?;
+        validate_distribution(
+            &[self.one_stay, self.one_flip, self.one_leak],
+            "CrosstalkTransitions from 1",
+        )?;
+        Ok(())
+    }
+
     /// Simple flip model: 50% chance to flip, no leakage.
     #[must_use]
     pub fn flip_only() -> Self {
         Self {
-            from_0_stay: 0.5,
-            from_0_flip: 0.5,
-            from_0_leak: 0.0,
-            from_1_stay: 0.5,
-            from_1_flip: 0.5,
-            from_1_leak: 0.0,
+            zero_stay: 0.5,
+            zero_flip: 0.5,
+            zero_leak: 0.0,
+            one_stay: 0.5,
+            one_flip: 0.5,
+            one_leak: 0.0,
         }
     }
 
@@ -1338,20 +1495,19 @@ impl CrosstalkTransitions {
     #[must_use]
     pub fn symmetric_with_leakage() -> Self {
         Self {
-            from_0_stay: 1.0 / 3.0,
-            from_0_flip: 1.0 / 3.0,
-            from_0_leak: 1.0 / 3.0,
-            from_1_stay: 1.0 / 3.0,
-            from_1_flip: 1.0 / 3.0,
-            from_1_leak: 1.0 / 3.0,
+            zero_stay: 1.0 / 3.0,
+            zero_flip: 1.0 / 3.0,
+            zero_leak: 1.0 / 3.0,
+            one_stay: 1.0 / 3.0,
+            one_flip: 1.0 / 3.0,
+            one_leak: 1.0 / 3.0,
         }
     }
 
     /// Custom transitions.
     ///
-    /// # Panics
-    /// Panics if probabilities for either starting state don't sum to approximately 1.0.
-    #[must_use]
+    /// # Errors
+    /// Rejects invalid probabilities or a total other than one for either state.
     pub fn custom(
         from_0_stay: f64,
         from_0_flip: f64,
@@ -1359,25 +1515,23 @@ impl CrosstalkTransitions {
         from_1_stay: f64,
         from_1_flip: f64,
         from_1_leak: f64,
-    ) -> Self {
-        let total_0 = from_0_stay + from_0_flip + from_0_leak;
-        let total_1 = from_1_stay + from_1_flip + from_1_leak;
-        assert!(
-            (total_0 - 1.0).abs() < 1e-6,
-            "Crosstalk transitions from 0 must sum to 1.0, got {total_0}"
-        );
-        assert!(
-            (total_1 - 1.0).abs() < 1e-6,
-            "Crosstalk transitions from 1 must sum to 1.0, got {total_1}"
-        );
-        Self {
-            from_0_stay,
-            from_0_flip,
-            from_0_leak,
-            from_1_stay,
-            from_1_flip,
-            from_1_leak,
-        }
+    ) -> ValidationResult<Self> {
+        validate_distribution(
+            &[from_0_stay, from_0_flip, from_0_leak],
+            "CrosstalkTransitions from 0",
+        )?;
+        validate_distribution(
+            &[from_1_stay, from_1_flip, from_1_leak],
+            "CrosstalkTransitions from 1",
+        )?;
+        Ok(Self {
+            zero_stay: from_0_stay,
+            zero_flip: from_0_flip,
+            zero_leak: from_0_leak,
+            one_stay: from_1_stay,
+            one_flip: from_1_flip,
+            one_leak: from_1_leak,
+        })
     }
 
     /// Sample a crosstalk result based on the qubit's current state.
@@ -1389,18 +1543,18 @@ impl CrosstalkTransitions {
     pub fn sample(&self, current_state: bool, r: f64) -> CrosstalkResult {
         if current_state {
             // Starting from 1
-            if r < self.from_1_stay {
+            if r < self.one_stay {
                 CrosstalkResult::NoChange
-            } else if r < self.from_1_stay + self.from_1_flip {
+            } else if r < self.one_stay + self.one_flip {
                 CrosstalkResult::Flip
             } else {
                 CrosstalkResult::Leak
             }
         } else {
             // Starting from 0
-            if r < self.from_0_stay {
+            if r < self.zero_stay {
                 CrosstalkResult::NoChange
-            } else if r < self.from_0_stay + self.from_0_flip {
+            } else if r < self.zero_stay + self.zero_flip {
                 CrosstalkResult::Flip
             } else {
                 CrosstalkResult::Leak
@@ -1507,7 +1661,7 @@ mod tests {
 
     #[test]
     fn test_two_qubit_pauli_weights_zz_biased() {
-        let weights = TwoQubitPauliWeights::zz_biased(0.5);
+        let weights = TwoQubitPauliWeights::zz_biased(0.5).unwrap();
 
         // ZZ (index 14) should have 50% weight
         assert!((weights.weights[14] - 0.5).abs() < 1e-10);

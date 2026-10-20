@@ -124,10 +124,10 @@ fn repetition_code_fault_enumeration() {
         let kind = match &ann.kind {
             pecos_quantum::AnnotationKind::Detector { .. } => "detector",
             pecos_quantum::AnnotationKind::Observable { .. } => "observable",
-            pecos_quantum::AnnotationKind::TrackedPauli => "tracked_pauli",
+            pecos_quantum::AnnotationKind::TrackedPauli { .. } => "tracked_pauli",
         };
         let label = ann.label.as_deref().unwrap_or("(none)");
-        println!("  {kind:10} {label:15} {}", ann.pauli);
+        println!("  {kind:10} {label:15} {:?}", ann.kind);
     }
 
     // Build influence map (InfluenceBuilder handles annotations)
@@ -155,7 +155,7 @@ fn repetition_code_fault_enumeration() {
     for (i, loc) in locs.iter().enumerate() {
         let timing = if loc.before { "before" } else { "after" };
         let qubit_list: Vec<usize> = loc.qubits.iter().map(pecos_core::QubitId::index).collect();
-        let num_faults = loc.possible_faults().len();
+        let num_faults = loc.possible_faults().unwrap().len();
         println!(
             "  loc {i:2}: {:3?} {timing:6} qubits={qubit_list:?} ({num_faults} faults)",
             loc.gate_type
@@ -177,7 +177,8 @@ fn repetition_code_fault_enumeration() {
             (false, true) => w1_undetectable += 1,
             (false, false) => w1_trivial += 1,
         }
-    });
+    })
+    .unwrap();
     println!("\n--- Weight-1 faults ---");
     println!("  Total:        {w1_total}");
     println!("  Detectable:   {w1_detectable}");
@@ -206,7 +207,8 @@ fn repetition_code_fault_enumeration() {
             (false, true) => w2_undetectable += 1,
             (false, false) => w2_trivial += 1,
         }
-    });
+    })
+    .unwrap();
     println!("\n--- Weight-2 faults ---");
     println!("  Total:        {w2_total}");
     println!("  Detectable:   {w2_detectable}");
@@ -254,7 +256,8 @@ fn repetition_code_fault_enumeration() {
             }
             (false, false) => w3_trivial += 1,
         }
-    });
+    })
+    .unwrap();
     println!("\n--- Weight-3 faults ---");
     println!("  Total:        {w3_total}");
     println!("  Detectable:   {w3_detectable}");
@@ -283,7 +286,7 @@ fn repetition_code_fault_enumeration() {
     if let Some(loc) = first_cx_loc {
         let qubit_list: Vec<usize> = loc.qubits.iter().map(pecos_core::QubitId::index).collect();
         println!("  CX after, qubits={qubit_list:?}:");
-        for event in loc.events() {
+        for event in loc.events().unwrap() {
             if !event.detectors.is_empty() || !event.dem_outputs.is_empty() {
                 println!(
                     "    {} -> dets={:?} dem_outputs={:?} meas={:?}",
@@ -322,7 +325,7 @@ fn repetition_code_labels() {
     let locs = map.gate_fault_locations();
     let mut found_labeled_event = false;
     for loc in &locs {
-        for event in loc.events() {
+        for event in loc.events().unwrap() {
             for &output_idx in &event.dem_outputs {
                 if let Some(label) = map.dem_output_label(output_idx as usize) {
                     println!("  {} at {:?} flips {label}", event.pauli, loc.gate_type);
@@ -362,7 +365,8 @@ fn repetition_code_lookup_table() {
                 .or_default()
                 .push(combo.effect.pauli.clone());
         }
-    });
+    })
+    .unwrap();
 
     println!("Lookup table (weight-1 syndromes):");
     for (syndrome, faults) in &lookup {
@@ -395,7 +399,7 @@ fn repetition_code_ml_decoder() {
         .expect("circuit is replayable");
 
     // Build ML decoder from fault enumeration up to weight 3
-    let decoder = LookupDecoder::build(&map, &noise, 3);
+    let decoder = LookupDecoder::build(&map, &noise, 3).unwrap();
 
     println!("ML Decoder:");
     println!("  Syndrome patterns: {}", decoder.num_syndromes());
@@ -474,7 +478,7 @@ fn decoder_empty_syndrome() {
         .build()
         .expect("circuit is replayable");
 
-    let decoder = LookupDecoder::build(&map, &noise, 2);
+    let decoder = LookupDecoder::build(&map, &noise, 2).unwrap();
 
     // Empty syndrome = no detectors fired = most likely no error
     let result = decoder.decode(&[]);
@@ -501,9 +505,9 @@ fn decoder_table_size_and_truncation() {
         .build()
         .expect("circuit is replayable");
 
-    let d1 = LookupDecoder::build(&map, &noise, 1);
-    let d2 = LookupDecoder::build(&map, &noise, 2);
-    let d3 = LookupDecoder::build(&map, &noise, 3);
+    let d1 = LookupDecoder::build(&map, &noise, 1).unwrap();
+    let d2 = LookupDecoder::build(&map, &noise, 2).unwrap();
+    let d3 = LookupDecoder::build(&map, &noise, 3).unwrap();
 
     println!(
         "Weight 1: {} syndromes, accounted={:.8}, truncation={:.2e}",
@@ -666,10 +670,10 @@ fn code_422_fault_enumeration() {
         let kind = match &ann.kind {
             pecos_quantum::AnnotationKind::Detector { .. } => "detector",
             pecos_quantum::AnnotationKind::Observable { .. } => "observable",
-            pecos_quantum::AnnotationKind::TrackedPauli => "tracked_pauli",
+            pecos_quantum::AnnotationKind::TrackedPauli { .. } => "tracked_pauli",
         };
         let label = ann.label.as_deref().unwrap_or("(none)");
-        println!("  {kind:10} {label:15} {}", ann.pauli);
+        println!("  {kind:10} {label:15} {:?}", ann.kind);
     }
 
     // Build influence map
@@ -724,7 +728,8 @@ fn code_422_fault_enumeration() {
             }
             (false, false) => w1_trivial += 1,
         }
-    });
+    })
+    .unwrap();
 
     println!("\n--- Weight-1 faults ---");
     println!("  Total:        {w1_total}");
@@ -759,7 +764,7 @@ fn code_422_ml_decoder() {
         .expect("circuit is replayable");
 
     // Build ML decoder up to weight 2
-    let decoder = LookupDecoder::build(&map, &noise, 2);
+    let decoder = LookupDecoder::build(&map, &noise, 2).unwrap();
 
     println!("[[4,2,2]] ML Decoder:");
     println!("  Syndrome patterns: {}", decoder.num_syndromes());

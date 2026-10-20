@@ -1,5 +1,6 @@
 pub mod ast;
 pub mod classical_interpreter;
+pub mod classical_validation;
 pub(crate) mod declarations;
 pub mod engine;
 pub mod foreign_objects;
@@ -31,11 +32,7 @@ impl PhirImplementation for V0_1 {
     type Engine = engine::PhirJsonEngine;
 
     fn parse_program(json: &str) -> Result<Self::Program, PecosError> {
-        let program: Self::Program = serde_json::from_str(json).map_err(|e| {
-            PecosError::Input(format!(
-                "Failed to parse PHIR-JSON program: Invalid JSON format: {e}"
-            ))
-        })?;
+        let program = ast::PHIRProgram::from_json(json)?;
 
         if program.format != "PHIR/JSON" {
             return Err(PecosError::Input(format!(

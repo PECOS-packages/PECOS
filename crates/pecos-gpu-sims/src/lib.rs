@@ -49,10 +49,13 @@ mod gpu_sampler;
 mod gpu_stab;
 mod gpu_stab_multi;
 pub mod prelude;
+mod qubit_validation;
 pub mod state_access;
 
 #[cfg(test)]
 mod gpu_sampler_validation;
+#[cfg(test)]
+mod qubit_bounds_tests;
 
 pub use circuit_compiler::{CompiledCircuit, Gate as CompiledGate, GateType};
 pub use gpu::{GpuError, GpuStateVec32, RequiredFeature};
@@ -81,7 +84,7 @@ pub use gpu_noisy_sampler::{
 pub use gpu_pauli_prop::GpuPauliProp;
 pub use gpu_sampler::{GpuMeasurementSampler, GpuSampleResult};
 pub use gpu_stab::GpuStab;
-pub use gpu_stab_multi::GpuStabMulti;
+pub use gpu_stab_multi::{DEFAULT_MEMORY_BUDGET_BYTES, GpuStabMulti};
 pub use state_access::{GpuDensityMatrixHostAccess, GpuStateVectorHostAccess};
 
 /// Default GPU stabilizer simulator using `PecosRng`

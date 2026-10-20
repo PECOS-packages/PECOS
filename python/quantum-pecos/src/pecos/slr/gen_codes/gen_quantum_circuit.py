@@ -117,6 +117,13 @@ class QuantumCircuitGenerator(Generator):
         if block_name in ("If", "While"):
             reject_permute_in_region(block, "QuantumCircuitGenerator")
 
+        if block_name == "If":
+            msg = (
+                "If cannot be converted to QuantumCircuit format: the generated circuit records no "
+                "classical results, so there is no condition to attach to the branch operations. "
+                "Use the QASM, QIR or Guppy targets for programs with conditionals."
+            )
+            raise NotImplementedError(msg)
         if block_name == "While":
             # While loops cannot be statically unrolled in QuantumCircuit format
             # This would require runtime evaluation which QuantumCircuit doesn't support
@@ -189,14 +196,6 @@ class QuantumCircuitGenerator(Generator):
             for _ in range(block.cond):
                 for op in block.ops:
                     self._handle_op(op)
-        elif block_name == "If":
-            # Conditional blocks - process both branches
-            self._flush_tick()
-            if hasattr(block, "then_block"):
-                self._handle_block(block.then_block)
-            if hasattr(block, "else_block") and block.else_block:
-                self._flush_tick()
-                self._handle_block(block.else_block)
         elif block_name == "Parallel":
             # Parallel operations stay in same tick
             for op in block.ops:

@@ -202,14 +202,14 @@ impl fmt::Display for QubitConflictError {
         if let Some(idx) = self.tick_idx {
             write!(
                 f,
-                "Qubit(s) {} already in use in tick {}",
+                "Qubit(s) {} already in use in tick {}; move the conflicting gate to another tick",
                 qubits.join(", "),
                 idx
             )
         } else {
             write!(
                 f,
-                "Qubit(s) {} already in use in this tick",
+                "Qubit(s) {} already in use in this tick; move the conflicting gate to another tick",
                 qubits.join(", ")
             )
         }
@@ -335,6 +335,7 @@ impl From<TickGateError> for CustomGateError {
 #[derive(Debug, Clone, Default)]
 struct TickGateStorage {
     commands: Vec<Gate>,
+    qubit_batches: BTreeMap<QubitId, usize>,
 }
 
 impl TickGateStorage {
@@ -359,15 +360,51 @@ impl TickGateStorage {
     }
 
     fn push(&mut self, gate: Gate) {
+        let idx = self.commands.len();
+        self.qubit_batches
+            .extend(gate.qubits.iter().map(|&q| (q, idx)));
         self.commands.push(gate);
     }
 
     fn set(&mut self, idx: usize, gate: Gate) {
+        for q in &self.commands[idx].qubits {
+            self.qubit_batches.remove(q);
+        }
+        self.qubit_batches
+            .extend(gate.qubits.iter().map(|&q| (q, idx)));
         self.commands[idx] = gate;
     }
 
     fn remove(&mut self, idx: usize) -> Gate {
-        self.commands.remove(idx)
+        let gate = self.commands.remove(idx);
+        for q in &gate.qubits {
+            // A merge may already have moved this qubit to its surviving batch.
+            if self.qubit_batches.get(q) == Some(&idx) {
+                self.qubit_batches.remove(q);
+            }
+        }
+        if idx < self.commands.len() {
+            for batch in self.qubit_batches.values_mut() {
+                if *batch > idx {
+                    *batch -= 1;
+                }
+            }
+        }
+        gate
+    }
+
+    fn retain_batches(&mut self, new_indices: &[Option<usize>]) {
+        let mut indices = new_indices.iter();
+        self.commands
+            .retain(|_| indices.next().is_some_and(Option::is_some));
+        self.qubit_batches.retain(|_, index| {
+            if let Some(new_index) = new_indices[*index] {
+                *index = new_index;
+                true
+            } else {
+                false
+            }
+        });
     }
 
     fn append_batch(&mut self, idx: usize, gate: Gate) {
@@ -375,10 +412,15 @@ impl TickGateStorage {
             self.commands[idx].can_batch_with(&gate),
             "cannot merge incompatible gate batches"
         );
+        self.qubit_batches
+            .extend(gate.qubits.iter().map(|&q| (q, idx)));
         self.commands[idx].append_batch(gate);
     }
 
     fn truncate_payload(&mut self, idx: usize, qubit_len: usize, meas_id_len: usize) {
+        for q in &self.commands[idx].qubits[qubit_len..] {
+            self.qubit_batches.remove(q);
+        }
         self.commands[idx].qubits.truncate(qubit_len);
         self.commands[idx].meas_ids.truncate(meas_id_len);
     }
@@ -961,6 +1003,11 @@ impl Tick {
         self.attrs.insert(key.to_string(), value);
     }
 
+    /// Remove tick-level metadata, returning its previous value if present.
+    pub fn remove_attr(&mut self, key: &str) -> Option<Attribute> {
+        self.attrs.remove(key)
+    }
+
     /// Set multiple tick-level metadata attributes at once.
     pub fn set_attrs(&mut self, attrs: BTreeMap<String, Attribute>) {
         self.attrs.extend(attrs);
@@ -988,21 +1035,22 @@ impl Tick {
 
     /// Get the set of qubits used in this tick.
     ///
-    /// This is computed lazily by iterating through all gates.
+    /// Uses the maintained per-qubit batch index.
     #[must_use]
     pub fn active_qubits(&self) -> BTreeSet<QubitId> {
-        self.gate_batches
-            .iter()
-            .flat_map(|gate| gate.qubits.iter().copied())
-            .collect()
+        self.gate_batches.qubit_batches.keys().copied().collect()
+    }
+
+    /// Look up the stored batch occupying a qubit in O(log n) time.
+    #[must_use]
+    pub fn gate_on_qubit(&self, qubit: QubitId) -> Option<usize> {
+        self.gate_batches.qubit_batches.get(&qubit).copied()
     }
 
     /// Check if a specific qubit is already in use in this tick.
     #[must_use]
     pub fn uses_qubit(&self, qubit: QubitId) -> bool {
-        self.gate_batches
-            .iter()
-            .any(|gate| gate.qubits.contains(&qubit))
+        self.gate_on_qubit(qubit).is_some()
     }
 
     /// Check if any of the given qubits are already in use in this tick.
@@ -1010,10 +1058,9 @@ impl Tick {
     /// Returns the conflicting qubits if any.
     #[must_use]
     pub fn find_conflicts(&self, qubits: &[QubitId]) -> Vec<QubitId> {
-        let active = self.active_qubits();
         qubits
             .iter()
-            .filter(|q| active.contains(q))
+            .filter(|q| self.uses_qubit(**q))
             .copied()
             .collect()
     }
@@ -1053,6 +1100,42 @@ impl Tick {
     /// by another gate in this tick.
     pub fn try_add_gate(&mut self, gate: Gate) -> Result<usize, TickGateError> {
         self.try_add_gate_piece(gate).map(|piece| piece.gate_idx)
+    }
+
+    /// Insert complete gate batches atomically, preserving command boundaries.
+    ///
+    /// Checks every payload and qubit, including overlaps between input batches,
+    /// before inserting anything. Unlike `try_add_gate`, this does not coalesce
+    /// batches, so returned indices remain suitable for per-command metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidGate` for invalid payloads or `QubitConflict` for overlaps.
+    pub fn try_add_gates(&mut self, gates: Vec<Gate>) -> Result<Vec<usize>, TickGateError> {
+        let mut requested = BTreeSet::new();
+        for gate in &gates {
+            gate.validate()
+                .map_err(|message| TickGateError::InvalidGate {
+                    message,
+                    tick_idx: None,
+                })?;
+            let conflicts: Vec<_> = gate
+                .qubits
+                .iter()
+                .copied()
+                .filter(|q| self.uses_qubit(*q) || !requested.insert(*q))
+                .collect();
+            if !conflicts.is_empty() {
+                return Err(TickGateError::QubitConflict(QubitConflictError {
+                    conflicting_qubits: conflicts,
+                    tick_idx: None,
+                }));
+            }
+        }
+        Ok(gates
+            .into_iter()
+            .map(|gate| self.push_gate_unchecked(gate))
+            .collect())
     }
 
     fn try_add_gate_piece(&mut self, gate: Gate) -> Result<GateBatchPiece, TickGateError> {
@@ -1103,17 +1186,10 @@ impl Tick {
                 tick_idx: None,
             })?;
 
-        let mut active = BTreeSet::new();
-        for (idx, existing) in self.gate_batches.iter().enumerate() {
-            if idx == gate_idx {
-                continue;
-            }
-            active.extend(existing.qubits.iter().copied());
-        }
         let conflicts: Vec<QubitId> = gate
             .qubits
             .iter()
-            .filter(|q| active.contains(q))
+            .filter(|q| self.gate_on_qubit(**q).is_some_and(|idx| idx != gate_idx))
             .copied()
             .collect();
         if !conflicts.is_empty() {
@@ -1170,29 +1246,41 @@ impl Tick {
     /// assert_eq!(tick.len(), 1);  // Only X on q1 remains
     /// ```
     pub fn discard(&mut self, qubits: &[QubitId]) -> usize {
-        let qubits_set: BTreeSet<_> = qubits.iter().copied().collect();
-
-        // Find indices of gates to remove (those using any of the specified qubits)
-        let indices_to_remove: Vec<usize> = self
-            .gate_batches
+        let indices: Vec<_> = qubits
             .iter()
-            .enumerate()
-            .filter(|(_, gate)| gate.qubits.iter().any(|q| qubits_set.contains(q)))
-            .map(|(idx, _)| idx)
+            .filter_map(|q| self.gate_on_qubit(*q))
             .collect();
+        self.remove_gates(&indices)
+    }
 
-        let removed_count = indices_to_remove.len();
-
-        if removed_count == 0 {
+    /// Remove batches at the given indices, preserving the order of survivors.
+    ///
+    /// Duplicate and out-of-bounds indices are ignored. Returns the number of
+    /// batches removed. Commands, attributes and the qubit index are compacted
+    /// once, in linear time in the tick size plus the number of supplied indices.
+    pub fn remove_gates(&mut self, indices: &[usize]) -> usize {
+        if indices.is_empty() {
             return 0;
         }
-
-        // Remove gates in reverse order to preserve indices
-        for &idx in indices_to_remove.iter().rev() {
-            let _ = self.remove_gate(idx);
+        let mut new_indices: Vec<_> = (0..self.len()).map(Some).collect();
+        for &index in indices {
+            if let Some(entry) = new_indices.get_mut(index) {
+                *entry = None;
+            }
         }
-
-        removed_count
+        let mut retained = 0;
+        for index in new_indices.iter_mut().flatten() {
+            *index = retained;
+            retained += 1;
+        }
+        let removed = self.gate_batches.len() - retained;
+        if removed != 0 {
+            self.gate_batches.retain_batches(&new_indices);
+            let mut indices = new_indices.iter();
+            self.batch_attrs
+                .retain(|_| indices.next().is_some_and(Option::is_some));
+        }
+        removed
     }
 
     /// Remove a specific gate by index.
@@ -1306,6 +1394,45 @@ impl std::fmt::Display for TickAnnotationRefError {
 }
 
 impl std::error::Error for TickAnnotationRefError {}
+
+/// Why a measurement identity cannot be resolved in a tick circuit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TickMeasResolveError {
+    /// No gate holds this identity. Tick circuits do not retain removal tombstones.
+    Unknown(MeasId),
+    /// More than one entry holds this identity, or it has no corresponding qubit.
+    Inconsistent(MeasId),
+    /// The holder produces no measurement record.
+    RecordLess {
+        id: MeasId,
+        tick: usize,
+        gate_idx: usize,
+    },
+}
+
+impl fmt::Display for TickMeasResolveError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unknown(id) => write!(
+                f,
+                "MeasId({}) does not name a measurement in this circuit; use a MeasId returned by this circuit",
+                id.index()
+            ),
+            Self::Inconsistent(id) => write!(
+                f,
+                "MeasId({}) has inconsistent measurement holders; assign each MeasId to exactly one record-consuming measurement",
+                id.index()
+            ),
+            Self::RecordLess { id, tick, gate_idx } => write!(
+                f,
+                "MeasId({}) at tick {tick}, batch {gate_idx} consumes no measurement record; refer to a measurement that produces a record",
+                id.index()
+            ),
+        }
+    }
+}
+
+impl std::error::Error for TickMeasResolveError {}
 
 #[derive(Debug, Clone, Default)]
 pub struct TickCircuit {
@@ -1567,10 +1694,7 @@ impl TickCircuit {
     pub fn meas_ref(&self, tick: usize, gate_idx: usize, qubit: QubitId) -> Option<TickMeasRef> {
         let batch = self.get_tick(tick)?.iter_gate_batches().nth(gate_idx)?;
         let gate = batch.as_gate();
-        if !matches!(
-            gate.gate_type,
-            GateType::MX | GateType::MZ | GateType::MeasureFree | GateType::MPZ
-        ) {
+        if !gate.gate_type.consumes_measurement_record() {
             return None;
         }
         let position = gate.qubits.iter().position(|&q| q == qubit)?;
@@ -1581,6 +1705,81 @@ impl TickCircuit {
             qubit,
             meas_id,
         })
+    }
+
+    /// Resolves a measurement identity to its gate's Pauli basis and qubit.
+    ///
+    /// # Errors
+    /// Rejects unknown identities, duplicate or malformed holders, and record-less gates.
+    pub fn measured_pauli(
+        &self,
+        id: MeasId,
+    ) -> Result<(pecos_core::Pauli, QubitId), TickMeasResolveError> {
+        self.scan_measured_paulis(&[id])
+            .remove(&id)
+            .unwrap_or(Err(TickMeasResolveError::Unknown(id)))
+    }
+
+    /// Resolves measurement identities in input order with one circuit scan.
+    /// Repeated input identities produce repeated results.
+    ///
+    /// # Errors
+    /// Returns the first error in input order, with the same resolution rules as
+    /// [`Self::measured_pauli`]. Unrequested identities do not affect resolution.
+    pub fn measured_paulis(
+        &self,
+        ids: &[MeasId],
+    ) -> Result<Vec<(pecos_core::Pauli, QubitId)>, TickMeasResolveError> {
+        let found = self.scan_measured_paulis(ids);
+        ids.iter()
+            .map(|&id| {
+                found
+                    .get(&id)
+                    .cloned()
+                    .unwrap_or(Err(TickMeasResolveError::Unknown(id)))
+            })
+            .collect()
+    }
+
+    fn scan_measured_paulis(
+        &self,
+        ids: &[MeasId],
+    ) -> BTreeMap<MeasId, Result<(pecos_core::Pauli, QubitId), TickMeasResolveError>> {
+        let requested: BTreeSet<_> = ids.iter().copied().collect();
+        let mut found = BTreeMap::new();
+        if requested.is_empty() {
+            return found;
+        }
+        for (tick, value) in self.ticks.iter().enumerate() {
+            for (gate_idx, batch) in value.iter_gate_batches().enumerate() {
+                let gate = batch.as_gate();
+                for (position, &id) in gate.meas_ids.iter().enumerate() {
+                    if !requested.contains(&id) {
+                        continue;
+                    }
+                    match found.entry(id) {
+                        std::collections::btree_map::Entry::Occupied(mut entry) => {
+                            *entry.get_mut() = Err(TickMeasResolveError::Inconsistent(id));
+                        }
+                        std::collections::btree_map::Entry::Vacant(entry) => {
+                            let resolved = gate
+                                .gate_type
+                                .measured_pauli()
+                                .ok_or(TickMeasResolveError::RecordLess { id, tick, gate_idx })
+                                .and_then(|pauli| {
+                                    gate.qubits
+                                        .get(position)
+                                        .copied()
+                                        .map(|qubit| (pauli, qubit))
+                                        .ok_or(TickMeasResolveError::Inconsistent(id))
+                                });
+                            entry.insert(resolved);
+                        }
+                    }
+                }
+            }
+        }
+        found
     }
 
     /// Get a tick by index.
@@ -1778,6 +1977,15 @@ impl TickCircuit {
         self.circuit_attrs.get(key)
     }
 
+    /// Return the next automatically assigned detector metadata id.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if detector metadata is malformed or the id overflows.
+    pub fn next_detector_metadata_id(&self) -> Result<usize, String> {
+        next_metadata_id(&meta_json_array(self, "detectors")?, "detectors")
+    }
+
     /// Add detector metadata defined by measurement-record offsets.
     ///
     /// This appends one entry to the circuit-level `"detectors"` JSON metadata
@@ -1789,19 +1997,22 @@ impl TickCircuit {
     ///
     /// Returns an error if existing detector metadata is not a JSON array, if
     /// JSON serialization fails, or if `detector_id` duplicates an existing
-    /// explicit detector id.
+    /// explicit detector id, or the fault sector is empty.
     pub fn add_detector_metadata(
         &mut self,
         records: &[i64],
         coords: Option<&[f64]>,
         label: Option<&str>,
         detector_id: Option<usize>,
+        fault_sector: Option<&str>,
     ) -> Result<usize, String> {
         let mut detectors = meta_json_array(self, "detectors")?;
         let id = match detector_id {
             Some(id) => id,
             None => next_metadata_id(&detectors, "detectors")?,
         };
+        let fault_sector = fault_sector.map(|value| serde_json::Value::String(value.to_owned()));
+        let fault_sector = crate::parse_fault_sector(fault_sector.as_ref(), id)?;
         ensure_unique_metadata_id(&detectors, "detectors", "detector_id", id)?;
 
         let mut detector = serde_json::Map::new();
@@ -1812,6 +2023,9 @@ impl TickCircuit {
         }
         if let Some(label) = label {
             detector.insert("label".to_string(), serde_json::json!(label));
+        }
+        if let Some(fault_sector) = fault_sector {
+            detector.insert("fault_sector".to_string(), serde_json::json!(fault_sector));
         }
         detectors.push(serde_json::Value::Object(detector));
         set_meta_json_array(self, "detectors", &detectors)?;
@@ -2163,38 +2377,52 @@ impl TickCircuit {
         &self.gate_signatures
     }
 
-    /// Validate a custom gate against its previously established signature,
-    /// or register it if this is the first use.
+    /// Check a custom gate signature without registering a new name.
     ///
     /// # Errors
     ///
-    /// Returns `GateSignatureMismatchError` if the gate has been seen before
-    /// with a different quantum or angle arity.
+    /// Returns `GateSignatureMismatchError` when a registered signature differs.
+    pub fn validate_gate_signature(
+        &self,
+        name: &str,
+        quantum_arity: usize,
+        angle_arity: usize,
+    ) -> Result<(), GateSignatureMismatchError> {
+        if let Some(existing) = self.gate_signatures.get(name)
+            && (existing.quantum_arity != quantum_arity || existing.angle_arity != angle_arity)
+        {
+            return Err(GateSignatureMismatchError {
+                name: name.to_string(),
+                expected_quantum_arity: existing.quantum_arity,
+                actual_quantum_arity: quantum_arity,
+                expected_angle_arity: existing.angle_arity,
+                actual_angle_arity: angle_arity,
+            });
+        }
+        Ok(())
+    }
+
+    /// Validate a custom gate signature and register it on first accepted use.
+    ///
+    /// Insertion callers should preflight with `validate_gate_signature` and call
+    /// this only after the gate has been accepted, so failures do not reserve names.
+    ///
+    /// # Errors
+    ///
+    /// Returns `GateSignatureMismatchError` when a registered signature differs.
     pub fn validate_or_register_gate(
         &mut self,
         name: &str,
         quantum_arity: usize,
         angle_arity: usize,
     ) -> Result<(), GateSignatureMismatchError> {
-        if let Some(existing) = self.gate_signatures.get(name) {
-            if existing.quantum_arity != quantum_arity || existing.angle_arity != angle_arity {
-                return Err(GateSignatureMismatchError {
-                    name: name.to_string(),
-                    expected_quantum_arity: existing.quantum_arity,
-                    actual_quantum_arity: quantum_arity,
-                    expected_angle_arity: existing.angle_arity,
-                    actual_angle_arity: angle_arity,
-                });
-            }
-        } else {
-            self.gate_signatures.insert(
-                name.to_string(),
-                GateSignature {
-                    quantum_arity,
-                    angle_arity,
-                },
-            );
-        }
+        self.validate_gate_signature(name, quantum_arity, angle_arity)?;
+        self.gate_signatures
+            .entry(name.to_string())
+            .or_insert(GateSignature {
+                quantum_arity,
+                angle_arity,
+            });
         Ok(())
     }
 
@@ -2344,10 +2572,9 @@ impl TickCircuit {
         &mut self,
         measurements: &[TickMeasRef],
     ) -> Result<usize, TickAnnotationRefError> {
-        let (measurement_ids, pauli) = self.validated_ids_and_pauli(measurements)?;
+        let measurement_ids = self.validated_measurement_ids(measurements)?;
         let idx = self.annotations.len();
         self.annotations.push(PauliAnnotation {
-            pauli,
             kind: AnnotationKind::Detector {
                 measurement_ids,
                 coords: Vec::new(),
@@ -2384,10 +2611,9 @@ impl TickCircuit {
         &mut self,
         measurements: &[TickMeasRef],
     ) -> Result<usize, TickAnnotationRefError> {
-        let (measurement_ids, pauli) = self.validated_ids_and_pauli(measurements)?;
+        let measurement_ids = self.validated_measurement_ids(measurements)?;
         let idx = self.annotations.len();
         self.annotations.push(PauliAnnotation {
-            pauli,
             kind: AnnotationKind::Observable { measurement_ids },
             label: None,
         });
@@ -2409,14 +2635,13 @@ impl TickCircuit {
         Ok(idx)
     }
 
-    /// Validate each reference against the batch it names and derive the ids
-    /// and basis-matched Pauli. Validation re-runs the [`Self::meas_ref`] lookup: the
-    /// reference must round-trip to the same id.
-    fn validated_ids_and_pauli(
+    /// Validate each reference against the batch it names and derive the ids.
+    /// Validation re-runs the [`Self::meas_ref`] lookup: the reference must
+    /// round-trip to the same id.
+    fn validated_measurement_ids(
         &self,
         measurements: &[TickMeasRef],
-    ) -> Result<(Vec<MeasId>, pecos_core::PauliString), TickAnnotationRefError> {
-        let mut paulis = Vec::with_capacity(measurements.len());
+    ) -> Result<Vec<MeasId>, TickAnnotationRefError> {
         for m in measurements {
             let held = self
                 .meas_ref(m.tick, m.gate_idx, m.qubit)
@@ -2429,24 +2654,8 @@ impl TickCircuit {
                     meas_id: m.meas_id,
                 });
             }
-            let gate_type = self.ticks[m.tick].gate_batches()[m.gate_idx].gate_type;
-            paulis.push((
-                if gate_type == GateType::MX {
-                    pecos_core::Pauli::X
-                } else {
-                    pecos_core::Pauli::Z
-                },
-                m.qubit,
-            ));
         }
-        let ids = measurements.iter().map(|m| m.meas_id).collect();
-        Ok((
-            ids,
-            pecos_core::PauliString::with_phase_and_paulis(
-                pecos_core::QuarterPhase::PlusOne,
-                paulis,
-            ),
-        ))
+        Ok(measurements.iter().map(|m| m.meas_id).collect())
     }
 
     /// Place a tracked-Pauli annotation.
@@ -2455,8 +2664,7 @@ impl TickCircuit {
         let idx = self.annotations.len();
         self.insert_pauli_meta_tick(&pauli);
         self.annotations.push(PauliAnnotation {
-            pauli,
-            kind: AnnotationKind::TrackedPauli,
+            kind: AnnotationKind::TrackedPauli { pauli },
             label: None,
         });
         idx
@@ -2886,9 +3094,9 @@ impl<'a> TickHandle<'a> {
     ///
     /// let mut circuit = TickCircuit::new();
     /// // Single qubit
-    /// circuit.tick().rx(PI / 2.0, &[0]);
+    /// circuit.tick().rx(pecos_core::Angle64::QUARTER_TURN, &[0]);
     /// // Multiple qubits with same angle
-    /// circuit.tick().rx(PI / 4.0, &[1, 2, 3]);
+    /// circuit.tick().rx(pecos_core::Angle64::from_turn_ratio(1, 8), &[1, 2, 3]);
     /// ```
     pub fn rx(
         &mut self,
@@ -2927,7 +3135,7 @@ impl<'a> TickHandle<'a> {
     /// use std::f64::consts::PI;
     ///
     /// let mut circuit = TickCircuit::new();
-    /// circuit.tick().rxy1q(PI / 2.0, PI / 4.0, &[0]);
+    /// circuit.tick().rxy1q(pecos_core::Angle64::QUARTER_TURN, pecos_core::Angle64::from_turn_ratio(1, 8), &[0]);
     /// ```
     pub fn rxy1q(
         &mut self,
@@ -2949,7 +3157,7 @@ impl<'a> TickHandle<'a> {
     /// use std::f64::consts::PI;
     ///
     /// let mut circuit = TickCircuit::new();
-    /// circuit.tick().u(PI / 2.0, 0.0, PI, &[0]);
+    /// circuit.tick().u(pecos_core::Angle64::QUARTER_TURN, pecos_core::Angle64::ZERO, pecos_core::Angle64::HALF_TURN, &[0]);
     /// ```
     pub fn u(
         &mut self,
@@ -3116,7 +3324,7 @@ impl<'a> TickHandle<'a> {
     /// use std::f64::consts::PI;
     ///
     /// let mut circuit = TickCircuit::new();
-    /// circuit.tick().rxx(PI / 4.0, &[(0, 1)]);
+    /// circuit.tick().rxx(pecos_core::Angle64::from_turn_ratio(1, 8), &[(0, 1)]);
     /// ```
     pub fn rxx(
         &mut self,
@@ -3135,7 +3343,7 @@ impl<'a> TickHandle<'a> {
     /// use std::f64::consts::PI;
     ///
     /// let mut circuit = TickCircuit::new();
-    /// circuit.tick().ryy(PI / 4.0, &[(0, 1)]);
+    /// circuit.tick().ryy(pecos_core::Angle64::from_turn_ratio(1, 8), &[(0, 1)]);
     /// ```
     pub fn ryy(
         &mut self,
@@ -3155,9 +3363,9 @@ impl<'a> TickHandle<'a> {
     ///
     /// let mut circuit = TickCircuit::new();
     /// // Single pair
-    /// circuit.tick().rzz(PI / 4.0, &[(0, 1)]);
+    /// circuit.tick().rzz(pecos_core::Angle64::from_turn_ratio(1, 8), &[(0, 1)]);
     /// // Multiple pairs with same angle
-    /// circuit.tick().rzz(PI / 2.0, &[(2, 3), (4, 5)]);
+    /// circuit.tick().rzz(pecos_core::Angle64::QUARTER_TURN, &[(2, 3), (4, 5)]);
     /// ```
     pub fn rzz(
         &mut self,
@@ -3169,19 +3377,15 @@ impl<'a> TickHandle<'a> {
 
     /// Lower CRZ boundary spelling into native rotations in consecutive ticks.
     ///
-    /// # Panics
-    ///
-    /// Panics if any lowered gate conflicts with an operation already present
-    /// in its destination tick. Use [`Self::try_crz`] for fallible insertion.
+    /// # Errors
+    /// Rejects non-finite angles and conflicting or invalid lowered gates,
+    /// without inserting any gates on failure.
     pub fn crz(
         &mut self,
         theta_radians: f64,
         pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
-    ) -> &mut Self {
-        match self.try_crz(theta_radians, pairs) {
-            Ok(handle) => handle,
-            Err(err) => panic!("{err}"),
-        }
+    ) -> Result<&mut Self, TickGateError> {
+        self.try_crz(theta_radians, pairs)
     }
 
     /// Try to lower CRZ boundary spelling into consecutive native ticks.
@@ -3196,6 +3400,10 @@ impl<'a> TickHandle<'a> {
         theta_radians: f64,
         pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
     ) -> Result<&mut Self, TickGateError> {
+        Angle64::try_from_radians(theta_radians).map_err(|error| TickGateError::InvalidGate {
+            message: error.to_string(),
+            tick_idx: Some(self.tick_idx),
+        })?;
         if pairs.is_empty() {
             return Ok(self);
         }
@@ -3207,6 +3415,10 @@ impl<'a> TickHandle<'a> {
                 control.into(),
                 target.into(),
             )
+            .map_err(|error| TickGateError::InvalidGate {
+                message: error.to_string(),
+                tick_idx: Some(self.tick_idx),
+            })?
             .into_iter()
             .enumerate()
             {
@@ -3575,13 +3787,15 @@ impl<'a> TickHandle<'a> {
         angles: &[Angle64],
     ) -> Result<&mut Self, CustomGateError> {
         self.circuit
-            .validate_or_register_gate(name, qubits.len(), angles.len())?;
+            .validate_gate_signature(name, qubits.len(), angles.len())?;
 
         let qubit_ids: GateQubits = qubits.iter().map(|&q| QubitId::from(q)).collect();
         let gate = Gate::new(GateType::Custom, angles.to_vec(), vec![], qubit_ids);
 
         match self.circuit.ticks[self.tick_idx].try_add_gate_piece(gate) {
             Ok(piece) => {
+                self.circuit
+                    .validate_or_register_gate(name, qubits.len(), angles.len())?;
                 // Auto-store _symbol metadata
                 let piece = self.circuit.ticks[self.tick_idx].set_gate_attr_for_piece(
                     piece,
@@ -3740,7 +3954,8 @@ impl TryFrom<&TickCircuit> for DagCircuit {
     /// Convert a `TickCircuit` to a `DagCircuit`.
     ///
     /// Gates are added in tick order, with qubit wires connecting
-    /// consecutive gates on the same qubit.
+    /// consecutive gates on the same qubit. The same insertion primitive as
+    /// the DAG builders maintains append heads and the last metadata target.
     ///
     /// # Example
     ///
@@ -3766,9 +3981,6 @@ impl TryFrom<&TickCircuit> for DagCircuit {
     fn try_from(tc: &TickCircuit) -> Result<Self, Self::Error> {
         let mut dag = DagCircuit::new();
 
-        // Track the last node for each qubit to connect wires
-        let mut last_node: BTreeMap<QubitId, usize> = BTreeMap::new();
-
         for (tick_idx, tick) in tc.iter_ticks() {
             for batch in tick.iter_gate_batches() {
                 // DagCircuit stores individual gate applications. Use the
@@ -3787,20 +3999,12 @@ impl TryFrom<&TickCircuit> for DagCircuit {
                 let mut split_nodes = Vec::with_capacity(split_gates.len());
                 for split_gate in &split_gates {
                     let node =
-                        dag.try_add_gate(split_gate.clone())
+                        dag.try_add_gate_auto_wire(split_gate.clone())
                             .map_err(|reason| TickToDagError {
                                 tick: tick_idx,
                                 reason: reason.to_string(),
                             })?;
                     split_nodes.push(node);
-
-                    // Connect wires from previous gates on the same qubits
-                    for qubit in &split_gate.qubits {
-                        if let Some(&prev_node) = last_node.get(qubit) {
-                            let _ = dag.connect(prev_node, node, *qubit);
-                        }
-                        last_node.insert(*qubit, node);
-                    }
                 }
 
                 // Copy batch-level gate attributes to every split gate.
@@ -3985,7 +4189,10 @@ mod tests {
     #[test]
     fn crz_boundary_lowers_into_consecutive_native_ticks() {
         let mut circuit = TickCircuit::new();
-        circuit.tick().crz(std::f64::consts::TAU, &[(0, 1)]);
+        circuit
+            .tick()
+            .crz(std::f64::consts::TAU, &[(0, 1)])
+            .unwrap();
 
         assert_eq!(circuit.num_ticks(), 3);
         assert_eq!(circuit.gate_count(), 3);
@@ -4370,8 +4577,8 @@ mod tests {
     fn test_tick_construction_keeps_different_parameters_in_separate_batches() {
         let mut tc = TickCircuit::new();
         tc.tick()
-            .rz(Angle64::from_turns(0.25), &[0])
-            .rz(Angle64::from_turns(0.5), &[1]);
+            .rz(Angle64::QUARTER_TURN, &[0])
+            .rz(Angle64::HALF_TURN, &[1]);
 
         let tick = tc.get_tick(0).unwrap();
         assert_eq!(tick.len(), 2);
@@ -4383,9 +4590,9 @@ mod tests {
     fn test_parameterized_gate_batching_counts_and_round_trip() {
         let mut tc1 = TickCircuit::new();
         tc1.tick()
-            .rz(Angle64::from_turns(0.25), &[0])
-            .rz(Angle64::from_turns(0.25), &[1])
-            .rz(Angle64::from_turns(0.5), &[2]);
+            .rz(Angle64::QUARTER_TURN, &[0])
+            .rz(Angle64::QUARTER_TURN, &[1])
+            .rz(Angle64::HALF_TURN, &[2]);
 
         let tick = tc1.get_tick(0).unwrap();
         assert_eq!(tick.len(), 2);
@@ -4412,7 +4619,7 @@ mod tests {
         );
         assert_eq!(
             tick.gate_batches()[0].angles,
-            Gate::rz(Angle64::from_turns(0.25), &[0]).angles
+            Gate::rz(Angle64::QUARTER_TURN, &[0]).angles
         );
         assert_eq!(
             tick.gate_batches()[1].qubits.as_slice(),
@@ -4420,7 +4627,7 @@ mod tests {
         );
         assert_eq!(
             tick.gate_batches()[1].angles,
-            Gate::rz(Angle64::from_turns(0.5), &[2]).angles
+            Gate::rz(Angle64::HALF_TURN, &[2]).angles
         );
     }
 
@@ -5013,7 +5220,9 @@ mod tests {
         };
         let err = dag
             .detector_labeled("not-a-measurement", &[forged])
-            .expect_err("H consumes no measurement record");
+            .expect_err(
+                "H consumes no measurement record; refer to a measurement that produces a record",
+            );
         assert!(matches!(err, AnnotationRefError::NotAMeasurement { .. }));
     }
 
@@ -5052,9 +5261,12 @@ mod tests {
         assert_eq!(tc2.annotations()[2].label.as_deref(), Some("tracked"));
         assert!(matches!(
             tc2.annotations()[2].kind,
-            AnnotationKind::TrackedPauli
+            AnnotationKind::TrackedPauli { .. }
         ));
-        assert_eq!(tc2.annotations()[2].pauli, X(0) & Z(2));
+        let AnnotationKind::TrackedPauli { pauli } = &tc2.annotations()[2].kind else {
+            panic!("expected tracked Pauli")
+        };
+        assert_eq!(pauli, &(X(0) & Z(2)));
     }
 
     #[test]
@@ -5101,9 +5313,9 @@ mod tests {
                     .meta("role", Attribute::String("entangle".into()));
             } else {
                 tc1.tick()
-                    .rz(Angle64::from_turns(0.25), &[base])
-                    .rz(Angle64::from_turns(0.25), &[base + 1])
-                    .rz(Angle64::from_turns(0.5), &[base + 2]);
+                    .rz(Angle64::QUARTER_TURN, &[base])
+                    .rz(Angle64::QUARTER_TURN, &[base + 1])
+                    .rz(Angle64::HALF_TURN, &[base + 2]);
             }
 
             let ms = tc1.tick().mz(&[base, base + 1]);
@@ -5150,8 +5362,8 @@ mod tests {
                 tc1.tick().cx(&[(base, base + 2), (base + 1, base + 3)]);
             } else {
                 tc1.tick()
-                    .rz(Angle64::from_turns(0.25), &[base])
-                    .rz(Angle64::from_turns(0.25), &[base + 1]);
+                    .rz(Angle64::QUARTER_TURN, &[base])
+                    .rz(Angle64::QUARTER_TURN, &[base + 1]);
             }
 
             let measurements = tc1.tick().mz(&[base, base + 1, base + 2]);
@@ -5215,8 +5427,11 @@ mod tests {
             }
 
             let track = annotation_by_label(&tc2, &format!("track-{case_idx}"));
-            assert!(matches!(track.kind, AnnotationKind::TrackedPauli));
-            assert_eq!(track.pauli, tracked, "case {case_idx}");
+            assert!(matches!(track.kind, AnnotationKind::TrackedPauli { .. }));
+            let AnnotationKind::TrackedPauli { pauli } = &track.kind else {
+                panic!("expected tracked Pauli")
+            };
+            assert_eq!(pauli, &tracked);
         }
     }
 
@@ -5268,14 +5483,14 @@ mod tests {
             .szzdg(&[(36, 37)])
             .swap(&[(38, 39)]);
         tc1.tick()
-            .rx(Angle64::from_turns(0.125), &[40])
-            .ry(Angle64::from_turns(0.25), &[41])
-            .rz(Angle64::from_turns(0.375), &[42])
-            .rxy1q(Angle64::from_turns(0.125), Angle64::from_turns(0.25), &[43])
+            .rx(Angle64::from_turn_ratio(1, 8), &[40])
+            .ry(Angle64::QUARTER_TURN, &[41])
+            .rz(Angle64::from_turn_ratio(3, 8), &[42])
+            .rxy1q(Angle64::from_turn_ratio(1, 8), Angle64::QUARTER_TURN, &[43])
             .u(
-                Angle64::from_turns(0.125),
-                Angle64::from_turns(0.25),
-                Angle64::from_turns(0.375),
+                Angle64::from_turn_ratio(1, 8),
+                Angle64::QUARTER_TURN,
+                Angle64::from_turn_ratio(3, 8),
                 &[44],
             );
         tc1.tick()
@@ -5318,7 +5533,7 @@ mod tests {
         ));
         assert!(matches!(
             tc2.annotations()[2].kind,
-            AnnotationKind::TrackedPauli
+            AnnotationKind::TrackedPauli { .. }
         ));
         assert!(tc2.has_channel_operations());
     }
@@ -5474,8 +5689,8 @@ mod tests {
                 tick.meta("round", Attribute::Int(1))
                     .meta("kind", Attribute::String("mixed".into()));
                 apply_pair(&mut tick, two, base + 2, base + 3);
-                tick.rz(Angle64::from_turns(rz_turns), &[base + 4])
-                    .rx(Angle64::from_turns(0.25), &[base + 5]);
+                tick.rz(Angle64::try_from_turns(rz_turns).unwrap(), &[base + 4])
+                    .rx(Angle64::QUARTER_TURN, &[base + 5]);
             }
             tc1.tick()
                 .meta("round", Attribute::Int(2))
@@ -5536,18 +5751,21 @@ mod tests {
             ));
             assert!(matches!(
                 tc2.annotations()[2].kind,
-                AnnotationKind::TrackedPauli
+                AnnotationKind::TrackedPauli { .. }
             ));
-            assert_eq!(tc2.annotations()[2].pauli, tracked, "case {case_idx}");
+            let AnnotationKind::TrackedPauli { pauli } = &tc2.annotations()[2].kind else {
+                panic!("expected tracked Pauli")
+            };
+            assert_eq!(pauli, &tracked);
             assert!(tc2.has_channel_operations(), "case {case_idx}");
         }
     }
 
     #[test]
     fn test_batching_invariants_cover_parameters_channels_and_measurements() {
-        let same_rz = Gate::rz(Angle64::from_turns(0.25), &[0]);
-        let same_rz_disjoint = Gate::rz(Angle64::from_turns(0.25), &[1]);
-        let different_rz = Gate::rz(Angle64::from_turns(0.5), &[2]);
+        let same_rz = Gate::rz(Angle64::QUARTER_TURN, &[0]);
+        let same_rz_disjoint = Gate::rz(Angle64::QUARTER_TURN, &[1]);
+        let different_rz = Gate::rz(Angle64::HALF_TURN, &[2]);
         assert!(same_rz.can_batch_with(&same_rz_disjoint));
         assert!(!same_rz.can_batch_with(&different_rz));
 
@@ -6149,7 +6367,7 @@ mod tests {
 
         assert_eq!(tc.num_ticks(), 0);
         assert_eq!(tc.num_measurements(), 0);
-        assert!(tc.annotations().is_empty());
+        assert_eq!(tc.annotations(), []);
 
         let reused_measurement = tc.tick().mz(&[1]);
         assert_eq!(reused_measurement[0].meas_id.index(), 0);
@@ -6160,7 +6378,7 @@ mod tests {
         let mut tc = TickCircuit::new();
 
         let detector_id = tc
-            .add_detector_metadata(&[-1], Some(&[0.0, 1.0, 2.0]), Some("d0"), None)
+            .add_detector_metadata(&[-1], Some(&[0.0, 1.0, 2.0]), Some("d0"), None, Some("X"))
             .unwrap();
         let observable_id = tc
             .add_observable_metadata(&[-1, -2], None, Some("L2"), None)
@@ -6177,7 +6395,7 @@ mod tests {
         };
         assert_eq!(
             detectors,
-            r#"[{"coords":[0.0,1.0,2.0],"id":0,"label":"d0","records":[-1]}]"#
+            r#"[{"coords":[0.0,1.0,2.0],"fault_sector":"X","id":0,"label":"d0","records":[-1]}]"#
         );
 
         let observables = match tc.get_meta("observables").unwrap() {
@@ -6185,6 +6403,37 @@ mod tests {
             other => panic!("expected observables JSON string, got {other:?}"),
         };
         assert_eq!(observables, r#"[{"id":2,"label":"L2","records":[-1,-2]}]"#);
+    }
+
+    #[test]
+    fn test_metadata_helper_fault_sectors() {
+        for sector in [
+            None,
+            Some("X"),
+            Some("Z"),
+            Some("XX"),
+            Some("sector-3"),
+            Some("x"),
+            Some(" "),
+        ] {
+            let mut circuit = TickCircuit::new();
+            circuit
+                .add_detector_metadata(&[-1], None, None, Some(37), sector)
+                .unwrap();
+            let entries = meta_json_array(&circuit, "detectors").unwrap();
+            assert_eq!(
+                entries[0]
+                    .get("fault_sector")
+                    .and_then(serde_json::Value::as_str),
+                sector
+            );
+        }
+        let mut circuit = TickCircuit::new();
+        let error = circuit
+            .add_detector_metadata(&[-1], None, None, Some(37), Some(""))
+            .unwrap_err();
+        assert!(error.contains("detector 37 fault_sector"), "{error}");
+        assert!(circuit.get_meta("detectors").is_none());
     }
 
     #[test]
@@ -6196,10 +6445,10 @@ mod tests {
             .unwrap_err();
         assert!(err.contains("conflicts"));
 
-        tc.add_detector_metadata(&[-1], None, None, Some(7))
+        tc.add_detector_metadata(&[-1], None, None, Some(7), None)
             .unwrap();
         let err = tc
-            .add_detector_metadata(&[-2], None, None, Some(7))
+            .add_detector_metadata(&[-2], None, None, Some(7), None)
             .unwrap_err();
         assert!(err.contains("already contains detector_id 7"));
 
@@ -6733,7 +6982,7 @@ mod tests {
     #[test]
     fn test_custom_gate_mismatch_angle_arity() {
         let mut tc = TickCircuit::new();
-        let angle = Angle64::from_radians(1.0);
+        let angle = pecos_core::radians!(1.0);
         tc.tick()
             .custom_gate("PARAM_GATE", &[0], &[angle])
             .expect("first use");
@@ -6762,8 +7011,8 @@ mod tests {
     #[test]
     fn test_custom_gate_with_angles() {
         let mut tc = TickCircuit::new();
-        let a1 = Angle64::from_radians(0.5);
-        let a2 = Angle64::from_radians(1.0);
+        let a1 = pecos_core::radians!(0.5);
+        let a2 = pecos_core::radians!(1.0);
         tc.tick()
             .custom_gate("PARAM2", &[0], &[a1, a2])
             .expect("should succeed");
@@ -6799,7 +7048,7 @@ mod tests {
         tc.import_signatures(&sigs);
 
         // Now using AOT_GATE with correct arity succeeds
-        let angle = Angle64::from_radians(0.5);
+        let angle = pecos_core::radians!(0.5);
         tc.tick()
             .custom_gate("AOT_GATE", &[0, 1], &[angle])
             .expect("correct arity");
@@ -6881,7 +7130,7 @@ mod tests {
         ));
         assert!(matches!(
             dag.annotations()[2].kind,
-            crate::dag_circuit::AnnotationKind::TrackedPauli
+            crate::dag_circuit::AnnotationKind::TrackedPauli { .. }
         ));
     }
 
@@ -6932,7 +7181,7 @@ mod tests {
         assert_eq!(tc2.annotations().len(), tc1.annotations().len());
         for (a1, a2) in tc1.annotations().iter().zip(tc2.annotations()) {
             assert_eq!(a1.label, a2.label);
-            assert_eq!(a1.pauli, a2.pauli);
+            assert_eq!(a1, a2);
         }
     }
 

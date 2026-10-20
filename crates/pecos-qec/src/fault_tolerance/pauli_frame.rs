@@ -135,10 +135,13 @@ impl PauliFrameLookup {
         {
             return Err(error.into());
         }
-        let tracked_annotations: Vec<&pecos_quantum::PauliAnnotation> = dag
+        let tracked_annotations: Vec<&pecos_core::PauliString> = dag
             .annotations()
             .iter()
-            .filter(|ann| matches!(ann.kind, AnnotationKind::TrackedPauli))
+            .filter_map(|ann| match &ann.kind {
+                AnnotationKind::TrackedPauli { pauli } => Some(pauli),
+                _ => None,
+            })
             .collect();
         let mut meta_nodes: Vec<usize> = dag
             .nodes()
@@ -153,7 +156,7 @@ impl PauliFrameLookup {
         if tracked_annotations.len() != meta_nodes.len() {
             return Err(PauliFrameLookupError::MissingMetaNode);
         }
-        let tracked: Vec<(&pecos_quantum::PauliAnnotation, usize)> =
+        let tracked: Vec<(&pecos_core::PauliString, usize)> =
             tracked_annotations.into_iter().zip(meta_nodes).collect();
         if !tracked.len().is_multiple_of(3) {
             return Err(PauliFrameLookupError::NonTripletTrackedPaulis {
@@ -176,7 +179,7 @@ impl PauliFrameLookup {
         let mut detector_rows = Vec::with_capacity(tracked.len());
         let mut observable_rows = Vec::with_capacity(tracked.len());
 
-        for (ann, meta_node) in &tracked {
+        for (pauli, meta_node) in &tracked {
             if dag
                 .gate(*meta_node)
                 .is_none_or(|gate| gate.gate_type != GateType::TrackedPauliMeta)
@@ -195,7 +198,7 @@ impl PauliFrameLookup {
                 &topo_order,
                 &measurement_records,
                 start_pos,
-                &ann.pauli,
+                pauli,
             );
             detector_rows.push(measurements_to_output_row(
                 &affected_measurements,

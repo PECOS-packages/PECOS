@@ -6,6 +6,31 @@
 
 use crate::{RuntimeNativeGateSet, SeleneRuntime};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+
+static BUNDLED_LIBRARY_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+/// Register a host package's bundled QIS libraries before creating an engine.
+///
+/// Explicit runtime environment overrides retain precedence. The directory is
+/// process-wide, like the QIS runtime singleton, and cannot be changed after
+/// registration. Rust applications without a bundle keep the usual discovery.
+///
+/// # Errors
+/// Returns an error if a different bundle was already registered.
+pub fn set_bundled_library_dir(path: impl AsRef<Path>) -> Result<(), &'static str> {
+    let path = path.as_ref();
+    let registered = BUNDLED_LIBRARY_DIR.get_or_init(|| path.to_path_buf());
+    if registered == path {
+        Ok(())
+    } else {
+        Err("A different QIS library bundle is already registered")
+    }
+}
+
+pub(crate) fn bundled_library(name: &str) -> Option<PathBuf> {
+    find_library_in_dir(BUNDLED_LIBRARY_DIR.get()?, name)
+}
 
 const SIMPLE_RUNTIME_DEFAULT_INIT_ARGS: &[&str] = &[
     "--duration-ns-rxy=0",
@@ -233,6 +258,12 @@ pub fn selene_soft_rz_runtime() -> Result<SeleneRuntime, RuntimeFetchError> {
 /// the Selene runtimes are built as dependencies that may not exist when the build
 /// script runs.
 fn find_built_selene_runtime(lib_name: &str) -> Result<PathBuf, RuntimeFetchError> {
+    if let Some(path) = std::env::var_os("PECOS_SELENE_DIR")
+        .and_then(|dir| find_library_in_dir(Path::new(&dir), lib_name))
+        .or_else(|| bundled_library(lib_name))
+    {
+        return Ok(path);
+    }
     // Note: We don't check build-time environment variables here because they may be stale
     // The build script runs before Selene runtime dependencies are built, so those env vars
     // would point to non-existent paths. We rely solely on runtime detection instead.
@@ -336,6 +367,10 @@ pub fn find_selene_runtime(name: &str) -> Option<PathBuf> {
             "PECOS_SELENE_DIR is set to {}, but neither {filename} nor {hashed_pattern} was found there or in its deps directory",
             selene_dir.display()
         );
+    }
+
+    if let Some(path) = bundled_library(&lib_name) {
+        return Some(path);
     }
 
     // Check target directories in current project

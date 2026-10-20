@@ -8,7 +8,8 @@ fn system(rate: f64) -> QuantumSystem {
     let mut s = QuantumSystem::new(
         ScheduledIdleZ::new(2, 0.0, 0.0, rate)
             .unwrap()
-            .into_noise_model(),
+            .into_noise_model()
+            .unwrap(),
         Box::new(StateVecEngine::new(2)),
     );
     s.set_seed(4);
@@ -28,8 +29,8 @@ fn ramsey(gap: u64) -> Vec<TimedBatch> {
             start_nanos: 0,
             duration_nanos: 100,
             gates: vec![Gate::rxy1q(
-                Angle64::from_radians(std::f64::consts::FRAC_PI_2),
-                Angle64::from_radians(std::f64::consts::FRAC_PI_2),
+                Angle64::QUARTER_TURN,
+                Angle64::QUARTER_TURN,
                 &[0],
             )],
         },
@@ -39,11 +40,7 @@ fn ramsey(gap: u64) -> Vec<TimedBatch> {
             start_nanos: 100 + gap,
             duration_nanos: 10,
             gates: vec![
-                Gate::rxy1q(
-                    Angle64::from_radians(-std::f64::consts::FRAC_PI_2),
-                    Angle64::from_radians(std::f64::consts::FRAC_PI_2),
-                    &[0],
-                ),
+                Gate::rxy1q(Angle64::THREE_QUARTERS_TURN, Angle64::QUARTER_TURN, &[0]),
                 Gate::mz(&[0]),
             ],
         },
@@ -112,7 +109,8 @@ fn malformed_transport_and_unknown_records_return_errors_without_panics() {
         (8, u32::MAX.to_le_bytes().to_vec()),
         (48, u64::MAX.to_le_bytes().to_vec()),
         (56, 99_u64.to_le_bytes().to_vec()),
-        (80, f64::NAN.to_bits().to_le_bytes().to_vec()),
+        // RXY1Q has no second target; angle words now accept every u64.
+        (72, 1_u64.to_le_bytes().to_vec()),
     ] {
         let mut mutated = original.to_vec();
         mutated[offset..offset + bytes.len()].copy_from_slice(&bytes);
@@ -125,11 +123,7 @@ fn malformed_transport_and_unknown_records_return_errors_without_panics() {
 #[test]
 fn later_invalid_batch_rejects_before_state_or_cursor_mutation() {
     let mut input = ramsey(1);
-    input[0].gates = vec![Gate::rxy1q(
-        Angle64::from_radians(std::f64::consts::PI),
-        Angle64::ZERO,
-        &[0],
-    )];
+    input[0].gates = vec![Gate::rxy1q(Angle64::HALF_TURN, Angle64::ZERO, &[0])];
     input[1].gates = vec![Gate::mz(&[2])];
     let mut s = system(0.0);
     assert!(s.process(encode_timed_batches(&input).unwrap()).is_err());
@@ -201,7 +195,8 @@ fn capacity_and_profile_admission_are_explicit() {
     let mut undersized = QuantumSystem::new(
         ScheduledIdleZ::new(2, 0.0, 0.0, 0.0)
             .unwrap()
-            .into_noise_model(),
+            .into_noise_model()
+            .unwrap(),
         Box::new(StateVecEngine::new(1)),
     );
     undersized
@@ -230,7 +225,8 @@ fn stochastic_profile_keeps_rng_and_whole_idle_across_inputs() {
         let mut s = QuantumSystem::new(
             ScheduledIdleZ::new(2, 0.1, 0.8, 0.3)
                 .unwrap()
-                .into_noise_model(),
+                .into_noise_model()
+                .unwrap(),
             Box::new(StateVecEngine::new(2)),
         );
         s.set_seed(seed);
@@ -277,7 +273,8 @@ fn production_idle_families_have_independent_physical_predictions() {
             let mut s = QuantumSystem::new(
                 ScheduledIdleZ::new(2, linear, sine, 0.0)
                     .unwrap()
-                    .into_noise_model(),
+                    .into_noise_model()
+                    .unwrap(),
                 Box::new(StateVecEngine::new(2)),
             );
             s.set_seed(seed);

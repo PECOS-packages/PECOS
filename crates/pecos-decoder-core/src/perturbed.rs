@@ -72,7 +72,10 @@ pub fn perturb_dem(
             let u2 = rng();
             let z = (-2.0_f64 * u1.ln()).sqrt() * (2.0_f64 * std::f64::consts::PI * u2).cos();
             let factor = (sigma * z).exp();
-            instruction.args[0] = (instruction.args[0] * factor).clamp(1e-15, 0.499);
+            // Preserve zero even when the multiplicative factor overflows.
+            if instruction.args[0] != 0.0 {
+                instruction.args[0] = (instruction.args[0] * factor).clamp(1e-15, 0.499);
+            }
             if !instruction.args[0].is_finite() {
                 return Err(DecoderError::InvalidConfiguration(
                     "probability perturbation produced a non-finite probability".into(),
@@ -221,6 +224,24 @@ mod tests {
             "stray parenthesis in {perturbed:?}"
         );
         check_targets(&perturbed).unwrap();
+    }
+
+    #[test]
+    fn test_perturb_dem_rejects_non_finite_factor() {
+        let error = perturb_dem("error(0.1) D0", f64::NAN, &mut || 0.5).unwrap_err();
+        assert!(
+            error.to_string().contains("non-finite probability"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn test_perturb_dem_preserves_zero_probability() {
+        for sigma in [0.5, 1000.0] {
+            let text = perturb_dem("error(0) D0 D1 D2 L0", sigma, &mut || 0.001).unwrap();
+            let model = crate::window::StructuredDem::from_dem_str(&text).unwrap();
+            assert_eq!(model.errors[0].probability.to_bits(), 0.0_f64.to_bits());
+        }
     }
 
     #[test]

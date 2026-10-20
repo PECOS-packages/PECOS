@@ -275,7 +275,7 @@ fn random_physical_records_probabilities_dense_and_width() {
                     let angles = if kind.angle_arity() == 0 {
                         vec![]
                     } else {
-                        vec![Angle64::from_radians(6.0 * rng.next_f64() - 3.0)]
+                        vec![Angle64::try_from_radians(6.0 * rng.next_f64() - 3.0).unwrap()]
                     };
                     make_gate(kind, &qs, &angles)
                 };

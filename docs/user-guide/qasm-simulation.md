@@ -97,6 +97,13 @@ Now, let's run this code using PECOS's unified `sim()` function:
 
 ## Using the Builder API
 
+For the shared Monte Carlo engine, `.seed()` controls a run seed drawn for each
+run. Each shot derives its own seed from that run seed and its global shot index,
+so changing the worker count or the number of shots preserves the shared prefix.
+Random draws in earlier shots do not affect later shots. Reusing a built engine
+advances its run-seed stream. Shot-seed derivation is stable, but component seeds
+use Rust's `DefaultHasher`; identical samples across Rust releases are not promised.
+
 The `sim()` function returns a builder that provides flexibility through method chaining. You can configure seeds, workers, noise models, and more:
 
 === ":fontawesome-brands-python: Python"
@@ -283,7 +290,7 @@ For research or to match specific hardware characteristics, you can create detai
         .with_p_meas_1(0.01)  # Measurement error |1> → |0>
         .with_p1(0.0001)  # Single-qubit gate error
         .with_p2(0.01)  # Two-qubit gate error
-        .with_seed(42)  # Deterministic noise
+        .with_seed(42)  # Standalone use only; sim() reseeds the noise model every shot
     )
     ```
 
@@ -306,10 +313,10 @@ For research or to match specific hardware characteristics, you can create detai
         .with_p2(0.01)         // Two-qubit gate error
         .with_p_idle_linear(0.0001, &idle_model) // Idle noise rate
         .with_idle_after_2q(1.0)             // Idle duration after two-qubit gates
-        .with_seed(42);                    // Deterministic noise
+        .with_seed(42);                    // Standalone use only; sim() reseeds the noise model every shot
 
     // Use with sim()
-    let results = sim(program).noise(noise).shots(1000).run()?;
+    let results = sim(program).noise(noise).seed(42).shots(1000).run()?;
     ```
 
 The builder provides many configuration options including idle noise rates, leakage probabilities,
@@ -537,7 +544,7 @@ Here's how to simulate a GHZ state with realistic noise:
         .with_p2(0.01)  # 1% two-qubit gate error
         .with_p_meas_0(0.02)  # 2% false positive rate
         .with_p_meas_1(0.03)  # 3% false negative rate
-        .with_seed(12345)  # Deterministic noise
+        .with_seed(12345)  # Standalone use only; sim() reseeds the noise model every shot
     )
 
     # Run simulation
@@ -572,7 +579,7 @@ Here's how to simulate a GHZ state with realistic noise:
             .with_p2(0.01)         // 1% two-qubit gate error
             .with_p_meas_0(0.02)     // 2% false positive rate
             .with_p_meas_1(0.03)     // 3% false negative rate
-            .with_seed(12345);                 // Deterministic noise
+            .with_seed(12345);                 // Standalone use only; sim() reseeds the noise model every shot
 
         // Run simulation
         let results = sim(program).noise(noise).seed(42).shots(1000).run()?;

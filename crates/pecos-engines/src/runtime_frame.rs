@@ -62,10 +62,19 @@ pub(crate) fn processing_error(s: &str) -> PecosError {
 
 // Public admission bounds make overflow unreachable; keep every factor checked
 // so this calculation remains defensive if those limits change.
-fn expansion_bound(count: usize, qubits: usize) -> Result<usize, PecosError> {
+fn expansion_bound(count: usize, qubits: usize, hooks: usize) -> Result<usize, PecosError> {
     qubits
         .checked_add(1)
         .and_then(|n| n.checked_mul(16))
+        // A hook emits <=2 commands per singleton: computational sources
+        // emit MZ plus <=1 transition (X or PZ); leakage recovery emits PZ
+        // plus optional X without MZ. Pauli/leakage events emit <=1 command.
+        // Add both P1 sites' configured hook counts to the existing base bound.
+        .and_then(|base| {
+            hooks
+                .checked_mul(2)
+                .and_then(|extra| base.checked_add(extra))
+        })
         .and_then(|factor| count.checked_mul(factor))
         .ok_or_else(|| error("expansion overflow"))
 }
@@ -170,8 +179,13 @@ pub(crate) fn decode(
     // For admitted singleton gates: <=8 idle commands; <=4 SQ commands;
     // <=3 preparation commands plus <=qubits raw crosstalk results; each
     // crosstalk payload adds <=1 measurement and <=1 continuation command.
-    // 16*(qubits+1) per record conservatively covers all commands and outcomes.
-    let bound = expansion_bound(count, config.qubits)?;
+    // The base 16*(qubits+1) covers these commands and outcomes; hooks
+    // add the separately derived per-singleton allowance in expansion_bound.
+    let bound = expansion_bound(
+        count,
+        config.qubits,
+        config.inner.runtime_frame_hook_count()?,
+    )?;
     if bound > config.limits.expanded_operations {
         return Err(error("frame expansion budget"));
     }
@@ -270,14 +284,16 @@ impl RuntimeNoise {
         qubits: usize,
         limits: FrameLimits,
     ) -> Result<Self, PecosError> {
-        inner.validate_configuration().map_err(error)?;
+        inner
+            .validate_configuration()
+            .map_err(|message| error(&message))?;
         if !(1..=16).contains(&qubits)
             || !(1..=128).contains(&limits.records)
             || !(1..=65536).contains(&limits.expanded_operations)
         {
             return Err(error("unsupported runtime frame limits"));
         }
-        let physical = inner.simple_probabilities().is_some();
+        let physical = inner.runtime_frame_supports_physical_events();
         let inner = inner.build();
         inner.validate_runtime_configuration()?;
         Ok(Self {
@@ -289,13 +305,13 @@ impl RuntimeNoise {
     }
 }
 impl IntoNoiseModel for RuntimeNoise {
-    fn into_noise_model(self) -> Box<dyn NoiseModel> {
-        Box::new(RuntimeGeneralNoise {
+    fn into_noise_model(self) -> Result<Box<dyn NoiseModel>, PecosError> {
+        Ok(Box::new(RuntimeGeneralNoise {
             inner: self.inner,
             limits: self.limits,
             qubits: self.qubits,
             physical: self.physical,
-        })
+        }))
     }
 }
 
@@ -316,7 +332,7 @@ impl RuntimeGeneralNoise {
     }
 
     pub(crate) fn preflight_legacy(&self, input: &ByteMessage) -> Result<(), PecosError> {
-        // Restrict opt-in v1 inputs too: the retained model must never acquire
+        // Restrict opt-in gate batches too: the retained model must never acquire
         // out-of-range bookkeeping that invalidates a later expansion bound.
         let bytes = input.as_bytes();
         if !(16..=MAX_FRAME_BYTES).contains(&bytes.len()) {
@@ -326,7 +342,8 @@ impl RuntimeGeneralNoise {
         // parsing, even when the wire contains fewer records than it claims.
         let count = word(bytes, 8) as usize;
         if count > self.limits.records
-            || expansion_bound(count, self.qubits)? > self.limits.expanded_operations
+            || expansion_bound(count, self.qubits, self.inner.runtime_frame_hook_count()?)?
+                > self.limits.expanded_operations
         {
             return Err(error("frame record or expansion limit"));
         }
@@ -404,11 +421,20 @@ impl FrameExecutor<'_> {
                 original.add_gate_command(g);
             }
         }
-        let bound = expansion_bound(records.len(), self.model.qubits)
-            .map_err(|_| processing_error("expansion overflow"))?;
-        // At most one outcome-dependent yield per source record, plus final
-        // transition dispatch and completion. Metadata consumes no lifecycle.
-        let dispatch_limit = records.len() + 2;
+        let bound = expansion_bound(
+            records.len(),
+            self.model.qubits,
+            self.model.inner.runtime_frame_hook_count()?,
+        )
+        .map_err(|_| processing_error("expansion overflow"))?;
+        // Singleton SQ gates yield once per configured before/after hook;
+        // crosstalk payloads are separate records and yield at most once.
+        // The final prefix dispatch and completion need two extra iterations.
+        let dispatch_limit = records
+            .len()
+            .checked_mul(self.model.inner.runtime_frame_hook_count()?.max(1))
+            .and_then(|yields| yields.checked_add(2))
+            .ok_or_else(|| processing_error("continuation budget overflow"))?;
         let (mut commands, mut ends) = self
             .model
             .inner
@@ -455,9 +481,9 @@ impl FrameExecutor<'_> {
         let mut start = prefix;
         let mut consumed = 0;
         while let Some(record) = records.peek() {
-            // Events immediately after a suspended payload must wait until its
-            // resolved transition prefix, just like subsequent source gates.
-            if consumed == ends.len() && self.model.inner.has_pending_crosstalk() {
+            // Events after a suspended gate or payload wait for its completion
+            // prefix, just like subsequent source gates.
+            if consumed == ends.len() && self.model.inner.barrier_pending() {
                 break;
             }
             match record {
@@ -516,11 +542,15 @@ mod tests {
 
     #[test]
     fn expansion_bound_checks_each_arithmetic_step() {
-        assert_eq!(expansion_bound(128, 16).unwrap(), 34816);
-        assert_eq!(expansion_bound(0, 16).unwrap(), 0);
+        assert_eq!(expansion_bound(128, 16, 0).unwrap(), 34816);
+        assert_eq!(expansion_bound(0, 16, 0).unwrap(), 0);
+        assert_eq!(expansion_bound(128, 2, 24).unwrap(), 12288);
+        for hooks in [usize::MAX, usize::MAX / 2] {
+            assert!(expansion_bound(1, 1, hooks).is_err());
+        }
         for (count, qubits) in [(1, usize::MAX), (1, usize::MAX / 16), (usize::MAX, 1)] {
             assert!(
-                matches!(expansion_bound(count, qubits), Err(PecosError::Input(message)) if message == "expansion overflow")
+                matches!(expansion_bound(count, qubits, 0), Err(PecosError::Input(message)) if message == "expansion overflow")
             );
         }
     }

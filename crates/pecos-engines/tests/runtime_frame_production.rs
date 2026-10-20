@@ -1,6 +1,8 @@
 //! All execution here enters exported QuantumSystem/HybridEngine/SimBuilder APIs.
 use pecos_core::{QubitId, RngManageable};
-use pecos_engines::noise::{GeneralNoiseModelBuilder, IntoNoiseModel};
+use pecos_engines::noise::{
+    GeneralNoiseModelBuilder, IntoNoiseModel, PauliLeakageChannel, StateTransitionChannel,
+};
 use pecos_engines::quantum::SparseStabEngine;
 use pecos_engines::runtime_frame::{
     FLIP, FrameLimits, FrameRecord, METADATA, RuntimeNoise, ShotContext, encode_frame,
@@ -49,7 +51,8 @@ fn frame(gates: &[Gate], metadata: bool) -> ByteMessage {
 fn setup(builder: GeneralNoiseModelBuilder, seed: u64) -> QuantumSystem {
     let noise = RuntimeNoise::new(builder, 2, FrameLimits::default())
         .unwrap()
-        .into_noise_model();
+        .into_noise_model()
+        .unwrap();
     let mut system = QuantumSystem::new(noise, Box::new(StateVecEngine::new(2)));
     system.set_seed(seed);
     system.begin_shot(context(0)).unwrap();
@@ -327,7 +330,10 @@ fn invalid_suffixes_versions_ids_profiles_and_budgets_reject_before_prefix_effec
         },
     )
     .unwrap();
-    let mut limited = QuantumSystem::new(cfg.into_noise_model(), Box::new(StateVecEngine::new(2)));
+    let mut limited = QuantumSystem::new(
+        cfg.into_noise_model().unwrap(),
+        Box::new(StateVecEngine::new(2)),
+    );
     limited.begin_shot(context(0)).unwrap();
     assert!(limited.process(good).is_err()); // two-record bound >48
     assert_eq!(
@@ -417,7 +423,7 @@ fn errors_and_failed_reset_poison_owner_and_clones() {
         fail_reset: fail_reset.clone(),
     };
     let cfg = RuntimeNoise::new(GeneralNoiseModel::builder(), 2, FrameLimits::default()).unwrap();
-    let mut system = QuantumSystem::new(cfg.into_noise_model(), Box::new(sim));
+    let mut system = QuantumSystem::new(cfg.into_noise_model().unwrap(), Box::new(sim));
     system.begin_shot(context(0)).unwrap();
     let msg = message(&[Gate::x(&[0])]);
     assert!(system.process(msg.clone()).is_err());
@@ -725,7 +731,8 @@ fn capacity_edges_and_mutable_access_require_explicit_readmission() {
     let mut unsupported_sim = QuantumSystem::new(
         RuntimeNoise::new(GeneralNoiseModel::builder(), 2, FrameLimits::default())
             .unwrap()
-            .into_noise_model(),
+            .into_noise_model()
+            .unwrap(),
         Box::new(StabilizerEngine::new(2)),
     );
     unsupported_sim.begin_shot(context(0)).unwrap();
@@ -737,7 +744,8 @@ fn capacity_edges_and_mutable_access_require_explicit_readmission() {
     let mut too_small = QuantumSystem::new(
         RuntimeNoise::new(GeneralNoiseModel::builder(), 2, FrameLimits::default())
             .unwrap()
-            .into_noise_model(),
+            .into_noise_model()
+            .unwrap(),
         Box::new(StateVecEngine::new(1)),
     );
     too_small.begin_shot(context(0)).unwrap();
@@ -785,7 +793,8 @@ fn metadata_preserves_consecutive_measurement_sampling() {
         for metadata in [false, true] {
             let noise = RuntimeNoise::new(GeneralNoiseModel::builder(), 4, FrameLimits::default())
                 .unwrap()
-                .into_noise_model();
+                .into_noise_model()
+                .unwrap();
             let mut actual = QuantumSystem::new(noise, Box::new(StateVecEngine::new(4)));
             actual.set_seed(seed);
             actual.begin_shot(context(0)).unwrap();
@@ -801,14 +810,11 @@ fn metadata_preserves_consecutive_measurement_sampling() {
 }
 
 #[test]
-fn malformed_legacy_angles_are_rejected_without_unwinding_or_mutation() {
+fn frame_rejects_angle_fields_without_unwinding_or_mutation() {
     for invalid in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-        let mut bytes = message(&[
-            Gate::x(&[0]),
-            Gate::rz(pecos_core::Angle64::from_radians(0.5), &[0]),
-        ])
-        .as_bytes()
-        .to_vec();
+        let mut bytes = message(&[Gate::x(&[0]), Gate::rz(pecos_core::radians!(0.5), &[0])])
+            .as_bytes()
+            .to_vec();
         let end = bytes.len();
         bytes[end - 8..].copy_from_slice(&invalid.to_le_bytes());
         let mut system = setup(GeneralNoiseModel::builder().with_p1(0.5), 17);
@@ -817,7 +823,14 @@ fn malformed_legacy_angles_are_rejected_without_unwinding_or_mutation() {
             system.process(ByteMessage::new(&bytes))
         }));
         assert!(result.is_ok(), "admission must return an error, not unwind");
-        assert!(result.unwrap().is_err());
+        assert!(
+            result
+                .unwrap()
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("unsupported frame gate fields")
+        );
         assert_rng_equal(&system, &before);
         assert_eq!(
             system
@@ -838,7 +851,8 @@ fn legacy_inputs_reject_undersized_simulator_before_mutation() {
         FrameLimits::default(),
     )
     .unwrap()
-    .into_noise_model();
+    .into_noise_model()
+    .unwrap();
     let mut simulator = StateVecEngine::new(1);
     simulator.process(message(&[Gate::x(&[0])])).unwrap();
     let mut system = QuantumSystem::new(noise, Box::new(simulator));
@@ -888,7 +902,7 @@ fn caught_execution_and_reset_panics_preserve_poison_in_clones() {
         panic_reset: panic_reset.clone(),
     };
     let cfg = RuntimeNoise::new(GeneralNoiseModel::builder(), 2, FrameLimits::default()).unwrap();
-    let mut system = QuantumSystem::new(cfg.into_noise_model(), Box::new(sim));
+    let mut system = QuantumSystem::new(cfg.into_noise_model().unwrap(), Box::new(sim));
     system.begin_shot(context(0)).unwrap();
     assert!(
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -943,8 +957,10 @@ fn expansion_admission_accounts_for_persistent_crosstalk_victims() {
             },
         )
         .unwrap();
-        let mut system =
-            QuantumSystem::new(cfg.into_noise_model(), Box::new(StateVecEngine::new(16)));
+        let mut system = QuantumSystem::new(
+            cfg.into_noise_model().unwrap(),
+            Box::new(StateVecEngine::new(16)),
+        );
         system.set_seed(29);
         system.begin_shot(context(0)).unwrap();
         system.process(message(&prepare)).unwrap();
@@ -1006,18 +1022,19 @@ fn failed_host_readmission_requires_whole_host_reset() {
 }
 
 #[test]
-fn shared_parser_rejects_nonfinite_angles_without_panicking() {
-    for angle in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-        let mut bytes = message(&[
-            Gate::x(&[0]),
-            Gate::rz(pecos_core::Angle64::from_radians(0.5), &[0]),
-        ])
-        .as_bytes()
-        .to_vec();
+fn shared_parser_preserves_all_angle_bit_patterns() {
+    for fraction in [
+        f64::NAN.to_bits(),
+        f64::INFINITY.to_bits(),
+        f64::NEG_INFINITY.to_bits(),
+    ] {
+        let mut bytes = message(&[Gate::x(&[0]), Gate::rz(pecos_core::Angle64::ZERO, &[0])])
+            .as_bytes()
+            .to_vec();
         let end = bytes.len();
-        bytes[end - 8..].copy_from_slice(&angle.to_le_bytes());
-        let result = std::panic::catch_unwind(|| ByteMessage::new(&bytes).quantum_ops());
-        assert!(matches!(result, Ok(Err(PecosError::Input(_)))));
+        bytes[end - 8..].copy_from_slice(&fraction.to_le_bytes());
+        let gates = ByteMessage::new(&bytes).quantum_ops().unwrap();
+        assert_eq!(gates[1].angles[0].fraction(), fraction);
     }
 }
 
@@ -1376,4 +1393,309 @@ fn stochastic_crosstalk_metadata_preserves_results_and_both_rngs() {
             assert_rng_equal(&framed, &legacy);
         }
     }
+}
+
+fn hook_channel(rows: &[(&str, f64)]) -> StateTransitionChannel {
+    StateTransitionChannel::from_transitions(
+        1.0,
+        &rows.iter().map(|(row, p)| ((*row).into(), *p)).collect(),
+    )
+    .unwrap()
+}
+
+fn compare_hook_inputs(builder: &GeneralNoiseModelBuilder, inputs: &[Vec<Gate>]) {
+    for seed in 0..32 {
+        let mut framed = setup(builder.clone(), seed);
+        let mut ordinary = QuantumSystem::new(
+            Box::new(builder.clone().build()),
+            Box::new(StateVecEngine::new(2)),
+        );
+        ordinary.set_seed(seed);
+        for input in inputs {
+            assert_eq!(
+                framed
+                    .process(frame(input, true))
+                    .unwrap()
+                    .outcomes()
+                    .unwrap(),
+                ordinary
+                    .process(message(input))
+                    .unwrap()
+                    .outcomes()
+                    .unwrap(),
+                "seed {seed}"
+            );
+            assert_rng_equal(&framed, &ordinary);
+        }
+    }
+}
+
+#[test]
+fn before_hook_finishes_before_flip_and_resumes_later_gates() {
+    let builder = GeneralNoiseModel::builder()
+        .add_p1_transition_channel_before_gate(&hook_channel(&[("0->L", 1.0), ("1->L", 1.0)]))
+        .add_p1_transition_channel_after_gate(&hook_channel(&[("L->1", 1.0)]));
+    let records = [
+        FrameRecord::gate(Gate::z(&[0])),
+        FrameRecord::Event {
+            id: FLIP,
+            target: 0,
+        },
+        FrameRecord::gate(Gate::pz(&[1])),
+        FrameRecord::gate(Gate::mz(&[0])),
+    ];
+    for seed in 0..32 {
+        let mut framed = setup(builder.clone(), seed);
+        let mut ordinary = QuantumSystem::new(
+            Box::new(builder.clone().build()),
+            Box::new(StateVecEngine::new(2)),
+        );
+        ordinary.set_seed(seed);
+        ordinary.process(message(&[Gate::z(&[0])])).unwrap();
+        // An event is an unnoised simulator command, so the ordinary reference
+        // completes the first source gate before applying it directly.
+        ordinary
+            .quantum_engine_mut()
+            .process(message(&[Gate::x(&[0])]))
+            .unwrap();
+        let expected = ordinary
+            .process(message(&[Gate::pz(&[1]), Gate::mz(&[0])]))
+            .unwrap()
+            .outcomes()
+            .unwrap();
+        assert_eq!(expected, vec![0]);
+        assert_eq!(
+            framed
+                .process(encode_frame(&records).unwrap())
+                .unwrap()
+                .outcomes()
+                .unwrap(),
+            expected
+        );
+        assert_rng_equal(&framed, &ordinary);
+    }
+}
+
+#[test]
+fn after_hook_on_last_gate_completes_with_trailing_metadata() {
+    let identity = hook_channel(&[("0->0", 1.0), ("1->1", 1.0)]);
+    compare_hook_inputs(
+        &GeneralNoiseModel::builder().add_p1_transition_channel_after_gate(&identity),
+        &[vec![Gate::pz(&[0]), Gate::h(&[0])], vec![Gate::mz(&[0])]],
+    );
+}
+
+#[test]
+fn two_measuring_hooks_at_one_site_resume_once_each() {
+    let flip = hook_channel(&[("0->1", 1.0), ("1->0", 1.0)]);
+    compare_hook_inputs(
+        &GeneralNoiseModel::builder()
+            .add_p1_transition_channel_before_gate(&flip)
+            .add_p1_transition_channel_before_gate(&flip),
+        &[
+            vec![Gate::h(&[0]), Gate::z(&[0]), Gate::mz(&[0])],
+            vec![Gate::mz(&[0])],
+        ],
+    );
+}
+
+#[test]
+fn hook_pause_resumes_into_measurement_crosstalk_payload() {
+    let identity = hook_channel(&[("0->0", 1.0), ("1->1", 1.0)]);
+    compare_hook_inputs(
+        &GeneralNoiseModel::builder()
+            .add_p1_transition_channel_before_gate(&identity)
+            .with_p_meas_crosstalk_local(1.0)
+            .with_p_meas_crosstalk_model(&BTreeMap::from([
+                ("0->1".into(), 1.0),
+                ("1->0".into(), 1.0),
+            ])),
+        &[vec![
+            Gate::pz(&[0]),
+            Gate::z(&[0]),
+            Gate::simple(GateType::MeasCrosstalkLocalPayload, vec![0.into()]),
+            Gate::mz(&[0]),
+            Gate::pz(&[0]),
+            Gate::h(&[0]),
+            Gate::mz(&[0]),
+        ]],
+    );
+}
+
+#[test]
+fn leakage_only_hooks_preserve_runtime_frame_compatibility_without_yields() {
+    let leak = PauliLeakageChannel::new(1.0, &BTreeMap::from([("L".into(), 1.0)])).unwrap();
+    let recovery = hook_channel(&[("L->1", 1.0)]);
+    compare_hook_inputs(
+        &GeneralNoiseModel::builder()
+            .add_p1_pauli_leakage_channel_before_gate(&leak)
+            .add_p1_transition_channel_after_gate(&recovery),
+        &[vec![
+            Gate::z(&[0]),
+            Gate::mz(&[0]),
+            Gate::h(&[0]),
+            Gate::measure_leaked(&[0]),
+        ]],
+    );
+}
+
+#[test]
+fn maximum_frame_hook_yields_and_expansion_fit_derived_budgets() {
+    let flip = hook_channel(&[("0->1", 1.0), ("1->0", 1.0)]);
+    let mut builder = GeneralNoiseModel::builder();
+    for _ in 0..12 {
+        builder = builder
+            .add_p1_transition_channel_before_gate(&flip)
+            .add_p1_transition_channel_after_gate(&flip);
+    }
+    // Every hook emits an internal MZ and an X: 24 barriers and 48 hook
+    // commands per gate, plus the ideal Z. Every record attains the per-hook
+    // yield and command allowances; the base allowance stays unused here.
+    let gates = vec![Gate::z(&[0]); 128];
+    let bound = 128 * (16 * (2 + 1) + 2 * 24);
+    for legacy_input in [false, true] {
+        let make = |budget| {
+            let noise = RuntimeNoise::new(
+                builder.clone(),
+                2,
+                FrameLimits {
+                    records: 128,
+                    expanded_operations: budget,
+                },
+            )
+            .unwrap()
+            .into_noise_model()
+            .unwrap();
+            let mut system = QuantumSystem::new(noise, Box::new(StateVecEngine::new(2)));
+            system.set_seed(17);
+            system.begin_shot(context(0)).unwrap();
+            system
+        };
+        let input = if legacy_input {
+            message(&gates)
+        } else {
+            frame(&gates, false)
+        };
+        let mut rejected = make(bound - 1);
+        let before = rejected.clone();
+        assert!(rejected.process(input.clone()).is_err());
+        assert_rng_equal(&rejected, &before);
+        rejected.process(frame(&[Gate::mz(&[0])], true)).unwrap();
+        let mut accepted = make(bound);
+        let mut ordinary = QuantumSystem::new(
+            Box::new(builder.clone().build()),
+            Box::new(StateVecEngine::new(2)),
+        );
+        ordinary.set_seed(17);
+        assert_eq!(
+            accepted.process(input).unwrap().outcomes().unwrap(),
+            ordinary
+                .process(message(&gates))
+                .unwrap()
+                .outcomes()
+                .unwrap()
+        );
+        assert_rng_equal(&accepted, &ordinary);
+        assert_eq!(
+            accepted
+                .process(frame(&[Gate::mz(&[0])], true))
+                .unwrap()
+                .outcomes()
+                .unwrap(),
+            vec![0]
+        );
+    }
+}
+
+#[test]
+fn sim_builder_reports_recorded_noise_setter_error() {
+    let error = sim_builder()
+        .classical(ScriptBuilder(script(false)))
+        .noise(GeneralNoiseModelBuilder::new().with_p1(1.5))
+        .build()
+        .err()
+        .expect("invalid noise must fail to build");
+    assert!(matches!(error, PecosError::Input(message)
+        if message == "Probability must be between 0 and 1, got 1.5"));
+}
+
+#[test]
+fn sim_builder_reports_depolarizing_probability() {
+    let error = sim_builder()
+        .classical(ScriptBuilder(script(false)))
+        .noise(DepolarizingNoise { p: 1.5 })
+        .build()
+        .err()
+        .expect("invalid noise must fail to build");
+    assert!(
+        matches!(error, PecosError::Input(message) if message == "uniform depolarizing probability must be between 0.0 and 1.0, got 1.5; supply a finite probability in 0.0..=1.0")
+    );
+}
+
+#[test]
+fn sim_builder_reports_biased_probability() {
+    let error = sim_builder()
+        .classical(ScriptBuilder(script(false)))
+        .noise(BiasedDepolarizingNoise { p: -0.1 })
+        .build()
+        .err()
+        .expect("invalid noise must fail to build");
+    assert!(
+        matches!(error, PecosError::Input(message) if message == "uniform biased depolarizing probability must be between 0.0 and 1.0, got -0.1; supply a finite probability in 0.0..=1.0")
+    );
+}
+
+#[test]
+fn sim_builder_reports_depolarizing_unset() {
+    let error = sim_builder()
+        .classical(ScriptBuilder(script(false)))
+        .noise(noise::DepolarizingNoiseModelBuilder::new().with_p_prep(0.0))
+        .build()
+        .err()
+        .expect("invalid noise must fail to build");
+    assert!(
+        matches!(error, PecosError::Input(message) if message == "Measurement probability must be set")
+    );
+}
+
+#[test]
+fn sim_builder_reports_biased_unset() {
+    let error = sim_builder()
+        .classical(ScriptBuilder(script(false)))
+        .noise(noise::BiasedDepolarizingNoiseModelBuilder::new().with_p_prep(0.0))
+        .build()
+        .err()
+        .expect("invalid noise must fail to build");
+    assert!(
+        matches!(error, PecosError::Input(message) if message == "Measurement 0->1 flip probability must be set")
+    );
+}
+
+#[test]
+fn sim_builder_reports_depolarizing_builder_probability() {
+    let error = sim_builder()
+        .classical(ScriptBuilder(script(false)))
+        .noise(noise::DepolarizingNoiseModelBuilder::new().with_uniform_probability(f64::NAN))
+        .build()
+        .err()
+        .expect("invalid noise must fail to build");
+    assert!(
+        matches!(error, PecosError::Input(message) if message == "uniform depolarizing probability must be between 0.0 and 1.0, got NaN; supply a finite probability in 0.0..=1.0")
+    );
+}
+
+#[test]
+fn sim_builder_reports_biased_builder_probability() {
+    let error = sim_builder()
+        .classical(ScriptBuilder(script(false)))
+        .noise(
+            noise::BiasedDepolarizingNoiseModelBuilder::new()
+                .with_uniform_probability(f64::INFINITY),
+        )
+        .build()
+        .err()
+        .expect("invalid noise must fail to build");
+    assert!(
+        matches!(error, PecosError::Input(message) if message == "uniform biased depolarizing probability must be between 0.0 and 1.0, got inf; supply a finite probability in 0.0..=1.0")
+    );
 }

@@ -36,11 +36,12 @@
 //!     .build();
 //!
 //! let results = sim_neo(circuit).auto()
-//!     .depolarizing(0.01)
+//!     .depolarizing(0.01)?
 //!     .sampling(monte_carlo(1000))
 //!     .seed(42)
 //!     .build()
 //!     .run().expect("simulation should succeed");
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
 //! ## QASM Programs
@@ -65,11 +66,12 @@
 //! // Pass QASM source, then set the engine
 //! let results = sim_neo(qasm).auto()
 //!     .classical(qasm_engine())
-//!     .depolarizing(0.01)
+//!     .depolarizing(0.01)?
 //!     .sampling(monte_carlo(1000))
 //!     .seed(42)
 //!     .build()
 //!     .run().expect("simulation should succeed");
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
 //! ## Other Program Types
@@ -108,6 +110,7 @@
 use crate::command::{CommandQueue, GateCommand};
 use crate::extensible::GateDefinitions;
 use crate::noise::ComposableNoiseModel;
+use crate::noise::validation::ValidationResult;
 use crate::outcome::{MeasurementOutcomes, RegisterMap};
 use crate::program::{CommandSource, DynProgramRunner, ProgramRunner, StaticProgram};
 use crate::runner::{EventHandlers, GateOverrides};
@@ -742,18 +745,21 @@ impl Default for SimConfig {
 /// # Example
 ///
 /// ```no_run
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use pecos_neo::tool::{sim_neo, importance_sampling};
 /// use pecos_neo::prelude::*;
 ///
 /// let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 /// let results = sim_neo(circuit).auto()
 ///     .sampling(importance_sampling(10000)
-///         .with_p1(0.001)
-///         .with_p2(0.01)
-///         .with_p_meas(0.001)
-///         .with_boost(10.0))
+///         .with_p1(0.001)?
+///         .with_p2(0.01)?
+///         .with_p_meas(0.001)?
+///         .with_boost(10.0)?)
 ///     .build()
 ///     .run().expect("simulation should succeed");
+/// # Ok(())
+/// # }
 /// ```
 #[derive(Debug, Clone)]
 pub struct ImportanceSamplingBuilder {
@@ -805,43 +811,60 @@ impl ImportanceSamplingBuilder {
     }
 
     /// Set the single-qubit gate error rate.
-    #[must_use]
-    pub fn with_p1(mut self, p: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_p1(mut self, p: f64) -> ValidationResult<Self> {
+        crate::sampling::ImportanceConfig::with_boost(p, self.boost)?;
         self.p1 = p;
-        self
+        Ok(self)
     }
 
     /// Set the two-qubit gate error rate.
-    #[must_use]
-    pub fn with_p2(mut self, p: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_p2(mut self, p: f64) -> ValidationResult<Self> {
+        crate::sampling::ImportanceConfig::with_boost(p, self.boost)?;
         self.p2 = p;
-        self
+        Ok(self)
     }
 
     /// Set the measurement error rate.
-    #[must_use]
-    pub fn with_p_meas(mut self, p: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_p_meas(mut self, p: f64) -> ValidationResult<Self> {
+        crate::sampling::ImportanceConfig::with_boost(p, self.boost)?;
         self.p_meas = p;
-        self
+        Ok(self)
     }
 
     /// Set all error rates to the same value.
-    #[must_use]
-    pub fn with_uniform_error(mut self, p: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_uniform_error(mut self, p: f64) -> ValidationResult<Self> {
+        crate::sampling::ImportanceConfig::with_boost(p, self.boost)?;
         self.p1 = p;
         self.p2 = p;
         self.p_meas = p;
-        self
+        Ok(self)
     }
 
     /// Set the boost factor for the proposal distribution.
     ///
     /// The proposal distribution samples errors at rate `p * boost`,
     /// capped at 50%.
-    #[must_use]
-    pub fn with_boost(mut self, boost: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_boost(mut self, boost: f64) -> ValidationResult<Self> {
+        crate::sampling::ImportanceConfig::with_boost(self.p1, boost)?;
+        crate::sampling::ImportanceConfig::with_boost(self.p2, boost)?;
+        crate::sampling::ImportanceConfig::with_boost(self.p_meas, boost)?;
         self.boost = boost;
-        self
+        Ok(self)
     }
 
     /// Build the sampling strategy.
@@ -895,15 +918,16 @@ impl From<ImportanceSamplingBuilder> for Sampling {
 /// # Example
 ///
 /// ```no_run
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use pecos_neo::tool::{sim_neo, importance_sampling};
 /// use pecos_neo::prelude::*;
 ///
 /// let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 /// let results = sim_neo(circuit).auto()
 ///     .sampling(importance_sampling(10000)
-///         .with_p1(0.001)
-///         .with_p2(0.01)
-///         .with_boost(10.0))
+///         .with_p1(0.001)?
+///         .with_p2(0.01)?
+///         .with_boost(10.0)?)
 ///     .build()
 ///     .run()
 ///     .expect("simulation should succeed");
@@ -915,6 +939,8 @@ impl From<ImportanceSamplingBuilder> for Sampling {
 /// }) {
 ///     println!("Estimated error rate: {:.2e}", rate);
 /// }
+/// # Ok(())
+/// # }
 /// ```
 #[must_use]
 pub fn importance_sampling(shots: usize) -> ImportanceSamplingBuilder {
@@ -975,6 +1001,7 @@ impl From<PathEnumerationBuilder> for Sampling {
 /// # Example
 ///
 /// ```no_run
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use pecos_neo::tool::{path_enumeration, sim_neo, sparse_stab};
 /// use pecos_neo::prelude::*;
 ///
@@ -999,6 +1026,8 @@ impl From<PathEnumerationBuilder> for Sampling {
 /// {
 ///     println!("p = {:.3}: {:?}", weight.weight(), outcome);
 /// }
+/// # Ok(())
+/// # }
 /// ```
 #[must_use]
 pub fn path_enumeration(max_measurements: usize) -> PathEnumerationBuilder {
@@ -1739,11 +1768,12 @@ fn validate_sampler_circuit(
 ///
 /// let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 /// let results = sim_neo(circuit).auto()
-///     .depolarizing(0.01)
+///     .depolarizing(0.01)?
 ///     .sampling(monte_carlo(1000))
 ///     .seed(42)
 ///     .build()
 ///     .run().expect("simulation should succeed");
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
 /// ## QASM Program (builder-of-builders pattern)
@@ -2197,7 +2227,7 @@ impl SimNeoBuilder {
     ///
     /// Accepts any type that implements `Into<ComposableNoiseModel>`:
     /// - `ComposableNoiseModel` directly
-    /// - `GeneralNoiseModelBuilder` (without calling `.build()`)
+    /// - A validated `GeneralNoiseModelBuilder` result (`builder.build()?`)
     /// - Any single `NoiseChannel`
     ///
     /// # Examples
@@ -2209,15 +2239,16 @@ impl SimNeoBuilder {
     ///
     /// let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
     ///
-    /// // Using GeneralNoiseModelBuilder (no .build() needed)
+    /// // Build and validate the noise model first
     /// sim_neo(circuit.clone()).auto()
-    ///     .noise(GeneralNoiseModelBuilder::new().with_p1(0.01).with_p2(0.02))
+    ///     .noise(GeneralNoiseModelBuilder::new().with_p1(0.01).with_p2(0.02).build()?)
     ///     .build();
     ///
     /// // Using a single channel directly
     /// sim_neo(circuit.clone()).auto()
-    ///     .noise(SingleQubitChannel::depolarizing(0.01))
+    ///     .noise(SingleQubitChannel::depolarizing(0.01)?)
     ///     .build();
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     #[must_use]
     pub fn noise(mut self, noise: impl Into<ComposableNoiseModel>) -> Self {
@@ -2367,15 +2398,18 @@ impl SimNeoBuilder {
     ///
     /// # Arguments
     /// * `p` - Error probability for gates, preparation, and measurements
-    #[must_use]
-    pub fn depolarizing(self, p: f64) -> Self {
-        self.noise(
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities, weights, or noise configuration.
+    pub fn depolarizing(self, p: f64) -> crate::noise::validation::ValidationResult<Self> {
+        Ok(self.noise(
             crate::noise::GeneralNoiseModelBuilder::new()
                 .with_p1(p)
                 .with_p2(p)
                 .with_p_prep(p)
-                .with_p_meas_symmetric(p),
-        )
+                .with_p_meas_symmetric(p)
+                .build()?,
+        ))
     }
 
     /// Build the simulation handle.
@@ -3242,8 +3276,11 @@ fn build_importance_runner(
 ) -> ImportanceSamplingRunner<SparseStab> {
     ImportanceSamplingRunner::new(SparseStab::new(num_qubits))
         .with_single_qubit_boost(is_config.p1(), is_config.boost())
+        .expect("ImportanceSamplingBuilder setters validate each probability and boosted product; defaults are finite valid constants")
         .with_two_qubit_boost(is_config.p2(), is_config.boost())
+        .expect("ImportanceSamplingBuilder setters validate each probability and boosted product; defaults are finite valid constants")
         .with_measurement_boost(is_config.p_meas(), is_config.boost())
+        .expect("ImportanceSamplingBuilder setters validate each probability and boosted product; defaults are finite valid constants")
 }
 
 /// Seed an importance sampling runner for a specific global shot index.
@@ -4067,11 +4104,12 @@ impl Simulation {
 ///     .build();
 ///
 /// let results = sim_neo(circuit).auto()
-///     .depolarizing(0.01)
+///     .depolarizing(0.01)?
 ///     .sampling(monte_carlo(1000))
 ///     .seed(42)
 ///     .build()
 ///     .run().expect("simulation should succeed");
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
 /// ## QASM Program
@@ -4093,11 +4131,12 @@ impl Simulation {
 ///
 /// let results = sim_neo(qasm).auto()
 ///     .classical(qasm_engine())
-///     .depolarizing(0.01)
+///     .depolarizing(0.01)?
 ///     .sampling(monte_carlo(1000))
 ///     .seed(42)
 ///     .build()
 ///     .run().expect("simulation should succeed");
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
 /// ## Reusable Simulation
@@ -4143,11 +4182,12 @@ pub fn sim_neo<I: SimNeoInput>(input: I) -> SimNeoBuilder {
 ///
 /// let results = sim_neo_builder()
 ///     .with_engine(qasm_engine().qasm(qasm))
-///     .depolarizing(0.01)
+///     .depolarizing(0.01)?
 ///     .sampling(monte_carlo(1000))
 ///     .seed(42)
 ///     .build()
 ///     .run().expect("simulation should succeed");
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[must_use]
 pub fn sim_neo_builder() -> SimNeoBuilder {
@@ -4303,7 +4343,8 @@ mod tests {
             .build();
 
         // Very high error rate - this will definitely flip some outcomes
-        let noise = ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.5));
+        let noise =
+            ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.5).unwrap());
 
         let results = sim_neo(circuit)
             .auto()
@@ -4341,8 +4382,10 @@ mod tests {
             .mz(&[0])
             .build();
 
-        let noise1 = ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.5));
-        let noise2 = ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.5));
+        let noise1 =
+            ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.5).unwrap());
+        let noise2 =
+            ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.5).unwrap());
 
         let results1 = sim_neo(circuit.clone())
             .auto()
@@ -4379,7 +4422,7 @@ mod tests {
         // This uses the From<C: NoiseChannel> impl for ComposableNoiseModel
         let results = sim_neo(circuit)
             .auto()
-            .noise(SingleQubitChannel::depolarizing(0.5))
+            .noise(SingleQubitChannel::depolarizing(0.5).unwrap())
             .sampling(monte_carlo(50))
             .seed(42)
             .build()
@@ -4408,7 +4451,12 @@ mod tests {
         // Pass builder directly - no .build() needed!
         let results = sim_neo(circuit)
             .auto()
-            .noise(GeneralNoiseModelBuilder::new().with_p1(0.3))
+            .noise(
+                GeneralNoiseModelBuilder::new()
+                    .with_p1(0.3)
+                    .build()
+                    .unwrap(),
+            )
             .sampling(monte_carlo(100))
             .seed(42)
             .build()
@@ -4432,7 +4480,7 @@ mod tests {
 
     #[test]
     fn test_sim_neo_convenience_depolarizing() {
-        // Test the .depolarizing(p) convenience method
+        // Test the .depolarizing(p).unwrap() convenience method
         let circuit = CommandBuilder::new()
             .pz(&[0])
             .pz(&[1])
@@ -4444,7 +4492,8 @@ mod tests {
 
         let results = sim_neo(circuit)
             .auto()
-            .depolarizing(0.2) // 20% on both 1Q and 2Q gates
+            .depolarizing(0.2)
+            .unwrap() // 20% on both 1Q and 2Q gates
             .sampling(monte_carlo(100))
             .seed(42)
             .build()
@@ -4477,7 +4526,12 @@ mod tests {
 
         let results = sim_neo(circuit)
             .auto()
-            .noise(GeneralNoiseModelBuilder::new().with_p_meas_symmetric(0.15))
+            .noise(
+                GeneralNoiseModelBuilder::new()
+                    .with_p_meas_symmetric(0.15)
+                    .build()
+                    .unwrap(),
+            )
             .sampling(monte_carlo(200))
             .seed(42)
             .build()
@@ -4509,7 +4563,12 @@ mod tests {
 
         let results = sim_neo(circuit)
             .auto()
-            .noise(GeneralNoiseModelBuilder::new().with_p_prep(0.20))
+            .noise(
+                GeneralNoiseModelBuilder::new()
+                    .with_p_prep(0.20)
+                    .build()
+                    .unwrap(),
+            )
             .sampling(monte_carlo(200))
             .seed(42)
             .build()
@@ -4892,7 +4951,7 @@ mod tests {
 
         let results = sim_neo(circuit)
             .auto()
-            .sampling(importance_sampling(35).with_uniform_error(0.01))
+            .sampling(importance_sampling(35).with_uniform_error(0.01).unwrap())
             .seed(3)
             .run()
             .expect("simulation should succeed");
@@ -4917,7 +4976,9 @@ mod tests {
                 .sampling(
                     importance_sampling(60)
                         .with_uniform_error(0.01)
+                        .unwrap()
                         .with_boost(10.0)
+                        .unwrap()
                         .workers(workers),
                 )
                 .seed(42)
@@ -4965,7 +5026,12 @@ mod tests {
         let run = || {
             sim_neo(circuit.clone())
                 .auto()
-                .sampling(importance_sampling(30).with_uniform_error(0.01).workers(3))
+                .sampling(
+                    importance_sampling(30)
+                        .with_uniform_error(0.01)
+                        .unwrap()
+                        .workers(3),
+                )
                 .seed(5)
                 .run()
                 .expect("simulation should succeed")
@@ -5182,7 +5248,7 @@ mod tests {
         let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
         let _ = sim_neo(circuit)
             .auto()
-            .noise(SingleQubitChannel::depolarizing(0.1))
+            .noise(SingleQubitChannel::depolarizing(0.1).unwrap())
             .sampling(path_enumeration(1))
             .build();
     }
@@ -5268,7 +5334,8 @@ mod tests {
     fn test_sim_neo_subset_simulation_with_noise() {
         // Depolarizing(0.3) after Z: P(flip) = 2/3 * 0.3 = 0.2.
         let circuit = CommandBuilder::new().pz(&[0]).z(&[0]).mz(&[0]).build();
-        let noise = ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.3));
+        let noise =
+            ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.3).unwrap());
 
         let results = sim_neo(circuit)
             .quantum(sparse_stab())
@@ -5440,9 +5507,9 @@ mod tests {
             .build();
 
         let noise_single =
-            ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.3));
+            ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.3).unwrap());
         let noise_par =
-            ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.3));
+            ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.3).unwrap());
 
         // Run with single worker (default)
         let single_results = sim_neo(circuit.clone())
@@ -5492,8 +5559,10 @@ mod tests {
             .mz(&[0])
             .build();
 
-        let noise1 = ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.3));
-        let noise2 = ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.3));
+        let noise1 =
+            ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.3).unwrap());
+        let noise2 =
+            ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.3).unwrap());
 
         let results1 = sim_neo(circuit.clone())
             .auto()
@@ -5632,7 +5701,8 @@ mod tests {
     )]
     fn test_sim_neo_quantum_engine_builder_rejects_composable_noise() {
         let circuit = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
-        let noise = ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.1));
+        let noise =
+            ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.1).unwrap());
 
         let _ = sim_neo(circuit)
             .quantum(pecos_engines::stabilizer())
@@ -5647,7 +5717,8 @@ mod tests {
     )]
     fn test_sim_neo_quantum_engine_builder_parallel_rejects_composable_noise() {
         let circuit = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
-        let noise = ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.1));
+        let noise =
+            ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.1).unwrap());
 
         let _ = sim_neo(circuit)
             .quantum(pecos_engines::stabilizer())
@@ -6083,9 +6154,13 @@ mod tests {
             .sampling(
                 importance_sampling(100)
                     .with_p1(0.01)
+                    .unwrap()
                     .with_p2(0.02)
+                    .unwrap()
                     .with_p_meas(0.01)
-                    .with_boost(5.0),
+                    .unwrap()
+                    .with_boost(5.0)
+                    .unwrap(),
             )
             .seed(42)
             .run()
@@ -6113,6 +6188,7 @@ mod tests {
                 .sampling(
                     importance_sampling(4)
                         .with_uniform_error(0.0)
+                        .unwrap()
                         .workers(workers),
                 )
                 .seed(42)
@@ -6135,8 +6211,10 @@ mod tests {
         let circuit = CommandBuilder::new().pz(&[0]).mz(&[0]).build();
         let noise = GeneralNoiseModelBuilder::new()
             .with_p_idle_quadratic(0.25)
+            .unwrap()
             .with_p_idle_coherent(true)
-            .build();
+            .build()
+            .unwrap();
 
         let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _ = sim_neo(circuit)
@@ -6173,7 +6251,9 @@ mod tests {
             .sampling(
                 importance_sampling(50)
                     .with_uniform_error(0.01)
-                    .with_boost(10.0),
+                    .unwrap()
+                    .with_boost(10.0)
+                    .unwrap(),
             )
             .seed(123)
             .run()
@@ -6201,7 +6281,9 @@ mod tests {
             .sampling(
                 importance_sampling(2000)
                     .with_uniform_error(0.001)
-                    .with_boost(100.0), // Very aggressive boost
+                    .unwrap()
+                    .with_boost(100.0)
+                    .unwrap(), // Very aggressive boost
             )
             .seed(42)
             .run()
@@ -6234,7 +6316,9 @@ mod tests {
 
         let is_builder = importance_sampling(20)
             .with_uniform_error(0.01)
-            .with_boost(10.0);
+            .unwrap()
+            .with_boost(10.0)
+            .unwrap();
 
         let results1 = sim_neo(circuit.clone())
             .auto()
@@ -6294,9 +6378,13 @@ mod tests {
             .sampling(
                 importance_sampling(100)
                     .with_p1(0.001)
+                    .unwrap()
                     .with_p2(0.01)
+                    .unwrap()
                     .with_p_meas(0.001)
-                    .with_boost(10.0),
+                    .unwrap()
+                    .with_boost(10.0)
+                    .unwrap(),
             )
             .seed(42)
             .run()
@@ -6318,7 +6406,9 @@ mod tests {
             .sampling(
                 importance_sampling(500)
                     .with_uniform_error(0.01)
-                    .with_boost(10.0),
+                    .unwrap()
+                    .with_boost(10.0)
+                    .unwrap(),
             )
             .seed(42)
             .run()
@@ -6422,7 +6512,8 @@ mod tests {
             .mz(&[0])
             .build();
 
-        let noise = ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.5));
+        let noise =
+            ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.5).unwrap());
 
         let results = sim_neo(circuit)
             .quantum(custom_backend(|n| SparseStab::with_seed(n, 42)))
@@ -6515,7 +6606,7 @@ mod tests {
         let run = |workers: usize| {
             sim_neo(circuit.clone())
                 .quantum(custom_backend(|n| SparseStab::with_seed(n, 42)))
-                .noise(SingleQubitChannel::depolarizing(0.3))
+                .noise(SingleQubitChannel::depolarizing(0.3).unwrap())
                 .sampling(monte_carlo(40).workers(workers))
                 .seed(7)
                 .run()
@@ -6769,13 +6860,12 @@ mod tests {
     #[test]
     fn test_sim_neo_statevec_rz_gate() {
         use pecos_core::Angle64;
-        use std::f64::consts::PI;
 
         // RZ(pi) on |+> should flip phase, so H then RZ(pi) then H = X (up to global phase)
         // Instead, simpler test: RZ on |0> leaves |0>
         let circuit = CommandBuilder::new()
             .pz(&[0])
-            .rz(&[0], Angle64::from_radians(PI / 4.0)) // arbitrary rotation
+            .rz(&[0], Angle64::from_turn_ratio(1, 8)) // arbitrary rotation
             .mz(&[0])
             .build();
 

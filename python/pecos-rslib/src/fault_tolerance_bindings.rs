@@ -137,12 +137,14 @@ use std::sync::Arc;
 
 mod batch_decode;
 mod decoder_comparison;
+mod projection;
 mod sample_corpus;
 mod sampler_decode;
 
 use decoder_comparison::{
     PyDecoderComparisonResult, compare_decoder_outcomes, validate_comparison_arguments,
 };
+use projection::{DemInput, PyProjectionReport};
 use sample_corpus::{CorpusError, CorpusToSave, LoadedCorpus};
 
 type PyDemMechanismTuple = (f64, Vec<u32>, Vec<u32>);
@@ -260,10 +262,7 @@ fn parse_p2_weights(weights: BTreeMap<String, f64>) -> PyResult<PauliWeights> {
         let pauli = if let Some(pauli) = pauli {
             pauli
         } else if replacement {
-            pecos_core::PauliString::with_phase_and_paulis(
-                pecos_core::QuarterPhase::PlusOne,
-                Vec::new(),
-            )
+            pecos_core::PauliString::identity()
         } else {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "plain p2_weights cannot contain identity pair 'II'; use '~II' (or ':replace:II') for a replacement branch that only omits the gate",
@@ -1137,9 +1136,17 @@ impl PyInfluenceBuilder {
     ///
     /// Returns:
     ///     Self for method chaining.
-    fn with_tracked_x(mut slf: PyRefMut<'_, Self>, qubits: Vec<usize>) -> PyRefMut<'_, Self> {
+    fn with_tracked_x(
+        mut slf: PyRefMut<'_, Self>,
+        qubits: Vec<usize>,
+    ) -> PyResult<PyRefMut<'_, Self>> {
+        if let Some(&qubit) = pecos_core::duplicate_qubits(qubits.iter().copied()).first() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                pecos_core::ParsePauliStringError::DuplicateQubit { qubit }.to_string(),
+            ));
+        }
         slf.tracked_x_qubits = qubits;
-        slf
+        Ok(slf)
     }
 
     /// Add a Z-string tracked Pauli.
@@ -1151,9 +1158,17 @@ impl PyInfluenceBuilder {
     ///
     /// Returns:
     ///     Self for method chaining.
-    fn with_tracked_z(mut slf: PyRefMut<'_, Self>, qubits: Vec<usize>) -> PyRefMut<'_, Self> {
+    fn with_tracked_z(
+        mut slf: PyRefMut<'_, Self>,
+        qubits: Vec<usize>,
+    ) -> PyResult<PyRefMut<'_, Self>> {
+        if let Some(&qubit) = pecos_core::duplicate_qubits(qubits.iter().copied()).first() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                pecos_core::ParsePauliStringError::DuplicateQubit { qubit }.to_string(),
+            ));
+        }
         slf.tracked_z_qubits = qubits;
-        slf
+        Ok(slf)
     }
 
     /// Add a tracked Pauli.
@@ -1183,11 +1198,13 @@ impl PyInfluenceBuilder {
                 Ok((pauli, pecos_core::QubitId::from(*qubit)))
             })
             .collect::<PyResult<_>>()?;
-        slf.tracked_paulis
-            .push(pecos_core::PauliString::with_phase_and_paulis(
+        slf.tracked_paulis.push(
+            pecos_core::PauliString::with_phase_and_paulis(
                 pecos_core::QuarterPhase::PlusOne,
                 paulis,
-            ));
+            )
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?,
+        );
         Ok(slf)
     }
 
@@ -1224,10 +1241,14 @@ impl PyInfluenceBuilder {
             .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
 
         if !self.tracked_x_qubits.is_empty() {
-            builder = builder.with_x(&self.tracked_x_qubits);
+            builder = builder
+                .with_x(&self.tracked_x_qubits)
+                .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         }
         if !self.tracked_z_qubits.is_empty() {
-            builder = builder.with_z(&self.tracked_z_qubits);
+            builder = builder
+                .with_z(&self.tracked_z_qubits)
+                .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         }
 
         if self.use_circuit_tracked_paulis {
@@ -1528,7 +1549,6 @@ fn parse_fault_distance_osd_method(value: &str) -> PyResult<RustFaultDistanceOsd
 impl PyFaultDistanceUpperBoundConfig {
     #[new]
     #[pyo3(signature = (samples, seed, observable_subset_strategy, error_rate, max_iterations, bp_method, bp_schedule, min_sum_scaling_factor, osd_method, osd_order, omp_threads))]
-    #[allow(clippy::too_many_arguments)]
     fn new(
         samples: usize,
         seed: u64,
@@ -1656,9 +1676,16 @@ pub struct PyDetectorErrorModel {
     pub(crate) inner: RustDetectorErrorModel,
 }
 
-/// A decoder built directly from a structured PECOS detector error model.
+/// A decoder built from standard DEM text plus the object's `fault_sector` labels.
 #[pyclass(name = "StructuredDemDecoder", module = "pecos_rslib.qec", unsendable)]
 pub struct PyStructuredDemDecoder {
+    /// Prepared model in standard DEM text, for inspecting the chosen components.
+    #[pyo3(get)]
+    dem: String,
+    /// Shared projection diagnostics. `None` means no projection was needed, or a
+    /// composition without a shared policy projected inside members with no shared report.
+    #[pyo3(get)]
+    projection: Option<PyProjectionReport>,
     inner: Box<dyn pecos_decoders::ObservableDecoder>,
     num_observables: usize,
 }
@@ -2356,7 +2383,6 @@ impl PyDetectorErrorModel {
     /// another scheduled gate matches the key.
     #[staticmethod]
     #[pyo3(signature = (circuit, p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None, p2_gate_rates=None, p1_gate_rates=None))]
-    #[allow(clippy::too_many_arguments)]
     fn from_circuit(
         circuit: &pyo3::Bound<'_, pyo3::PyAny>,
         p1: f64,
@@ -2486,7 +2512,34 @@ impl PyDetectorErrorModel {
             .collect()
     }
 
-    /// Build a decoder without rendering and reparsing this model at the API boundary.
+    /// Detector identities and their optional fault sectors.
+    fn detector_fault_sectors(&self) -> Vec<(u32, Option<&str>)> {
+        self.inner
+            .detectors
+            .iter()
+            .map(|detector| (detector.id, detector.fault_sector.as_deref()))
+            .collect()
+    }
+
+    /// Detector X/Z families in detector id order, read from the fault sectors.
+    fn detector_bases(&self) -> PyResult<Vec<&'static str>> {
+        use pecos_decoder_core::dem_views::DetectorBasis;
+
+        self.inner
+            .detector_bases()
+            .map(|bases| {
+                bases
+                    .into_iter()
+                    .map(|basis| match basis {
+                        DetectorBasis::X => "X",
+                        DetectorBasis::Z => "Z",
+                    })
+                    .collect()
+            })
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+    }
+
+    /// Build a decoder from this object's standard text plus its `fault_sector` labels.
     ///
     /// Windowed and beam-search specifications consume the structured model directly;
     /// backends that only expose a text parser are rendered at their leaf boundary.
@@ -2506,10 +2559,22 @@ impl PyDetectorErrorModel {
             .to_structured_decoder_dem()
             .map_err(decoder_build_error_to_py)?;
         let num_observables = model.num_observables;
-        let inner = spec
-            .build(&pecos_decoders::DecodeModel::StructuredDem(model))
+        let prepared = spec
+            .decode_structured_model(&model)
             .map_err(decoder_build_error_to_py)?;
+        let inner = spec
+            .build(&prepared.model)
+            .map_err(decoder_build_error_to_py)?;
+        let dem = match &prepared.model {
+            pecos_decoders::DecodeModel::StructuredDem(model) => model.to_dem_string(),
+            pecos_decoders::DecodeModel::SingleDem(text) => text.clone(),
+            pecos_decoders::DecodeModel::HybridDem { .. } => {
+                unreachable!("structured preparation refuses Hybrid")
+            }
+        };
         Ok(PyStructuredDemDecoder {
+            dem,
+            projection: prepared.projection.map(Into::into),
             inner,
             num_observables,
         })
@@ -2678,9 +2743,11 @@ impl PyDetectorErrorModel {
 
     /// Convert the DEM to a source-informed graphlike decomposition.
     ///
-    /// Source-carried components are recursively decomposed only using
-    /// graphlike pieces that are themselves source-carried components in this
-    /// DEM. Residual hyperedges remain hyperedges.
+    /// Source-carried component structure is used first. Components that are
+    /// still hyperedges are decomposed with graphlike mechanisms that appear
+    /// as source-carried components or source-tracked alternatives in this
+    /// DEM, introducing graphlike remnants when needed. Residual hyperedges
+    /// remain hyperedges.
     fn to_string_source_graphlike_decomposed(&self) -> String {
         self.inner.to_string_source_graphlike_decomposed()
     }
@@ -2980,7 +3047,6 @@ impl PyDemBuilder {
     /// Clifford action of a different scheduled gate are rejected, even if
     /// another scheduled gate matches the key.
     #[pyo3(signature = (p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None, p2_gate_rates=None, p1_gate_rates=None))]
-    #[allow(clippy::too_many_arguments)]
     fn with_noise(
         mut slf: PyRefMut<'_, Self>,
         p1: f64,
@@ -3219,6 +3285,12 @@ fn create_observable_decoder(
     spec.build(&model).map_err(decoder_build_error_to_py)
 }
 
+/// A loaded corpus's exact DEM text and its dense detector fault-sector labels.
+struct EmbeddedDem {
+    text: String,
+    fault_sectors: Vec<Option<String>>,
+}
+
 /// Pre-generated sample batch held in Rust memory.
 ///
 /// Created by `DemSampler.sample_batch()`. Can be decoded by multiple
@@ -3245,7 +3317,7 @@ pub struct PySampleBatch {
     samples: SampleBatch,
     raw_measurements: bool,
     seed: Option<u64>,
-    dem: Option<String>,
+    embedded: Option<EmbeddedDem>,
     metadata_json: Option<String>,
     generator: Option<String>,
     format_version: Option<u32>,
@@ -3293,7 +3365,7 @@ impl PySampleBatch {
             samples,
             raw_measurements: false,
             seed,
-            dem: None,
+            embedded: None,
             metadata_json: None,
             generator: None,
             format_version: None,
@@ -3382,7 +3454,7 @@ impl PySampleBatch {
             .expect("Python constructor validated rows and observable masks"),
             raw_measurements: false,
             seed: None,
-            dem: None,
+            embedded: None,
             metadata_json: None,
             generator: None,
             format_version: None,
@@ -3399,10 +3471,32 @@ impl PySampleBatch {
             .expect("corpus loader validated packed columns"),
             raw_measurements: false,
             seed: corpus.seed,
-            dem: Some(corpus.dem),
+            embedded: Some(EmbeddedDem {
+                text: corpus.dem,
+                fault_sectors: corpus.detector_fault_sectors,
+            }),
             metadata_json: corpus.metadata_json,
             generator: Some(corpus.generator),
             format_version: Some(corpus.format_version),
+        }
+    }
+
+    fn embedded_dem(&self) -> PyResult<DemInput> {
+        let embedded = self.embedded.as_ref().ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err(
+                "dem is required because this SampleBatch has no embedded DEM",
+            )
+        })?;
+        let text = embedded.text.clone();
+        if embedded.fault_sectors.iter().any(Option::is_some) {
+            let structured = pecos_decoder_core::window::StructuredDem::from_dem_str(&text)
+                .and_then(|parsed| {
+                    parsed.with_detector_fault_sectors(embedded.fault_sectors.clone())
+                })
+                .map_err(decoder_build_error_to_py)?;
+            Ok(DemInput::Object { text, structured })
+        } else {
+            Ok(DemInput::Text(text))
         }
     }
 
@@ -3411,8 +3505,8 @@ impl PySampleBatch {
         if allow_dem_mismatch {
             return Ok(());
         }
-        if let Some(embedded_dem) = &self.dem
-            && embedded_dem != dem
+        if let Some(embedded) = &self.embedded
+            && embedded.text != dem
         {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "supplied DEM differs from the DEM embedded in this loaded SampleBatch; pass \
@@ -3529,7 +3623,17 @@ impl PySampleBatch {
     /// Exact detector error model stored with a loaded corpus, if any.
     #[getter]
     fn dem(&self) -> Option<&str> {
-        self.dem.as_deref()
+        self.embedded
+            .as_ref()
+            .map(|embedded| embedded.text.as_str())
+    }
+
+    /// Dense detector labels stored with a loaded corpus, returned as a fresh list.
+    #[getter]
+    fn dem_fault_sectors(&self) -> Option<Vec<Option<String>>> {
+        self.embedded
+            .as_ref()
+            .map(|embedded| embedded.fault_sectors.clone())
     }
 
     /// Opaque caller metadata JSON stored with a loaded corpus, if any.
@@ -3552,9 +3656,14 @@ impl PySampleBatch {
 
     /// Save this serially captured shot batch as a self-describing corpus.
     ///
+    /// Every save writes format v2; new readers accept v1 and v2, but older PECOS
+    /// installations reject v2. Objects supply their own labels. Equal embedded
+    /// text preserves stored labels, even with the mismatch override; other text
+    /// writes all-null labels. Saving does not attach a model to this batch.
+    ///
     /// Args:
     ///     path: Destination file path.
-    ///     dem: DEM text associated with the samples. For a generated or
+    ///     dem: DEM text or a DetectorErrorModel object associated with the samples. For a generated or
     ///         Python-constructed batch, only detector and observable dimensions
     ///         can be checked. This catches gross mismatches, but cannot prove DEM
     ///         identity or detect a different model with the same dimensions. For
@@ -3571,12 +3680,20 @@ impl PySampleBatch {
     fn save(
         &self,
         path: std::path::PathBuf,
-        dem: &str,
+        dem: &Bound<'_, PyAny>,
         metadata_json: Option<&str>,
         clear_metadata: bool,
         allow_dem_mismatch: bool,
     ) -> PyResult<()> {
-        self.ensure_dem_matches(dem, allow_dem_mismatch)?;
+        let dem = DemInput::extract(dem)?;
+        self.ensure_dem_matches(dem.text(), allow_dem_mismatch)?;
+        let labels = match &dem {
+            DemInput::Object { structured, .. } => structured.detector_fault_sectors.clone(),
+            DemInput::Text(text) => match &self.embedded {
+                Some(embedded) if embedded.text == *text => embedded.fault_sectors.clone(),
+                _ => vec![None; self.samples.num_detectors()],
+            },
+        };
         if clear_metadata && metadata_json.is_some() {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "metadata_json and clear_metadata=True are mutually exclusive",
@@ -3594,14 +3711,17 @@ impl PySampleBatch {
                 obs_columns: self.samples.obs_columns(),
                 num_shots: self.samples.num_shots(),
                 seed: self.seed,
-                dem,
+                dem: dem.text(),
+                detector_fault_sectors: &labels,
                 metadata_json,
             },
         )
         .map_err(|error| Self::map_corpus_error(error, &path))
     }
 
-    /// Load and validate a self-describing shot corpus.
+    /// Load and validate a v1 or v2 shot corpus, reporting its on-disk version.
+    /// Version 1 loads unlabelled. Version 2 preserves detector fault-sector labels.
+    /// Every save writes v2, which older PECOS installations reject.
     #[staticmethod]
     fn load(path: std::path::PathBuf) -> PyResult<Self> {
         sample_corpus::load(&path)
@@ -3665,7 +3785,11 @@ impl PySampleBatch {
     /// legacy decoder string, or an optional decoder-provider specification.
     ///
     /// `dem=None` uses the exact DEM embedded by `SampleBatch.load`; generated
-    /// batches require an explicit DEM. Automatic execution honors decoder
+    /// batches require an explicit DEM. Stored labels use object semantics; providers
+    /// refuse labelled embedded models. All-null labels retain text semantics.
+    /// Explicit objects use their own labels. Explicit text (including loaded.dem)
+    /// is unlabelled. Corpus identity compares standard text only, never labels.
+    /// Automatic execution honors decoder
     /// statefulness, uses native batching where available, and otherwise chooses
     /// sequential or bounded parallel per-shot execution. Set `workers` to opt
     /// into that many workers, bounded by one per shot (and never below one)
@@ -3675,22 +3799,21 @@ impl PySampleBatch {
     fn decode(
         &self,
         py: Python<'_>,
-        dem: Option<&str>,
+        dem: Option<&Bound<'_, PyAny>>,
         decoder: Option<&Bound<'_, PyAny>>,
         workers: Option<i64>,
         predictions: bool,
         timing: bool,
         allow_dem_mismatch: bool,
     ) -> PyResult<batch_decode::PyDecodeResult> {
-        let resolved_dem = dem.or(self.dem.as_deref()).ok_or_else(|| {
-            pyo3::exceptions::PyValueError::new_err(
-                "dem is required because this SampleBatch has no embedded DEM",
-            )
-        })?;
+        let resolved_dem = match dem {
+            Some(dem) => DemInput::extract(dem)?,
+            None => self.embedded_dem()?,
+        };
 
         // Preserve the legacy validation precedence: reject raw rows and an
         // embedded-model mismatch before inspecting or constructing a decoder.
-        self.ensure_dem_matches(resolved_dem, allow_dem_mismatch)?;
+        self.ensure_dem_matches(resolved_dem.text(), allow_dem_mismatch)?;
 
         let decoder = decoder.ok_or_else(|| {
             pyo3::exceptions::PyTypeError::new_err("decoder is a required argument")
@@ -3715,8 +3838,25 @@ impl PySampleBatch {
             .predictions(predictions)
             .timing(timing);
         options.workers = explicit_workers;
+        if dem.is_none()
+            && matches!(resolved_dem, DemInput::Object { .. })
+            && matches!(
+                spec,
+                crate::batch_decoder_spec::BatchDecoderSpec::Provider { .. }
+            )
+        {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "decoder providers require DEM text by protocol; the embedded model carries fault-sector labels; passing loaded.dem text decodes without them",
+            ));
+        }
+
         let output = py
-            .detach(|| self.samples.decode_with(resolved_dem, &spec, &options))
+            .detach(|| match &resolved_dem {
+                DemInput::Text(text) => self.samples.decode_with(text, &spec, &options),
+                DemInput::Object { structured, .. } => self
+                    .samples
+                    .decode_structured_with(structured, &spec, &options),
+            })
             .map_err(batch_decode::batch_error_to_py)?;
         batch_decode::PyDecodeResult::from_result(py, output)
     }
@@ -3730,7 +3870,8 @@ impl PySampleBatch {
     /// 64-observable limit.
     ///
     /// Args:
-    ///     dem: DEM string shared by both decoders.
+    ///     dem: DEM text or DetectorErrorModel object shared by both decoders.
+    ///         An object decodes its standard text plus its `fault_sector` labels.
     ///     `dut_decoder_type`: Decoder type string for the decoder under test.
     ///     `reference_decoder_type`: Decoder type string for the reference.
     ///     alpha: Tail probability for equal-tailed Jeffreys intervals.
@@ -3741,7 +3882,7 @@ impl PySampleBatch {
     #[pyo3(signature = (dem, dut_decoder_type, reference_decoder_type, alpha=0.05, *, allow_dem_mismatch=false))]
     fn compare_decoders(
         &self,
-        dem: &str,
+        dem: &Bound<'_, PyAny>,
         dut_decoder_type: &str,
         reference_decoder_type: &str,
         alpha: f64,
@@ -3749,9 +3890,22 @@ impl PySampleBatch {
     ) -> PyResult<PyDecoderComparisonResult> {
         validate_comparison_arguments(self.samples.num_shots(), alpha)
             .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
-        self.ensure_dem_matches(dem, allow_dem_mismatch)?;
-        let mut dut = create_observable_decoder(dem, dut_decoder_type)?;
-        let mut reference = create_observable_decoder(dem, reference_decoder_type)?;
+        let dem = DemInput::extract(dem)?;
+        self.ensure_dem_matches(dem.text(), allow_dem_mismatch)?;
+        let dut_spec = pecos_decoders::DecoderSpec::parse(dut_decoder_type)
+            .map_err(decoder_parse_error_to_py)?;
+        let reference_spec = pecos_decoders::DecoderSpec::parse(reference_decoder_type)
+            .map_err(decoder_parse_error_to_py)?;
+        let dut_prepared = dem.prepare(&dut_spec).map_err(decoder_build_error_to_py)?;
+        let reference_prepared = dem
+            .prepare(&reference_spec)
+            .map_err(decoder_build_error_to_py)?;
+        let mut dut = dut_spec
+            .build(&dut_prepared.model)
+            .map_err(decoder_build_error_to_py)?;
+        let mut reference = reference_spec
+            .build(&reference_prepared.model)
+            .map_err(decoder_build_error_to_py)?;
         let mut syndrome = vec![0u8; self.samples.num_detectors()];
         let counts = compare_decoder_outcomes(
             self.samples.num_shots(),
@@ -3763,8 +3917,11 @@ impl PySampleBatch {
             dut.as_mut(),
             reference.as_mut(),
         );
-        PyDecoderComparisonResult::new(counts, alpha)
-            .map_err(|error| pyo3::exceptions::PyRuntimeError::new_err(error.to_string()))
+        let mut result = PyDecoderComparisonResult::new(counts, alpha)
+            .map_err(|error| pyo3::exceptions::PyRuntimeError::new_err(error.to_string()))?;
+        result.dut_projection = dut_prepared.projection.map(Into::into);
+        result.reference_projection = reference_prepared.projection.map(Into::into);
+        Ok(result)
     }
 
     fn __repr__(&self) -> String {
@@ -3913,7 +4070,6 @@ impl PyDemSampler {
     /// another scheduled gate matches the key.
     #[staticmethod]
     #[pyo3(signature = (circuit, p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None, p2_gate_rates=None, p1_gate_rates=None))]
-    #[allow(clippy::too_many_arguments)]
     fn from_circuit(
         circuit: &Bound<'_, pyo3::PyAny>,
         p1: f64,
@@ -4077,7 +4233,6 @@ impl PyDemSampler {
     /// another scheduled gate matches the key.
     #[staticmethod]
     #[pyo3(signature = (influence_map, detectors, observables, p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None, p2_gate_rates=None, p1_gate_rates=None))]
-    #[allow(clippy::too_many_arguments)]
     fn with_detectors(
         influence_map: &PyDagFaultInfluenceMap,
         detectors: Vec<Vec<i32>>,
@@ -4502,8 +4657,9 @@ impl PyDemSampler {
     /// their observables.
     ///
     /// Args:
-    ///     dem: DEM text used to construct the decoder. It may deliberately be
-    ///         a different projection from the sampler's own model.
+    ///     dem: DEM text or DetectorErrorModel object used to construct the decoder. It may deliberately be
+    ///         a different projection from the sampler's own model. An object decodes
+    ///         its standard text plus its `fault_sector` labels.
     ///     `num_shots`: Number of shots to sample and decode.
     ///     decoder: A typed `DecoderSpec`, legacy decoder string, or optional decoder-provider specification.
     ///     seed: Optional sampling seed. The resolved seed is returned as
@@ -4520,7 +4676,7 @@ impl PyDemSampler {
     fn decode(
         &self,
         py: Python<'_>,
-        dem: &str,
+        dem: &Bound<'_, PyAny>,
         num_shots: usize,
         decoder: Option<&Bound<'_, PyAny>>,
         seed: Option<u64>,
@@ -4578,11 +4734,12 @@ impl PyDemSampler {
 
         // Resolve entropy once before dispatch, including for an empty run.
         let actual_seed = seed.unwrap_or_else(|| rand::rng().random());
+        let dem = DemInput::extract(dem)?;
         let output = py
             .detach(|| {
                 sampler_decode::execute(
                     &self.inner,
-                    dem,
+                    &dem,
                     &spec,
                     &plan,
                     num_shots,
@@ -4645,7 +4802,6 @@ impl PyDemSamplerBuilder {
     /// Clifford action of a different scheduled gate are rejected, even if
     /// another scheduled gate matches the key.
     #[pyo3(signature = (p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None, p2_gate_rates=None, p1_gate_rates=None))]
-    #[allow(clippy::too_many_arguments)]
     fn with_noise(
         mut slf: PyRefMut<'_, Self>,
         p1: f64,
@@ -6663,11 +6819,14 @@ fn mechanisms_to_dem_string(mechanisms: Vec<(f64, Vec<u32>, Vec<u32>)>) -> Strin
     fmt_inner(&mechs)
 }
 
-/// Query whether a decoder type requires decomposed (graphlike) DEMs.
+/// Query the legacy graphlike-model classification of a decoder type.
 ///
-/// Returns ``"graphlike"`` for MWPM decoders that need decomposed DEMs
-/// (hyperedges cause errors), ``"any"`` for decoders that handle both
-/// raw and decomposed DEMs.
+/// Graph decoder specs project raw hyperedges using their irreducible policy
+/// (default: refuse faults that cannot be decomposed), and still accept supplied
+/// graphlike decompositions. ``"graphlike"`` describes the backend model, not a
+/// requirement to decompose raw input beforehand. Hybrid and beam phase 1 retain
+/// their separate graphlike-input requirements; ``"any"`` is the legacy category
+/// for decoders accepting either representation.
 ///
 /// Raises ``ValueError`` for unknown decoder types.
 #[pyfunction]
@@ -8137,6 +8296,7 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     qec.add_class::<PyDemBuilder>()?;
     qec.add_class::<PySampleBatch>()?;
     qec.add_class::<batch_decode::PyDecodeResult>()?;
+    qec.add_class::<PyProjectionReport>()?;
     qec.add_class::<PyDecoderComparisonResult>()?;
     qec.add_class::<PyCssUfDecoder>()?;
     qec.add_class::<PyLogicalSubgraphDecoder>()?;
@@ -8223,4 +8383,38 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     modules.set_item("pecos_rslib.qec", &qec)?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod corpus_sector_tests {
+    use super::*;
+
+    #[test]
+    fn embedded_labels_change_prepared_projection_components() {
+        let dem = "error(0.01) D0 D1\nerror(0.01) D0 D1 D2 D3\nerror(0.01) D0 D2\nerror(0.01) D1 D3\nerror(0.01) D2 D3\n";
+        let batch = PySampleBatch::from_corpus(LoadedCorpus {
+            det_columns: vec![vec![0]; 4],
+            obs_columns: vec![],
+            num_shots: 1,
+            seed: None,
+            dem: dem.into(),
+            detector_fault_sectors: ["X", "Z", "X", "Z"].map(|s| Some(s.into())).to_vec(),
+            metadata_json: None,
+            generator: "test".into(),
+            format_version: 2,
+        });
+        let spec = pecos_decoders::DecoderSpec::parse("pymatching").unwrap();
+        let labelled = batch.embedded_dem().unwrap().prepare(&spec).unwrap();
+        let text = DemInput::Text(dem.into()).prepare(&spec).unwrap();
+        let pecos_decoders::DecodeModel::StructuredDem(labelled) = labelled.model else {
+            panic!("expected prepared graphlike model");
+        };
+        let pecos_decoders::DecodeModel::StructuredDem(text) = text.model else {
+            panic!("expected prepared graphlike model");
+        };
+        assert_eq!(labelled.errors[1].components[0].detectors, vec![0, 2]);
+        assert_eq!(labelled.errors[1].components[1].detectors, vec![1, 3]);
+        assert_eq!(text.errors[1].components[0].detectors, vec![0, 1]);
+        assert_eq!(text.errors[1].components[1].detectors, vec![2, 3]);
+    }
 }

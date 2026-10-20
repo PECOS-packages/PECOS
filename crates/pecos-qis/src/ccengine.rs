@@ -472,6 +472,8 @@ pub struct QisEngine {
     shot_lifecycle: ShotLifecycle,
     /// Terminal scheduled drains require feedback before releasing more work.
     scheduled_drain_round: usize,
+    /// End-hook output has been delivered; do not submit or finalize again.
+    runtime_end_delivered: bool,
     scheduled_drain_feedback: bool,
 
     /// RNG for generating per-shot seeds
@@ -514,6 +516,14 @@ pub struct QisEngine {
 
     /// Unique trace id for this engine instance.
     trace_engine_id: u64,
+
+    /// Last ID reserved for runtime `shot_start`. Starts at zero, survives reset,
+    /// and is cleared only for a new engine/template clone. Separate from traces
+    /// and from Monte Carlo's global indices used to derive seeds.
+    last_runtime_shot_id: Option<u64>,
+
+    /// One-shot scheduler override for the program-visible global index.
+    program_shot: Option<u64>,
 
     /// 1-based shot index for operation traces.
     trace_shot_index: usize,
@@ -616,6 +626,7 @@ impl QisEngine {
             reset_failure: None,
             shot_lifecycle: ShotLifecycle::Idle,
             scheduled_drain_round: 0,
+            runtime_end_delivered: false,
             scheduled_drain_feedback: false,
             rng: PecosRng::seed_from_u64(0), // Will be properly seeded via set_seed()
             current_shot_seed: None,
@@ -631,6 +642,8 @@ impl QisEngine {
             operation_trace_dir: None,
             operation_trace_collector: None,
             trace_engine_id: TRACE_ENGINE_ID_COUNTER.fetch_add(1, Ordering::Relaxed),
+            last_runtime_shot_id: None,
+            program_shot: None,
             trace_shot_index: 0,
             trace_chunk_index: 0,
             command_builder: ByteMessageBuilder::new(),
@@ -718,6 +731,7 @@ impl QisEngine {
             reset_failure: None,
             shot_lifecycle: ShotLifecycle::Idle,
             scheduled_drain_round: 0,
+            runtime_end_delivered: false,
             scheduled_drain_feedback: false,
             rng: PecosRng::seed_from_u64(0), // Will be properly seeded via set_seed()
             current_shot_seed: None,
@@ -733,6 +747,8 @@ impl QisEngine {
             operation_trace_dir: None,
             operation_trace_collector: None,
             trace_engine_id: TRACE_ENGINE_ID_COUNTER.fetch_add(1, Ordering::Relaxed),
+            last_runtime_shot_id: None,
+            program_shot: None,
             trace_shot_index: 0,
             trace_chunk_index: 0,
             command_builder: ByteMessageBuilder::new(),
@@ -806,7 +822,7 @@ impl QisEngine {
                 && self.num_physical_slots >= limit
             {
                 return Err(PecosError::Generic(format!(
-                    "QIS program requires more than the configured {limit} physical qubit slots while allocating program qubit {program_id}"
+                    "QIS program requires more than the configured {limit} physical qubit slots while allocating program qubit {program_id}; raise the simulator capacity with .qubits(n) in Rust/Python or --qubits N on the CLI to cover all runtime allocations"
                 )));
             }
             self.num_physical_slots
@@ -911,29 +927,29 @@ impl QisEngine {
                         }
                         QuantumOp::RX(angle, qubit) => {
                             builder.rx(
-                                Angle64::from_radians(*angle),
+                                Angle64::try_from_radians(*angle)?,
                                 &[self.mapped_qubit(*qubit, qop)?],
                             );
                             Self::push_gate_metadata(&mut gate_metadata, &mut pending_metadata);
                         }
                         QuantumOp::RY(angle, qubit) => {
                             builder.ry(
-                                Angle64::from_radians(*angle),
+                                Angle64::try_from_radians(*angle)?,
                                 &[self.mapped_qubit(*qubit, qop)?],
                             );
                             Self::push_gate_metadata(&mut gate_metadata, &mut pending_metadata);
                         }
                         QuantumOp::RZ(angle, qubit) => {
                             builder.rz(
-                                Angle64::from_radians(*angle),
+                                Angle64::try_from_radians(*angle)?,
                                 &[self.mapped_qubit(*qubit, qop)?],
                             );
                             Self::push_gate_metadata(&mut gate_metadata, &mut pending_metadata);
                         }
                         QuantumOp::RXY(theta, phi, qubit) => {
                             builder.rxy1q(
-                                Angle64::from_radians(*theta),
-                                Angle64::from_radians(*phi),
+                                Angle64::try_from_radians(*theta)?,
+                                Angle64::try_from_radians(*phi)?,
                                 &[self.mapped_qubit(*qubit, qop)?],
                             );
                             Self::push_gate_metadata(&mut gate_metadata, &mut pending_metadata);
@@ -968,8 +984,8 @@ impl QisEngine {
                         }
                         QuantumOp::RXYXY2Q(theta, phi, qubit1, qubit2) => {
                             builder.rxyxy2q(
-                                Angle64::from_radians(*theta),
-                                Angle64::from_radians(*phi),
+                                Angle64::try_from_radians(*theta)?,
+                                Angle64::try_from_radians(*phi)?,
                                 &[(
                                     self.mapped_qubit(*qubit1, qop)?,
                                     self.mapped_qubit(*qubit2, qop)?,
@@ -979,7 +995,7 @@ impl QisEngine {
                         }
                         QuantumOp::RZZ(angle, qubit1, qubit2) => {
                             builder.rzz(
-                                Angle64::from_radians(*angle),
+                                Angle64::try_from_radians(*angle)?,
                                 &[(
                                     self.mapped_qubit(*qubit1, qop)?,
                                     self.mapped_qubit(*qubit2, qop)?,
@@ -988,13 +1004,14 @@ impl QisEngine {
                             Self::push_gate_metadata(&mut gate_metadata, &mut pending_metadata);
                         }
                         QuantumOp::CRZ(angle, control, target) => {
+                            Angle64::try_from_radians(*angle)?;
                             let control = self.mapped_qubit(*control, qop)?;
                             let target = self.mapped_qubit(*target, qop)?;
                             let gates = pecos_core::controlled_rotations::lower_crz(
                                 *angle,
                                 control.into(),
                                 target.into(),
-                            );
+                            )?;
                             builder.add_gate_commands(&gates);
                             let metadata = std::mem::take(&mut pending_metadata);
                             gate_metadata.extend(std::iter::repeat_n(metadata, gates.len()));
@@ -1103,8 +1120,7 @@ impl QisEngine {
                 .runtime
                 .lower_scheduled_operations(ops)
                 .map_err(|e| PecosError::Generic(format!("scheduled extraction failed: {e}")))?;
-            let shot = u64::try_from(self.trace_shot_index)
-                .map_err(|_| PecosError::Generic("shot index exceeds u64".into()))?;
+            let shot = self.runtime_shot_id()?;
             let is_empty = batches.is_empty();
             let (commands, ids) =
                 crate::scheduled_transport::encode_mode(batches, shot, self.scheduled_transport)?;
@@ -1177,21 +1193,21 @@ impl QisEngine {
                         gate_metadata.push(metadata);
                     }
                     QuantumOp::RX(angle, qubit) => {
-                        builder.rx(Angle64::from_radians(angle), &[qubit]);
+                        builder.rx(Angle64::try_from_radians(angle)?, &[qubit]);
                         gate_metadata.push(metadata);
                     }
                     QuantumOp::RY(angle, qubit) => {
-                        builder.ry(Angle64::from_radians(angle), &[qubit]);
+                        builder.ry(Angle64::try_from_radians(angle)?, &[qubit]);
                         gate_metadata.push(metadata);
                     }
                     QuantumOp::RZ(angle, qubit) => {
-                        builder.rz(Angle64::from_radians(angle), &[qubit]);
+                        builder.rz(Angle64::try_from_radians(angle)?, &[qubit]);
                         gate_metadata.push(metadata);
                     }
                     QuantumOp::RXY(theta, phi, qubit) => {
                         builder.rxy1q(
-                            Angle64::from_radians(theta),
-                            Angle64::from_radians(phi),
+                            Angle64::try_from_radians(theta)?,
+                            Angle64::try_from_radians(phi)?,
                             &[qubit],
                         );
                         gate_metadata.push(metadata);
@@ -1220,22 +1236,23 @@ impl QisEngine {
                     }
                     QuantumOp::RXYXY2Q(theta, phi, qubit1, qubit2) => {
                         builder.rxyxy2q(
-                            Angle64::from_radians(theta),
-                            Angle64::from_radians(phi),
+                            Angle64::try_from_radians(theta)?,
+                            Angle64::try_from_radians(phi)?,
                             &[(qubit1, qubit2)],
                         );
                         gate_metadata.push(metadata);
                     }
                     QuantumOp::RZZ(angle, qubit1, qubit2) => {
-                        builder.rzz(Angle64::from_radians(angle), &[(qubit1, qubit2)]);
+                        builder.rzz(Angle64::try_from_radians(angle)?, &[(qubit1, qubit2)]);
                         gate_metadata.push(metadata);
                     }
                     QuantumOp::CRZ(angle, control, target) => {
+                        Angle64::try_from_radians(angle)?;
                         let gates = pecos_core::controlled_rotations::lower_crz(
                             angle,
                             control.into(),
                             target.into(),
-                        );
+                        )?;
                         builder.add_gate_commands(&gates);
                         gate_metadata.extend(std::iter::repeat_n(metadata, gates.len()));
                     }
@@ -1306,6 +1323,7 @@ impl Clone for QisEngine {
             reset_failure: self.reset_failure.clone(), // Keep a failed reset latched
             shot_lifecycle: ShotLifecycle::Idle,
             scheduled_drain_round: 0,
+            runtime_end_delivered: false,
             scheduled_drain_feedback: false,
             rng: self.rng.clone(),
             current_shot_seed: None,         // Will be set on next start()
@@ -1325,6 +1343,8 @@ impl Clone for QisEngine {
             operation_trace_dir: self.operation_trace_dir.clone(),
             operation_trace_collector: self.operation_trace_collector.clone(),
             trace_engine_id: TRACE_ENGINE_ID_COUNTER.fetch_add(1, Ordering::Relaxed),
+            last_runtime_shot_id: None,
+            program_shot: None,
             trace_shot_index: 0,
             trace_chunk_index: 0,
             command_builder: ByteMessageBuilder::new(),
@@ -1335,12 +1355,27 @@ impl Clone for QisEngine {
 
 // Helper methods for dynamic execution
 impl QisEngine {
-    fn begin_trace_shot(&mut self) {
+    fn next_runtime_shot_id(&self) -> Result<u64, PecosError> {
+        match self.last_runtime_shot_id {
+            None => Ok(0),
+            Some(last) => last
+                .checked_add(1)
+                .ok_or_else(|| PecosError::Generic("runtime shot IDs exhausted".into())),
+        }
+    }
+
+    fn runtime_shot_id(&self) -> Result<u64, PecosError> {
+        self.last_runtime_shot_id
+            .ok_or_else(|| PecosError::Generic("runtime shot has not started".into()))
+    }
+
+    fn begin_trace_shot(&mut self) -> Result<(), PecosError> {
         self.trace_shot_index = self
             .trace_shot_index
             .checked_add(1)
-            .expect("trace_shot_index overflow: too many shots for a single trace engine");
+            .ok_or_else(|| PecosError::Generic("trace shot indices exhausted".into()))?;
         self.trace_chunk_index = 0;
+        Ok(())
     }
 
     fn lowered_quantum_ops_trace(
@@ -1884,6 +1919,9 @@ impl QisEngine {
     }
 
     fn drain_terminal_commands(&mut self) -> Result<Option<ByteMessage>, PecosError> {
+        if self.runtime_end_delivered {
+            return Ok(None);
+        }
         self.drain_commands(true)
             .map(|drained| drained.map(|(commands, _)| commands))
     }
@@ -1960,8 +1998,7 @@ impl QisEngine {
                     self.scheduled_drain_round
                 )));
             }
-            let shot = u64::try_from(self.trace_shot_index)
-                .map_err(|_| PecosError::Generic("shot index exceeds u64".into()))?;
+            let shot = self.runtime_shot_id()?;
             let (commands, ids) =
                 crate::scheduled_transport::encode_mode(batches, shot, self.scheduled_transport)?;
             self.measurement_mapping = ids;
@@ -2035,13 +2072,55 @@ impl QisEngine {
         }
     }
 
+    /// Invoke the runtime end hook once and lower its final operations for
+    /// execution. Terminal measurements are unsupported: nothing could feed
+    /// their outcomes back after end.
+    fn deliver_runtime_end(&mut self) -> Result<Option<ByteMessage>, PecosError> {
+        if self.scheduled_transport.enabled() {
+            let batches = self
+                .runtime
+                .finish_scheduled_operations()
+                .map_err(|e| PecosError::Generic(format!("runtime shot_end failed: {e}")))?;
+            let empty = batches.is_empty();
+            let shot = self.runtime_shot_id()?;
+            let (commands, ids) =
+                crate::scheduled_transport::encode_mode(batches, shot, self.scheduled_transport)?;
+            if !ids.is_empty() {
+                return Err(PecosError::Input(
+                    "measurements emitted by shot_end are unsupported".into(),
+                ));
+            }
+            Ok((!empty).then_some(commands))
+        } else {
+            let ops = self
+                .runtime
+                .finish_operations()
+                .map_err(|e| PecosError::Generic(format!("runtime shot_end failed: {e}")))?;
+            if ops
+                .iter()
+                .any(|op| matches!(op.op, QuantumOp::Measure(..) | QuantumOp::MeasureLeaked(..)))
+            {
+                return Err(PecosError::Input(
+                    "measurements emitted by shot_end are unsupported".into(),
+                ));
+            }
+            let lowered = self.quantum_ops_to_lowered_commands(ops)?;
+            // Preserve the trace shape for runtimes with no terminal work.
+            if !lowered.is_empty {
+                self.trace_operations_chunk("shot_end", &[], None, Some(&lowered));
+            }
+            Ok((!lowered.is_empty).then_some(lowered.commands))
+        }
+    }
+
     /// Run the shot-completion gates in order: sticky terminal check, drain
-    /// verification, the runtime's own `shot_end` finalization hook, then the
-    /// named-result traces and terminal trace marker. A runtime that only
+    /// verification, the runtime's own `shot_end` finalization hook and delivery
+    /// of its final operations, then the named-result and terminal trace markers.
+    /// Returned commands must be executed before the next completion poll. A runtime that only
     /// detects an invalid final schedule at shot end therefore fails the shot
     /// instead of receiving a certified trace. Failures latch sticky and
     /// success is one-shot.
-    fn finalize_shot_for_certification(&mut self) -> Result<(), PecosError> {
+    fn finalize_shot_for_certification(&mut self) -> Result<Option<ByteMessage>, PecosError> {
         if let Some(err) = self.terminal_failure_error() {
             return Err(err);
         }
@@ -2053,17 +2132,38 @@ impl QisEngine {
             .as_ref()
             .is_some_and(|state| state.finalized)
         {
-            return Ok(());
+            return Ok(None);
         }
-        self.verify_runtime_drained()?;
+        if !self.runtime_end_delivered {
+            self.verify_runtime_drained()?;
+        }
         if !self.pending_measurements.is_empty() {
             let slots: Vec<_> = self.pending_measurements.keys().copied().collect();
             return Err(self.latch_terminal_error(format!(
                 "runtime dropped imported measurements for result slots {slots:?}"
             )));
         }
-        if let Err(e) = self.runtime.shot_end() {
-            return Err(self.latch_terminal_error(format!("runtime shot_end failed: {e}")));
+        if !self.runtime_end_delivered {
+            // The end hook may have run before a panic, so an unwind must
+            // poison the shot exactly like an error return.
+            let delivery = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.deliver_runtime_end()
+            }));
+            let commands = match delivery {
+                Ok(result) => result.map_err(|e| {
+                    self.latch_terminal_error(format!("runtime final delivery failed: {e}"))
+                })?,
+                Err(payload) => {
+                    self.latch_terminal_error(
+                        "runtime shot_end delivery panicked; reset required".into(),
+                    );
+                    std::panic::resume_unwind(payload)
+                }
+            };
+            self.runtime_end_delivered = true;
+            if commands.is_some() {
+                return Ok(commands);
+            }
         }
         self.trace_named_result_traces_from_dynamic_handle();
         self.trace_complete_chunk();
@@ -2071,7 +2171,7 @@ impl QisEngine {
             state.finalized = true;
         }
         self.shot_lifecycle = ShotLifecycle::Finalized;
-        Ok(())
+        Ok(None)
     }
 
     /// The one complete reset behind `Engine::reset`, `ClassicalEngine::reset`
@@ -2105,6 +2205,7 @@ impl QisEngine {
         self.reset_failure = None;
         self.shot_lifecycle = ShotLifecycle::Idle;
         self.scheduled_drain_round = 0;
+        self.runtime_end_delivered = false;
         self.scheduled_drain_feedback = false;
         self.current_operations = None;
         self.started = false;
@@ -2112,6 +2213,7 @@ impl QisEngine {
         self.measurement_results.clear();
         self.pending_measurements.clear();
         self.current_shot_seed = None;
+        self.program_shot = None;
         debug!("QisEngine: reset() completed, cleared measurement_results");
         Ok(())
     }
@@ -2224,6 +2326,10 @@ impl Engine for QisEngine {
 }
 
 impl ClassicalEngine for QisEngine {
+    fn has_dynamic_qubit_count(&self) -> bool {
+        self.num_qubits_hint.is_none()
+    }
+
     fn num_qubits(&self) -> usize {
         // The trait contract asks for the number of simulator slots required,
         // not the count of live program handles: freed handles shrink
@@ -2243,6 +2349,10 @@ impl ClassicalEngine for QisEngine {
     fn set_num_qubits_hint(&mut self, num_qubits: usize) {
         self.num_qubits_hint = Some(num_qubits);
         self.runtime.set_num_qubits(num_qubits);
+    }
+
+    fn set_program_shot(&mut self, shot: u64) {
+        self.program_shot = Some(shot);
     }
 
     fn set_seed(&mut self, seed: u64) {
@@ -2290,6 +2400,9 @@ impl ClassicalEngine for QisEngine {
         if let Some(state) = &self.dynamic_state
             && let Some(handle) = &state.sync_handle
         {
+            shot.program_exit = handle.get_program_exit().map_err(|error| {
+                PecosError::Generic(format!("Failed to get program exit: {error}"))
+            })?;
             let named_results = handle.get_named_results().map_err(|error| {
                 PecosError::Generic(format!("Failed to get named results: {error}"))
             })?;
@@ -2418,8 +2531,13 @@ impl ControlEngine for QisEngine {
         }
         self.shot_lifecycle = ShotLifecycle::Running;
         self.scheduled_drain_round = 0;
+        self.runtime_end_delivered = false;
         self.scheduled_drain_feedback = false;
+        let program_shot = self.program_shot.take();
         let attempt = (|| {
+            // Check exhaustion before consuming RNG state or touching the runtime.
+            let shot_id = self.next_runtime_shot_id()?;
+            self.begin_trace_shot()?;
             // Clear previous shot's measurement state
             self.measurement_results.clear();
             self.pending_measurements.clear();
@@ -2435,7 +2553,6 @@ impl ControlEngine for QisEngine {
 
             // Store the shot seed for quantum engine access
             self.current_shot_seed = Some(shot_seed);
-            self.begin_trace_shot();
 
             // Reset the runtime to ensure clean state for new shot. A failure is
             // latched like a failed `reset_all`, which alone clears the latch.
@@ -2446,16 +2563,22 @@ impl ControlEngine for QisEngine {
                 return Err(error);
             }
 
-            // Start a new shot with the generated seed and a real, monotonically
-            // increasing shot id (a plugin keying state or telemetry on the shot
-            // id must not see every shot as shot 0).
-            let shot_id = u64::try_from(self.trace_shot_index)
-                .map_err(|_| PecosError::Generic("shot index exceeds u64".to_string()))?;
+            // Reserve before invoking the plugin: even a failed start may have
+            // observed the ID, so reset/retry must not reuse it. Do not derive
+            // the seed from this per-instance ID; Monte Carlo seeds use a global
+            // shot index independently of worker partitioning.
+            self.last_runtime_shot_id = Some(shot_id);
             self.runtime
                 .shot_start(shot_id, Some(shot_seed))
                 .map_err(|e| PecosError::Generic(format!("Failed to start shot: {e}")))?;
 
             self.started = true;
+            // The scheduler supplies a global job index. Direct engine callers
+            // use the local sequence; never infer it from a trace counter.
+            self.interface
+                .as_mut()
+                .expect("validated interface")
+                .set_program_shot(program_shot.unwrap_or(shot_id));
 
             // Start LLVM program in worker thread
             self.start_dynamic_worker()?;
@@ -2492,7 +2615,9 @@ impl ControlEngine for QisEngine {
                 if let Some(commands) = self.drain_terminal_commands()? {
                     return Ok(EngineStage::NeedsProcessing(commands));
                 }
-                self.finalize_shot_for_certification()?;
+                if let Some(commands) = self.finalize_shot_for_certification()? {
+                    return Ok(EngineStage::NeedsProcessing(commands));
+                }
                 let shot = self.get_results()?;
                 return Ok(EngineStage::Complete(shot));
             }
@@ -2554,7 +2679,9 @@ impl ControlEngine for QisEngine {
             if let Some(commands) = self.drain_terminal_commands()? {
                 return Ok(EngineStage::NeedsProcessing(commands));
             }
-            self.finalize_shot_for_certification()?;
+            if let Some(commands) = self.finalize_shot_for_certification()? {
+                return Ok(EngineStage::NeedsProcessing(commands));
+            }
             let shot = self.get_results()?;
             return Ok(EngineStage::Complete(shot));
         }
@@ -2609,7 +2736,9 @@ impl ControlEngine for QisEngine {
             if let Some(commands) = self.drain_terminal_commands()? {
                 return Ok(EngineStage::NeedsProcessing(commands));
             }
-            self.finalize_shot_for_certification()?;
+            if let Some(commands) = self.finalize_shot_for_certification()? {
+                return Ok(EngineStage::NeedsProcessing(commands));
+            }
             let shot = self.get_results()?;
             return Ok(EngineStage::Complete(shot));
         }
@@ -2639,7 +2768,7 @@ mod tests {
     use tempfile::TempDir;
 
     #[derive(Clone, Default)]
-    struct DummyRuntime {
+    pub(super) struct DummyRuntime {
         state: ClassicalState,
         delivered: Arc<Mutex<Vec<(usize, bool)>>>,
     }
@@ -2844,6 +2973,7 @@ mod tests {
             crate::selene_runtimes::selene_soft_rz_runtime().unwrap(),
         ));
         engine.set_num_qubits_hint(2);
+        engine.last_runtime_shot_id = Some(0);
         engine.runtime.shot_start(0, None).unwrap();
         engine
     }
@@ -2965,6 +3095,7 @@ mod tests {
             QisEngine::with_runtime(Box::new(DummyRuntime::default()))
         };
         engine.set_num_qubits_hint(3);
+        engine.last_runtime_shot_id = Some(0);
         engine.runtime.shot_start(0, None).unwrap();
         engine
     }
@@ -3501,7 +3632,7 @@ mod tests {
         use pecos_core::gate_type::GateType::{PZ, RZ};
         use pecos_engines::scheduled_events::{ScheduledEventOp, decode_event_batches};
         let mut engine = prep_test_engine(true);
-        engine.scheduled_transport = ScheduledTransport::V4;
+        engine.scheduled_transport = ScheduledTransport::V7;
         let lowered = engine
             .lower_operations_to_commands(&[
                 Operation::AllocateQubit { id: 7 },
@@ -3528,7 +3659,7 @@ mod tests {
         let collector: OperationTraceStore = Arc::new(Mutex::new(Vec::new()));
         engine.set_operation_trace_collector(collector.clone());
         engine.current_shot_seed = Some(123);
-        engine.begin_trace_shot();
+        engine.begin_trace_shot().unwrap();
 
         let ops = vec![
             Operation::AllocateQubit { id: 0 },
@@ -3593,6 +3724,28 @@ mod tests {
         let in_memory = collector.lock().expect("collector lock");
         assert_eq!(in_memory[1].stage, "trace_complete");
         assert_eq!(in_memory[1].measurement_results, BTreeMap::from([(7, 1)]));
+    }
+
+    #[test]
+    fn nonfinite_runtime_rotations_are_errors() {
+        for angle in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            for op in [
+                QuantumOp::RX(angle, 0),
+                QuantumOp::RY(angle, 0),
+                QuantumOp::RZ(angle, 0),
+                QuantumOp::RXY(0.0, angle, 0),
+                QuantumOp::RZZ(angle, 0, 1),
+                QuantumOp::RXYXY2Q(0.0, angle, 0, 1),
+                QuantumOp::CRZ(angle, 0, 1),
+            ] {
+                let mut engine = QisEngine::with_runtime(Box::new(DummyRuntime::default()));
+                let error = engine
+                    .quantum_ops_to_lowered_commands(vec![op.into()])
+                    .err()
+                    .expect("nonfinite runtime angle must fail");
+                assert!(error.to_string().contains(&angle.to_string()));
+            }
+        }
     }
 
     #[test]
@@ -3751,7 +3904,7 @@ mod tests {
             assert_eq!(gates[0].qubits.as_slice(), &qubits.map(pecos_core::QubitId));
             assert_eq!(
                 gates[0].angles.as_slice(),
-                &[Angle64::from_radians(-0.73), Angle64::from_radians(0.41)]
+                &[pecos_core::radians!(-0.73), pecos_core::radians!(0.41)]
             );
             assert_eq!(batch.gate_metadata, vec![metadata.clone()]);
         }
@@ -3797,11 +3950,7 @@ mod tests {
         let mut system = QuantumSystem::new(Box::new(noise), Box::new(StateVecEngine::new(1)));
         let mut builder = ByteMessage::quantum_operations_builder();
         builder.pz(&[0]);
-        builder.rxy1q(
-            Angle64::from_radians(std::f64::consts::FRAC_PI_2),
-            Angle64::from_radians(3.0 * std::f64::consts::FRAC_PI_2),
-            &[0],
-        );
+        builder.rxy1q(Angle64::QUARTER_TURN, Angle64::THREE_QUARTERS_TURN, &[0]);
         builder.rz(Angle64::HALF_TURN, &[0]);
         builder.measure_leakages(&[0]);
 
@@ -3842,7 +3991,7 @@ mod tests {
         let mut engine = QisEngine::with_runtime(Box::new(DummyRuntime::default()));
         let collector: OperationTraceStore = Arc::new(Mutex::new(Vec::new()));
         engine.set_operation_trace_collector(collector.clone());
-        engine.begin_trace_shot();
+        engine.begin_trace_shot().unwrap();
 
         let mut metadata = TraceMetadata::new();
         metadata.insert(
@@ -3949,7 +4098,7 @@ mod tests {
         let mut engine = QisEngine::with_runtime(Box::new(IdleLoweringRuntime::default()));
         let collector: OperationTraceStore = Arc::new(Mutex::new(Vec::new()));
         engine.set_operation_trace_collector(collector.clone());
-        engine.begin_trace_shot();
+        engine.begin_trace_shot().unwrap();
 
         let ops = vec![QuantumOp::H(0).into(), QuantumOp::Measure(0, 17).into()];
         let lowered = engine
@@ -4017,6 +4166,16 @@ mod tests {
     }
 
     #[test]
+    fn qubit_count_is_dynamic_until_a_hint_is_set() {
+        let mut engine: Box<dyn pecos_engines::ClassicalControlEngine> =
+            Box::new(QisEngine::with_runtime(Box::new(DummyRuntime::default())));
+        assert!(engine.has_dynamic_qubit_count());
+        engine.set_num_qubits_hint(2);
+        assert!(!engine.has_dynamic_qubit_count());
+        assert_eq!(engine.num_qubits(), 2);
+    }
+
+    #[test]
     fn test_num_qubits_hint_is_physical_capacity_for_sparse_handles() {
         let mut engine = QisEngine::with_runtime(Box::new(DummyRuntime::default()));
         engine.set_num_qubits_hint(98);
@@ -4049,7 +4208,7 @@ mod tests {
         let temp_dir = TempDir::new().expect("tempdir");
         let mut engine = QisEngine::with_runtime(Box::new(DummyRuntime::default()));
         engine.set_operation_trace_dir(temp_dir.path());
-        engine.begin_trace_shot();
+        engine.begin_trace_shot().unwrap();
         engine.dynamic_state = Some(DynamicExecutionState {
             sync_handle: None,
             execution_complete: true,
@@ -4266,7 +4425,7 @@ mod tests {
         let temp_dir = TempDir::new().expect("tempdir");
         let mut engine = QisEngine::with_runtime(Box::new(ShotEndFailRuntime::default()));
         engine.set_operation_trace_dir(temp_dir.path());
-        engine.begin_trace_shot();
+        engine.begin_trace_shot().unwrap();
         engine.dynamic_state = Some(DynamicExecutionState {
             sync_handle: None,
             execution_complete: true,
@@ -4591,7 +4750,7 @@ mod tests {
         };
         let mut engine = QisEngine::with_runtime(Box::new(runtime));
         engine.set_operation_trace_dir(temp_dir.path());
-        engine.begin_trace_shot();
+        engine.begin_trace_shot().unwrap();
         engine.dynamic_state = Some(DynamicExecutionState {
             sync_handle: None,
             execution_complete: true,
@@ -4688,7 +4847,7 @@ mod tests {
         let temp_dir = TempDir::new().expect("tempdir");
         let mut engine = QisEngine::with_runtime(Box::new(LoweringFailRuntime::default()));
         engine.set_operation_trace_dir(temp_dir.path());
-        engine.begin_trace_shot();
+        engine.begin_trace_shot().unwrap();
         engine.dynamic_state = Some(DynamicExecutionState {
             sync_handle: None,
             execution_complete: true,
@@ -4738,7 +4897,7 @@ mod tests {
         };
         let mut engine = QisEngine::with_runtime(Box::new(runtime));
         engine.set_operation_trace_dir(temp_dir.path());
-        engine.begin_trace_shot();
+        engine.begin_trace_shot().unwrap();
         engine.dynamic_state = Some(DynamicExecutionState {
             sync_handle: None,
             execution_complete: true,
@@ -4797,6 +4956,14 @@ mod tests {
             err.to_string().contains("more than the configured 1"),
             "unexpected error: {err}"
         );
+        for text in [
+            "program qubit 105",
+            "simulator capacity",
+            ".qubits(n)",
+            "--qubits N",
+        ] {
+            assert!(err.to_string().contains(text), "unexpected error: {err}");
+        }
     }
 }
 
@@ -4862,7 +5029,7 @@ mod scheduled_completion_tests {
         Feedback,
         Padding,
         FeedbackThenPadding,
-        OversizedV4,
+        OversizedV7,
     }
 
     #[derive(Clone, Default)]
@@ -4915,6 +5082,10 @@ mod scheduled_completion_tests {
             }
             Ok(crate::runtime::Shot::default())
         }
+        fn finish_scheduled_operations(&mut self) -> RuntimeResult<Vec<ScheduledBatch>> {
+            self.shot_end()?;
+            Ok(vec![])
+        }
         fn lower_scheduled_operations(
             &mut self,
             operations: &[Operation],
@@ -4929,14 +5100,14 @@ mod scheduled_completion_tests {
                     "drain after shot completion".into(),
                 ));
             }
-            if matches!(self.output, TerminalOutput::OversizedV4) {
+            if matches!(self.output, TerminalOutput::OversizedV7) {
                 use pecos_engines::scheduled_events::MAX_BATCH_PAYLOAD;
                 use pecos_engines::scheduled_frame::MAX_SCHEDULE_BYTES;
                 if self.stage != 0 {
                     return Ok(vec![]);
                 }
                 self.stage = 1;
-                // One byte over V4's limit, but below the collection lower bound.
+                // One byte over V7's limit, but below the collection lower bound.
                 let tail = MAX_SCHEDULE_BYTES + 1 - 16 - 255 * (104 + MAX_BATCH_PAYLOAD) - 104;
                 return Ok((0..256)
                     .map(|index| ScheduledBatch {
@@ -5032,10 +5203,10 @@ mod scheduled_completion_tests {
         }
     }
     #[test]
-    fn oversized_v4_drain_fails_at_encode_and_latches() {
+    fn oversized_v7_drain_fails_at_encode_and_latches() {
         use crate::scheduled_transport::EventBudget;
         let mut runtime = FeedbackTail {
-            output: TerminalOutput::OversizedV4,
+            output: TerminalOutput::OversizedV7,
             ..Default::default()
         };
         let batches = runtime.drain_pending_scheduled_operations().unwrap();
@@ -5048,9 +5219,10 @@ mod scheduled_completion_tests {
         drop(batches);
         runtime.stage = 0;
         let mut engine = QisEngine::with_runtime(Box::new(runtime));
-        engine.scheduled_transport = ScheduledTransport::V4;
+        engine.last_runtime_shot_id = Some(0);
+        engine.scheduled_transport = ScheduledTransport::V7;
         let Err(error) = engine.drain_terminal_commands() else {
-            panic!("oversized V4 encoding must fail");
+            panic!("oversized V7 encoding must fail");
         };
         let error = error.to_string();
         assert!(
@@ -5066,7 +5238,8 @@ mod scheduled_completion_tests {
         assert_eq!(
             engine
                 .finalize_shot_for_certification()
-                .unwrap_err()
+                .err()
+                .unwrap()
                 .to_string(),
             error
         );
@@ -5074,13 +5247,15 @@ mod scheduled_completion_tests {
 
     #[test]
     fn scheduled_terminal_padding_without_feedback_fails_promptly() {
-        for mode in [ScheduledTransport::V3, ScheduledTransport::V4] {
+        for mode in [ScheduledTransport::V6, ScheduledTransport::V7] {
             let mut engine = QisEngine::with_runtime(Box::new(FeedbackTail {
                 output: TerminalOutput::Padding,
                 ..Default::default()
             }));
             engine.scheduled_transport = mode;
             engine.interface = Some(Box::new(TerminalInterface));
+            // This fixture enters mid-shot without calling start().
+            engine.last_runtime_shot_id = Some(0);
             engine.dynamic_state = Some(DynamicExecutionState {
                 sync_handle: None,
                 execution_complete: true,
@@ -5112,12 +5287,14 @@ mod scheduled_completion_tests {
 
     #[test]
     fn scheduled_feedback_permits_only_one_more_terminal_drain() {
-        for mode in [ScheduledTransport::V3, ScheduledTransport::V4] {
+        for mode in [ScheduledTransport::V6, ScheduledTransport::V7] {
             let mut engine = QisEngine::with_runtime(Box::new(FeedbackTail {
                 output: TerminalOutput::FeedbackThenPadding,
                 ..Default::default()
             }));
             engine.scheduled_transport = mode;
+            // This fixture enters mid-shot without calling start().
+            engine.last_runtime_shot_id = Some(0);
             engine.dynamic_state = Some(DynamicExecutionState {
                 sync_handle: None,
                 execution_complete: true,
@@ -5186,13 +5363,15 @@ mod scheduled_completion_tests {
     }
 
     fn assert_scheduled_drain_progress_cleared(reset: bool) {
-        for mode in [ScheduledTransport::V3, ScheduledTransport::V4] {
+        for mode in [ScheduledTransport::V6, ScheduledTransport::V7] {
             let gate = Arc::new(std::sync::Barrier::new(2));
             let mut engine = QisEngine::new(
                 Box::new(GatedTerminalInterface(Arc::clone(&gate))),
                 Box::new(FeedbackTail::default()),
             );
             engine.scheduled_transport = mode;
+            // This fixture enters mid-shot without calling start().
+            engine.last_runtime_shot_id = Some(0);
             engine.dynamic_state = Some(DynamicExecutionState {
                 sync_handle: None,
                 execution_complete: true,
@@ -5252,12 +5431,14 @@ mod scheduled_completion_tests {
 
     #[test]
     fn scheduled_gate_only_final_tail_completes_without_feedback() {
-        for mode in [ScheduledTransport::V3, ScheduledTransport::V4] {
+        for mode in [ScheduledTransport::V6, ScheduledTransport::V7] {
             let mut engine = QisEngine::with_runtime(Box::new(FeedbackTail {
                 stage: 3,
                 ..Default::default()
             }));
             engine.scheduled_transport = mode;
+            // This fixture enters mid-shot without calling start().
+            engine.last_runtime_shot_id = Some(0);
             engine.dynamic_state = Some(DynamicExecutionState {
                 sync_handle: None,
                 execution_complete: true,
@@ -5290,7 +5471,9 @@ mod scheduled_completion_tests {
         use pecos_engines::scheduled_frame::ScheduledIdleZ;
         use pecos_engines::{StateVecEngine, quantum_system::QuantumSystem};
         let mut engine = QisEngine::with_runtime(Box::new(FeedbackTail::default()));
-        engine.scheduled_transport = ScheduledTransport::V3;
+        engine.scheduled_transport = ScheduledTransport::V6;
+        // This fixture enters mid-shot without calling start().
+        engine.last_runtime_shot_id = Some(0);
         engine.dynamic_state = Some(DynamicExecutionState {
             sync_handle: None,
             execution_complete: true,
@@ -5305,7 +5488,8 @@ mod scheduled_completion_tests {
         let mut quantum = QuantumSystem::new(
             ScheduledIdleZ::new(1, 0.0, 0.0, 0.0)
                 .unwrap()
-                .into_noise_model(),
+                .into_noise_model()
+                .unwrap(),
             Box::new(StateVecEngine::new(1)),
         );
         quantum
@@ -5375,11 +5559,9 @@ mod scheduled_completion_tests {
                 for op in &b.operations {
                     out.push(match op {
                         ScheduledEventOp::Gate(g) => g.as_ref().clone(),
-                        ScheduledEventOp::Custom { .. } => Gate::rxy1q(
-                            Angle64::from_radians(std::f64::consts::PI),
-                            Angle64::from_radians(0.0),
-                            &[0],
-                        ),
+                        ScheduledEventOp::Custom { .. } => {
+                            Gate::rxy1q(Angle64::HALF_TURN, Angle64::ZERO, &[0])
+                        }
                     })?;
                 }
                 Ok(())
@@ -5398,6 +5580,8 @@ mod scheduled_completion_tests {
             .scheduled_event_batches(true)
             .build()
             .unwrap();
+        // This fixture enters mid-shot without calling start().
+        engine.last_runtime_shot_id = Some(0);
         engine.dynamic_state = Some(DynamicExecutionState {
             sync_handle: None,
             execution_complete: true,
@@ -5412,7 +5596,8 @@ mod scheduled_completion_tests {
             ScheduledEventIdleZ::new(ScheduledIdleZ::new(1, 0.0, 0.0, 0.0).unwrap(), |_| {
                 Ok(Box::new(Flip))
             })
-            .into_noise_model(),
+            .into_noise_model()
+            .unwrap(),
             Box::new(StateVecEngine::new(1)),
         );
         quantum
@@ -5452,7 +5637,9 @@ mod scheduled_completion_tests {
             fail_tail: true,
             ..FeedbackTail::default()
         }));
-        engine.scheduled_transport = ScheduledTransport::V3;
+        engine.scheduled_transport = ScheduledTransport::V6;
+        // This fixture enters mid-shot without calling start().
+        engine.last_runtime_shot_id = Some(0);
         engine.dynamic_state = Some(DynamicExecutionState {
             sync_handle: None,
             execution_complete: true,
@@ -5487,3 +5674,19 @@ mod terminal_lowering_tests;
 #[cfg(test)]
 #[path = "ccengine_lifecycle_tests.rs"]
 mod lifecycle_tests;
+
+#[cfg(test)]
+#[path = "ccengine_shot_end_tests.rs"]
+mod shot_end_delivery_tests;
+
+#[cfg(test)]
+#[path = "ccengine_shot_identity_tests.rs"]
+mod shot_identity_tests;
+
+#[cfg(all(test, feature = "selene-runtimes"))]
+#[path = "ccengine_program_shot_tests.rs"]
+mod program_shot_tests;
+
+#[cfg(all(test, feature = "selene-runtimes"))]
+#[path = "ccengine_exit_tests.rs"]
+mod exit_metadata_tests;

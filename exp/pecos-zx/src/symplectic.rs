@@ -156,6 +156,7 @@ impl SymplecticVector {
         }
 
         PauliString::from_decomposed(self.phase, x_qubits, y_qubits, z_qubits)
+            .expect("symplectic conversion partitions distinct qubits into X, Y and Z")
     }
 
     /// Convert from a [`PauliString`], embedding into `n` qubits.
@@ -368,10 +369,12 @@ impl SymplecticMatrix {
         let mut rep = CliffordRep::identity(self.n);
         for q in 0..self.n {
             let x_vec = self.image(q);
-            rep.set_x_image(q, x_vec.to_pauli_string());
+            rep.set_x_image(q, x_vec.to_pauli_string())
+                .expect("generator index and image lie within the allocated tableau width");
 
             let z_vec = self.image(self.n + q);
-            rep.set_z_image(q, z_vec.to_pauli_string());
+            rep.set_z_image(q, z_vec.to_pauli_string())
+                .expect("generator index and image lie within the allocated tableau width");
         }
         rep
     }
@@ -522,8 +525,12 @@ pub(crate) fn padded_clifford(rep: CliffordRep, n: usize) -> CliffordRep {
     // for qubits the gate touches, and identity for the rest.
     let mut result = id;
     for q in 0..rep.num_qubits() {
-        result.set_x_image(q, rep.x_image(q).clone());
-        result.set_z_image(q, rep.z_image(q).clone());
+        result
+            .set_x_image(q, rep.x_image(q).clone())
+            .expect("generator index and image lie within the allocated tableau width");
+        result
+            .set_z_image(q, rep.z_image(q).clone())
+            .expect("generator index and image lie within the allocated tableau width");
     }
     result
 }

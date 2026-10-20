@@ -2,7 +2,7 @@
 // Licensed under the Apache License, Version 2.0.
 
 use super::{
-    IncompatibleMeasurement, Mask, PecosRng, PhasePoly, QuantumSimulator, QubitId, ShotResult,
+    Mask, PecosRng, PhasePoly, QuantumSimulator, QubitId, ShotError, ShotResult,
     TriorthogonalMatrix, logical_paulis, validate_probability,
 };
 use std::collections::BTreeSet;
@@ -224,16 +224,12 @@ fn toggle_pair(pairs: &mut BTreeSet<(usize, usize)>, p: usize, q: usize) {
 /// Output checks must follow every syndrome measurement, as in `circuit()`.
 ///
 /// # Errors
-/// Propagates unsupported X measurements; a generated circuit has deterministic
-/// syndrome measurements for every Z-error pattern.
+/// Reports unsupported X measurements or repeated qubits in a logical output.
+/// A generated circuit has deterministic syndromes for every Z-error pattern.
 ///
 /// # Panics
 /// Indices must fit the simulator; output supports must have odd weight.
-pub fn run_shot<F>(
-    sim: &mut PhasePoly,
-    ops: &[Op],
-    errors: &mut F,
-) -> Result<ShotResult, IncompatibleMeasurement>
+pub fn run_shot<F>(sim: &mut PhasePoly, ops: &[Op], errors: &mut F) -> Result<ShotResult, ShotError>
 where
     F: FnMut(usize, usize, f64) -> bool,
 {
@@ -283,7 +279,7 @@ where
                     "logical output must have odd weight"
                 );
                 if accepted {
-                    let (x, y) = logical_paulis(support);
+                    let (x, y) = logical_paulis(support)?;
                     logical_w.push(
                         (sim.expectation(&x) + sim.expectation(&y))
                             * std::f64::consts::FRAC_1_SQRT_2,
@@ -302,7 +298,7 @@ where
 /// Run one shot with independently sampled Z errors from a caller-owned RNG.
 ///
 /// # Errors
-/// Propagates unsupported X measurements, as in [`run_shot`].
+/// Reports measurement or logical-output errors, as in [`run_shot`].
 ///
 /// # Panics
 /// Requires valid circuit indices, odd output supports, and probabilities in `[0,1]`.
@@ -310,7 +306,7 @@ pub fn run_shot_sampled(
     sim: &mut PhasePoly,
     ops: &[Op],
     rng: &mut PecosRng,
-) -> Result<ShotResult, IncompatibleMeasurement> {
+) -> Result<ShotResult, ShotError> {
     run_shot(sim, ops, &mut |_, _, p| rng.random_bool(p))
 }
 

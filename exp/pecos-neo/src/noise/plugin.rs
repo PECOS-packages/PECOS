@@ -31,7 +31,8 @@
 //! let model = ComposableNoiseModel::new()
 //!     .add_plugin(&CorePlugin)           // Fundamental state tracking
 //!     .add_plugin(&LeakagePlugin::new()) // Leakage handling
-//!     .add_plugin(&DepolarizingPlugin::new(0.01, 0.02));
+//!     .add_plugin(&DepolarizingPlugin::new(0.01, 0.02)?);
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
 use super::{NoiseChannel, NoiseContext, NoiseEvent, NoiseResponse};

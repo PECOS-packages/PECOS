@@ -154,9 +154,10 @@ fn random_circuit_with_features(n: usize, seed: u64, extended: bool) -> (StabMps
             }
             2 => {
                 let angle_bits = xorshift(&mut rng);
-                let angle = Angle64::from_radians(
+                let angle = Angle64::try_from_radians(
                     (angle_bits % 1000) as f64 * 0.001 * std::f64::consts::TAU,
-                );
+                )
+                .unwrap();
                 stn.rz(angle, &[QubitId(q0)]);
                 has_nonclifford = true;
             }
@@ -177,9 +178,10 @@ fn random_circuit_with_features(n: usize, seed: u64, extended: bool) -> (StabMps
             }
             _ => {
                 let angle_bits = xorshift(&mut rng);
-                let angle = Angle64::from_radians(
+                let angle = Angle64::try_from_radians(
                     (angle_bits % 1000) as f64 * 0.001 * std::f64::consts::TAU,
-                );
+                )
+                .unwrap();
                 stn.rx(angle, &[QubitId(q0)]);
                 features.rx = true;
                 has_nonclifford = true;
@@ -1021,11 +1023,12 @@ fn clean_validation_circuit(n: usize, seed: u64) -> StabMps {
         .build();
     stn.h(&(0..n).map(QubitId).collect::<Vec<_>>());
     for q in 0..n {
-        let angle = Angle64::from_radians(
+        let angle = Angle64::try_from_radians(
             ((seed.wrapping_mul(137) + q as u64 * 251) % 1000) as f64
                 * 0.001
                 * std::f64::consts::TAU,
-        );
+        )
+        .unwrap();
         stn.rz(angle, &[QubitId(q)]);
     }
     for q in 0..n - 1 {

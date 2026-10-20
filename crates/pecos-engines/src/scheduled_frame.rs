@@ -1,4 +1,4 @@
-//! Mandatory v3 batches for checked local noise profiles. Not a custom-event format.
+//! Mandatory v6 batches for checked local noise profiles. Not a custom-event format.
 use crate::noise::{GeneralNoiseModel, GeneralNoiseModelBuilder, IntoNoiseModel, NoiseModel};
 use crate::runtime_frame::{error, processing_error};
 use crate::{ByteMessage, ControlEngine, EngineStage, Gate, GateType};
@@ -44,7 +44,7 @@ impl From<ScheduledIdleZ> for ScheduledNoise {
     }
 }
 impl IntoNoiseModel for ScheduledIdleZ {
-    fn into_noise_model(self) -> Box<dyn NoiseModel> {
+    fn into_noise_model(self) -> Result<Box<dyn NoiseModel>, PecosError> {
         self.0.into_noise_model()
     }
 }
@@ -67,27 +67,45 @@ pub struct ScheduledNoise {
     sine_model: BTreeMap<String, f64>,
     coherent_model: BTreeMap<String, f64>,
 }
-/// Checked local Pauli gate faults, preparation bit flips and asymmetric readout.
-/// Idle channels use the supplied profile. Gate faults are uniform over X/Y/Z or
-/// the fifteen nonidentity Pauli pairs, with angle-independent event probability.
+/// Checked local gate faults, preparation faults and asymmetric readout.
+/// Idle channels use the supplied profile. The single-qubit Pauli branch is uniform
+/// over X/Y/Z; two-qubit Pauli faults default to uniform nonidentity pairs and accept
+/// a checked distribution. Two-qubit rotation faults can use checked angle scaling.
 /// Emitted RZ gates receive single-qubit faults too; virtual frame updates must
 /// be resolved by the runtime/adapter rather than represented as physical RZ.
-/// Emission, gate/preparation leakage, seepage and crosstalk are disabled.
+/// Preparation faults can leak or flip the qubit. Gate faults optionally select
+/// emission models and seepage using the general model. Crosstalk is disabled.
 /// Capacity remains 1..=16 with a state-vector engine. Measurements capture
 /// leakage before subsequent operations, allowing same-batch reset and reuse.
 #[derive(Clone, Debug)]
-pub struct ScheduledLocalNoise(ScheduledNoise);
+pub struct ScheduledLocalNoise {
+    idle: ScheduledNoise,
+    local: LocalFaults,
+}
 #[derive(Clone, Debug)]
 struct LocalFaults {
     p1: f64,
     p2: f64,
     prep: f64,
+    prep_leak_ratio: f64,
+    p2_pauli_model: Option<BTreeMap<String, f64>>,
+    p2_angle_params: Option<(f64, f64, f64, f64)>,
+    p2_angle_power: Option<f64>,
+    p1_emission_ratio: f64,
+    p1_emission_model: Option<BTreeMap<String, f64>>,
+    p1_seepage_prob: f64,
+    p2_emission_ratio: f64,
+    p2_emission_model: Option<BTreeMap<String, f64>>,
+    p2_seepage_prob: f64,
     meas0: f64,
     meas1: f64,
 }
 impl ScheduledLocalNoise {
     /// Set local fault probabilities while preserving the supplied idle channels.
-    /// Replaces all existing local fault probabilities if the profile already has them.
+    /// Replaces all existing local fault probabilities if the profile already has them,
+    /// including resetting preparation leakage to zero, two-qubit faults to uniform,
+    /// two-qubit angle scaling to its constant-rate defaults, and all gate emission
+    /// and seepage settings to their disabled/default values.
     /// # Errors
     /// Every probability must be finite and in [0, 1].
     pub fn new(
@@ -106,26 +124,220 @@ impl ScheduledLocalNoise {
                 "scheduled local probabilities must be finite and in [0, 1]",
             ));
         }
-        let mut profile = idle;
-        profile.local = Some(LocalFaults {
-            p1,
-            p2,
-            prep,
-            meas0,
-            meas1,
-        });
-        Ok(Self(profile))
+        Ok(Self {
+            idle,
+            local: LocalFaults {
+                p1,
+                p2,
+                prep,
+                prep_leak_ratio: 0.0,
+                p2_pauli_model: None,
+                p2_angle_params: None,
+                p2_angle_power: None,
+                p1_emission_ratio: 0.0,
+                p1_emission_model: None,
+                p1_seepage_prob: 0.0,
+                p2_emission_ratio: 0.0,
+                p2_emission_model: None,
+                p2_seepage_prob: 0.0,
+                meas0,
+                meas1,
+            },
+        })
+    }
+    /// Set the fraction of single-qubit faults that select spontaneous emission.
+    /// Emission replaces the ideal gate. For an already leaked operand, it attempts
+    /// seepage instead of sampling a fresh emission fault. The default is zero.
+    /// # Errors
+    /// Rejects nonfinite ratios or values outside [0, 1], even when p1 is zero.
+    pub fn with_p1_emission_ratio(mut self, ratio: f64) -> Result<Self, PecosError> {
+        self.local.p1_emission_ratio = ratio;
+        self.local.validate()?;
+        Ok(self)
+    }
+    /// Set the conditional single-qubit emission distribution.
+    /// Keys are X/Y/Z/L, where L leaks the operand.
+    /// Omission uses the general model's uniform nonidentity Pauli distribution.
+    /// This replaces only the distribution, preserving other local and idle faults.
+    /// # Errors
+    /// Uses the general model's checked key/weight validation, including when disabled.
+    pub fn with_p1_emission_model(
+        mut self,
+        model: BTreeMap<String, f64>,
+    ) -> Result<Self, PecosError> {
+        self.local.p1_emission_model = Some(model);
+        self.local.validate()?;
+        Ok(self)
+    }
+    /// Set the conditional seepage probability for an already leaked operand.
+    /// It is attempted only when a single-qubit fault selects emission, and returns
+    /// the operand to a random computational basis state. The default is zero.
+    /// # Errors
+    /// Rejects nonfinite probabilities or values outside [0, 1], even when disabled.
+    pub fn with_p1_seepage_prob(mut self, probability: f64) -> Result<Self, PecosError> {
+        self.local.p1_seepage_prob = probability;
+        self.local.validate()?;
+        Ok(self)
+    }
+    /// Set the fraction of two-qubit faults that select spontaneous emission.
+    /// Emission replaces the ideal gate. For an already leaked operand, it attempts
+    /// seepage instead of sampling a fresh emission fault. The default is zero.
+    /// # Errors
+    /// Rejects nonfinite ratios or values outside [0, 1], even when p2 is zero.
+    pub fn with_p2_emission_ratio(mut self, ratio: f64) -> Result<Self, PecosError> {
+        self.local.p2_emission_ratio = ratio;
+        self.local.validate()?;
+        Ok(self)
+    }
+    /// Set the conditional two-qubit emission distribution.
+    /// Keys are ordered I/X/Y/Z/L pairs except II; L leaks that operand.
+    /// Omission uses the general model's uniform nonidentity Pauli distribution.
+    /// This replaces only the distribution, preserving other local and idle faults.
+    /// # Errors
+    /// Uses the general model's checked key/weight validation, including when disabled.
+    pub fn with_p2_emission_model(
+        mut self,
+        model: BTreeMap<String, f64>,
+    ) -> Result<Self, PecosError> {
+        self.local.p2_emission_model = Some(model);
+        self.local.validate()?;
+        Ok(self)
+    }
+    /// Set the conditional seepage probability for an already leaked operand.
+    /// It is attempted only when a two-qubit fault selects emission, and returns
+    /// the operand to a random computational basis state. The default is zero.
+    /// # Errors
+    /// Rejects nonfinite probabilities or values outside [0, 1], even when disabled.
+    pub fn with_p2_seepage_prob(mut self, probability: f64) -> Result<Self, PecosError> {
+        self.local.p2_seepage_prob = probability;
+        self.local.validate()?;
+        Ok(self)
+    }
+    /// Set signed principal-angle coefficients using the existing general model.
+    /// For `x = |theta|/pi`, the multiplier is `a*x^power+b` for negative angles,
+    /// `c*x^power+d` for positive angles, and `(b+d)/2` at zero. Angles are reduced
+    /// to `(-pi, pi]`, with both half-turn endpoints on the positive branch.
+    /// This changes only the event probability, preserving the Pauli distribution
+    /// and all other faults. It does not rewrite gates or runtime timing.
+    /// # Errors
+    /// Rejects nonfinite coefficients or effective probabilities outside [0, 1]
+    /// anywhere in the principal-angle range, including when p2 is zero.
+    pub fn with_p2_angle_params(
+        mut self,
+        a: f64,
+        b: f64,
+        c: f64,
+        d: f64,
+    ) -> Result<Self, PecosError> {
+        self.local.p2_angle_params = Some((a, b, c, d));
+        self.local.validate()?;
+        Ok(self)
+    }
+    /// Set a finite positive angle exponent, preserving all other settings.
+    /// The default exponent is one; with constant coefficients it has no effect.
+    /// # Errors
+    /// Rejects nonfinite/nonpositive powers and invalid combined probabilities.
+    pub fn with_p2_angle_power(mut self, power: f64) -> Result<Self, PecosError> {
+        self.local.p2_angle_power = Some(power);
+        self.local.validate()?;
+        Ok(self)
+    }
+    /// Set the conditional distribution of a two-qubit Pauli fault.
+    /// Keys are ordered pairs of I/X/Y/Z excluding II. The first character acts
+    /// on the emitted gate's first operand, not the lower-numbered qubit. Missing
+    /// pairs have zero weight. This replaces the previous distribution without
+    /// changing the fault probability, idle channels or preparation leakage.
+    /// # Errors
+    /// Rejects invalid keys or nonfinite/negative weights, even when p2 is zero.
+    /// Weights must sum to one within 1e-10; empty and all-zero maps are rejected.
+    pub fn with_p2_pauli_model(mut self, model: BTreeMap<String, f64>) -> Result<Self, PecosError> {
+        for (pair, weight) in &model {
+            if pair.len() != 2
+                || pair == "II"
+                || !pair
+                    .bytes()
+                    .all(|axis| matches!(axis, b'I' | b'X' | b'Y' | b'Z'))
+            {
+                return Err(error(
+                    "scheduled two-qubit Pauli keys must be I/X/Y/Z pairs excluding II",
+                ));
+            }
+            if !weight.is_finite() || *weight < 0.0 {
+                return Err(error(
+                    "scheduled two-qubit Pauli weights must be finite and nonnegative",
+                ));
+            }
+        }
+        let total: f64 = model.values().sum();
+        if !total.is_finite() || (total - 1.0).abs() > 1e-10 {
+            return Err(error("scheduled two-qubit Pauli weights must sum to one"));
+        }
+        self.local.p2_pauli_model = Some(model);
+        Ok(self)
+    }
+    /// Set the conditional probability of leakage when a preparation fault occurs.
+    /// The remaining preparation faults apply X. Preparation always resets the
+    /// qubit and clears prior leakage before sampling this new fault. The default
+    /// ratio is zero; a zero preparation fault probability leaves this inactive.
+    /// # Errors
+    /// Rejects nonfinite ratios or values outside [0, 1], even when prep is zero.
+    pub fn with_prep_leak_ratio(mut self, ratio: f64) -> Result<Self, PecosError> {
+        if !ratio.is_finite() || !(0.0..=1.0).contains(&ratio) {
+            return Err(error(
+                "scheduled preparation leakage ratio must be finite and in [0, 1]",
+            ));
+        }
+        self.local.prep_leak_ratio = ratio;
+        Ok(self)
+    }
+}
+impl LocalFaults {
+    fn configure(&self, mut builder: GeneralNoiseModelBuilder) -> GeneralNoiseModelBuilder {
+        builder = builder
+            .with_p1(self.p1)
+            .with_p2(self.p2)
+            .with_p_prep(self.prep)
+            .with_prep_leak_ratio(self.prep_leak_ratio)
+            .with_p_meas_0(self.meas0)
+            .with_p_meas_1(self.meas1)
+            .with_p1_emission_ratio(self.p1_emission_ratio)
+            .with_p1_seepage_prob(self.p1_seepage_prob)
+            .with_p2_emission_ratio(self.p2_emission_ratio)
+            .with_p2_seepage_prob(self.p2_seepage_prob);
+        if let Some(model) = &self.p2_pauli_model {
+            builder = builder.with_p2_pauli_model(model);
+        }
+        if let Some(model) = &self.p1_emission_model {
+            builder = builder.with_p1_emission_model(model);
+        }
+        if let Some(model) = &self.p2_emission_model {
+            builder = builder.with_p2_emission_model(model);
+        }
+        if let Some((a, b, c, d)) = self.p2_angle_params {
+            builder = builder.with_p2_angle_params(a, b, c, d);
+        }
+        if let Some(power) = self.p2_angle_power {
+            builder = builder.with_p2_angle_power(power);
+        }
+        builder
+    }
+    fn validate(&self) -> Result<(), PecosError> {
+        self.configure(GeneralNoiseModelBuilder::new())
+            .validate_configuration()
+            .map_err(PecosError::Input)
     }
 }
 /// Lossless conversion for scheduled transport composition; all configured faults remain enabled.
 impl From<ScheduledLocalNoise> for ScheduledNoise {
     fn from(profile: ScheduledLocalNoise) -> Self {
-        profile.0
+        let mut noise = profile.idle;
+        noise.local = Some(profile.local);
+        noise
     }
 }
 impl IntoNoiseModel for ScheduledLocalNoise {
-    fn into_noise_model(self) -> Box<dyn NoiseModel> {
-        self.0.into_noise_model()
+    fn into_noise_model(self) -> Result<Box<dyn NoiseModel>, PecosError> {
+        ScheduledNoise::from(self).into_noise_model()
     }
 }
 
@@ -244,12 +456,7 @@ impl ScheduledNoise {
             .with_p_idle_sin_squared(self.sine, &self.sine_model)
             .with_p_idle_coherent(self.coherent, &self.coherent_model);
         if let Some(local) = &self.local {
-            builder = builder
-                .with_p1(local.p1)
-                .with_p2(local.p2)
-                .with_p_prep(local.prep)
-                .with_p_meas_0(local.meas0)
-                .with_p_meas_1(local.meas1);
+            builder = local.configure(builder);
         }
         let inner = builder.build();
         ScheduledIdleModel {
@@ -260,11 +467,11 @@ impl ScheduledNoise {
     }
 }
 impl IntoNoiseModel for ScheduledNoise {
-    fn into_noise_model(self) -> Box<dyn NoiseModel> {
-        Box::new(self.build_model())
+    fn into_noise_model(self) -> Result<Box<dyn NoiseModel>, PecosError> {
+        Ok(Box::new(self.build_model()))
     }
 }
-pub(crate) fn fields(g: &Gate) -> Result<(u64, u64, u64, f64, f64), PecosError> {
+pub(crate) fn fields(g: &Gate) -> Result<(u64, u64, u64, u64, u64), PecosError> {
     g.validate().map_err(|s| error(&s))?;
     let (code, n, angles) = match g.gate_type {
         GateType::RXY1Q => (1, 1, 2),
@@ -291,12 +498,12 @@ pub(crate) fn fields(g: &Gate) -> Result<(u64, u64, u64, f64, f64), PecosError> 
         code,
         g.qubits[0].0 as u64,
         if n == 2 { g.qubits[1].0 as u64 } else { 0 },
-        g.angles.first().map_or(0.0, Angle64::to_radians),
-        g.angles.get(1).map_or(0.0, Angle64::to_radians),
+        g.angles.first().map_or(0, Angle64::fraction),
+        g.angles.get(1).map_or(0, Angle64::fraction),
     ))
 }
-/// Encode mandatory v3 transport: 16-byte header, 40-byte batch headers and gates.
-/// All fields are little endian. No unknown records, implicit padding or events.
+/// Encode mandatory v6 transport: 16-byte header, 40-byte batch headers and gates.
+/// Angle words are exact u64 fractions. All fields are little endian. No unknown records, implicit padding or events.
 /// # Errors
 /// Rejects unsupported gates and messages exceeding the transport limit.
 pub fn encode_timed_batches(batches: &[TimedBatch]) -> Result<ByteMessage, PecosError> {
@@ -318,7 +525,12 @@ pub fn encode_timed_batches(batches: &[TimedBatch]) -> Result<ByteMessage, Pecos
         .try_reserve_exact(size)
         .map_err(|_| processing_error("schedule allocation failed"))?;
     bytes.extend_from_slice(&crate::byte_message::protocol::BATCH_MAGIC.to_le_bytes());
-    bytes.extend_from_slice(&[3, 0, 0, 0]);
+    bytes.extend_from_slice(&[
+        crate::byte_message::protocol::SCHEDULED_FRAME_VERSION,
+        0,
+        0,
+        0,
+    ]);
     bytes.extend_from_slice(
         &u32::try_from(batches.len())
             .map_err(|_| error("batch count overflow"))?
@@ -341,7 +553,7 @@ pub fn encode_timed_batches(batches: &[TimedBatch]) -> Result<ByteMessage, Pecos
         }
         for gate in &batch.gates {
             let (op, q0, q1, theta, phi) = fields(gate)?;
-            for v in [op, q0, q1, theta.to_bits(), phi.to_bits()] {
+            for v in [op, q0, q1, theta, phi] {
                 bytes.extend_from_slice(&v.to_le_bytes());
             }
         }
@@ -355,16 +567,45 @@ fn word(bytes: &[u8], offset: usize) -> u64 {
             .expect("bounded record"),
     )
 }
+/// Validate the common scheduled header before interpreting version-specific records.
+pub(crate) fn validate_scheduled_header(
+    bytes: &[u8],
+    expected_version: u32,
+) -> Result<(), PecosError> {
+    if bytes.len() < 16 {
+        return Err(error(&format!(
+            "scheduled message length {} is below the 16-byte header minimum; supply a complete scheduled message",
+            bytes.len()
+        )));
+    }
+    let magic = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+    if magic != crate::byte_message::protocol::BATCH_MAGIC {
+        return Err(error(&format!(
+            "scheduled magic {magic:#x} is invalid; encode the input with the scheduled message builder"
+        )));
+    }
+    let version = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+    if version != expected_version {
+        return Err(error(&format!(
+            "scheduled version {version} is unsupported; rebuild the message with version {expected_version}, which stores angles as exact u64 fractions"
+        )));
+    }
+    let declared = u32::from_le_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
+    if bytes.len() > MAX_SCHEDULE_BYTES || declared != bytes.len() {
+        return Err(error(&format!(
+            "scheduled message length {} disagrees with declared length {declared} or exceeds limit {MAX_SCHEDULE_BYTES}; encode a complete message within the limit",
+            bytes.len()
+        )));
+    }
+    Ok(())
+}
+
 pub(crate) fn decode(input: &ByteMessage) -> Result<Vec<TimedBatch>, PecosError> {
     let bytes = input.as_bytes();
-    if bytes.len() < 16
-        || bytes.len() > MAX_SCHEDULE_BYTES
-        || bytes[..4] != crate::byte_message::protocol::BATCH_MAGIC.to_le_bytes()
-        || bytes[4..8] != [3, 0, 0, 0]
-        || u32::from_le_bytes(bytes[12..16].try_into().expect("header")) as usize != bytes.len()
-    {
-        return Err(error("invalid scheduled header/version/length"));
-    }
+    validate_scheduled_header(
+        bytes,
+        u32::from(crate::byte_message::protocol::SCHEDULED_FRAME_VERSION),
+    )?;
     let count = u32::from_le_bytes(bytes[8..12].try_into().expect("header")) as usize;
     if count > (bytes.len() - 16) / 40 {
         return Err(error("invalid scheduled batch count"));
@@ -392,15 +633,12 @@ pub(crate) fn decode(input: &ByteMessage) -> Result<Vec<TimedBatch>, PecosError>
             let op = word(bytes, offset);
             let q0 = word(bytes, offset + 8);
             let q1 = word(bytes, offset + 16);
-            let theta = f64::from_bits(word(bytes, offset + 24));
-            let phi = f64::from_bits(word(bytes, offset + 32));
-            if !theta.is_finite() || !phi.is_finite() {
-                return Err(error("nonfinite scheduled angle"));
-            }
+            let theta = word(bytes, offset + 24);
+            let phi = word(bytes, offset + 32);
             let q0 = usize::try_from(q0).map_err(|_| error("target overflow"))?;
             let q1 = usize::try_from(q1).map_err(|_| error("target overflow"))?;
-            let a = Angle64::from_radians(theta);
-            let p = Angle64::from_radians(phi);
+            let a = Angle64::new(theta);
+            let p = Angle64::new(phi);
             let gate = match op {
                 1 => Gate::rxy1q(a, p, &[q0]),
                 2 => Gate::rz(a, &[q0]),
@@ -412,8 +650,8 @@ pub(crate) fn decode(input: &ByteMessage) -> Result<Vec<TimedBatch>, PecosError>
                 _ => return Err(error("unknown mandatory scheduled operation")),
             };
             if !matches!(op, 3 | 4) && q1 != 0
-                || (op >= 5 && theta.to_bits() != 0)
-                || (op != 1 && op != 4 && phi.to_bits() != 0)
+                || (op >= 5 && theta != 0)
+                || (op != 1 && op != 4 && phi != 0)
             {
                 return Err(error("nonzero unused scheduled fields"));
             }
@@ -556,7 +794,7 @@ impl ControlEngine for ScheduledIdleModel {
         _: ByteMessage,
     ) -> Result<EngineStage<ByteMessage, ByteMessage>, PecosError> {
         Err(error(
-            "scheduled idle profile requires mandatory v3 transport",
+            "scheduled idle profile requires mandatory v6 transport",
         ))
     }
     fn continue_processing(
@@ -605,6 +843,23 @@ mod timing_tests {
             gates,
         }
     }
+    #[test]
+    fn scheduled_angles_keep_every_fraction_bit() {
+        for fraction in [0, 1, u64::MAX, pecos_core::radians!(-0.73).fraction()] {
+            let a = Angle64::new(fraction);
+            let gates = vec![
+                Gate::rz(a, &[0]),
+                Gate::rxy1q(a, -a, &[1]),
+                Gate::rxyxy2q(a, -a, &[(0, 1)]),
+            ];
+            let message = encode_timed_batches(&[batch(0, 0, 0, gates.clone())]).unwrap();
+            assert_eq!(decode(&message).unwrap()[0].gates, gates);
+            let mut old = message.as_bytes().to_vec();
+            old[4] = 3;
+            assert!(decode(&ByteMessage::new(&old)).is_err());
+        }
+    }
+
     fn config() -> ScheduledNoise {
         ScheduledIdleZ::new(2, 0.2, 0.3, 0.4).unwrap().into()
     }
@@ -666,7 +921,7 @@ mod local_gate_contract {
         let stage = model
             .start_admitted(
                 &ByteMessage::quantum_operations_builder()
-                    .rz(Angle64::from_radians(0.4), &[0])
+                    .rz(pecos_core::radians!(0.4), &[0])
                     .build(),
             )
             .unwrap();
@@ -681,5 +936,41 @@ mod local_gate_contract {
             GateType::X | GateType::Y | GateType::Z
         ));
         assert_eq!(gates[1].qubits, gates[0].qubits);
+    }
+}
+
+#[cfg(test)]
+mod header_tests {
+    use super::*;
+
+    #[test]
+    fn scheduled_headers_check_length_and_magic_before_version() {
+        for version in [6_u32, 7] {
+            let decode = |bytes: &[u8]| -> Result<(), PecosError> {
+                let input = ByteMessage::new(bytes);
+                if version == 6 {
+                    super::decode(&input).map(|_| ())
+                } else {
+                    crate::scheduled_events::decode_event_batches(&input).map(|_| ())
+                }
+            };
+            for bytes in [vec![], vec![0xff; 8]] {
+                let error = decode(&bytes).unwrap_err().to_string();
+                assert!(error.contains("length") && error.contains("16"), "{error}");
+            }
+            let error = decode(&[0xff; 16]).unwrap_err().to_string();
+            assert!(error.contains("magic"), "{error}");
+            let mut bytes = vec![0; 16];
+            bytes[..4].copy_from_slice(&crate::byte_message::protocol::BATCH_MAGIC.to_le_bytes());
+            bytes[4..8].copy_from_slice(&(version - 3).to_le_bytes());
+            bytes[12..16].copy_from_slice(&16_u32.to_le_bytes());
+            let error = decode(&bytes).unwrap_err().to_string();
+            assert!(
+                error.contains("version") && error.contains(&format!("version {version}")),
+                "{error}"
+            );
+            bytes[4..8].copy_from_slice(&version.to_le_bytes());
+            decode(&bytes).unwrap();
+        }
     }
 }

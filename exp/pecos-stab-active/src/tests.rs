@@ -63,7 +63,7 @@ fn apply_dense(matrix: &[(usize, Complex64)], vector: &[Complex64]) -> Vec<Compl
 
 // Independent H1 oracle: no simulator methods or decomposition/basis-change
 // helpers are used. The random seed only selects a nonorthogonal projector input.
-fn reconstruct(sim: &StabActive) -> Vec<Complex64> {
+pub(super) fn reconstruct(sim: &StabActive) -> Vec<Complex64> {
     let n = sim.structure.tableau().num_qubits();
     let mut rng = PecosRng::seed_from_u64(937);
     let mut phi: Vec<_> = (0..1 << n)
@@ -192,6 +192,9 @@ fn unitary<S: ArbitraryRotationGateable>(
         10 if q != r => {
             sim.rzz(theta, &pairs);
         }
+        11 => {
+            sim.ry(theta, &qubits);
+        }
         _ => {
             sim.h(&qubits);
         }
@@ -201,7 +204,13 @@ fn unitary<S: ArbitraryRotationGateable>(
 // Evolve the plain dense reference with small physical gate matrices computed
 // by StateVec. Keeping a plain vector permits forced dense projection without
 // depending on a measurement or state-loading API in StateVec.
-fn reference_unitary(state: &mut [Complex64], gate: usize, q: usize, r: usize, angle: Angle64) {
+pub(super) fn reference_unitary(
+    state: &mut [Complex64],
+    gate: usize,
+    q: usize,
+    r: usize,
+    angle: Angle64,
+) {
     let two = matches!(gate, 6 | 7 | 10) && q != r;
     let width = if two { 2 } else { 1 };
     let columns: Vec<_> = (0..1 << width)
@@ -247,7 +256,7 @@ fn dense_random_circuits() {
                     index(&mut rng, 13)
                 };
                 let q = if circuit == 0 && depth < n { depth } else { q };
-                let angle = Angle64::from_radians(6.0 * rng.next_f64() - 3.0);
+                let angle = Angle64::try_from_radians(6.0 * rng.next_f64() - 3.0).unwrap();
                 if gate >= 11 {
                     let outcome =
                         synchronized_measure(&mut sim, &mut reference, q, rng.next_bool_fast());
@@ -273,7 +282,7 @@ fn dense_random_circuits() {
 
 #[test]
 fn repeated_support_bounds_width() {
-    let angle = Angle64::from_radians(0.37);
+    let angle = pecos_core::radians!(0.37);
     let mut sim = StabActive::with_seed(10, 12);
     let mut reference = StateVec::new(10).state();
     for step in 0..60 {
@@ -295,7 +304,7 @@ fn active_certain_measurements_ignore_impossible_force() {
     for pair in [false, true] {
         for outcome in [false, true] {
             let mut sim = StabActive::with_seed(1, 34);
-            let theta = Angle64::from_radians(0.37);
+            let theta = pecos_core::radians!(0.37);
             if pair {
                 let t = Angle64::QUARTER_TURN / 2u64;
                 sim.rx(t, &[QubitId(0)])
@@ -381,7 +390,7 @@ fn pure_cliffords_never_promote() {
 fn width_limit() {
     StabActive::new(2)
         .with_max_active_width(1)
-        .rx(Angle64::from_radians(0.37), &[QubitId(0), QubitId(1)]);
+        .rx(pecos_core::radians!(0.37), &[QubitId(0), QubitId(1)]);
 }
 
 #[test]
@@ -391,7 +400,7 @@ fn seed_reset_and_preparation() {
     for _ in 0..100 {
         for sim in [&mut first, &mut second] {
             sim.h(&[QubitId(0)]).cx(&[(QubitId(0), QubitId(1))]);
-            sim.rx(Angle64::from_radians(0.79), &[QubitId(2), QubitId(3)]);
+            sim.rx(pecos_core::radians!(0.79), &[QubitId(2), QubitId(3)]);
         }
         let a = first.mz(&[QubitId(0), QubitId(1), QubitId(2), QubitId(3)]);
         let b = second.mz(&[QubitId(0), QubitId(1), QubitId(2), QubitId(3)]);
@@ -406,7 +415,7 @@ fn seed_reset_and_preparation() {
         assert_state(&first, &StateVec::new(4).state(), "reset");
     }
     first.rx(
-        Angle64::from_radians(0.89),
+        pecos_core::radians!(0.89),
         &[QubitId(0), QubitId(1), QubitId(2), QubitId(3)],
     );
     assert_eq!(first.peak_active_width(), 4);
@@ -429,7 +438,7 @@ fn full_stabilizer_suite() {
 
 #[test]
 fn mixed_support_and_odd_overlap() {
-    let angle = Angle64::from_radians(0.37);
+    let angle = pecos_core::radians!(0.37);
     // X in the S-rotated frame has odd overlap of its D and S factors.
     let mut sim = StabActive::new(1);
     let mut reference = StateVec::new(1).state();
@@ -488,8 +497,8 @@ fn check_roundoff_endpoint(pair: bool) {
         let mut sim = StabActive::with_seed(1, 34);
         let mut reference = StateVec::new(1);
         let (a, b) = if pair { (0.37, 0.83) } else { (0.79, 2.91) };
-        let a = Angle64::from_radians(a);
-        let b = Angle64::from_radians(b);
+        let a = Angle64::try_from_radians(a).unwrap();
+        let b = Angle64::try_from_radians(b).unwrap();
         let target = if pair {
             Angle64::QUARTER_TURN
         } else {
@@ -497,7 +506,7 @@ fn check_roundoff_endpoint(pair: bool) {
         };
         // A nontrivial global phase leaves both real and imaginary components
         // in the endpoint amplitude, exposing roundoff in its squared norm.
-        let phase = Angle64::from_radians(1.23);
+        let phase = pecos_core::radians!(1.23);
         sim.rz(phase, &[QubitId(0)]);
         reference.rz(phase, &[QubitId(0)]);
         for angle in [a, b, target - (a + b)] {
@@ -573,7 +582,7 @@ fn signed_clifford_paulis_match_dense_matrix() {
         (6, 0, 2, 0.0),
         (8, 1, 1, 0.43),
     ] {
-        let angle = Angle64::from_radians(radians);
+        let angle = Angle64::try_from_radians(radians).unwrap();
         unitary(&mut initial, gate, q, r, angle);
         reference_unitary(&mut reference, gate, q, r, angle);
     }

@@ -288,11 +288,18 @@ where
 /// Divides all entries by the first nonzero entry (row-major scan).
 /// Returns `None` for the zero matrix.
 fn canonicalize_matrix(mat: &DMatrix<Complex64>) -> Option<DMatrix<Complex64>> {
+    if mat.iter().any(|v| !v.re.is_finite() || !v.im.is_finite()) {
+        return None;
+    }
     for i in 0..mat.nrows() {
         for j in 0..mat.ncols() {
             let v = mat[(i, j)];
             if v.norm() > 1e-14 {
-                return Some(mat / v);
+                let normalized = mat / v;
+                return normalized
+                    .iter()
+                    .all(|v| v.re.is_finite() && v.im.is_finite())
+                    .then_some(normalized);
             }
         }
     }
@@ -306,7 +313,8 @@ fn matrices_approx_equal(a: &DMatrix<Complex64>, b: &DMatrix<Complex64>, tol: f6
     }
     for i in 0..a.nrows() {
         for j in 0..a.ncols() {
-            if (a[(i, j)] - b[(i, j)]).norm() > tol {
+            let distance = (a[(i, j)] - b[(i, j)]).norm();
+            if !distance.is_finite() || distance > tol {
                 return false;
             }
         }
@@ -380,8 +388,8 @@ fn try_identify_rxy1q(c_i: Complex64, c_x: Complex64, c_y: Complex64, tol: f64) 
         }
         let phi = ratio.re.atan();
         return Some(Unitary::RXY1Q {
-            theta: Angle64::from_radians(std::f64::consts::PI),
-            phi: Angle64::from_radians(phi),
+            theta: Angle64::HALF_TURN,
+            phi: Angle64::try_from_radians(phi).ok()?,
         });
     }
 
@@ -409,8 +417,8 @@ fn try_identify_rxy1q(c_i: Complex64, c_x: Complex64, c_y: Complex64, tol: f64) 
     let theta = 2.0 * tan_half_theta.atan();
 
     Some(Unitary::RXY1Q {
-        theta: Angle64::from_radians(theta),
-        phi: Angle64::from_radians(phi),
+        theta: Angle64::try_from_radians(theta).ok()?,
+        phi: Angle64::try_from_radians(phi).ok()?,
     })
 }
 
@@ -469,13 +477,13 @@ fn try_identify_u3(mat: &DMatrix<Complex64>, tol: f64) -> Option<Unitary> {
         (phi, lambda)
     };
 
-    // Snap tiny angles to exactly zero to avoid from_radians boundary issues
+    // Snap tiny angles to exactly zero to avoid floating-point conversion boundary issues
     let snap = |v: f64| -> f64 { if v.abs() < 1e-14 { 0.0 } else { v } };
     let (theta, phi, lambda) = (snap(theta), snap(phi), snap(lambda));
     Some(Unitary::U3 {
-        theta: Angle64::from_radians(theta),
-        phi: Angle64::from_radians(phi),
-        lambda: Angle64::from_radians(lambda),
+        theta: Angle64::try_from_radians(theta).ok()?,
+        phi: Angle64::try_from_radians(phi).ok()?,
+        lambda: Angle64::try_from_radians(lambda).ok()?,
     })
 }
 
@@ -584,9 +592,9 @@ fn try_identify_rxxryyrzz(
     let c = (qm - pp) - a;
 
     Some(Unitary::RXXRYYRZZ {
-        alpha: Angle64::from_radians(a),
-        beta: Angle64::from_radians(b),
-        gamma: Angle64::from_radians(c),
+        alpha: Angle64::try_from_radians(a).ok()?,
+        beta: Angle64::try_from_radians(b).ok()?,
+        gamma: Angle64::try_from_radians(c).ok()?,
     })
 }
 
@@ -774,9 +782,9 @@ fn try_identify_u2q(mat: &DMatrix<Complex64>, tol: f64) -> Option<Unitary> {
     Some(Unitary::U2q {
         before: [before_0, before_1],
         interaction: [
-            Angle64::from_radians(snap(alpha)),
-            Angle64::from_radians(snap(beta)),
-            Angle64::from_radians(snap(gamma)),
+            Angle64::try_from_radians(snap(alpha)).ok()?,
+            Angle64::try_from_radians(snap(beta)).ok()?,
+            Angle64::try_from_radians(snap(gamma)).ok()?,
         ],
         after: [after_0, after_1],
     })
@@ -864,7 +872,7 @@ fn extract_rotation_angle(
     let theta = 2.0 * ratio.re.atan();
     Some(Unitary::Rotation {
         rotation_type,
-        angle: Angle64::from_radians(theta),
+        angle: Angle64::try_from_radians(theta).ok()?,
     })
 }
 
@@ -2982,7 +2990,7 @@ mod tests {
         use pecos_core::unitary_rep::RY;
 
         for &(angle_rad, label) in &[(0.3, "0.3"), (1.0, "1.0"), (2.5, "2.5"), (-0.7, "-0.7")] {
-            let angle = Angle64::from_radians(angle_rad);
+            let angle = Angle64::try_from_radians(angle_rad).unwrap();
 
             // RX
             let mat = RX(angle, 0).to_matrix();
@@ -3039,7 +3047,7 @@ mod tests {
         use pecos_core::unitary_rep::{RXX, RYY, RZZ};
 
         for &angle_rad in &[0.3, 1.0, 2.5, -0.7] {
-            let angle = Angle64::from_radians(angle_rad);
+            let angle = Angle64::try_from_radians(angle_rad).unwrap();
 
             let mat = RXX(angle, 0, 1).to_matrix();
             let u = mat
@@ -3091,7 +3099,7 @@ mod tests {
     #[test]
     fn try_to_unitary_rotation_rejects_scaled() {
         // 3*RZ(0.5) is not unitary, so rotation extraction should not match
-        let angle = Angle64::from_radians(0.5);
+        let angle = pecos_core::radians!(0.5);
         let mat = &RZ(angle, 0).to_matrix() * 3.0;
         assert_eq!(mat.try_to_unitary(), None);
     }
@@ -3102,8 +3110,8 @@ mod tests {
         // Note: RXY1Q(-theta, phi) = RXY1Q(theta, phi+pi), so we compare matrices
         // rather than raw angles to handle this sign ambiguity.
         for &(theta_rad, phi_rad) in &[(0.3, 0.7), (1.0, 2.0), (2.5, -0.5), (-0.7, 1.2)] {
-            let theta = Angle64::from_radians(theta_rad);
-            let phi = Angle64::from_radians(phi_rad);
+            let theta = Angle64::try_from_radians(theta_rad).unwrap();
+            let phi = Angle64::try_from_radians(phi_rad).unwrap();
             let mat = Unitary::RXY1Q { theta, phi }.on_qubit(0).to_matrix();
             let u = mat
                 .try_to_unitary()
@@ -3124,7 +3132,7 @@ mod tests {
     #[test]
     fn try_to_unitary_rxy1q_special_cases() {
         // RXY1Q(theta, 0) should be identified as RX (single-axis, not RXY1Q)
-        let theta = Angle64::from_radians(0.5);
+        let theta = pecos_core::radians!(0.5);
         let mat = Unitary::RXY1Q {
             theta,
             phi: Angle64::ZERO,
@@ -3166,7 +3174,7 @@ mod tests {
     #[test]
     fn try_to_unitary_special_angles_prefer_named() {
         // RZ(pi) should be identified as Z (named gate), not Rotation
-        let rz_pi = RZ(Angle64::from_radians(PI), 0).to_matrix();
+        let rz_pi = RZ(Angle64::HALF_TURN, 0).to_matrix();
         let u = rz_pi.try_to_unitary().unwrap();
         assert!(
             matches!(u, Unitary::Named(named) if named.gate_type() == GateType::Z),
@@ -3174,7 +3182,7 @@ mod tests {
         );
 
         // RZ(pi/2) should be identified as SZ (named gate), not Rotation
-        let rz_half = RZ(Angle64::from_radians(PI / 2.0), 0).to_matrix();
+        let rz_half = RZ(Angle64::QUARTER_TURN, 0).to_matrix();
         let u = rz_half.try_to_unitary().unwrap();
         assert!(
             matches!(u, Unitary::Named(named) if named.gate_type() == GateType::SZ),
@@ -3185,9 +3193,9 @@ mod tests {
     #[test]
     fn try_to_unitary_identifies_rxxryyrzz() {
         // RXX(0.3) * RYY(0.7) * RZZ(1.1)
-        let a = Angle64::from_radians(0.3);
-        let b = Angle64::from_radians(0.7);
-        let c = Angle64::from_radians(1.1);
+        let a = pecos_core::radians!(0.3);
+        let b = pecos_core::radians!(0.7);
+        let c = pecos_core::radians!(1.1);
         let mat_rxx = rotation_to_matrix(RotationType::RXX, a, &[0, 1], 2);
         let mat_ryy = rotation_to_matrix(RotationType::RYY, b, &[0, 1], 2);
         let mat_rzz = rotation_to_matrix(RotationType::RZZ, c, &[0, 1], 2);
@@ -3208,8 +3216,8 @@ mod tests {
     #[test]
     fn try_to_unitary_rxxryyrzz_two_axes() {
         // RXX(0.5) * RZZ(0.9) -- only 2 of 3 axes nonzero
-        let a = Angle64::from_radians(0.5);
-        let c = Angle64::from_radians(0.9);
+        let a = pecos_core::radians!(0.5);
+        let c = pecos_core::radians!(0.9);
         let mat_rxx = rotation_to_matrix(RotationType::RXX, a, &[0, 1], 2);
         let mat_rzz = rotation_to_matrix(RotationType::RZZ, c, &[0, 1], 2);
         let mat = UnitaryMatrix::from(mat_rxx * mat_rzz);
@@ -3229,7 +3237,7 @@ mod tests {
     #[test]
     fn try_to_unitary_single_axis_still_prefers_rxx() {
         // RXX(0.5) alone should still be identified as Rotation, not RXXRYYRZZ
-        let a = Angle64::from_radians(0.5);
+        let a = pecos_core::radians!(0.5);
         let mat_rxx = UnitaryMatrix::from(rotation_to_matrix(RotationType::RXX, a, &[0, 1], 2));
         let u = mat_rxx.try_to_unitary().unwrap();
         assert!(
@@ -3460,9 +3468,9 @@ mod tests {
                     if count > 500 {
                         break;
                     }
-                    let alpha = Angle64::from_radians(a);
-                    let beta = Angle64::from_radians(b);
-                    let gamma = Angle64::from_radians(c);
+                    let alpha = Angle64::try_from_radians(a).unwrap();
+                    let beta = Angle64::try_from_radians(b).unwrap();
+                    let gamma = Angle64::try_from_radians(c).unwrap();
                     let mat_rxx = rotation_to_matrix(RotationType::RXX, alpha, &[0, 1], 2);
                     let mat_ryy = rotation_to_matrix(RotationType::RYY, beta, &[0, 1], 2);
                     let mat_rzz = rotation_to_matrix(RotationType::RZZ, gamma, &[0, 1], 2);
@@ -3516,9 +3524,9 @@ mod tests {
     fn try_to_unitary_identifies_u2q_general() {
         // Build a general 2-qubit unitary: U3(0.3, 0.5, 0.7) on q0, then CX
         let u3_mat = u3_to_matrix(
-            Angle64::from_radians(0.3),
-            Angle64::from_radians(0.5),
-            Angle64::from_radians(0.7),
+            pecos_core::radians!(0.3),
+            pecos_core::radians!(0.5),
+            pecos_core::radians!(0.7),
             &[0],
             2,
         );
@@ -3548,9 +3556,9 @@ mod tests {
     fn try_to_unitary_u2q_with_global_phase() {
         // Same gate but with a global phase e^{i*0.4}
         let u3_mat = u3_to_matrix(
-            Angle64::from_radians(0.3),
-            Angle64::from_radians(0.5),
-            Angle64::from_radians(0.7),
+            pecos_core::radians!(0.3),
+            pecos_core::radians!(0.5),
+            pecos_core::radians!(0.7),
             &[0],
             2,
         );
@@ -3590,7 +3598,7 @@ mod tests {
         // RXX should stay as Rotation, not U2q
         let rxx = UnitaryMatrix::from(rotation_to_matrix(
             RotationType::RXX,
-            Angle64::from_radians(0.5),
+            pecos_core::radians!(0.5),
             &[0, 1],
             2,
         ));
@@ -3619,16 +3627,16 @@ mod tests {
                 for &g in &angles {
                     // Build: CX-like gate with various single-qubit pre/post rotations
                     let u3_0 = u3_to_matrix(
-                        Angle64::from_radians(a),
-                        Angle64::from_radians(b),
-                        Angle64::from_radians(0.1),
+                        Angle64::try_from_radians(a).unwrap(),
+                        Angle64::try_from_radians(b).unwrap(),
+                        pecos_core::radians!(0.1),
                         &[0],
                         2,
                     );
                     let u3_1 = u3_to_matrix(
-                        Angle64::from_radians(g),
-                        Angle64::from_radians(0.2),
-                        Angle64::from_radians(0.3),
+                        Angle64::try_from_radians(g).unwrap(),
+                        pecos_core::radians!(0.2),
+                        pecos_core::radians!(0.3),
                         &[1],
                         2,
                     );

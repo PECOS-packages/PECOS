@@ -459,19 +459,14 @@ class AstToQuantumCircuit:
             self.context.current_tick = {}
 
     def _process_if(self, node: IfStmt) -> None:
-        """Process an if statement."""
+        """Reject an if statement: the circuit has no classical state to condition on."""
         reject_permute_in_region(node, "QuantumCircuit")
-        # QuantumCircuit doesn't support conditionals directly
-        # Process both branches
-        self._flush_tick()
-
-        for stmt in node.then_body:
-            self._process_statement(stmt)
-
-        if node.else_body:
-            self._flush_tick()
-            for stmt in node.else_body:
-                self._process_statement(stmt)
+        msg = (
+            "If cannot be converted to QuantumCircuit format: the generated circuit records no "
+            "classical results, so there is no condition to attach to the branch operations. "
+            "Use the QASM, QIR or Guppy targets for programs with conditionals."
+        )
+        raise NotImplementedError(msg)
 
     def _process_while(self, node: WhileStmt) -> None:
         """Process a while loop."""

@@ -1865,7 +1865,7 @@ mod reusable_validation_tests {
         dag.h(&[0]);
         dag.t(&[0]);
         dag.h(&[0]);
-        dag.rz(pecos_core::Angle64::from_radians(0.3), &[0]);
+        dag.rz(pecos_core::radians!(0.3), &[0]);
         dag.h(&[0]);
         let walker = DagPropagator::new(&dag);
         pauli::GATE_VALIDATIONS.set(0);

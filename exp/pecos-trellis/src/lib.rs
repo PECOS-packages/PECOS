@@ -34,7 +34,7 @@ pub mod factor;
 pub mod streaming;
 
 pub use bp_trellis::{BpTrellisConfig, BpTrellisDecoder};
-pub use streaming::{StreamingProgress, TrellisStreamingDecoder};
+pub use streaming::{StreamingMode, StreamingProgress, TrellisStreamingDecoder};
 
 use factor::{FactorModel, NormalizedFactor, Outcome};
 use pecos_bp::{BpGraph, BpScratch, min_sum_bp_into};
@@ -1736,6 +1736,13 @@ enum DecodeMode {
     PredictionOnly,
 }
 
+#[derive(Clone, Copy)]
+struct BinaryRangeOptions {
+    mode: DecodeMode,
+    /// Detectors at or above this index are unknown and excluded from scoring.
+    known_count: Option<usize>,
+}
+
 impl TrellisModel {
     fn decode_attempt(
         &self,
@@ -1788,7 +1795,10 @@ impl TrellisModel {
             suffix_values,
             0..columns.len(),
             params,
-            mode,
+            BinaryRangeOptions {
+                mode,
+                known_count: None,
+            },
         ) {
             return match failure {
                 BinaryFailure::NoPath => TrellisDecodeAttempt::NoPath {
@@ -1803,25 +1813,7 @@ impl TrellisModel {
         TrellisDecodeAttempt::Success(Self::finish_binary(progress, columns.len(), bp_seconds))
     }
 
-    /// The single binary float column walk, shared by batch and streaming.
-    fn process_binary_range(
-        &self,
-        progress: &mut BinaryProgress,
-        observed: &[u64],
-        suffix_values: &SuffixValues,
-        range: std::ops::Range<usize>,
-        params: PruneParams,
-    ) -> Result<(), BinaryFailure> {
-        self.process_binary_range_with_mode(
-            progress,
-            observed,
-            suffix_values,
-            range,
-            params,
-            DecodeMode::Full,
-        )
-    }
-
+    /// The binary float column walk shared by batch and streaming.
     fn process_binary_range_with_mode(
         &self,
         progress: &mut BinaryProgress,
@@ -1829,8 +1821,9 @@ impl TrellisModel {
         suffix_values: &SuffixValues,
         range: std::ops::Range<usize>,
         params: PruneParams,
-        mode: DecodeMode,
+        options: BinaryRangeOptions,
     ) -> Result<(), BinaryFailure> {
+        let BinaryRangeOptions { mode, known_count } = options;
         let BinaryProgress {
             frontier,
             transitions,
@@ -1882,7 +1875,16 @@ impl TrellisModel {
                 return Err(BinaryFailure::NoPath);
             }
             let suffix_compatibility = SuffixCompatibility {
-                rows: &column.suffix_compatibility,
+                // Rows are sorted by detector index. Taking a prefix masks
+                // unknown outcomes without copying or losing vectorized scoring.
+                rows: &column.suffix_compatibility[..known_count.map_or(
+                    column.suffix_compatibility.len(),
+                    |count| {
+                        column.suffix_compatibility.partition_point(|row| {
+                            row.word as usize * WORD_BITS + usize::from(row.bit) < count
+                        })
+                    },
+                )],
                 values: suffix_values,
             };
             let pruned = prune(

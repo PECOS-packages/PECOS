@@ -2,15 +2,33 @@ use super::DecoderSpec;
 use super::config::{
     BeamSearchConfig, BeliefMatchingConfig, BeliefMatchingMode, BpLsdConfig, BpOsdConfig,
     EnsembleConfig, FusionBlossomConfig, FusionBlossomSolverType, KMwpmConfig, MinSumBpConfig,
-    MwpfConfig, MwpfSolverType, PecosUfPreset, PerturbedConfig, PerturbedFusionBlossomConfig,
-    PyMatchingConfig, RelayBpConfig, TesseractConfig, TesseractPreset, TesseractTrellisConfig,
-    WindowedConfig,
+    MwpfConfig, MwpfSolverType, PecosUfConfig, PecosUfPreset, PerturbedConfig,
+    PerturbedFusionBlossomConfig, PyMatchingConfig, RelayBpConfig, TesseractConfig,
+    TesseractPreset, TesseractTrellisConfig, WindowedConfig,
 };
-use pecos_decoder_core::DecoderError;
+use pecos_decoder_core::{DecoderError, graphlike_projection::IrreduciblePolicy};
 use std::fmt::Display;
 use std::str::FromStr;
 
 pub(super) fn parse(type_string: &str) -> Result<DecoderSpec, DecoderError> {
+    if let Some((name, params)) = type_string.split_once(':') {
+        match name {
+            "pymatching"
+            | "pymatching_correlated"
+            | "pymatching_uncorrelated"
+            | "fusion_blossom"
+            | "fusion_blossom_serial"
+            | "fusion_blossom_parallel"
+            | "fusion_blossom_correlated"
+            | "astar"
+            | "belief_matching"
+            | "belief_matching_correlated"
+            | "belief_matching_mgbp"
+            | "pecos_uf"
+            | "pecos_uf_correlated" => return parse_graph_options(name, params),
+            _ => {}
+        }
+    }
     match type_string {
         "pymatching" | "pymatching_correlated" => Ok(correlated_pymatching()),
         "pymatching_uncorrelated" => Ok(DecoderSpec::PyMatching(PyMatchingConfig::default())),
@@ -22,7 +40,7 @@ pub(super) fn parse(type_string: &str) -> Result<DecoderSpec, DecoderError> {
             ..TesseractConfig::default()
         })),
         "k_mwpm" => Ok(DecoderSpec::KMwpm(KMwpmConfig::default())),
-        "astar" => Ok(DecoderSpec::AStar),
+        "astar" => Ok(DecoderSpec::AStar(crate::spec::AStarConfig::default())),
         "astar_full" => Ok(DecoderSpec::AStarFull),
         "fusion_blossom" => Ok(DecoderSpec::FusionBlossom(FusionBlossomConfig::default())),
         "fusion_blossom_serial" => Ok(fusion_blossom(FusionBlossomSolverType::Serial, false)),
@@ -37,13 +55,11 @@ pub(super) fn parse(type_string: &str) -> Result<DecoderSpec, DecoderError> {
         "union_find" => Ok(DecoderSpec::UnionFind),
         "relay_bp" => Ok(DecoderSpec::RelayBp(RelayBpConfig::default())),
         "min_sum_bp" => Ok(DecoderSpec::MinSumBp(MinSumBpConfig::default())),
-        "pecos_uf" | "pecos_uf:fast" => Ok(DecoderSpec::PecosUf(PecosUfPreset::Fast)),
-        "pecos_uf:balanced" | "pecos_uf_correlated" => {
-            Ok(DecoderSpec::PecosUf(PecosUfPreset::Balanced))
-        }
-        "pecos_uf:accurate" => Ok(DecoderSpec::PecosUf(PecosUfPreset::Accurate)),
-        "pecos_uf:bp" => Ok(DecoderSpec::PecosUf(PecosUfPreset::Bp)),
-        "pecos_uf:bp_serial" => Ok(DecoderSpec::PecosUf(PecosUfPreset::BpSerial)),
+        "pecos_uf" => Ok(DecoderSpec::PecosUf(PecosUfConfig::default())),
+        "pecos_uf_correlated" => Ok(DecoderSpec::PecosUf(PecosUfConfig {
+            preset: PecosUfPreset::Balanced,
+            ..PecosUfConfig::default()
+        })),
         "belief_matching" => Ok(belief_matching(BeliefMatchingMode::Standard)),
         "belief_matching_correlated" => Ok(belief_matching(BeliefMatchingMode::Correlated)),
         "belief_matching_mgbp" => Ok(belief_matching(BeliefMatchingMode::MatchingGraphBp)),
@@ -63,6 +79,7 @@ pub(super) fn parse(type_string: &str) -> Result<DecoderSpec, DecoderError> {
                 return invalid("belief_matching_hybrid requires a non-empty full DEM");
             }
             Ok(DecoderSpec::BeliefMatching(BeliefMatchingConfig {
+                irreducible: IrreduciblePolicy::default(),
                 mode: BeliefMatchingMode::Hybrid,
                 embedded_full_dem: Some(full_dem.to_string()),
             }))
@@ -83,8 +100,67 @@ pub(super) fn parse(type_string: &str) -> Result<DecoderSpec, DecoderError> {
     }
 }
 
+fn pecos_uf_preset(name: &str) -> Option<PecosUfPreset> {
+    match name {
+        "fast" => Some(PecosUfPreset::Fast),
+        "balanced" => Some(PecosUfPreset::Balanced),
+        "accurate" => Some(PecosUfPreset::Accurate),
+        "bp" => Some(PecosUfPreset::Bp),
+        "bp_serial" => Some(PecosUfPreset::BpSerial),
+        _ => None,
+    }
+}
+
+fn parse_graph_options(name: &str, mut params: &str) -> Result<DecoderSpec, DecoderError> {
+    if name == "pecos_uf"
+        && params
+            .split(',')
+            .skip(1)
+            .any(|part| pecos_uf_preset(part).is_some())
+    {
+        return invalid("pecos_uf preset must come first, before key=value parameters");
+    }
+    let mut spec = parse(name)?;
+    if name == "pecos_uf" && !params.is_empty() && !params.split(',').next().unwrap().contains('=')
+    {
+        let (preset, rest) = params.split_once(',').unwrap_or((params, ""));
+        let Some(preset) = pecos_uf_preset(preset) else {
+            return invalid(format!("pecos_uf has unknown preset '{preset}'"));
+        };
+        spec = DecoderSpec::PecosUf(PecosUfConfig {
+            preset,
+            ..Default::default()
+        });
+        params = rest;
+    }
+    for (key, value) in params_iter(name, params)? {
+        if key != "irreducible" {
+            return unknown_key(name, key);
+        }
+        let policy = parse_irreducible(value)?;
+        match &mut spec {
+            DecoderSpec::PyMatching(c) => c.irreducible = policy,
+            DecoderSpec::FusionBlossom(c) => c.irreducible = policy,
+            DecoderSpec::AStar(c) => c.irreducible = policy,
+            DecoderSpec::PecosUf(c) => c.irreducible = policy,
+            DecoderSpec::BeliefMatching(c) => c.irreducible = policy,
+            _ => unreachable!("only graph-option families reach this parser"),
+        }
+    }
+    Ok(spec)
+}
+
+fn parse_irreducible(value: &str) -> Result<IrreduciblePolicy, DecoderError> {
+    match value {
+        "refuse" => Ok(IrreduciblePolicy::Refuse),
+        "drop" => Ok(IrreduciblePolicy::Drop),
+        _ => invalid(format!("irreducible must be refuse|drop, got '{value}'")),
+    }
+}
+
 fn correlated_pymatching() -> DecoderSpec {
     DecoderSpec::PyMatching(PyMatchingConfig {
+        irreducible: IrreduciblePolicy::default(),
         correlated: true,
         error_probability: None,
     })
@@ -92,6 +168,7 @@ fn correlated_pymatching() -> DecoderSpec {
 
 fn fusion_blossom(solver_type: FusionBlossomSolverType, correlated: bool) -> DecoderSpec {
     DecoderSpec::FusionBlossom(FusionBlossomConfig {
+        irreducible: IrreduciblePolicy::default(),
         correlated,
         solver_type,
     })
@@ -99,6 +176,7 @@ fn fusion_blossom(solver_type: FusionBlossomSolverType, correlated: bool) -> Dec
 
 fn belief_matching(mode: BeliefMatchingMode) -> DecoderSpec {
     DecoderSpec::BeliefMatching(BeliefMatchingConfig {
+        irreducible: IrreduciblePolicy::default(),
         mode,
         embedded_full_dem: None,
     })
@@ -108,6 +186,7 @@ fn parse_k_mwpm(params: &str) -> Result<DecoderSpec, DecoderError> {
     let mut config = KMwpmConfig::default();
     for (key, value) in params_iter("k_mwpm", params)? {
         match key {
+            "irreducible" => config.irreducible = parse_irreducible(value)?,
             "K" | "k" => config.k = parse_number("k_mwpm", key, value)?,
             _ => return unknown_key("k_mwpm", key),
         }
@@ -119,6 +198,7 @@ fn parse_perturbed_fb(params: &str) -> Result<DecoderSpec, DecoderError> {
     let mut config = PerturbedFusionBlossomConfig::default();
     for (key, value) in params_iter("perturbed_fb_corr", params)? {
         match key {
+            "irreducible" => config.irreducible = parse_irreducible(value)?,
             "K" | "k" => config.k = parse_number("perturbed_fb_corr", key, value)?,
             "sigma" | "s" => config.sigma = parse_finite("perturbed_fb_corr", key, value)?,
             "seed" => config.seed = parse_number("perturbed_fb_corr", key, value)?,
@@ -337,11 +417,130 @@ mod tests {
     use super::*;
     use crate::spec::{BpSchedule, DecodeModel, ExecutionTraits};
 
+    // contract: all graph names accept the policy without changing their default specs.
+    #[test]
+    fn graph_policy_grammar() {
+        for name in [
+            "pymatching",
+            "pymatching_correlated",
+            "pymatching_uncorrelated",
+            "fusion_blossom",
+            "fusion_blossom_serial",
+            "fusion_blossom_parallel",
+            "fusion_blossom_correlated",
+            "astar",
+            "k_mwpm",
+            "perturbed_fb_corr",
+            "belief_matching",
+            "belief_matching_correlated",
+            "belief_matching_mgbp",
+            "pecos_uf",
+            "pecos_uf:fast",
+            "pecos_uf:balanced",
+            "pecos_uf:accurate",
+            "pecos_uf:bp",
+            "pecos_uf:bp_serial",
+            "pecos_uf_correlated",
+        ] {
+            let separator = if name.contains(':') { ',' } else { ':' };
+            let base = parse(name).unwrap();
+            assert_eq!(base.irreducible_policy(), Some(IrreduciblePolicy::Refuse));
+            assert_eq!(
+                parse(&format!("{name}{separator}irreducible=refuse")).unwrap(),
+                base
+            );
+            assert_eq!(
+                parse(&format!("{name}{separator}irreducible=drop"))
+                    .unwrap()
+                    .irreducible_policy(),
+                Some(IrreduciblePolicy::Drop)
+            );
+            assert!(
+                parse(&format!("{name}{separator}irreducible=unknown"))
+                    .unwrap_err()
+                    .to_string()
+                    .contains("refuse|drop")
+            );
+        }
+        assert_eq!(
+            parse("pecos_uf:irreducible=drop").unwrap(),
+            parse("pecos_uf:fast,irreducible=drop").unwrap()
+        );
+        assert_eq!(
+            parse("pecos_uf_correlated:irreducible=drop").unwrap(),
+            parse("pecos_uf:balanced,irreducible=drop").unwrap()
+        );
+        let DecoderSpec::KMwpm(config) = parse("k_mwpm:k=3,irreducible=drop").unwrap() else {
+            unreachable!()
+        };
+        assert_eq!(config.k, 3);
+        assert_eq!(config.irreducible, IrreduciblePolicy::Drop);
+        let DecoderSpec::PerturbedFusionBlossomCorrelated(config) =
+            parse("perturbed_fb_corr:k=3,sigma=0.2,seed=7,irreducible=drop").unwrap()
+        else {
+            unreachable!()
+        };
+        assert_eq!(config.k, 3);
+        assert_eq!(config.irreducible, IrreduciblePolicy::Drop);
+    }
+
+    // compatibility: duplicate policy keys retain the parameter parser's last-value-wins rule.
+    #[test]
+    fn duplicate_policy_uses_last_value() {
+        for name in [
+            "pymatching",
+            "fusion_blossom",
+            "pecos_uf",
+            "belief_matching",
+            "astar",
+            "k_mwpm",
+            "perturbed_fb_corr",
+        ] {
+            for (params, expected) in [
+                ("drop,irreducible=refuse", IrreduciblePolicy::Refuse),
+                ("refuse,irreducible=drop", IrreduciblePolicy::Drop),
+            ] {
+                let spec = parse(&format!("{name}:irreducible={params}")).unwrap();
+                assert_eq!(spec.irreducible_policy(), Some(expected));
+            }
+        }
+    }
+
+    // compatibility: commas still delimit ensemble members, even after a member parameter.
+    #[test]
+    fn ensemble_single_parameter_member_and_hybrid_suffix() {
+        let DecoderSpec::Ensemble(config) =
+            parse("ensemble:pymatching:irreducible=drop,fusion_blossom").unwrap()
+        else {
+            unreachable!()
+        };
+        assert_eq!(
+            config.members,
+            vec![
+                parse("pymatching:irreducible=drop").unwrap(),
+                parse("fusion_blossom").unwrap()
+            ]
+        );
+        let spec = parse("belief_matching_hybrid:irreducible=drop").unwrap();
+        let DecoderSpec::BeliefMatching(config) = spec else {
+            unreachable!()
+        };
+        assert_eq!(config.irreducible, IrreduciblePolicy::Refuse);
+        // The entire suffix remains a DEM fragment, never a policy parameter.
+        assert_eq!(
+            config.embedded_full_dem.as_deref(),
+            Some("irreducible=drop")
+        );
+    }
+
     #[test]
     fn parses_legacy_parameterized_forms() {
         assert_eq!(
             parse("k_mwpm:K=10").unwrap(),
-            DecoderSpec::KMwpm(KMwpmConfig { k: 10 })
+            DecoderSpec::KMwpm(KMwpmConfig {
+                irreducible: IrreduciblePolicy::default(),
+                k: 10
+            })
         );
 
         let perturbed = parse("perturbed:K=15,sigma=0.7,seed=42,inner=pymatching").unwrap();
@@ -367,7 +566,10 @@ mod tests {
         };
         assert!(matches!(
             *config.inner,
-            DecoderSpec::PecosUf(PecosUfPreset::Fast)
+            DecoderSpec::PecosUf(PecosUfConfig {
+                preset: PecosUfPreset::Fast,
+                ..
+            })
         ));
 
         let exact_pecos_uf = parse("windowed:step=5,buf=5,inner=pecos_uf").unwrap();
@@ -376,6 +578,7 @@ mod tests {
         assert_eq!(
             parse("perturbed_fb_corr:K=9,sigma=0.25,seed=7").unwrap(),
             DecoderSpec::PerturbedFusionBlossomCorrelated(PerturbedFusionBlossomConfig {
+                irreducible: IrreduciblePolicy::default(),
                 k: 9,
                 sigma: 0.25,
                 seed: 7,
@@ -401,7 +604,10 @@ mod tests {
 
         assert_eq!(
             parse("pecos_uf:accurate").unwrap(),
-            DecoderSpec::PecosUf(PecosUfPreset::Accurate)
+            DecoderSpec::PecosUf(PecosUfConfig {
+                preset: PecosUfPreset::Accurate,
+                ..Default::default()
+            })
         );
         assert_eq!(
             parse("beamsearch:K=7,sigma=0.4,seed=9,step=3,buf=4,wmax=2.5").unwrap(),
@@ -460,6 +666,16 @@ mod tests {
     }
 
     #[test]
+    fn graph_options_reject_misplaced_presets() {
+        let error = parse("pecos_uf:irreducible=drop,fast")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("preset must come first"), "{error}");
+        let error = parse("pecos_uf:fast,bogus").unwrap_err().to_string();
+        assert!(error.contains("key=value"), "{error}");
+    }
+
+    #[test]
     fn empty_parameter_suffix_uses_family_defaults() {
         for (with_suffix, bare) in [
             ("k_mwpm:", "k_mwpm"),
@@ -467,6 +683,10 @@ mod tests {
             ("mwpf:", "mwpf"),
             ("perturbed:", "perturbed"),
             ("beamsearch:", "beamsearch"),
+            ("pymatching:", "pymatching"),
+            ("pecos_uf:", "pecos_uf"),
+            ("astar:", "astar"),
+            ("fusion_blossom:", "fusion_blossom"),
         ] {
             assert_eq!(parse(with_suffix).unwrap(), parse(bare).unwrap());
         }

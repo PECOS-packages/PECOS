@@ -193,3 +193,50 @@ fn program_seeds_and_contexts_are_independent() {
         assert_eq!(random_int(), 2_319_459_346_u32.cast_signed());
     }
 }
+
+#[test]
+fn program_shot_queries_share_context_and_do_not_change_explicit_rng() {
+    let registered = RegisteredContext::new();
+    unsafe {
+        assert_eq!(
+            pecos_set_program_shot_with_context(std::ptr::null_mut(), 7),
+            1
+        );
+        for shot in [0, 17, u64::MAX] {
+            assert_eq!(pecos_set_program_shot_with_context(registered.0, shot), 0);
+            assert_eq!(get_current_shot(), shot);
+            assert_eq!(
+                crate::selene::selene_get_current_shot(std::ptr::null_mut()).value,
+                shot
+            );
+            // A compiled wrapper starts its one local shot at index zero.
+            crate::selene::selene_on_shot_start(std::ptr::null_mut(), 0);
+            assert_eq!(get_current_shot(), shot);
+            random_seed(42);
+            assert_eq!(random_int(), 1_085_446_021);
+        }
+        registered.context().reset();
+        assert_eq!(get_current_shot(), 0);
+    }
+}
+
+#[test]
+fn program_shot_context_is_thread_local() {
+    let threads: Vec<_> = (0..4)
+        .map(|shot| {
+            std::thread::spawn(move || {
+                let registered = RegisteredContext::new();
+                unsafe {
+                    pecos_set_program_shot_with_context(registered.0, shot);
+                    for _ in 0..20 {
+                        std::thread::yield_now();
+                        assert_eq!(get_current_shot(), shot);
+                    }
+                }
+            })
+        })
+        .collect();
+    for thread in threads {
+        thread.join().unwrap();
+    }
+}

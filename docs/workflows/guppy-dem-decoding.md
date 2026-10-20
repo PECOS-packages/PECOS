@@ -185,14 +185,22 @@ for the program contract and inference audit. The program above uses scalar
 measurement tags and must first emit the required raw and computed outputs to
 use that route.
 
-The DEM has several text forms, one per decoder appetite. `to_string()` returns
-Stim-format text with raw hyperedges, which BP+OSD and Tesseract consume
-directly. For graph matchers such as PyMatching, prefer the source-informed
-`to_string_source_graphlike_decomposed()` form, also used for Tesseract below.
-Check that it has no residual hyperedges before passing it to a graph matcher.
-The terminal projection from `to_string_terminal_graphlike_decomposed()` is a
-coordinate-based approximation that can invent nonphysical components and decode
-less accurately, even when its component labels are consistent.
+Pass the DEM object to built-in decoder specs. BP+OSD and PECOS's built-in
+Tesseract consume raw hyperedges; graph specs such as PyMatching project them
+during preparation, retaining the object's fault-sector labels. Results expose
+`.projection` (`None` when no projection was needed or when a composition
+without a shared policy projects inside its members, with no shared report). Irreducible faults raise by
+default; `pymatching(correlated=True, irreducible="drop")` explicitly removes them from the decoder
+model and reports their input indices in `.projection.dropped_indices`. This
+does not change the model used for sampling.
+Effects with more than 12 detectors or reducible only with overlapping components
+are refused under either policy; `irreducible="drop"` does not apply to them.
+Use a hyperedge-capable decoder such as `bp_osd()` or `tesseract()` for these effects.
+
+Explicit text renderers remain available for exports to external tools such as
+Stim or external Tesseract, which cannot consume PECOS objects. The following
+export examples retain raw and source-informed text. Python decoder providers
+(Frontier and BP-Trellis below) require text by their protocol.
 
 <!--continuation-->
 ```python
@@ -370,16 +378,16 @@ returned `DecodeResult` supplies the aggregate count and rate directly.
     from pecos.decoders import bp_osd, bp_trellis, frontier, pymatching, tesseract
 
     pymatching_result = batch.decode(
-        source_graphlike_text,
+        dem,
         pymatching(correlated=True),
     )
     tesseract_result = batch.decode(
-        source_graphlike_text,
+        dem,
         tesseract(preset="fast", pqlimit=50_000),
         workers=None,
     )
     bp_osd_result = batch.decode(
-        raw_text,
+        dem,
         bp_osd(max_iter=10, osd_order=1),
         workers=None,
     )
@@ -417,14 +425,12 @@ returned `DecodeResult` supplies the aggregate count and rate directly.
 
 === ":fontawesome-brands-rust: Rust"
 
-    <!--continuation test-data: guppy_dem_decoding_graphlike.dem-->
+    <!--continuation-->
     ```rust
     use pecos_decoders::DecoderSpec;
     use pecos_decoders::batch::{DecodeOptions, ExecutionPath};
     use pecos_decoders::spec::{BpOsdConfig, PyMatchingConfig};
 
-    let source_graphlike_text =
-        std::fs::read_to_string("guppy_dem_decoding_graphlike.dem")?;
     let pymatching = DecoderSpec::PyMatching(PyMatchingConfig {
         correlated: true,
         ..Default::default()
@@ -435,7 +441,7 @@ returned `DecodeResult` supplies the aggregate count and rate directly.
         ..Default::default()
     });
 
-    let pymatching_result = batch.decode(&source_graphlike_text, &pymatching)?;
+    let pymatching_result = batch.decode(&raw_text, &pymatching)?;
     let options = DecodeOptions::default().workers(4).predictions(true);
     let bp_osd_result = batch.decode_with(&raw_text, &bp_osd, &options)?;
 
@@ -507,9 +513,9 @@ sim_batch = SampleBatch(
     [observable_mask for _, observable_mask in sim_shots],
 )
 sim_results = {
-    "pymatching": sim_batch.decode(source_graphlike_text, pymatching(correlated=True)),
-    "tesseract": sim_batch.decode(source_graphlike_text, tesseract(preset="fast", pqlimit=50_000)),
-    "bp_osd": sim_batch.decode(raw_text, bp_osd(max_iter=10, osd_order=1)),
+    "pymatching": sim_batch.decode(dem, pymatching(correlated=True)),
+    "tesseract": sim_batch.decode(dem, tesseract(preset="fast", pqlimit=50_000)),
+    "bp_osd": sim_batch.decode(dem, bp_osd(max_iter=10, osd_order=1)),
     "frontier": sim_batch.decode(raw_text, frontier(k=64), workers=4),
     "bp_trellis": sim_batch.decode(raw_text, bp_trellis(k=8, escalation=[(64, 100.0)]), workers=4),
 }
@@ -522,7 +528,8 @@ for name, result in sim_results.items():
 At this noise level the five decoders land within about a percentage point of
 each other on this code; the gaps between decoders widen with code distance and
 with genuinely hyperedge-like noise. Frontier, BP-Trellis, and BP+OSD consume the raw model
-in this example; Tesseract uses the source-informed decomposition chosen above.
+in this example, as does PECOS's built-in Tesseract. Frontier and BP-Trellis
+receive the raw text export because they are Python decoder providers.
 
 ## 6. Optional: per-shot confidence with an experimental decoder
 
@@ -610,9 +617,9 @@ Because the gap is a per-shot quantity, a threshold on it partitions the run
 into a confident majority and a tail worth treating differently, as the last
 lines of each tab do.
 
-Frontier consumes the raw model directly, so unlike the matching decoders it
-needs no graph-like projection — `raw_text` rather than
-`source_graphlike_text`. See [Experimental Decoders](../experimental/decoders.md)
+Frontier consumes `raw_text` because Python decoder providers take text by protocol.
+The matching decoders on this page take the `dem` object and project it themselves;
+`source_graphlike_text` remains only as an export example. See [Experimental Decoders](../experimental/decoders.md)
 for the full result surface, including what `status` and `dropped_log_mass` say
 about whether pruning affected the answer.
 

@@ -9,7 +9,7 @@ use pecos_engines::ClassicalControlEngineBuilder;
 use pecos_engines::hybrid::builder::HybridEngineBuilder;
 use pecos_engines::quantum::StateVecEngine;
 use pecos_engines::quantum_engine_builder::StateVectorEngineBuilder;
-use pecos_engines::{ClassicalEngine, Engine, ShotVec};
+use pecos_engines::{ClassicalEngine, Engine, EngineSystem, ShotVec};
 use pecos_phir::PhirEngine;
 
 /// Helper: parse QIS LLVM IR, convert to `QuantumOp`s, build `PhirEngine`
@@ -259,13 +259,35 @@ entry:
 }
 ";
 
+// Fix demonstration (#1217): observe the computed shift value before reset.
 #[test]
 fn test_shift_operations_end_to_end() {
-    // Verify that shl/lshr instructions parsed from LLVM IR execute correctly.
-    // This tests the binary operand mode fix for Shl/Shr.
-    let engine = engine_from_qis_ir(SHIFT_IR);
-    let results = run_shots(engine, 5);
-    assert_eq!(results.shots.len(), 5);
+    let module = pecos_phir::parse_qis_to_quantum(SHIFT_IR).unwrap();
+    let id = module.body.blocks[0]
+        .operations
+        .iter()
+        .rev()
+        .find(|instruction| instruction.operands.len() == 2)
+        .unwrap()
+        .results[0]
+        .id;
+    let mut hybrid = HybridEngineBuilder::new()
+        .with_classical_engine(Box::new(PhirEngine::new(module).unwrap()))
+        .with_quantum_engine(Box::new(StateVecEngine::new(4)))
+        .build();
+    for _ in 0..5 {
+        hybrid.run_shot().unwrap();
+        let engine = hybrid
+            .controller()
+            .as_any()
+            .downcast_ref::<PhirEngine>()
+            .unwrap();
+        assert_eq!(
+            engine.processor.ssa_values.get(&id),
+            Some(&pecos_phir::execution::environment::TypedValue::I64(4))
+        );
+        Engine::reset(&mut hybrid).unwrap();
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -280,6 +302,7 @@ fn test_phir_engine_builder_to_sim() {
         .from_qis_llvm_ir(SINGLE_H_IR)
         .expect("parse")
         .to_sim()
+        .qubits(1)
         .quantum(StateVectorEngineBuilder::default())
         .run(20);
     assert!(result.is_ok(), "to_sim().run() failed: {:?}", result.err());
@@ -294,6 +317,7 @@ fn test_phir_engine_builder_to_sim_bell() {
         .from_qis_llvm_ir(SELENE_BELL_IR)
         .expect("parse")
         .to_sim()
+        .qubits(2)
         .quantum(StateVectorEngineBuilder::default())
         .seed(123)
         .run(50);

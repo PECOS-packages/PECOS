@@ -795,7 +795,7 @@ mod batched_pair_tests {
 #[cfg(test)]
 mod rotation_exactness_tests {
     use super::{Direction, PauliPropagationOutcome, apply_gate};
-    use pecos_core::Angle64;
+
     use pecos_core::gate_type::GateType;
     use pecos_core::gates::Gate;
     use pecos_simulators::PauliProp;
@@ -806,7 +806,7 @@ mod rotation_exactness_tests {
         prop.track_x(&[0]);
         let gate = Gate::with_angles(
             GateType::RZ,
-            vec![Angle64::from_turns(0.25 + 1e-12)],
+            vec![pecos_core::turns!(0.25 + 1e-12)],
             vec![0.into()],
         );
 

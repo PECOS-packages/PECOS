@@ -134,7 +134,7 @@ pub use selene_runtime::{
 #[cfg(feature = "selene")]
 pub use selene_runtimes::{
     RuntimeFetchError, find_selene_runtime, selene_runtime_auto, selene_simple_runtime,
-    selene_soft_rz_runtime,
+    selene_soft_rz_runtime, set_bundled_library_dir,
 };
 
 // Re-export pecos_qis_ffi_types for downstream crates

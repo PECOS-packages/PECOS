@@ -76,6 +76,7 @@ from pecos.qec.surface._check_plan import require_current_surface_check_plan_ren
 
 if TYPE_CHECKING:
     import stim
+    from pecos_rslib.qec import DetectorErrorModel
 
     from pecos import Array
     from pecos.decoders import DecoderSpec
@@ -1793,6 +1794,7 @@ def _surface_native_topology(
                 "id": detector["id"],
                 "records": records,
                 "label": detector["label"],
+                "fault_sector": detector["fault_sector"],
                 **({"coords": detector["coords"]} if detector["coords"] is not None else {}),
             }
             for detector, records in zip(definitions["detectors"], det_records, strict=True)
@@ -2142,10 +2144,14 @@ def generate_circuit_level_dem_from_builder(
             but it is not an exact raw DEM serialization.
         dem_decomposition: Which native graphlike projection to use when
             ``decompose_errors=True``. ``"source_graphlike"`` preserves the
-            source-informed decomposition and is preferred for graph matchers.
-            ``"terminal_graphlike"`` groups raw mechanisms first, then pairs
-            detector terminals by coordinate distance. It can invent nonphysical
-            components and decode less accurately despite consistent labels.
+            source-informed decomposition. ``"terminal_graphlike"`` groups raw
+            mechanisms first, then pairs detector terminals by coordinate
+            distance; it can invent nonphysical components. Which one decodes
+            better depends on how a DEM was built: in the memory experiments of
+            issue #1187 on this function (uniform noise, ``num_rounds`` equal to
+            the distance, default circuit options), terminal decoded as well as
+            or better than source with correlated PyMatching, so
+            ``surface_code_memory`` uses it for PyMatching-family decoders.
         ancilla_budget: Optional cap on simultaneously live ancillas. When
             provided below the total stabilizer count, the native DEM is built
             from the same batched ancilla-reuse circuit family used by Guppy.
@@ -3744,10 +3750,15 @@ def surface_code_memory(
         basis: Memory basis, ``"Z"`` or ``"X"``.
         decoder_type: Typed decoder specification or legacy decoder string
             passed to ``SampleBatch.decode``. PyMatching-family decoders use
-            PECOS's coordinate-based terminal approximation in this helper.
-            For source-informed graph matching, build a DetectorErrorModel and
-            pass its ``to_string_source_graphlike_decomposed()`` output to
-            ``SampleBatch.decode``.
+            the terminal graphlike decomposition: in the memory experiments of
+            issue #1187 (uniform noise, ``rounds`` equal to ``distance``,
+            default circuit options) it decoded as well as or better than the
+            source-informed one with correlated PyMatching. Which decomposition
+            decodes better depends on how a DEM was built, so compare both on
+            DEMs from other paths. For the source-informed decomposition here,
+            call ``generate_circuit_level_dem_from_builder`` with
+            ``decompose_errors=True`` and
+            ``dem_decomposition="source_graphlike"``.
         seed: Optional sampler seed.
         decode: If false, report the raw observable-flip rate.
         circuit_source: ``"abstract"`` or ``"traced_qis"`` circuit source.
@@ -4372,7 +4383,7 @@ def decode_native_samples(
     sampler: NativeSampler,
     num_shots: int,
     *,
-    dem: str | None = None,
+    dem: str | DetectorErrorModel | None = None,
     decoder_type: str | DecoderSpec = "pymatching",
     seed: int | None = None,
     pauli_masks: Any | None = None,
@@ -4381,13 +4392,17 @@ def decode_native_samples(
 
     ``decoder_type`` accepts a typed :class:`pecos.decoders.DecoderSpec` or a
     legacy decoder string. The de-masked records are decoded through the
-    unified ``SampleBatch.decode`` execution planner.
+    unified ``SampleBatch.decode`` execution planner. Pass a DetectorErrorModel
+    object to preserve fault-sector labels, or text with unlabelled detectors.
     """
     from pecos_rslib.qec import SampleBatch
 
-    dem_str = dem if dem is not None else sampler.dem_string
-    if dem_str is None:
-        msg = "decode_native_samples requires a DEM string; pass dem= or build the sampler with sampling_model='dem'"
+    decode_dem = dem if dem is not None else sampler.dem_string
+    if decode_dem is None:
+        msg = (
+            "decode_native_samples requires DEM text or a DetectorErrorModel; "
+            "pass dem= or build the sampler with sampling_model='dem'"
+        )
         raise ValueError(msg)
 
     masks_arr = _pauli_masks_as_int64(pauli_masks) if pauli_masks is not None else None
@@ -4411,7 +4426,7 @@ def decode_native_samples(
     uint64_mask = (1 << 64) - 1
     obs_masks = [sum(int(bit) << index for index, bit in enumerate(row)) & uint64_mask for row in obs_arr.tolist()]
     batch = SampleBatch(det_list, obs_masks, num_observables=obs_arr.shape[1])
-    return batch.decode(dem_str, decoder_type).num_errors
+    return batch.decode(decode_dem, decoder_type).num_errors
 
 
 def demask_pauli_frame_records(

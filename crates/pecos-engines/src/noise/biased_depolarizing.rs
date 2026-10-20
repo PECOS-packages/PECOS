@@ -10,6 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
+use super::utils::{ensure_probability_in_range, panic_on_noise_error};
 use crate::Gate;
 use crate::byte_message::{ByteMessage, ByteMessageBuilder, GateType};
 use crate::engine_system::{ControlEngine, EngineStage};
@@ -81,29 +82,59 @@ impl BiasedDepolarizingNoiseModel {
     }
 
     /// Create a new general noise model with the given probabilities
+    ///
+    /// # Panics
+    /// Panics if any probability is outside [0, 1], including NaN.
     #[must_use]
     pub fn new(p_prep: f64, p_meas_0: f64, p_meas_1: f64, p1: f64, p2: f64) -> Self {
-        // Validate all probabilities
-        Self::validate_probability(p_prep);
-        Self::validate_probability(p_meas_0);
-        Self::validate_probability(p_meas_1);
-        Self::validate_probability(p1);
-        Self::validate_probability(p2);
+        Self::try_new(p_prep, p_meas_0, p_meas_1, p1, p2)
+            .unwrap_or_else(|error| panic_on_noise_error(error))
+    }
 
-        Self {
+    /// Create a noise model with checked probabilities.
+    ///
+    /// # Errors
+    /// Returns `PecosError::Input` if any probability is outside [0, 1], including NaN.
+    pub fn try_new(
+        p_prep: f64,
+        p_meas_0: f64,
+        p_meas_1: f64,
+        p1: f64,
+        p2: f64,
+    ) -> Result<Self, PecosError> {
+        // Validate all probabilities
+        Self::try_validate_probability(p_prep, "p_prep")?;
+        Self::try_validate_probability(p_meas_0, "p_meas_0")?;
+        Self::try_validate_probability(p_meas_1, "p_meas_1")?;
+        Self::try_validate_probability(p1, "p1")?;
+        Self::try_validate_probability(p2, "p2")?;
+
+        Ok(Self {
             p_prep,
             p_meas_0,
             p_meas_1,
             p1,
             p2,
             rng: NoiseRng::default(),
-        }
+        })
     }
 
     /// Create a new noise model with uniform probability for all error types
+    ///
+    /// # Panics
+    /// Panics if any probability is outside [0, 1], including NaN.
     #[must_use]
     pub fn new_uniform(probability: f64) -> Self {
-        Self::new(
+        Self::try_new_uniform(probability).unwrap_or_else(|error| panic_on_noise_error(error))
+    }
+
+    /// Create a uniform noise model with a checked probability.
+    ///
+    /// # Errors
+    /// Returns `PecosError::Input` if the probability is outside [0, 1], including NaN.
+    pub fn try_new_uniform(probability: f64) -> Result<Self, PecosError> {
+        Self::try_validate_probability(probability, "uniform biased depolarizing probability")?;
+        Self::try_new(
             probability,
             probability,
             probability,
@@ -127,11 +158,11 @@ impl BiasedDepolarizingNoiseModel {
         p1: f64,
         p2: f64,
     ) {
-        Self::validate_probability(p_prep);
-        Self::validate_probability(p_meas_0);
-        Self::validate_probability(p_meas_1);
-        Self::validate_probability(p1);
-        Self::validate_probability(p2);
+        Self::validate_probability(p_prep, "p_prep");
+        Self::validate_probability(p_meas_0, "p_meas_0");
+        Self::validate_probability(p_meas_1, "p_meas_1");
+        Self::validate_probability(p1, "p1");
+        Self::validate_probability(p2, "p2");
 
         self.p_prep = p_prep;
         self.p_meas_0 = p_meas_0;
@@ -142,6 +173,7 @@ impl BiasedDepolarizingNoiseModel {
 
     /// Set a uniform probability for all error types
     pub fn set_uniform_probability(&mut self, probability: f64) {
+        Self::validate_probability(probability, "uniform biased depolarizing probability");
         self.set_probabilities(
             probability,
             probability,
@@ -544,6 +576,7 @@ pub struct BiasedDepolarizingNoiseModelBuilder {
     p1: Option<f64>,
     p2: Option<f64>,
     seed: Option<u64>,
+    setter_error: Option<String>,
 }
 
 impl Default for BiasedDepolarizingNoiseModelBuilder {
@@ -563,17 +596,25 @@ impl BiasedDepolarizingNoiseModelBuilder {
             p1: None,
             p2: None,
             seed: None,
+            setter_error: None,
         }
     }
 
     /// Set the same probability for all error types
     ///
     /// This is a convenience method to set all probabilities to the same value.
+    /// Invalid values are recorded and reported by `validate_configuration` or `try_build`.
     ///
     /// # Arguments
     /// * `probability` - The probability value to set for all error types
     #[must_use]
     pub fn with_uniform_probability(mut self, probability: f64) -> Self {
+        if let Err(message) =
+            ensure_probability_in_range(probability, "uniform biased depolarizing probability")
+        {
+            self.setter_error.get_or_insert(message);
+            return self;
+        }
         self.p_prep = Some(probability);
         self.p_meas_0 = Some(probability);
         self.p_meas_1 = Some(probability);
@@ -633,18 +674,54 @@ impl BiasedDepolarizingNoiseModelBuilder {
     /// Panics if any probabilities are not set or are not between 0 and 1.
     #[must_use]
     pub fn build(self) -> BiasedDepolarizingNoiseModel {
-        let p_prep = self.p_prep.expect("Preparation probability must be set");
-        let p_meas_0 = self
-            .p_meas_0
-            .expect("Measurement 0->1 flip probability must be set");
-        let p_meas_1 = self
-            .p_meas_1
-            .expect("Measurement 1->0 flip probability must be set");
-        let p1 = self.p1.expect("Single-qubit probability must be set");
-        let p2 = self.p2.expect("Two-qubit probability must be set");
+        self.try_build()
+            .unwrap_or_else(|error| panic_on_noise_error(error))
+    }
 
-        // Create the noise model
-        let mut noise = BiasedDepolarizingNoiseModel::new(p_prep, p_meas_0, p_meas_1, p1, p2);
+    fn configured_probabilities(&self) -> Result<[f64; 5], PecosError> {
+        if let Some(error) = &self.setter_error {
+            return Err(PecosError::Input(error.clone()));
+        }
+        Ok([
+            self.p_prep.ok_or_else(|| {
+                PecosError::Input("Preparation probability must be set".to_string())
+            })?,
+            self.p_meas_0.ok_or_else(|| {
+                PecosError::Input("Measurement 0->1 flip probability must be set".to_string())
+            })?,
+            self.p_meas_1.ok_or_else(|| {
+                PecosError::Input("Measurement 1->0 flip probability must be set".to_string())
+            })?,
+            self.p1.ok_or_else(|| {
+                PecosError::Input("Single-qubit probability must be set".to_string())
+            })?,
+            self.p2.ok_or_else(|| {
+                PecosError::Input("Two-qubit probability must be set".to_string())
+            })?,
+        ])
+    }
+
+    /// Check required fields and probability ranges without constructing a model.
+    ///
+    /// # Errors
+    /// Returns `PecosError::Input` for the first missing field or invalid probability.
+    pub fn validate_configuration(&self) -> Result<(), PecosError> {
+        for (name, probability) in ["p_prep", "p_meas_0", "p_meas_1", "p1", "p2"]
+            .into_iter()
+            .zip(self.configured_probabilities()?)
+        {
+            BiasedDepolarizingNoiseModel::try_validate_probability(probability, name)?;
+        }
+        Ok(())
+    }
+
+    /// Build a model, reporting missing fields and invalid probabilities.
+    ///
+    /// # Errors
+    /// Returns `PecosError::Input` for the first missing field or invalid probability.
+    pub fn try_build(self) -> Result<BiasedDepolarizingNoiseModel, PecosError> {
+        let [p_prep, p_meas_0, p_meas_1, p1, p2] = self.configured_probabilities()?;
+        let mut noise = BiasedDepolarizingNoiseModel::try_new(p_prep, p_meas_0, p_meas_1, p1, p2)?;
 
         // Set the seed if provided
         if let Some(seed) = self.seed {
@@ -652,13 +729,13 @@ impl BiasedDepolarizingNoiseModelBuilder {
             noise.set_seed(seed);
         }
 
-        noise
+        Ok(noise)
     }
 }
 
 impl crate::noise::IntoNoiseModel for BiasedDepolarizingNoiseModelBuilder {
-    fn into_noise_model(self) -> Box<dyn crate::noise::NoiseModel> {
-        Box::new(self.build())
+    fn into_noise_model(self) -> Result<Box<dyn crate::noise::NoiseModel>, PecosError> {
+        Ok(Box::new(self.try_build()?))
     }
 }
 
@@ -800,7 +877,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Probability must be between 0.0 and 1.0")]
+    #[should_panic(expected = "p_meas_1 must be between 0.0 and 1.0")]
     fn test_invalid_probability_panics() {
         let mut noise = BiasedDepolarizingNoiseModel::new(0.1, 0.2, 0.3, 0.4, 0.5);
         noise.set_probabilities(0.1, 0.2, 1.1, 0.4, 0.5); // Should panic

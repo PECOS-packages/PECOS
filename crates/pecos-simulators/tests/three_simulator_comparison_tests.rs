@@ -393,23 +393,23 @@ fn test_complex_circuit_consistency() {
 fn test_non_clifford_circuits() {
     // Test rotation gates (only StateVec and DensityMatrix)
     compare_general_circuit(1, |sv, dm| {
-        sv.rx(Angle64::from_radians(PI / 4.0), &qid(0));
-        dm.rx(Angle64::from_radians(PI / 4.0), &qid(0));
+        sv.rx(Angle64::from_turn_ratio(1, 8), &qid(0));
+        dm.rx(Angle64::from_turn_ratio(1, 8), &qid(0));
     });
 
     compare_general_circuit(1, |sv, dm| {
-        sv.rz(Angle64::from_radians(PI / 3.0), &qid(0));
-        dm.rz(Angle64::from_radians(PI / 3.0), &qid(0));
+        sv.rz(pecos_core::radians!(PI / 3.0), &qid(0));
+        dm.rz(pecos_core::radians!(PI / 3.0), &qid(0));
     });
 
     // Test two-qubit rotations
     compare_general_circuit(2, |sv, dm| {
         sv.h(&qid(0))
             .h(&qid(1))
-            .rzz(Angle64::from_radians(PI / 4.0), &[(QubitId(0), QubitId(1))]);
+            .rzz(Angle64::from_turn_ratio(1, 8), &[(QubitId(0), QubitId(1))]);
         dm.h(&qid(0))
             .h(&qid(1))
-            .rzz(Angle64::from_radians(PI / 4.0), &[(QubitId(0), QubitId(1))]);
+            .rzz(Angle64::from_turn_ratio(1, 8), &[(QubitId(0), QubitId(1))]);
     });
 
     // Test complex non-Clifford circuit
@@ -423,12 +423,12 @@ fn test_non_clifford_circuits() {
             .cx(&[(QubitId(1), QubitId(2))]);
 
         // Apply non-Clifford rotations
-        sv.rx(Angle64::from_radians(PI / 5.0), &qid(0))
-            .rz(Angle64::from_radians(PI / 7.0), &qid(1))
-            .rzz(Angle64::from_radians(PI / 9.0), &[(QubitId(0), QubitId(2))]);
-        dm.rx(Angle64::from_radians(PI / 5.0), &qid(0))
-            .rz(Angle64::from_radians(PI / 7.0), &qid(1))
-            .rzz(Angle64::from_radians(PI / 9.0), &[(QubitId(0), QubitId(2))]);
+        sv.rx(pecos_core::radians!(PI / 5.0), &qid(0))
+            .rz(pecos_core::radians!(PI / 7.0), &qid(1))
+            .rzz(pecos_core::radians!(PI / 9.0), &[(QubitId(0), QubitId(2))]);
+        dm.rx(pecos_core::radians!(PI / 5.0), &qid(0))
+            .rz(pecos_core::radians!(PI / 7.0), &qid(1))
+            .rzz(pecos_core::radians!(PI / 9.0), &[(QubitId(0), QubitId(2))]);
     });
 }
 

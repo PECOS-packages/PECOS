@@ -8,8 +8,14 @@ use bytemuck::{Pod, Zeroable};
 
 // Magic bytes to identify PECOS message batches - "PECS"
 pub const BATCH_MAGIC: u32 = 0x50_45_43_53;
-// Current protocol version
-pub const PROTOCOL_VERSION: u8 = 1;
+// Version 5 stores ordinary gate angles as u64 fractions; versions 6/7 do
+// the same for scheduled batches/events. Version 2 is the runtime envelope.
+// Legacy versions 1 (ordinary) and 3/4 (scheduled) used lossy f64 radians.
+pub const PROTOCOL_VERSION: u8 = 5;
+/// Scheduled frame transport with exact angle fractions.
+pub const SCHEDULED_FRAME_VERSION: u8 = 6;
+/// Scheduled event transport with exact angle fractions.
+pub const SCHEDULED_EVENT_VERSION: u8 = 7;
 
 bitflags! {
     /// Flags that can be set on individual messages
@@ -125,7 +131,9 @@ pub struct GateHeader {
     pub reserved: u8,   // Reserved for future use (padding for alignment)
                         // Followed by:
                         // - qubit_indices: [u32; num_qubits]
-                        // - parameters: depends on gate type (if has_params=1)
+                        // - angles: little-endian u64 Angle64 fractions (angle_arity words)
+                        // - non-angle parameters: little-endian f64 words
+                        // Custom treats every parameter word as an angle.
 }
 
 // MeasurementHeader removed - measurements now use regular gate structure

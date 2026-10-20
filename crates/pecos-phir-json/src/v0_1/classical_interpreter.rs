@@ -110,8 +110,7 @@ impl PhirClassicalInterpreter {
         json: &str,
         foreign_object: Option<Box<dyn ForeignObject>>,
     ) -> Result<usize, PecosError> {
-        let program: PHIRProgram = serde_json::from_str(json)
-            .map_err(|e| PecosError::Input(format!("Failed to parse PHIR JSON: {e}")))?;
+        let program = PHIRProgram::from_json(json)?;
 
         // Validate format
         if program.format != "PHIR/JSON" && program.format != "PHIR" {
@@ -379,7 +378,8 @@ impl PhirClassicalInterpreter {
     ///
     /// # Errors
     ///
-    /// Returns `PecosError` for unknown quantum variables or out-of-bounds qubit indices.
+    /// Returns `PecosError` for invalid gate names, argument grouping, signatures,
+    /// duplicate qubits, unknown quantum registers or out-of-bounds indices.
     pub fn make_qop(
         &self,
         qop_name: &str,
@@ -388,10 +388,8 @@ impl PhirClassicalInterpreter {
         returns: &[(String, usize)],
         metadata: &Option<BTreeMap<String, serde_json::Value>>,
     ) -> Result<YieldedQOp, PecosError> {
-        if qop_name == "RXYXY2Q" {
-            crate::v0_1::ast::validate_rxyxy2q_args(angles.as_deref(), args)
-                .map_err(PecosError::ValidationInvalidGateParameters)?;
-        }
+        let gate = super::operations::quantum_gate_type(qop_name)?;
+        super::operations::validate_quantum_args(qop_name, gate.quantum_arity(), args)?;
 
         // Resolve qubit args to integer IDs
         let mut is_multi = false;
@@ -416,6 +414,18 @@ impl PhirClassicalInterpreter {
             QOpArgs::Single(flat)
         };
 
+        let flat_args: Vec<_> = match &resolved_args {
+            QOpArgs::Single(ids) => ids.clone(),
+            QOpArgs::Multi(groups) => groups.iter().flatten().copied().collect(),
+        };
+        super::operations::validate_quantum_signature(
+            qop_name,
+            gate,
+            flat_args.len(),
+            angles.as_ref().map_or(0, Vec::len),
+        )?;
+        super::operations::validate_quantum_qubits(qop_name, &flat_args)?;
+
         // Build metadata
         let mut meta = metadata.clone().unwrap_or_default();
         if let Some(angs) = angles {
@@ -428,10 +438,6 @@ impl PhirClassicalInterpreter {
 
         // Build var_output for measurement compatibility
         if !returns.is_empty() {
-            let flat_args: Vec<usize> = match &resolved_args {
-                QOpArgs::Single(ids) => ids.clone(),
-                QOpArgs::Multi(groups) => groups.iter().flatten().copied().collect(),
-            };
             let mut var_output = serde_json::Map::new();
             for (q, r) in flat_args.iter().zip(returns.iter()) {
                 var_output.insert(q.to_string(), serde_json::json!([r.0, r.1]));
@@ -442,7 +448,7 @@ impl PhirClassicalInterpreter {
             );
         }
 
-        let sim_name = resolve_sim_name(qop_name, angles.as_deref());
+        let sim_name = resolve_sim_name(qop_name, angles.as_deref())?;
 
         let ret = if returns.is_empty() {
             None
@@ -517,13 +523,14 @@ impl PhirClassicalInterpreter {
     /// The Environment's `BitValue` storage automatically masks to the declared
     /// bit width, so no manual masking is needed.
     fn assign_int_var(&mut self, name: &str, val: u64) -> Result<(), PecosError> {
-        // Assigning a measurement result to an undeclared variable is an error
-        // (matching Python's `csym2id[cvar]` lookup), not a silent no-op.
+        // Measurement destinations must already be declared classical registers.
+        self.environment.classical_info_for(name, "Measurement")?;
         self.environment.set_raw(name, val)
     }
 
     /// Assign a bit value to a specific bit of a classical variable.
     fn assign_int_bit(&mut self, name: &str, idx: usize, val: i64) -> Result<(), PecosError> {
+        self.environment.validate_measurement_write(name, idx)?;
         self.environment.set_bit(name, idx, (val & 1) != 0)
     }
 
@@ -559,6 +566,9 @@ impl PhirClassicalInterpreter {
         returns: &[ArgItem],
         function: &Option<String>,
     ) -> Result<(), PecosError> {
+        if matches!(cop, "=" | "ffcall") {
+            self.environment.validate_assignment_targets(returns)?;
+        }
         match cop {
             "=" => {
                 // Evaluate ALL args first (before any assignment),
@@ -587,27 +597,7 @@ impl PhirClassicalInterpreter {
                 }
             }
             "Result" => {
-                // Map source register to destination register
-                for (src_arg, dst_arg) in args.iter().zip(returns.iter()) {
-                    let src_name = match src_arg {
-                        ArgItem::Simple(name) | ArgItem::Indexed((name, _)) => name.clone(),
-                        _ => {
-                            return Err(PecosError::Input(
-                                "Result source must be a variable".to_string(),
-                            ));
-                        }
-                    };
-                    let dst_name = match dst_arg {
-                        ArgItem::Simple(name) | ArgItem::Indexed((name, _)) => name.clone(),
-                        _ => {
-                            return Err(PecosError::Input(
-                                "Result destination must be a variable".to_string(),
-                            ));
-                        }
-                    };
-                    // Copy variable value from source to destination
-                    self.environment.copy_variable(&src_name, &dst_name)?;
-                }
+                self.environment.apply_result(args, returns)?;
             }
             "ffcall" => {
                 let func_name = function
@@ -764,7 +754,7 @@ impl<'a> ExecuteIter<'a> {
                     metadata,
                 } => {
                     let yielded = self.interp.make_qop(qop, angles, args, returns, metadata)?;
-                    let is_measure = matches!(qop.as_str(), "measure Z" | "Measure" | "Measure +Z");
+                    let is_measure = qop == "Measure";
                     self.buffer.push(YieldedOp::QOp(yielded));
 
                     if is_measure {

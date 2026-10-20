@@ -4105,18 +4105,20 @@ impl ScalarAngle64 {
 
     /// Create from radians
     #[staticmethod]
-    fn from_radians(radians: f64) -> Self {
-        Self {
-            value: Angle64::from_radians(radians),
-        }
+    fn from_radians(radians: f64) -> PyResult<Self> {
+        Ok(Self {
+            value: Angle64::try_from_radians(radians)
+                .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?,
+        })
     }
 
     /// Create from turns (0.0 = 0, 0.5 = half turn, 1.0 = full turn)
     #[staticmethod]
-    fn from_turns(turns: f64) -> Self {
-        Self {
-            value: Angle64::from_turns(turns),
-        }
+    fn from_turns(turns: f64) -> PyResult<Self> {
+        Ok(Self {
+            value: Angle64::try_from_turns(turns)
+                .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?,
+        })
     }
 
     /// Convert to radians (unsigned, in [0, 2pi))
@@ -4334,7 +4336,9 @@ impl<'a, 'py> pyo3::FromPyObject<'a, 'py> for AngleParam {
         if let Ok(sa) = ob.extract::<ScalarAngle64>() {
             Ok(Self(sa.inner()))
         } else if let Ok(f) = ob.extract::<f64>() {
-            Ok(Self(Angle64::from_radians(f)))
+            Ok(Self(Angle64::try_from_radians(f).map_err(|error| {
+                pyo3::exceptions::PyValueError::new_err(error.to_string())
+            })?))
         } else {
             Err(pyo3::exceptions::PyTypeError::new_err(
                 "expected angle64 or float for angle parameter",

@@ -3981,7 +3981,8 @@ mod tests {
         let pauli = PauliString::with_phase_and_paulis(
             QuarterPhase::PlusI,
             vec![(Pauli::X, 0.into()), (Pauli::Z, 1.into())],
-        );
+        )
+        .unwrap();
         let sum = PauliSum::from_pauli_string(2, &pauli).unwrap();
         let label = pauli_string_to_bitmask(2, &pauli).unwrap();
         assert_complex_close(*sum.terms().get(&label).unwrap(), Complex64::new(0.0, 1.0));

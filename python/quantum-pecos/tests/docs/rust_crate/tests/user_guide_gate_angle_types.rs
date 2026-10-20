@@ -41,7 +41,7 @@ fn test_user_guide_gate_angle_types_rust_3() {
     assert_eq!(p.as_quarter(), Some(pecos_core::QuarterPhase::PlusI));
 
     // Arbitrary phase
-    let p = GlobalPhase::from_angle(Angle64::from_turns(0.125)); // e^{i*pi/4}
+    let p = GlobalPhase::from_angle(Angle64::from_turn_ratio(1, 8)); // e^{i*pi/4}
 }
 
 
@@ -56,7 +56,7 @@ fn test_user_guide_gate_angle_types_rust_4() {
     let full = Angle64::FULL_TURN;         // 2*pi (wraps to 0)
 
     // From turns (fractional rotations)
-    let eighth = Angle64::from_turns(0.125);  // pi/4
+    let eighth = Angle64::from_turn_ratio(1, 8);  // pi/4
 
     // Exact rational construction
     let third = Angle64::from_turn_ratio(1, 3);  // 2*pi/3
@@ -70,10 +70,26 @@ fn test_user_guide_gate_angle_types_rust_4() {
 }
 
 
+
+#[test]
+fn test_user_guide_gate_angle_types_rust_5() -> Result<(), Box<dyn std::error::Error>> {
+    use pecos_core::{Angle64, NonFiniteAngleError, radians, turns};
+    let half = Angle64::HALF_TURN;
+    let eighth = Angle64::from_turn_ratio(1, 8);
+    let literal_radians = radians!(0.37);
+    let literal_turns = turns!(0.125);
+
+    fn runtime_angles(radians: f64, turns: f64) -> Result<(Angle64, Angle64), NonFiniteAngleError> {
+        Ok((Angle64::try_from_radians(radians)?, Angle64::try_from_turns(turns)?))
+    }
+    Ok(())
+}
+
+
 // angle! -- pi-based syntax
 
 #[test]
-fn test_user_guide_gate_angle_types_rust_5() {
+fn test_user_guide_gate_angle_types_rust_6() {
     use pecos_core::{angle, turn};
     let a = angle!(pi);         // pi (half turn)
     let a = angle!(pi / 2);    // pi/2 (quarter turn)
@@ -90,7 +106,7 @@ fn test_user_guide_gate_angle_types_rust_5() {
 // Global phase applied to a gate
 
 #[test]
-fn test_user_guide_gate_angle_types_rust_6() {
+fn test_user_guide_gate_angle_types_rust_7() {
     use pecos_core::{phase, phase_turn};
     use pecos_core::unitary::X;
     let op = phase!(pi / 4) * X(0);      // e^{i*pi/4} * X
@@ -100,7 +116,7 @@ fn test_user_guide_gate_angle_types_rust_6() {
 
 
 #[test]
-fn test_user_guide_gate_angle_types_rust_7() {
+fn test_user_guide_gate_angle_types_rust_8() {
     use pecos_core::prelude::GateType;
     let gate = GateType::CX;
     assert_eq!(gate.quantum_arity(), 2);  // two-qubit gate
@@ -119,7 +135,7 @@ fn test_user_guide_gate_angle_types_rust_7() {
 
 
 #[test]
-fn test_user_guide_gate_angle_types_rust_8() {
+fn test_user_guide_gate_angle_types_rust_9() {
     use pecos_core::{Angle64, AngleSource, GateDefinitionBuilder, GateRegistry};
     use pecos_core::prelude::GateType;
     let mut registry = GateRegistry::new();

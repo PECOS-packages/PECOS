@@ -15,6 +15,15 @@ use pecos_engines::ClassicalEngine;
 use pecos_engines::byte_message::builder::ByteMessageBuilder;
 use std::collections::BTreeMap;
 
+fn qubit_constant(index: u32) -> Instruction {
+    Instruction::new(
+        Operation::Classical(ClassicalOp::ConstInt(i64::from(index))),
+        vec![],
+        vec![SSAValue::new(index)],
+        vec![Type::Int(crate::types::IntWidth::I64)],
+    )
+}
+
 /// Create a simple PHIR module for testing
 fn create_test_module() -> Module {
     // Create a simple module with an H gate
@@ -31,7 +40,7 @@ fn create_test_module() -> Module {
     let main_block = Block {
         label: None,
         arguments: vec![],
-        operations: vec![h_instruction],
+        operations: vec![qubit_constant(0), h_instruction],
         terminator: None,
         attributes: BTreeMap::new(),
     };
@@ -96,6 +105,8 @@ fn create_bell_state_module() -> Module {
         label: None,
         arguments: vec![],
         operations: vec![
+            qubit_constant(0),
+            qubit_constant(1),
             h_instruction,
             cx_instruction,
             measure1_instruction,
@@ -299,12 +310,13 @@ fn run_instructions(instructions: &[Instruction]) -> PhirProcessor {
 #[test]
 fn test_processor_rz_gate() {
     let mut processor = PhirProcessor::new();
+    processor
+        .ssa_values
+        .insert(0, super::environment::TypedValue::I64(0));
     let mut builder = ByteMessageBuilder::new();
 
     let rz_instr = instr(
-        Operation::Quantum(QuantumOp::RZ(Angle64::from_radians(
-            std::f64::consts::FRAC_PI_2,
-        ))),
+        Operation::Quantum(QuantumOp::RZ(Angle64::QUARTER_TURN)),
         vec![0],
         vec![1],
         vec![Type::Qubit],
@@ -319,13 +331,13 @@ fn test_processor_rz_gate() {
 #[test]
 fn test_processor_rxy1q_gate() {
     let mut processor = PhirProcessor::new();
+    processor
+        .ssa_values
+        .insert(0, super::environment::TypedValue::I64(0));
     let mut builder = ByteMessageBuilder::new();
 
     let rxy1q_instr = instr(
-        Operation::Quantum(QuantumOp::RXY1Q(
-            Angle64::from_radians(std::f64::consts::FRAC_PI_2),
-            Angle64::ZERO,
-        )),
+        Operation::Quantum(QuantumOp::RXY1Q(Angle64::QUARTER_TURN, Angle64::ZERO)),
         vec![0],
         vec![1],
         vec![Type::Qubit],
@@ -339,18 +351,19 @@ fn test_processor_rxy1q_gate() {
 #[test]
 fn test_processor_rx_ry_gates() {
     let mut processor = PhirProcessor::new();
+    processor
+        .ssa_values
+        .insert(0, super::environment::TypedValue::I64(0));
     let mut builder = ByteMessageBuilder::new();
 
     let rx_instr = instr(
-        Operation::Quantum(QuantumOp::RX(Angle64::from_radians(std::f64::consts::PI))),
+        Operation::Quantum(QuantumOp::RX(Angle64::HALF_TURN)),
         vec![0],
         vec![1],
         vec![Type::Qubit],
     );
     let ry_instr = instr(
-        Operation::Quantum(QuantumOp::RY(Angle64::from_radians(
-            std::f64::consts::FRAC_PI_4,
-        ))),
+        Operation::Quantum(QuantumOp::RY(Angle64::from_turn_ratio(1, 8))),
         vec![0],
         vec![2],
         vec![Type::Qubit],
@@ -371,13 +384,16 @@ fn test_processor_rx_ry_gates() {
 #[test]
 fn test_processor_u3_gate() {
     let mut processor = PhirProcessor::new();
+    processor
+        .ssa_values
+        .insert(0, super::environment::TypedValue::I64(0));
     let mut builder = ByteMessageBuilder::new();
 
     let u3_instr = instr(
         Operation::Quantum(QuantumOp::U3(
-            Angle64::from_radians(std::f64::consts::FRAC_PI_2),
+            Angle64::QUARTER_TURN,
             Angle64::ZERO,
-            Angle64::from_radians(std::f64::consts::PI),
+            Angle64::HALF_TURN,
         )),
         vec![0],
         vec![1],
@@ -398,6 +414,12 @@ fn test_processor_u3_gate() {
 #[test]
 fn test_processor_swap_gate() {
     let mut processor = PhirProcessor::new();
+    processor
+        .ssa_values
+        .insert(0, super::environment::TypedValue::I64(0));
+    processor
+        .ssa_values
+        .insert(1, super::environment::TypedValue::I64(1));
     let mut builder = ByteMessageBuilder::new();
 
     let swap_instr = instr(
@@ -418,12 +440,16 @@ fn test_processor_swap_gate() {
 #[test]
 fn test_processor_rzz_gate() {
     let mut processor = PhirProcessor::new();
+    processor
+        .ssa_values
+        .insert(0, super::environment::TypedValue::I64(0));
+    processor
+        .ssa_values
+        .insert(1, super::environment::TypedValue::I64(1));
     let mut builder = ByteMessageBuilder::new();
 
     let rzz_instr = instr(
-        Operation::Quantum(QuantumOp::RZZ(Angle64::from_radians(
-            std::f64::consts::FRAC_PI_4,
-        ))),
+        Operation::Quantum(QuantumOp::RZZ(Angle64::from_turn_ratio(1, 8))),
         vec![0, 1],
         vec![2],
         vec![Type::Qubit],
@@ -440,13 +466,17 @@ fn test_processor_rzz_gate() {
 #[test]
 fn test_processor_cphase_gate() {
     let mut processor = PhirProcessor::new();
+    processor
+        .ssa_values
+        .insert(0, super::environment::TypedValue::I64(0));
+    processor
+        .ssa_values
+        .insert(1, super::environment::TypedValue::I64(1));
     let mut builder = ByteMessageBuilder::new();
     let _ = builder.for_quantum_operations();
 
     let cp_instr = instr(
-        Operation::Quantum(QuantumOp::CPhase(Angle64::from_radians(
-            std::f64::consts::PI,
-        ))),
+        Operation::Quantum(QuantumOp::CPhase(Angle64::HALF_TURN)),
         vec![0, 1],
         vec![2],
         vec![Type::Qubit],
@@ -468,8 +498,49 @@ fn test_processor_cphase_gate() {
 }
 
 #[test]
+fn test_processor_cphase_preserves_fixed_point_half() {
+    // Signed magnitudes are 2143200067395860927 and ...928 ticks;
+    // their halves toward zero differ by one tick although both map to -0.73 f64.
+    for (angle, half_magnitude) in [
+        (pecos_core::radians!(-0.73), 1_071_600_033_697_930_463),
+        (
+            Angle64::new(16_303_544_006_313_690_688),
+            1_071_600_033_697_930_464,
+        ),
+    ] {
+        let mut processor = PhirProcessor::new();
+        processor
+            .ssa_values
+            .insert(0, super::environment::TypedValue::I64(0));
+        processor
+            .ssa_values
+            .insert(1, super::environment::TypedValue::I64(1));
+        let mut builder = ByteMessageBuilder::new();
+        let _ = builder.for_quantum_operations();
+        let cp = instr(
+            Operation::Quantum(QuantumOp::CPhase(angle)),
+            vec![0, 1],
+            vec![2],
+            vec![Type::Qubit],
+        );
+        processor.process_instruction(&cp, &mut builder).unwrap();
+        let ops = builder.build().quantum_ops().unwrap();
+        let magnitude = Angle64::new(half_magnitude);
+        assert_eq!(ops[0].angles[0], magnitude);
+        assert_eq!(ops[1].angles[2], -magnitude);
+        assert_eq!(ops[2].angles[0], -magnitude);
+    }
+}
+
+#[test]
 fn test_processor_cz_gate() {
     let mut processor = PhirProcessor::new();
+    processor
+        .ssa_values
+        .insert(0, super::environment::TypedValue::I64(0));
+    processor
+        .ssa_values
+        .insert(1, super::environment::TypedValue::I64(1));
     let mut builder = ByteMessageBuilder::new();
 
     let cz_instr = instr(
@@ -493,6 +564,9 @@ fn test_processor_cz_gate() {
 #[test]
 fn test_processor_named_phase_sensitive_gates() {
     let mut processor = PhirProcessor::new();
+    processor
+        .ssa_values
+        .insert(0, super::environment::TypedValue::I64(0));
     let mut builder = ByteMessageBuilder::new();
     let _ = builder.for_quantum_operations();
 
@@ -532,6 +606,12 @@ fn test_processor_named_phase_sensitive_gates() {
 #[test]
 fn test_processor_all_named_two_qubit_roots() {
     let mut processor = PhirProcessor::new();
+    processor
+        .ssa_values
+        .insert(0, super::environment::TypedValue::I64(0));
+    processor
+        .ssa_values
+        .insert(1, super::environment::TypedValue::I64(1));
     let mut builder = ByteMessageBuilder::new();
     let _ = builder.for_quantum_operations();
 
@@ -608,6 +688,9 @@ fn test_processor_alloc_dealloc() {
 #[test]
 fn test_processor_reset() {
     let mut processor = PhirProcessor::new();
+    processor
+        .ssa_values
+        .insert(0, super::environment::TypedValue::I64(0));
     let mut builder = ByteMessageBuilder::new();
 
     let reset_instr = instr(
@@ -626,6 +709,9 @@ fn test_processor_reset() {
 #[test]
 fn test_processor_init_zero() {
     let mut processor = PhirProcessor::new();
+    processor
+        .ssa_values
+        .insert(0, super::environment::TypedValue::I64(0));
     let mut builder = ByteMessageBuilder::new();
 
     let init_instr = instr(
@@ -645,6 +731,7 @@ fn test_processor_init_zero() {
 // Classical operation processor tests
 // ──────────────────────────────────────────────────────────────────────
 
+// Fix demonstration (#1217): declared signed storage is I64.
 #[test]
 fn test_processor_const_int() {
     let processor = run_instructions(&[instr(
@@ -655,7 +742,7 @@ fn test_processor_const_int() {
     )]);
     assert_eq!(
         processor.ssa_values.get(&0),
-        Some(&super::environment::TypedValue::U32(42))
+        Some(&super::environment::TypedValue::I64(42))
     );
 }
 
@@ -687,6 +774,7 @@ fn test_processor_const_bool() {
     );
 }
 
+// Fix demonstration (#1217): declared signed storage is I64.
 #[test]
 fn test_processor_add() {
     let processor = run_instructions(&[
@@ -711,10 +799,11 @@ fn test_processor_add() {
     ]);
     assert_eq!(
         processor.ssa_values.get(&2),
-        Some(&super::environment::TypedValue::U32(30))
+        Some(&super::environment::TypedValue::I64(30))
     );
 }
 
+// Fix demonstration (#1217): declared signed storage is I64.
 #[test]
 fn test_processor_sub() {
     let processor = run_instructions(&[
@@ -739,10 +828,11 @@ fn test_processor_sub() {
     ]);
     assert_eq!(
         processor.ssa_values.get(&2),
-        Some(&super::environment::TypedValue::U32(18))
+        Some(&super::environment::TypedValue::I64(18))
     );
 }
 
+// Fix demonstration (#1217): declared signed storage is I64.
 #[test]
 fn test_processor_mul() {
     let processor = run_instructions(&[
@@ -767,10 +857,11 @@ fn test_processor_mul() {
     ]);
     assert_eq!(
         processor.ssa_values.get(&2),
-        Some(&super::environment::TypedValue::U32(42))
+        Some(&super::environment::TypedValue::I64(42))
     );
 }
 
+// Fix demonstration (#1217): declared signed storage is I64.
 #[test]
 fn test_processor_div_and_mod() {
     let processor = run_instructions(&[
@@ -801,14 +892,15 @@ fn test_processor_div_and_mod() {
     ]);
     assert_eq!(
         processor.ssa_values.get(&2),
-        Some(&super::environment::TypedValue::U32(3))
+        Some(&super::environment::TypedValue::I64(3))
     );
     assert_eq!(
         processor.ssa_values.get(&3),
-        Some(&super::environment::TypedValue::U32(2))
+        Some(&super::environment::TypedValue::I64(2))
     );
 }
 
+// Fix demonstration (#1217): declared signed storage is I64.
 #[test]
 fn test_processor_div_by_zero() {
     let processor = run_instructions(&[
@@ -834,7 +926,7 @@ fn test_processor_div_by_zero() {
     // Division by zero should produce 0
     assert_eq!(
         processor.ssa_values.get(&2),
-        Some(&super::environment::TypedValue::U32(0))
+        Some(&super::environment::TypedValue::I64(0))
     );
 }
 
@@ -842,6 +934,7 @@ fn test_processor_div_by_zero() {
 // Bitwise operation tests
 // ──────────────────────────────────────────────────────────────────────
 
+// Fix demonstration (#1217): declared signed storage is I64.
 #[test]
 fn test_processor_bitwise_and_or_xor() {
     let processor = run_instructions(&[
@@ -878,18 +971,19 @@ fn test_processor_bitwise_and_or_xor() {
     ]);
     assert_eq!(
         processor.ssa_values.get(&2),
-        Some(&super::environment::TypedValue::U32(0b1000))
+        Some(&super::environment::TypedValue::I64(0b1000))
     ); // AND
     assert_eq!(
         processor.ssa_values.get(&3),
-        Some(&super::environment::TypedValue::U32(0b1110))
+        Some(&super::environment::TypedValue::I64(0b1110))
     ); // OR
     assert_eq!(
         processor.ssa_values.get(&4),
-        Some(&super::environment::TypedValue::U32(0b0110))
+        Some(&super::environment::TypedValue::I64(0b0110))
     ); // XOR
 }
 
+// Fix demonstration (#1217): declared signed storage is I64.
 #[test]
 fn test_processor_shl_shr() {
     let processor = run_instructions(&[
@@ -920,14 +1014,15 @@ fn test_processor_shl_shr() {
     ]);
     assert_eq!(
         processor.ssa_values.get(&1),
-        Some(&super::environment::TypedValue::U32(8))
+        Some(&super::environment::TypedValue::I64(8))
     ); // 1 << 3
     assert_eq!(
         processor.ssa_values.get(&3),
-        Some(&super::environment::TypedValue::U32(4))
+        Some(&super::environment::TypedValue::I64(4))
     ); // 16 >> 2
 }
 
+// Fix demonstration (#1217): declared signed storage is I64.
 #[test]
 fn test_processor_shl_shr_binary_mode() {
     // Test Shl/Shr with two operands (binary mode), matching how the QIS parser emits them
@@ -973,11 +1068,11 @@ fn test_processor_shl_shr_binary_mode() {
     ]);
     assert_eq!(
         processor.ssa_values.get(&2),
-        Some(&super::environment::TypedValue::U32(8))
+        Some(&super::environment::TypedValue::I64(8))
     ); // 1 << 3
     assert_eq!(
         processor.ssa_values.get(&5),
-        Some(&super::environment::TypedValue::U32(4))
+        Some(&super::environment::TypedValue::I64(4))
     ); // 16 >> 2
 }
 
@@ -1159,6 +1254,7 @@ fn test_processor_comparisons_equal() {
 // Select operation test
 // ──────────────────────────────────────────────────────────────────────
 
+// Fix demonstration (#1217): declared signed storage is I64.
 #[test]
 fn test_processor_select() {
     let processor = run_instructions(&[
@@ -1189,10 +1285,11 @@ fn test_processor_select() {
     ]);
     assert_eq!(
         processor.ssa_values.get(&3),
-        Some(&super::environment::TypedValue::U32(100))
+        Some(&super::environment::TypedValue::I64(100))
     );
 }
 
+// Fix demonstration (#1217): declared signed storage is I64.
 #[test]
 fn test_processor_select_false() {
     let processor = run_instructions(&[
@@ -1223,7 +1320,7 @@ fn test_processor_select_false() {
     ]);
     assert_eq!(
         processor.ssa_values.get(&3),
-        Some(&super::environment::TypedValue::U32(200))
+        Some(&super::environment::TypedValue::I64(200))
     );
 }
 
@@ -1343,6 +1440,7 @@ fn test_processor_fdiv_by_zero() {
 // Memory operation tests (alloca/load/store)
 // ──────────────────────────────────────────────────────────────────────
 
+// Fix demonstration (#1217): declared signed storage is I64.
 #[test]
 fn test_processor_memory_alloc_store_load() {
     let processor = run_instructions(&[
@@ -1378,10 +1476,11 @@ fn test_processor_memory_alloc_store_load() {
     ]);
     assert_eq!(
         processor.ssa_values.get(&2),
-        Some(&super::environment::TypedValue::U32(42))
+        Some(&super::environment::TypedValue::I64(42))
     );
 }
 
+// Fix demonstration (#1217): declared signed storage is I64.
 #[test]
 fn test_processor_memory_overwrite() {
     let processor = run_instructions(&[
@@ -1429,7 +1528,7 @@ fn test_processor_memory_overwrite() {
     ]);
     assert_eq!(
         processor.ssa_values.get(&3),
-        Some(&super::environment::TypedValue::U32(99))
+        Some(&super::environment::TypedValue::I64(99))
     );
 }
 
@@ -1437,6 +1536,7 @@ fn test_processor_memory_overwrite() {
 // Assign operation test
 // ──────────────────────────────────────────────────────────────────────
 
+// Fix demonstration (#1217): declared signed storage is I64.
 #[test]
 fn test_processor_assign() {
     let processor = run_instructions(&[
@@ -1455,7 +1555,7 @@ fn test_processor_assign() {
     ]);
     assert_eq!(
         processor.ssa_values.get(&1),
-        Some(&super::environment::TypedValue::U32(42))
+        Some(&super::environment::TypedValue::I64(42))
     );
 }
 
@@ -1463,6 +1563,7 @@ fn test_processor_assign() {
 // Bitcast operation tests
 // ──────────────────────────────────────────────────────────────────────
 
+// Fix demonstration (#1217): declared signed storage is I64.
 #[test]
 fn test_processor_bitcast_bool_to_int_true() {
     let processor = run_instructions(&[
@@ -1481,10 +1582,11 @@ fn test_processor_bitcast_bool_to_int_true() {
     ]);
     assert_eq!(
         processor.ssa_values.get(&1),
-        Some(&super::environment::TypedValue::U32(1))
+        Some(&super::environment::TypedValue::I64(1))
     );
 }
 
+// Fix demonstration (#1217): declared signed storage is I64.
 #[test]
 fn test_processor_bitcast_bool_to_int_false() {
     let processor = run_instructions(&[
@@ -1503,7 +1605,7 @@ fn test_processor_bitcast_bool_to_int_false() {
     ]);
     assert_eq!(
         processor.ssa_values.get(&1),
-        Some(&super::environment::TypedValue::U32(0))
+        Some(&super::environment::TypedValue::I64(0))
     );
 }
 
@@ -1511,6 +1613,7 @@ fn test_processor_bitcast_bool_to_int_false() {
 // Result/export operation tests
 // ──────────────────────────────────────────────────────────────────────
 
+// Fix demonstration (#1217): declared signed storage is I64.
 #[test]
 fn test_processor_result_export() {
     use crate::phir::AttributeValue;
@@ -1551,7 +1654,7 @@ fn test_processor_result_export() {
     let exports = processor.get_export_results();
     assert_eq!(
         exports.get("my_result"),
-        Some(&super::environment::TypedValue::U32(42))
+        Some(&super::environment::TypedValue::I64(42))
     );
 }
 
@@ -1659,6 +1762,7 @@ fn test_engine_compile_empty_name_error() -> Result<(), Box<dyn std::error::Erro
 // Classical-only module (no quantum messages)
 // ──────────────────────────────────────────────────────────────────────
 
+// Fix demonstration (#1217): declared signed storage is I64.
 #[test]
 fn test_engine_classical_only_module() -> Result<(), Box<dyn std::error::Error>> {
     let instructions = vec![
@@ -1712,7 +1816,7 @@ fn test_engine_classical_only_module() -> Result<(), Box<dyn std::error::Error>>
     // Verify classical ops were processed
     assert_eq!(
         engine.processor.ssa_values.get(&2),
-        Some(&super::environment::TypedValue::U32(30))
+        Some(&super::environment::TypedValue::I64(30))
     );
 
     Ok(())
@@ -1733,26 +1837,19 @@ fn test_engine_rz_rxy_module() -> Result<(), Box<dyn std::error::Error>> {
             vec![Type::Qubit],
         ),
         instr(
-            Operation::Quantum(QuantumOp::RZ(Angle64::from_radians(
-                std::f64::consts::FRAC_PI_2,
-            ))),
+            Operation::Quantum(QuantumOp::RZ(Angle64::QUARTER_TURN)),
             vec![0],
             vec![1],
             vec![Type::Qubit],
         ),
         instr(
-            Operation::Quantum(QuantumOp::RXY1Q(
-                Angle64::from_radians(std::f64::consts::FRAC_PI_2),
-                Angle64::ZERO,
-            )),
+            Operation::Quantum(QuantumOp::RXY1Q(Angle64::QUARTER_TURN, Angle64::ZERO)),
             vec![0],
             vec![2],
             vec![Type::Qubit],
         ),
         instr(
-            Operation::Quantum(QuantumOp::RZ(Angle64::from_radians(
-                std::f64::consts::FRAC_PI_2,
-            ))),
+            Operation::Quantum(QuantumOp::RZ(Angle64::QUARTER_TURN)),
             vec![0],
             vec![3],
             vec![Type::Qubit],
@@ -1832,9 +1929,15 @@ fn test_dynamic_zero_engine_rejected_without_explicit_qubits() {
 
 #[test]
 fn test_processor_rxyxy2q_gate() {
-    let theta = Angle64::from_radians(-0.73);
-    let phi = Angle64::from_radians(0.41);
+    let theta = pecos_core::radians!(-0.73);
+    let phi = pecos_core::radians!(0.41);
     let mut processor = PhirProcessor::new();
+    processor
+        .ssa_values
+        .insert(2, super::environment::TypedValue::I64(2));
+    processor
+        .ssa_values
+        .insert(0, super::environment::TypedValue::I64(0));
     let mut builder = pecos_engines::ByteMessage::quantum_operations_builder();
     let instruction = instr(
         Operation::Quantum(QuantumOp::RXYXY2Q(theta, phi)),

@@ -193,7 +193,7 @@ impl PyStabilizerCodeSpecBuilder {
         Ok(())
     }
 
-    /// Build with count validation only.
+    /// Build with operator-width, logical-count, and stabilizer-independence validation.
     fn build(&mut self) -> PyResult<PyStabilizerCodeSpec> {
         let inner = self
             .take_inner()?

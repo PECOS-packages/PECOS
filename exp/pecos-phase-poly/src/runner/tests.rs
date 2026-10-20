@@ -27,9 +27,9 @@ fn append(circuit: &mut TickCircuit, mut gate: Gate) {
 fn compile_errors_have_locations() {
     for gate in [
         Gate::simple(GateType::H, vec![QubitId(1)]),
-        Gate::rz(Angle64::from_turns(0.01), &[1]),
+        Gate::rz(pecos_core::turns!(0.01), &[1]),
         Gate::rzz(
-            Angle64::from_turns(0.125) + Angle64::from_turns(1e-12),
+            Angle64::from_turn_ratio(1, 8) + pecos_core::turns!(1e-12),
             &[(1, 2)],
         ),
         Gate::channel(channel::from_unitary(unitary::H(1))),
@@ -242,5 +242,90 @@ fn noise_correlations_and_independent_rng_streams() {
             program.run_shot(&mut a, &mut ra),
             program.run_shot(&mut b, &mut rb)
         );
+    }
+}
+
+#[test]
+fn segments_preserve_state_and_local_records() {
+    // [contract] Segment records start at zero, with independent annotations.
+    let mut prefix = TickCircuit::new();
+    prefix.tick().x(&[0, 2]);
+    prefix.tick().mz(&[2]);
+    let prefix = compile(&prefix).unwrap();
+    let mut suffix = TickCircuit::new();
+    let refs = suffix.tick().mz(&[0]);
+    suffix.detector(&refs).unwrap();
+    suffix.observable(&refs).unwrap();
+    let suffix = compile(&suffix).unwrap();
+    let mut sim = PhasePoly::with_seed(3, 11);
+    let mut rng = PecosRng::seed_from_u64(12);
+    assert_eq!(
+        prefix.run_segment(&mut sim, &mut rng).unwrap().records,
+        [true]
+    );
+    let result = suffix.run_segment(&mut sim, &mut rng).unwrap();
+    assert_eq!(result.records, [true]);
+    assert_eq!(result.detectors, [true]);
+    assert_eq!(result.observables, [true]);
+    assert!(sim.mz(&[QubitId(2)])[0].outcome);
+    // [contract] run_shot still requires exact size, without mutating on error.
+    assert!(matches!(
+        suffix.run_shot(&mut sim, &mut rng),
+        Err(RunError::QubitCount {
+            expected: 1,
+            actual: 3
+        })
+    ));
+    assert!(sim.mz(&[QubitId(0)])[0].outcome);
+    let mut exact = PhasePoly::with_seed(1, 13);
+    exact.x(&[QubitId(0)]);
+    assert_eq!(
+        suffix.run_shot(&mut exact, &mut rng).unwrap().records,
+        [false]
+    );
+}
+
+#[test]
+fn undersized_segments_do_not_mutate_state_or_randomness() {
+    // [contract] Reject before an early noisy operation or random measurement.
+    let mut circuit = TickCircuit::new();
+    circuit.tick().channel(channel::BitFlip(0.5, 0));
+    circuit.tick().mz(&[0, 2]);
+    let program = compile(&circuit).unwrap();
+    for segment in [false, true] {
+        let mut sim = PhasePoly::with_seed(2, 14);
+        sim.px(&[QubitId(0)]);
+        sim.x(&[QubitId(1)]);
+        let mut expected = sim.clone();
+        let mut rng = PecosRng::seed_from_u64(15);
+        let mut expected_rng = rng.clone();
+        let result = if segment {
+            program.run_segment(&mut sim, &mut rng)
+        } else {
+            program.run_shot(&mut sim, &mut rng)
+        };
+        assert_eq!(
+            result,
+            Err(RunError::QubitCount {
+                expected: 3,
+                actual: 2
+            })
+        );
+        assert_eq!(rng.next_u64(), expected_rng.next_u64());
+        for _ in 0..16 {
+            assert_eq!(
+                sim.mz(&[QubitId(0), QubitId(1)])
+                    .iter()
+                    .map(|r| r.outcome)
+                    .collect::<Vec<_>>(),
+                expected
+                    .mz(&[QubitId(0), QubitId(1)])
+                    .iter()
+                    .map(|r| r.outcome)
+                    .collect::<Vec<_>>()
+            );
+            sim.px(&[QubitId(0)]);
+            expected.px(&[QubitId(0)]);
+        }
     }
 }

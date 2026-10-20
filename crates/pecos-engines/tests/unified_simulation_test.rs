@@ -21,11 +21,12 @@ fn test_sim_builder_api() {
     assert!(!config.verbose);
 
     // Test noise conversions work with IntoNoiseModel trait
-    let _: Box<dyn pecos_engines::noise::NoiseModel> = PassThroughNoise.into_noise_model();
+    let _: Box<dyn pecos_engines::noise::NoiseModel> = PassThroughNoise.into_noise_model().unwrap();
     let _: Box<dyn pecos_engines::noise::NoiseModel> =
-        DepolarizingNoise { p: 0.01 }.into_noise_model();
-    let _: Box<dyn pecos_engines::noise::NoiseModel> =
-        BiasedDepolarizingNoise { p: 0.01 }.into_noise_model();
+        DepolarizingNoise { p: 0.01 }.into_noise_model().unwrap();
+    let _: Box<dyn pecos_engines::noise::NoiseModel> = BiasedDepolarizingNoise { p: 0.01 }
+        .into_noise_model()
+        .unwrap();
 }
 
 #[test]
@@ -51,7 +52,16 @@ fn test_columnar_conversion() {
     shot2.insert("q1".to_string(), Data::U32(0));
 
     let shot_vector = ShotVec {
-        shots: vec![Shot { data: shot1 }, Shot { data: shot2 }],
+        shots: vec![
+            Shot {
+                data: shot1,
+                ..Default::default()
+            },
+            Shot {
+                data: shot2,
+                ..Default::default()
+            },
+        ],
     };
 
     let columnar = shots_to_columnar(&shot_vector);

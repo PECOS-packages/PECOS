@@ -297,3 +297,14 @@ fn test_u_gate_is_native() {
         _ => panic!("Expected U gate operation"),
     }
 }
+
+#[test]
+fn nonfinite_rotation_parameter_is_an_error() {
+    for parameter in ["1e400", "1e308*10", "ln(0)", "sqrt(-1)"] {
+        let source =
+            format!("OPENQASM 2.0; include \"qelib1.inc\"; qreg q[1]; rz({parameter}) q[0];");
+        let result =
+            QASMEngine::from_str(&source).and_then(|mut engine| engine.generate_commands());
+        assert!(result.is_err(), "accepted {parameter}");
+    }
+}

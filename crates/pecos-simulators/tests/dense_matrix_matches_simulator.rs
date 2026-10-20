@@ -222,7 +222,7 @@ fn dense_matrices_match_the_simulator_for_parameterised_unitaries() {
     let q = [QubitId(0)];
     let pair = [(QubitId(0), QubitId(1))];
     for sign in [1.0, -1.0] {
-        let angle = |magnitude| Angle64::from_radians(sign * magnitude);
+        let angle = |magnitude| Angle64::try_from_radians(sign * magnitude).unwrap();
 
         for (name, rotation_type) in [
             ("RX", RotationType::RX),

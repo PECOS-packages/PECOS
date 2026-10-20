@@ -71,7 +71,7 @@ fn rotation_fusion_preserves_minus_identity() {
 fn rotation_adjoint_is_inverse() {
     for axis in AXES {
         for theta in [0.0, PI, -PI, FRAC_PI_2, TAU, 0.37] {
-            let u = rotation(axis, Angle64::from_radians(theta));
+            let u = rotation(axis, Angle64::try_from_radians(theta).unwrap());
             let matrix = u.to_matrix();
             assert_same_matrix(&u.dg().to_matrix(), &matrix.adjoint());
             let product = u.dg() * u;
@@ -88,7 +88,7 @@ fn rotation_adjoint_is_inverse() {
 fn rotation_double_adjoint_preserves_amplitudes() {
     for axis in AXES {
         for theta in [0.0, PI, -PI, FRAC_PI_2, TAU, 0.37] {
-            let u = rotation(axis, Angle64::from_radians(theta));
+            let u = rotation(axis, Angle64::try_from_radians(theta).unwrap());
             assert_same_matrix(&u.dg().dg().to_matrix(), &u.to_matrix());
             assert_simplification(&u.dg().dg(), u.to_matrix().num_qubits());
         }
@@ -147,13 +147,13 @@ fn rotation_adjoint_parameter_slots() {
             for lambda in [0.0, PI, -PI, -0.41] {
                 for unitary in [
                     Unitary::RXY1Q {
-                        theta: Angle64::from_radians(theta),
-                        phi: Angle64::from_radians(phi),
+                        theta: Angle64::try_from_radians(theta).unwrap(),
+                        phi: Angle64::try_from_radians(phi).unwrap(),
                     },
                     Unitary::U3 {
-                        theta: Angle64::from_radians(theta),
-                        phi: Angle64::from_radians(phi),
-                        lambda: Angle64::from_radians(lambda),
+                        theta: Angle64::try_from_radians(theta).unwrap(),
+                        phi: Angle64::try_from_radians(phi).unwrap(),
+                        lambda: Angle64::try_from_radians(lambda).unwrap(),
                     },
                 ] {
                     let u = unitary.on_qubit(0);
@@ -179,7 +179,7 @@ fn rotation_adjoint_compound_slot_parity() {
             if mask & (1 << bit) != 0 {
                 Angle64::HALF_TURN
             } else {
-                Angle64::from_radians(0.37)
+                pecos_core::radians!(0.37)
             }
         };
         let interaction = [angle(4), angle(5), angle(6)];

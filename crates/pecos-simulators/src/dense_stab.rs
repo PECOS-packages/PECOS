@@ -1386,6 +1386,7 @@ impl<R: Rng> DenseStab<R> {
             phase = phase.multiply(&QuarterPhase::MinusI);
         }
         PauliString::with_phase_and_paulis(phase, paulis)
+            .expect("tableau conversion emits one Pauli per qubit")
     }
 
     fn generators_from_rows(

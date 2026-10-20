@@ -44,12 +44,13 @@ trait BoxedClassicalEngineBuilder: Send {
 /// Trait for building boxed quantum engines
 trait BoxedQuantumEngineBuilder: Send {
     fn build_boxed(self: Box<Self>) -> Result<Box<dyn crate::quantum::QuantumEngine>, PecosError>;
+    fn num_qubits(&self) -> Option<usize>;
     fn set_qubits_if_needed(&mut self, num_qubits: usize);
 }
 
 /// Trait for building boxed noise models
 trait BoxedNoiseModelBuilder: Send {
-    fn build_boxed(self: Box<Self>) -> Box<dyn NoiseModel>;
+    fn build_boxed(self: Box<Self>) -> Result<Box<dyn NoiseModel>, PecosError>;
 }
 
 /// Wrapper that converts any `ClassicalControlEngineBuilder` to `BoxedClassicalEngineBuilder`
@@ -82,6 +83,10 @@ where
         self.builder.build()
     }
 
+    fn num_qubits(&self) -> Option<usize> {
+        self.builder.num_qubits()
+    }
+
     fn set_qubits_if_needed(&mut self, num_qubits: usize) {
         self.builder.set_qubits_if_needed(num_qubits);
     }
@@ -96,7 +101,7 @@ impl<N> BoxedNoiseModelBuilder for NoiseModelWrapper<N>
 where
     N: IntoNoiseModel + Send + 'static,
 {
-    fn build_boxed(self: Box<Self>) -> Box<dyn NoiseModel> {
+    fn build_boxed(self: Box<Self>) -> Result<Box<dyn NoiseModel>, PecosError> {
         self.noise.into_noise_model()
     }
 }
@@ -274,53 +279,37 @@ impl SimBuilder {
             }
         };
 
-        // Determine number of qubits
-        let num_qubits = self
-            .explicit_num_qubits
-            .or_else(|| Some(classical_engine.num_qubits()))
-            .ok_or_else(|| {
-                PecosError::Input(
-                    "Number of qubits not specified and cannot be inferred from engine".to_string(),
-                )
-            })?;
-
-        // Forward a qubit-count hint only when it is meaningful. An explicit
-        // count is the caller's choice and is always forwarded, even 0. But an
-        // inferred 0 from a dynamic classical engine means "unknown", not "zero
-        // qubits"; forwarding it would freeze dynamic allocation at 0.
-        match self.explicit_num_qubits {
-            Some(explicit) => classical_engine.set_num_qubits_hint(explicit),
-            None if num_qubits > 0 => classical_engine.set_num_qubits_hint(num_qubits),
-            None => {}
+        let quantum_qubits = self
+            .quantum_builder
+            .as_ref()
+            .and_then(|builder| builder.num_qubits());
+        if let (Some(simulation), Some(quantum)) = (self.explicit_num_qubits, quantum_qubits)
+            && simulation != quantum
+        {
+            return Err(PecosError::Input(format!(
+                "Simulation count .qubits({simulation}) differs from quantum builder count {quantum}; set only one count or make both counts equal"
+            )));
+        }
+        let configured_qubits = self.explicit_num_qubits.or(quantum_qubits);
+        let num_qubits = crate::classical::resolve_qubit_count(
+            classical_engine.as_ref(),
+            configured_qubits,
+            "specify .qubits(n) on the simulation or on the quantum builder",
+        )?;
+        if configured_qubits.is_some() || num_qubits > 0 {
+            classical_engine.set_num_qubits_hint(num_qubits);
         }
 
-        // Build quantum engine (require explicit qubit specification)
         let quantum_engine = if let Some(mut builder) = self.quantum_builder {
-            // Set qubits on the quantum engine builder if explicitly specified
             builder.set_qubits_if_needed(num_qubits);
             builder.build_boxed()?
         } else {
-            // Default: fixed-size sparse stabilizer. Dynamic classical engines
-            // may report 0 before execution, but the default quantum engine
-            // cannot grow to fit runtime qalloc operations.
-            if self.explicit_num_qubits.is_none()
-                && num_qubits == 0
-                && classical_engine.has_dynamic_qubit_count()
-            {
-                return Err(PecosError::Input(
-                    "A dynamic classical engine reports 0 qubits before execution, but the \
-                     default quantum engine is fixed-size and cannot grow to fit qubits \
-                     allocated at runtime. Specify .qubits(n) or provide a quantum engine \
-                     via .quantum()."
-                        .to_string(),
-                ));
-            }
             Box::new(SparseStabEngine::new(num_qubits))
         };
 
         // Build noise model (with default if not set)
         let noise_model = if let Some(builder) = self.noise_builder {
-            builder.build_boxed()
+            builder.build_boxed()?
         } else {
             // Default: no noise
             Box::new(PassThroughNoiseModel::new())
@@ -469,21 +458,23 @@ pub struct BiasedDepolarizingNoise {
 // ============================================================================
 
 impl crate::noise::IntoNoiseModel for PassThroughNoise {
-    fn into_noise_model(self) -> Box<dyn crate::noise::NoiseModel> {
-        Box::new(crate::noise::PassThroughNoiseModel::new())
+    fn into_noise_model(self) -> Result<Box<dyn crate::noise::NoiseModel>, PecosError> {
+        Ok(Box::new(crate::noise::PassThroughNoiseModel::new()))
     }
 }
 
 impl crate::noise::IntoNoiseModel for DepolarizingNoise {
-    fn into_noise_model(self) -> Box<dyn crate::noise::NoiseModel> {
-        Box::new(crate::noise::DepolarizingNoiseModel::new_uniform(self.p))
+    fn into_noise_model(self) -> Result<Box<dyn crate::noise::NoiseModel>, PecosError> {
+        Ok(Box::new(
+            crate::noise::DepolarizingNoiseModel::try_new_uniform(self.p)?,
+        ))
     }
 }
 
 impl crate::noise::IntoNoiseModel for BiasedDepolarizingNoise {
-    fn into_noise_model(self) -> Box<dyn crate::noise::NoiseModel> {
-        Box::new(crate::noise::BiasedDepolarizingNoiseModel::new_uniform(
-            self.p,
+    fn into_noise_model(self) -> Result<Box<dyn crate::noise::NoiseModel>, PecosError> {
+        Ok(Box::new(
+            crate::noise::BiasedDepolarizingNoiseModel::try_new_uniform(self.p)?,
         ))
     }
 }

@@ -35,8 +35,10 @@ fn assert_measurement_value(size: usize, bits: &[usize], outcomes: &[u32], expec
     // Supply measurement SSA values directly to avoid engine outcome routing.
     let module = phir_json_to_module(&input.to_string()).unwrap();
     let mut classical = PhirProcessor::new();
+    classical.extract_variable_definitions(&module).unwrap();
     let mut outcomes = outcomes.iter();
     let mut register_value = None;
+    let mut builder = pecos_engines::ByteMessage::quantum_operations_builder();
     for instruction in &module.body.blocks[0].operations {
         match &instruction.operation {
             Operation::Quantum(QuantumOp::Measure) => {
@@ -57,6 +59,11 @@ fn assert_measurement_value(size: usize, bits: &[usize], outcomes: &[u32], expec
             Operation::Classical(op) => {
                 classical
                     .process_classical_operation(op, instruction)
+                    .unwrap();
+            }
+            Operation::Builtin(_) => {
+                classical
+                    .process_instruction(instruction, &mut builder)
                     .unwrap();
             }
             _ => {}

@@ -1,4 +1,5 @@
 use super::*;
+use pecos_core::PauliString;
 use pecos_quantum::Gate;
 
 fn emission() -> [Option<MeasId>; 2] {
@@ -23,7 +24,6 @@ fn detector(ids: &[usize]) -> AnnotationDefinition {
         kind: DefinitionKind::Detector { coords: vec![] },
         measurement_ids: ids.iter().copied().map(MeasId::from_raw).collect(),
         label: None,
-        pauli: None,
     }
 }
 
@@ -252,7 +252,6 @@ fn empty_metadata() {
         // id17 is at position 0; id9 at position 1, regardless of empty attributes.
         assert_eq!(result.detectors[0].measurements, vec![0]);
         assert_eq!(result.observables[0].measurements, vec![1]);
-        assert_eq!(result.observables[0].pauli, None);
     }
 }
 
@@ -287,7 +286,6 @@ fn interleaved_annotations() {
         vec![(0, vec![1]), (1, vec![0])]
     );
     assert_eq!(result.detectors[0].coords, None);
-    assert_eq!(result.observables[0].pauli, Some(PauliString::zs(&[1])));
     assert_eq!(
         definitions_from_dag_circuit(&DagCircuit::try_from(&circuit).unwrap()).unwrap(),
         result
@@ -307,6 +305,7 @@ fn merged_fields() {
     assert_eq!(
         result.detectors[0],
         ResolvedDetector {
+            fault_sector: None,
             id: 0,
             coords: Some(vec![1.0, 2.0, 3.0]),
             label: Some("check".into()),
@@ -318,9 +317,7 @@ fn merged_fields() {
     assert_eq!(result.detectors[0].coords, Some(vec![4.0, 5.0]));
     assert_eq!(result.detectors[0].label.as_deref(), Some("check"));
     annotation.kind = DefinitionKind::Observable;
-    annotation.pauli = Some(PauliString::zs(&[0]));
     let result = resolve_definitions(None, Some(json), &[annotation], &emission()).unwrap();
-    assert_eq!(result.observables[0].pauli, Some(PauliString::zs(&[0])));
     assert_eq!(result.observables[0].label.as_deref(), Some("check"));
     assert_eq!(result.observables[0].measurements, vec![0, 1, 1]);
 }
@@ -384,14 +381,12 @@ fn metadata_only_observables() {
                 reference: None,
                 id: 3,
                 label: None,
-                pauli: None,
                 measurements: vec![0]
             },
             ResolvedObservable {
                 reference: None,
                 id: 9,
                 label: Some("last".into()),
-                pauli: None,
                 measurements: vec![1]
             }
         ]

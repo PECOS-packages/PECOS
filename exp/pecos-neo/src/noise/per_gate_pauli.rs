@@ -35,6 +35,7 @@
 
 use super::{NoiseChannel, NoiseContext, NoiseEvent, NoiseResponse, TWO_QUBIT_PAULIS};
 use crate::command::{GateCommand, GateType};
+use crate::noise::validation::ValidationResult;
 use pecos_core::QubitId;
 use pecos_random::PecosRng;
 use rand::RngExt;
@@ -58,12 +59,8 @@ pub struct PerGatePauliChannel {
     base_p2: f64,
 }
 
-fn assert_probability_vector(rates: &[f64], what: &str) {
-    let total: f64 = rates.iter().sum();
-    assert!(
-        rates.iter().all(|&r| r >= 0.0) && total <= 1.0 + 1e-9,
-        "{what} must be non-negative probabilities summing to at most 1.0, got total {total}"
-    );
+fn validate_probability_vector(rates: &[f64], what: &str) -> ValidationResult<()> {
+    super::validation::validate_probability_sum_at_most_one(rates, what)
 }
 
 impl PerGatePauliChannel {
@@ -77,13 +74,15 @@ impl PerGatePauliChannel {
     ///
     /// `p1`/`p2` are total error probabilities, split uniformly over the
     /// 3 (15) Paulis, matching pecos-qec's `NoiseConfig` fallback.
-    #[must_use]
-    pub fn with_base(mut self, p1: f64, p2: f64) -> Self {
-        assert_probability_vector(&[p1], "base p1");
-        assert_probability_vector(&[p2], "base p2");
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_base(mut self, p1: f64, p2: f64) -> ValidationResult<Self> {
+        validate_probability_vector(&[p1], "base p1")?;
+        validate_probability_vector(&[p2], "base p2")?;
         self.base_p1 = p1;
         self.base_p2 = p2;
-        self
+        Ok(self)
     }
 
     /// Set the default measurement and preparation error rates.
@@ -92,79 +91,93 @@ impl PerGatePauliChannel {
     /// propagates into the post-measurement state, matching the DEM's
     /// measurement-fault convention), and the preparation error is a
     /// physical X after prep.
-    #[must_use]
-    pub fn with_meas_init(mut self, p_meas: f64, p_init: f64) -> Self {
-        assert_probability_vector(&[p_meas], "p_meas");
-        assert_probability_vector(&[p_init], "p_init");
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_meas_init(mut self, p_meas: f64, p_init: f64) -> ValidationResult<Self> {
+        validate_probability_vector(&[p_meas], "p_meas")?;
+        validate_probability_vector(&[p_init], "p_init")?;
         self.p_meas = p_meas;
         self.p_init = p_init;
-        self
+        Ok(self)
     }
 
     /// Attach `[P(X), P(Y), P(Z)]` rates for a 1q gate type on any qubit.
-    #[must_use]
-    pub fn with_1q_rates(mut self, gate: GateType, rates: [f64; 3]) -> Self {
-        assert_probability_vector(&rates, "1q rates");
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_1q_rates(mut self, gate: GateType, rates: [f64; 3]) -> ValidationResult<Self> {
+        validate_probability_vector(&rates, "1q rates")?;
         self.rates_1q.insert(gate, rates);
-        self
+        Ok(self)
     }
 
     /// Attach rates for a 2q gate type on any qubit pair, ordered by
     /// [`TWO_QUBIT_PAULIS`].
-    #[must_use]
-    pub fn with_2q_rates(mut self, gate: GateType, rates: [f64; 15]) -> Self {
-        assert_probability_vector(&rates, "2q rates");
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_2q_rates(mut self, gate: GateType, rates: [f64; 15]) -> ValidationResult<Self> {
+        validate_probability_vector(&rates, "2q rates")?;
         self.rates_2q.insert(gate, rates);
-        self
+        Ok(self)
     }
 
     /// Attach `[P(X), P(Y), P(Z)]` rates for a 1q gate type on one qubit.
     /// Takes precedence over [`Self::with_1q_rates`] for that pair.
-    #[must_use]
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
     pub fn with_1q_rates_for_qubit(
         mut self,
         gate: GateType,
         qubit: QubitId,
         rates: [f64; 3],
-    ) -> Self {
-        assert_probability_vector(&rates, "1q per-qubit rates");
+    ) -> ValidationResult<Self> {
+        validate_probability_vector(&rates, "1q per-qubit rates")?;
         self.rates_1q_per_qubit.insert((gate, qubit), rates);
-        self
+        Ok(self)
     }
 
     /// Attach rates for a 2q gate type on one ordered qubit pair, ordered
     /// by [`TWO_QUBIT_PAULIS`]. Takes precedence over
     /// [`Self::with_2q_rates`] for that combination.
-    #[must_use]
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
     pub fn with_2q_rates_for_qubits(
         mut self,
         gate: GateType,
         first: QubitId,
         second: QubitId,
         rates: [f64; 15],
-    ) -> Self {
-        assert_probability_vector(&rates, "2q per-qubit rates");
+    ) -> ValidationResult<Self> {
+        validate_probability_vector(&rates, "2q per-qubit rates")?;
         self.rates_2q_per_qubits
             .insert((gate, first, second), rates);
-        self
+        Ok(self)
     }
 
     /// Set a per-qubit measurement X-flip probability (overrides the
     /// default from [`Self::with_meas_init`] for that qubit).
-    #[must_use]
-    pub fn with_meas_rate_for_qubit(mut self, qubit: QubitId, p: f64) -> Self {
-        assert_probability_vector(&[p], "per-qubit meas rate");
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_meas_rate_for_qubit(mut self, qubit: QubitId, p: f64) -> ValidationResult<Self> {
+        validate_probability_vector(&[p], "per-qubit meas rate")?;
         self.measurement_rates.insert(qubit, p);
-        self
+        Ok(self)
     }
 
     /// Set a per-qubit preparation X-error probability (overrides the
     /// default from [`Self::with_meas_init`] for that qubit).
-    #[must_use]
-    pub fn with_init_rate_for_qubit(mut self, qubit: QubitId, p: f64) -> Self {
-        assert_probability_vector(&[p], "per-qubit init rate");
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_init_rate_for_qubit(mut self, qubit: QubitId, p: f64) -> ValidationResult<Self> {
+        validate_probability_vector(&[p], "per-qubit init rate")?;
         self.init_rates.insert(qubit, p);
-        self
+        Ok(self)
     }
 
     /// Resolve the 1q rates for a gate on a qubit via the layered lookup.
@@ -409,7 +422,7 @@ mod tests {
 
     #[test]
     fn test_batched_two_qubit_faults() {
-        let channel = PerGatePauliChannel::new().with_base(0.0, 0.5);
+        let channel = PerGatePauliChannel::new().with_base(0.0, 0.5).unwrap();
         let qubits = [QubitId(0), QubitId(1), QubitId(2), QubitId(3)];
         let trailing = [QubitId(4), QubitId(5)];
         for seed in 0..32 {
@@ -481,7 +494,9 @@ mod tests {
     #[test]
     fn per_gate_rates_apply_to_that_gate_only() {
         // X-only error on H; the X gate stays noiseless.
-        let channel = PerGatePauliChannel::new().with_1q_rates(GateType::H, [0.2, 0.0, 0.0]);
+        let channel = PerGatePauliChannel::new()
+            .with_1q_rates(GateType::H, [0.2, 0.0, 0.0])
+            .unwrap();
         let model = ComposableNoiseModel::new().add_channel(channel);
 
         // H twice returns to |0>; an injected X after either H flips the
@@ -505,7 +520,9 @@ mod tests {
         );
 
         // The X gate has no entry and base is zero: noiseless.
-        let channel = PerGatePauliChannel::new().with_1q_rates(GateType::H, [0.2, 0.0, 0.0]);
+        let channel = PerGatePauliChannel::new()
+            .with_1q_rates(GateType::H, [0.2, 0.0, 0.0])
+            .unwrap();
         let model = ComposableNoiseModel::new().add_channel(channel);
         let commands = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
         let rate = flip_rate(model, &commands, 0);
@@ -520,7 +537,9 @@ mod tests {
         // Gate-level: 30% X error on X gates; qubit 0 override: 0%.
         let channel = PerGatePauliChannel::new()
             .with_1q_rates(GateType::X, [0.3, 0.0, 0.0])
-            .with_1q_rates_for_qubit(GateType::X, QubitId(0), [0.0; 3]);
+            .unwrap()
+            .with_1q_rates_for_qubit(GateType::X, QubitId(0), [0.0; 3])
+            .unwrap();
         let model = ComposableNoiseModel::new().add_channel(channel);
 
         let commands = CommandBuilder::new()
@@ -553,7 +572,9 @@ mod tests {
         // happened BEFORE the gate; injection is after, so it stays local).
         let mut rates = [0.0; 15];
         rates[0] = 0.25; // (X, I) in TWO_QUBIT_PAULIS order
-        let channel = PerGatePauliChannel::new().with_2q_rates(GateType::CX, rates);
+        let channel = PerGatePauliChannel::new()
+            .with_2q_rates(GateType::CX, rates)
+            .unwrap();
         let model = ComposableNoiseModel::new().add_channel(channel);
 
         let commands = CommandBuilder::new()
@@ -580,7 +601,9 @@ mod tests {
     fn measurement_and_init_rates_with_per_qubit_overrides() {
         let channel = PerGatePauliChannel::new()
             .with_meas_init(0.1, 0.0)
-            .with_meas_rate_for_qubit(QubitId(1), 0.4);
+            .unwrap()
+            .with_meas_rate_for_qubit(QubitId(1), 0.4)
+            .unwrap();
         let model = ComposableNoiseModel::new().add_channel(channel);
 
         let commands = CommandBuilder::new()
@@ -609,7 +632,7 @@ mod tests {
         // sees the second outcome flipped at 2p(1-p), not p. A record-only
         // flip (the bug this guards) would give p.
         let p = 0.25;
-        let channel = PerGatePauliChannel::new().with_meas_init(p, 0.0);
+        let channel = PerGatePauliChannel::new().with_meas_init(p, 0.0).unwrap();
         let model = ComposableNoiseModel::new().add_channel(channel);
 
         let commands = CommandBuilder::new().pz(&[0]).mz(&[0]).mz(&[0]).build();
@@ -639,7 +662,7 @@ mod tests {
     fn base_rates_back_fill_unlisted_gates() {
         // base p1 = 0.3 -> uniform X/Y/Z at 0.1 each; X and Y flip the
         // Z-basis outcome after an X gate, so P(outcome = 1) = 0.8.
-        let channel = PerGatePauliChannel::new().with_base(0.3, 0.0);
+        let channel = PerGatePauliChannel::new().with_base(0.3, 0.0).unwrap();
         let model = ComposableNoiseModel::new().add_channel(channel);
         let commands = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
         let rate = flip_rate(model, &commands, 0);
@@ -650,8 +673,10 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "must be non-negative probabilities")]
     fn rejects_rates_summing_above_one() {
-        let _ = PerGatePauliChannel::new().with_1q_rates(GateType::H, [0.5, 0.4, 0.3]);
+        let error = PerGatePauliChannel::new()
+            .with_1q_rates(GateType::H, [0.5, 0.4, 0.3])
+            .unwrap_err();
+        assert!(error.to_string().contains("1q rates total"));
     }
 }

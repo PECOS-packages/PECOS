@@ -162,10 +162,23 @@ helper in `tests/common/phir_test_utils.rs`, which adds noise-model and worker o
 
 ### Quantum Operations
 
-- Single-qubit gates: `H`, `X`, `Y`, `Z`
-- Rotations: `RZ`, `R1XY`
-- Two-qubit gates: `CX` (CNOT), `SZZ` (ZZ interaction)
-- Measurement: `Measure`
+The native engine and JSON-to-module converter support every quantum operation
+and alias in [PHIR v0.1 Table II](specification/v0.1/spec.md#table-ii---quantum-operations):
+
+- Single-qubit gates: `I`, `X`, `Y`, `Z`, `H`, `SX`, `SXdg`, `SY`, `SYdg`,
+  `SZ` (`S`), `SZdg` (`Sdg`), `F`, `Fdg`, `T`, `Tdg`
+- Single-qubit rotations: `RX`, `RY`, `RZ`, `R1XY` (`U1q`)
+- Two-qubit gates: `CX` (`CNOT`), `CY`, `CZ`, `SXX`, `SXXdg`, `SYY`, `SYYdg`,
+  `SZZ` (`ZZ`, `ZZMax`), `SZZdg`, `SWAP`
+- Two-qubit rotations: `RXX`, `RYY`, `RZZ` (`ZZPhase`), `R2XXYYZZ` (`RXXYYZZ`)
+- Preparation and measurement: `Init`, `Measure`
+
+Each operation broadcasts in argument order over its qubits or pairs. Qubit IDs
+must be unique within an operation, and its angle count must match Table II.
+Angles use `rad`, `pi`, or `deg`; every broadcast target receives the same angles.
+Compatibility spellings `Prep`, `RXY1Q`, `RXXRYYRZZ` and the extensions `U` and
+`RXYXY2Q` are also available. Gates use the existing exact byte-message representation;
+backend support still determines which simulators can execute a given gate.
 
 ### Classical Operations
 
@@ -223,6 +236,86 @@ The conversion paths are:
 2. **Debug/Export**: PHIR Module → PHIR-RON (Rusty Object Notation for inspection)
 
 ### Converting PHIR-JSON to PHIR Module
+
+Broadcast quantum operations become one instruction per qubit or qubit pair,
+including preparations and measurements. Each instruction receives the same
+rotation angles; measurement destinations retain their argument order.
+The converter uses the native angle decoder (`rad`, `pi`, and `deg`).
+Two-qubit argument groups must contain exactly two qubits in the native engine,
+Rust and Python classical interpreters and converter. They share validation of
+group shapes, qubit uniqueness and gate signatures. RXYXY2Q requires paired
+arguments; its gate validation runs during execution/conversion, after structural
+AST decoding.
+
+JSON-to-module conversion supports register declarations, quantum operations
+and Result exports with whole-register names or indexed `[name, bit]` references.
+Result args and returns must have matching nonzero lengths. Each pair becomes a
+named Result instruction; copies retain their source-order values even when
+subsequent measurements overwrite a register. Indexed sources extract one bit;
+indexed destinations replace one bit
+without losing the others. Result cannot overwrite quantum registers or read
+unknown sources. Measurement destinations must be declared classical registers,
+and their bit indices must be below the declared size (excluding the sign bit).
+JSON-to-module conversion, which supports only straight-line programs, checks each
+measurement destination when it compiles. Native execution and both interpreters
+check destinations when the measurement runs.
+All classical storage types (`i8`–`i64`, `u8`–`u64`, and `bool`) support
+measurements. Declaration sizes use one shared Rust decoder: only an absent
+field means omitted. JSON null, negative, string, fractional and boolean size
+values are rejected with a named input error. Classical sizes are inferred when
+omitted; quantum declarations still require a positive size. Bool has one-bit
+backing storage: use size 1 or omit size; declarations with size greater than 1
+are rejected on every path. Assignment and
+ffcall destinations also require declared classical registers, with indexed
+writes below the declared size. Whole signed Result copies sign-extend to i64
+before destination-width masking, independently of the source backing type,
+matching `=`. Malformed Result entries report the offending JSON value; Python
+uses TypeError for wrong types and ValueError for invalid integer indices.
+Rust classifies these as `PecosError::Input`. The Python interpreter validates
+Result reference syntax and declarations at load. It checks Result counts when
+that Result executes, like native and the Rust interpreter, and caches successful
+reference decoding until the next init or full reset. Result arguments and returns
+are treated as immutable after first execution. Successful decoding holds each
+executed Result operation until the next init or full reset. Later shots do not
+repeat JSON/FFI validation. Measurement destinations are checked against declarations when results
+arrive. Shot resets do not repeat declaration checks. PyPHIR's classical-input
+validation does not serialize unrelated metadata in parsed Python programs.
+In the Python readers (PyPHIR and the Python interpreter), declaration fields
+that are not finite JSON scalars use a bounded non-string stand-in for named
+Rust diagnostics; int, str and float subclasses are normalized and accepted. Invalid declaration-name and size
+values are rendered with at most 80 characters, including an ellipsis.
+Exports use U32 through 32 bits and U64 for wider registers.
+Without Result mappings, all declared classical registers are exported.
+CPhase is not a PHIR v0.1 gate and must be lowered before emitting PHIR JSON.
+
+Known limitation ([#1323](https://github.com/PECOS-packages/PECOS/issues/1323)):
+`cvar_export` remains unsupported. The native engine currently ignores it and
+exports all classical registers unless Result mappings select them. Lowering it
+to module Result instructions would select different registers.
+
+The converter rejects blocks such as `qparallel` and `if`, machine/meta operations,
+unsupported data/classical operations and unrecognized operations with a named
+error. Use the native PHIR-JSON engine for supported PHIR programs containing
+these constructs. Although the module IR has structural parallel and conditional
+forms, its current execution path does not execute
+those regions; the converter does not emit programs that would lose their work.
+PHIR comments carry no execution semantics and are ignored.
+
+The legacy Python `pecos_rslib.PhirJsonEngine` (also exported through
+`pecos.engines`) delegates command generation, register updates, exports, and
+execution state to this native engine. It no longer invokes a Python interpreter
+fallback or changes outcomes when pytest is installed. `process_program()` returns
+the next batch as command dictionaries. Supply every measurement outcome in order
+using `handle_measurement(0)` or `handle_measurement(1)` before requesting the next
+batch. `get_results()` and `results_dict` expose native results as u32 dictionaries;
+values outside that representation raise `ValueError` instead of being truncated.
+Use the simulation results API for wider values. The compatibility constructor
+`create_with_validation_disabled()` bypasses no native validation; neither
+constructor uses the Python schema validator.
+
+PyPHIR also interprets `rad` unchanged, `pi` as multiples of pi, and `deg` as
+multiples of pi/180. Unknown unit strings raise `ValueError`; nonstring units raise
+`TypeError`.
 
 ```rust
 use pecos_engines::PecosError;

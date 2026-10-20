@@ -9,7 +9,7 @@ use pecos_phir::Result;
 use pecos_phir::builtin_ops::{BuiltinOp, FuncOp, VarDefineOp};
 use pecos_phir::ops::{ClassicalOp, Operation, QuantumOp, SSAValue};
 use pecos_phir::phir::{AttributeValue, Block, Instruction, Module};
-use pecos_phir::types::{FunctionType, Type};
+use pecos_phir::types::{FunctionType, IntWidth, Type};
 
 use crate::ast::Operation as QasmOp;
 use crate::parser::{Program, QASMParser};
@@ -104,10 +104,21 @@ impl Converter {
             ));
         }
 
-        // 3) Assign SSA values to each qubit (VarDefine handles allocation)
+        // 3) Reserve and define SSA values for each physical qubit index
         let mut qubit_ssa: Vec<SSAValue> = Vec::with_capacity(program.total_qubits);
         for _ in 0..program.total_qubits {
             qubit_ssa.push(self.new_ssa());
+        }
+
+        for (index, &reserved_id) in qubit_ssa.iter().enumerate() {
+            let index = i64::try_from(index)
+                .map_err(|_| pecos_phir::PhirError::internal("Qubit index exceeds I64"))?;
+            block.add_instruction(Instruction::new(
+                Operation::Classical(ClassicalOp::ConstInt(index)),
+                vec![],
+                vec![reserved_id],
+                vec![Type::Int(IntWidth::I64)],
+            ));
         }
 
         // 4) Convert operations (measurements are deferred)
@@ -273,19 +284,19 @@ impl Converter {
                 Operation::Classical(ClassicalOp::ConstInt(0)),
                 vec![],
                 vec![zero_ssa],
-                vec![Type::Int(pecos_phir::types::IntWidth::I64)],
+                vec![Type::UInt(pecos_phir::types::IntWidth::I32)],
             ));
 
             let mut accum = zero_ssa;
 
             for (meas_ssa, bit_idx) in &bits {
-                // Bitcast measurement bit to i64
+                // Bitcast measurement bit to u32
                 let cast_ssa = self.new_ssa();
                 block.add_instruction(Instruction::new(
                     Operation::Classical(ClassicalOp::Bitcast),
                     vec![*meas_ssa],
                     vec![cast_ssa],
-                    vec![Type::Int(pecos_phir::types::IntWidth::I64)],
+                    vec![Type::UInt(pecos_phir::types::IntWidth::I32)],
                 ));
 
                 // Shift left by bit_idx
@@ -434,7 +445,8 @@ fn angle_param(params: &[f64], index: usize, gate_type: GateType) -> Result<Angl
             params.len()
         )));
     }
-    Ok(Angle64::from_radians(params[index]))
+    Angle64::try_from_radians(params[index])
+        .map_err(|error| pecos_phir::PhirError::internal(error.to_string()))
 }
 
 #[cfg(test)]
@@ -563,15 +575,15 @@ mod tests {
         assert_eq!(
             quantum_ops,
             [
-                QuantumOp::RX(Angle64::from_radians(0.1)),
-                QuantumOp::RY(Angle64::from_radians(0.2)),
-                QuantumOp::RZ(Angle64::from_radians(0.3)),
-                QuantumOp::RZZ(Angle64::from_radians(0.4)),
-                QuantumOp::RXY1Q(Angle64::from_radians(0.5), Angle64::from_radians(0.6)),
+                QuantumOp::RX(pecos_core::radians!(0.1)),
+                QuantumOp::RY(pecos_core::radians!(0.2)),
+                QuantumOp::RZ(pecos_core::radians!(0.3)),
+                QuantumOp::RZZ(pecos_core::radians!(0.4)),
+                QuantumOp::RXY1Q(pecos_core::radians!(0.5), pecos_core::radians!(0.6)),
                 QuantumOp::U3(
-                    Angle64::from_radians(0.7),
-                    Angle64::from_radians(0.8),
-                    Angle64::from_radians(0.9)
+                    pecos_core::radians!(0.7),
+                    pecos_core::radians!(0.8),
+                    pecos_core::radians!(0.9)
                 ),
             ]
         );

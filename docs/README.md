@@ -56,7 +56,7 @@ Simulate a distance-3 repetition code with syndrome extraction using [Guppy](htt
     d = results.to_dict()
     syndrome = [[d["s0"][i], d["s1"][i]] for i in range(10)]
     print(syndrome)
-    # [[0, 0], [1, 0], [0, 0], [0, 0], [0, 0], [0, 1], [0, 1], [0, 0], [0, 0], [0, 0]]
+    # [[1, 0], [1, 0], [0, 0], [0, 0], [0, 1], [0, 1], [0, 1], [0, 0], [1, 0], [1, 0]]
     ```
 
     Non-trivial syndromes like `[1, 0]`, `[0, 1]`, `[1, 1]` indicate detected errors that a decoder would use to identify and correct faults.

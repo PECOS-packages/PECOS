@@ -33,6 +33,7 @@ use crate::fault_tolerance::propagator::{
 };
 use pecos_core::BitSet;
 use pecos_core::gate_type::GateType;
+use pecos_quantum::parse_fault_sector;
 use pecos_simulators::{
     PauliProp, SymbolicMeasurementResult, SymbolicSparseStab,
     symbolic_sparse_stab::MeasurementHistory,
@@ -59,6 +60,8 @@ pub struct ParsedDetector {
     pub meas_ids: Vec<usize>,
     /// Human-readable name from the metadata JSON's `label` field.
     pub label: Option<String>,
+    /// Optional detector fault sector.
+    pub fault_sector: Option<String>,
 }
 
 /// Parsed observable from JSON metadata.
@@ -582,6 +585,7 @@ impl<'a> DemBuilder<'a> {
                     }
                 };
                 Ok(ParsedDetector {
+                    fault_sector: detector.fault_sector,
                     id: detector.id,
                     coords,
                     label: detector.label,
@@ -880,6 +884,7 @@ impl<'a> DemBuilder<'a> {
         // Add detector definitions
         for det in &self.detectors {
             let mut def = DetectorDef::new(det.id);
+            def.fault_sector.clone_from(&det.fault_sector);
             if let Some(coords) = det.coords {
                 def = def.with_coords(coords);
             }
@@ -2497,32 +2502,11 @@ fn two_qubit_label_to_pauli_indices(label: &str) -> Option<(u8, u8)> {
 }
 
 fn two_qubit_label_for_replay(pauli: &pecos_core::PauliString) -> Result<String, DemBuilderError> {
-    let mut label = String::with_capacity(2);
-    for qubit in [0, 1] {
-        label.push(pauli_index_to_label(match pauli.get(qubit) {
-            pecos_core::Pauli::I => 0,
-            pecos_core::Pauli::X => 1,
-            pecos_core::Pauli::Y => 2,
-            pecos_core::Pauli::Z => 3,
-        }));
-    }
-    if pauli.qubits().into_iter().any(|qubit| qubit > 1) {
-        return Err(DemBuilderError::ConfigurationError(format!(
-            "exact_branch_replay replacement Pauli {} is not supported by the two-qubit replay path",
+    super::types::two_qubit_pauli_label(pauli, [pecos_core::QubitId(0), pecos_core::QubitId(1)])
+        .map_err(|_| DemBuilderError::ConfigurationError(format!(
+            "exact_branch_replay replacement Pauli {} is not supported by the two-qubit replay path; use a Pauli supported on the gate operands",
             pauli.to_sparse_str()
-        )));
-    }
-    Ok(label)
-}
-
-fn pauli_index_to_label(index: u8) -> char {
-    match index {
-        0 => 'I',
-        1 => 'X',
-        2 => 'Y',
-        3 => 'Z',
-        _ => unreachable!("Pauli index must be 0-3"),
-    }
+        )))
 }
 
 fn pauli_label_to_index(label: char) -> Option<u8> {
@@ -2615,6 +2599,8 @@ fn parse_single_detector(value: &serde_json::Value) -> Result<ParsedDetector, De
     let label = extract_definition_label(object, "detector")?;
 
     Ok(ParsedDetector {
+        fault_sector: parse_fault_sector(object.get("fault_sector"), id)
+            .map_err(DemBuilderError::ParseError)?,
         id,
         coords,
         records,
@@ -3411,19 +3397,18 @@ fn circuit_with_omitted_two_qubit_gate(
 /// Resolve `result_tags` on detector/observable JSON into record offsets.
 ///
 /// `tag_to_ords` is the **sound** Guppy `result(tag, ...)` -> measurement
-/// ordinal binding recovered structurally by Python from the compiled HUGR.
+/// ordinal binding recovered structurally by Python from the executed lowered QIS program.
 /// Each referenced tag's ordinals are mapped through `source_meas_ids` to stable runtime measurement
 /// identities. `result_tags` is an alternative to `records`/`meas_ids` (not
 /// additive): any co-present form must resolve to the same measurements.
 ///
 /// Fail-loud (returns `Err`), never silently misbinds:
-/// - **Loop guard**: if `static_meas_count != source_meas_ids.len()` the program
-///   has un-unrolled runtime loops (the HUGR has one static measure op per
-///   loop body), so per-occurrence tag binding is not statically available.
+/// - **Count guard**: if `static_meas_count != source_meas_ids.len()` the trace
+///   disagrees with the certified lowered program, so per-occurrence tag binding is unavailable.
 /// - An unknown tag, malformed `result_tags`, or invalid JSON is an error.
 ///
 /// # Errors
-/// Returns [`DemBuilderError::ParseError`] on the loop guard, an unknown tag,
+/// Returns [`DemBuilderError::ParseError`] on the count guard, an unknown tag,
 /// malformed `result_tags`, or invalid JSON.
 pub fn resolve_result_tags(
     detectors_json: &str,
@@ -3435,11 +3420,9 @@ pub fn resolve_result_tags(
 ) -> Result<(String, String), DemBuilderError> {
     if static_meas_count != source_meas_ids.len() {
         return Err(DemBuilderError::ParseError(format!(
-            "result_tags (tag-referenced detectors) is not supported for Guppy \
-             programs with runtime loops: the HUGR has {static_meas_count} \
-             static measurement op(s) but the traced program emits \
-             {} measurement(s). Per-occurrence tag binding is \
-             not statically available; use positional records.",
+            "Cannot bind result_tags: the certified lowered program has \
+             {static_meas_count} measurement(s) but the traced program emitted \
+             {} measurement(s).",
             source_meas_ids.len()
         )));
     }
@@ -4036,7 +4019,7 @@ mod tests {
             pecos_quantum::Attribute::String(circuit.num_measurements().to_string()),
         );
         circuit
-            .add_detector_metadata(&[-2], None, Some("D0"), Some(0))
+            .add_detector_metadata(&[-2], None, Some("D0"), Some(0), None)
             .unwrap();
         circuit
             .add_observable_metadata(&[-1], Some(0), Some("L0"), None)
@@ -4421,6 +4404,98 @@ mod tests {
     }
 
     #[test]
+    fn fault_sector_parser_and_sampler_validation() {
+        use super::super::{dem_sampler::SamplingEngineBuilder, sampler::DemSamplerBuilder};
+        let map = DagFaultInfluenceMap::with_capacity(0);
+        for (field, expected) in [
+            ("", None),
+            (r#", "fault_sector": null"#, None),
+            (r#", "fault_sector": "X""#, Some("X".to_string())),
+            (r#", "fault_sector": "Z""#, Some("Z".to_string())),
+            (r#", "fault_sector": "XX""#, Some("XX".to_string())),
+            (r#", "fault_sector": "x""#, Some("x".to_string())),
+            (
+                r#", "fault_sector": "sector-3""#,
+                Some("sector-3".to_string()),
+            ),
+        ] {
+            let json = format!(r#"[{{"id":0,"records":[-1]{field}}}]"#);
+            assert_eq!(
+                parse_detectors_json(&json).unwrap()[0].fault_sector,
+                expected
+            );
+            assert!(
+                DemSamplerBuilder::new(&map)
+                    .with_detectors_json(&json)
+                    .is_ok()
+            );
+            assert!(
+                SamplingEngineBuilder::new(&map)
+                    .with_detectors_json(&json)
+                    .is_ok()
+            );
+            assert!(parse_detector_record_vectors(&json, &map).is_ok());
+        }
+        for value in [r#""""#, "1", "[]", "{}", "true"] {
+            let json = format!(r#"[{{"id":37,"records":[-1],"fault_sector":{value}}}]"#);
+            let errors = [
+                parse_detectors_json(&json).unwrap_err().to_string(),
+                validate_sampler_json(&json, &map, true)
+                    .unwrap_err()
+                    .to_string(),
+                parse_detector_record_vectors(&json, &map)
+                    .unwrap_err()
+                    .to_string(),
+            ];
+            for error in errors {
+                assert!(error.contains("detector 37 fault_sector"), "{error}");
+            }
+            assert!(parse_observables_json(&json).is_ok());
+        }
+    }
+
+    #[test]
+    fn fault_sector_survives_guppy_result_tag_resolution() {
+        let tags = std::collections::BTreeMap::from([("syndrome".into(), vec![Some(0)])]);
+        let (detectors, _) = resolve_result_tags(
+            r#"[{"id":0,"result_tags":["syndrome"],"fault_sector":"Z"}]"#,
+            "[]",
+            &tags,
+            1,
+            &[17],
+            &[17],
+        )
+        .unwrap();
+        let detector = &parse_detectors_json(&detectors).unwrap()[0];
+        assert_eq!(detector.fault_sector, Some("Z".to_string()));
+        assert_eq!(detector.meas_ids, vec![17]);
+    }
+
+    #[test]
+    fn resolve_result_tags_rejects_measurement_count_mismatch() {
+        let tags = std::collections::BTreeMap::from([("syndrome".into(), vec![Some(0)])]);
+        for static_count in [0, 2] {
+            let error = resolve_result_tags(
+                r#"[{"id":0,"result_tags":["syndrome"]}]"#,
+                "[]",
+                &tags,
+                static_count,
+                &[17],
+                &[17],
+            )
+            .unwrap_err();
+            let expected = format!(
+                "Cannot bind result_tags: the certified lowered program has \
+                 {static_count} measurement(s) but the traced program emitted 1 measurement(s)."
+            );
+            assert!(
+                matches!(error, DemBuilderError::ParseError(ref message) if *message == expected),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
     fn test_parse_detectors_json() {
         let json = r#"[
             {"id": 0, "coords": [0.0, 0.0, 0.0], "records": [-1, -5]},
@@ -4754,7 +4829,7 @@ mod tests {
     #[test]
     fn crosstalk_unsupported_rotation_diagnostic_preserves_angles() {
         let mut sim = SymbolicSparseStab::new(1);
-        let gate = pecos_core::Gate::rz(pecos_core::Angle64::from_turns(0.125), &[0]);
+        let gate = pecos_core::Gate::rz(pecos_core::Angle64::from_turn_ratio(1, 8), &[0]);
         let error = DemBuilder::apply_symbolic_gate_for_crosstalk_hidden_mz(&mut sim, 0, &gate)
             .unwrap_err();
         assert!(error.to_string().contains("RZ(0.125000 turns)"));

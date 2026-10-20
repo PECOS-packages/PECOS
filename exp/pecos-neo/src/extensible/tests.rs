@@ -691,7 +691,7 @@ fn test_canonicalize_arbitrary_angle_returns_none() {
     let canon = GateCanonicalizer::standard();
 
     // RZ(0.123 turns) has no canonical form
-    let arbitrary = Angle64::from_turns(0.123);
+    let arbitrary = pecos_core::turns!(0.123);
     let result = canon.canonicalize(gates::RZ, &[arbitrary]);
     assert_eq!(result, None);
 }
@@ -739,20 +739,20 @@ fn test_canonicalize_non_parameterized_gate_returns_none() {
 #[test]
 fn test_angle64_quarter_turn_exact() {
     // Verify that 0.25 turns converts exactly to QUARTER_TURN
-    let from_turns = Angle64::from_turns(0.25);
+    let from_turns = Angle64::QUARTER_TURN;
     assert_eq!(from_turns, Angle64::QUARTER_TURN);
 }
 
 #[test]
 fn test_angle64_half_turn_exact() {
-    let from_turns = Angle64::from_turns(0.5);
+    let from_turns = Angle64::HALF_TURN;
     assert_eq!(from_turns, Angle64::HALF_TURN);
 }
 
 #[test]
 fn test_angle64_eighth_turn_exact() {
     // T gate angle: π/4 = 1/8 turn
-    let from_turns = Angle64::from_turns(0.125);
+    let from_turns = Angle64::from_turn_ratio(1, 8);
     let expected = Angle64::HALF_TURN / 4;
     assert_eq!(from_turns, expected);
 }
@@ -1194,7 +1194,7 @@ fn test_snapper_close_angle() {
     let snapper = AngleSnapper::standard(1e-6);
 
     // Slightly off from pi/2 (0.25 turns)
-    let close = Angle64::from_turns(0.25 + 1e-9);
+    let close = pecos_core::turns!(0.25 + 1e-9);
     let result = snapper.snap(close).unwrap();
 
     assert_eq!(result.snapped, Angle64::QUARTER_TURN);
@@ -1206,7 +1206,7 @@ fn test_snapper_fails_outside_tolerance() {
     let snapper = AngleSnapper::standard(1e-9);
 
     // Way off from any standard angle
-    let far = Angle64::from_turns(0.123_456);
+    let far = pecos_core::turns!(0.123_456);
     let result = snapper.snap(far);
 
     assert!(result.is_err());
@@ -1223,7 +1223,7 @@ fn test_snapper_snap_or_keep() {
     );
 
     // Far angle gets kept
-    let arbitrary = Angle64::from_turns(0.123);
+    let arbitrary = pecos_core::turns!(0.123);
     assert_eq!(snapper.snap_or_keep(arbitrary), arbitrary);
 }
 
@@ -1263,7 +1263,7 @@ fn test_snap_policy_exact() {
     let policy = SnapPolicy::Exact;
 
     // Exact policy returns angle unchanged
-    let arbitrary = Angle64::from_turns(0.123);
+    let arbitrary = pecos_core::turns!(0.123);
     let result = policy.apply(arbitrary, &snapper).unwrap();
     assert_eq!(result, arbitrary);
 }
@@ -1274,11 +1274,11 @@ fn test_snap_policy_snap_or_fail() {
     let policy = SnapPolicy::snap_or_fail(1e-9);
 
     // Close angle succeeds
-    let close = Angle64::from_turns(0.25);
+    let close = Angle64::QUARTER_TURN;
     assert!(policy.apply(close, &snapper).is_ok());
 
     // Far angle fails
-    let far = Angle64::from_turns(0.123);
+    let far = pecos_core::turns!(0.123);
     assert!(policy.apply(far, &snapper).is_err());
 }
 
@@ -1288,12 +1288,12 @@ fn test_snap_policy_snap_or_keep() {
     let policy = SnapPolicy::snap_or_keep(1e-9);
 
     // Close angle gets snapped
-    let close = Angle64::from_turns(0.25);
+    let close = Angle64::QUARTER_TURN;
     let result = policy.apply(close, &snapper).unwrap();
     assert_eq!(result, Angle64::QUARTER_TURN);
 
     // Far angle is kept
-    let far = Angle64::from_turns(0.123);
+    let far = pecos_core::turns!(0.123);
     let result = policy.apply(far, &snapper).unwrap();
     assert_eq!(result, far);
 }
@@ -1344,7 +1344,7 @@ fn test_clifford_validator_rejects_arbitrary_rz() {
     let registry = GateRegistry::new();
 
     let circuit = vec![
-        make_gate(gates::RZ, &[Angle64::from_turns(0.123)]), // Arbitrary angle
+        make_gate(gates::RZ, &[pecos_core::turns!(0.123)]), // Arbitrary angle
     ];
 
     let result = validator.validate(&circuit, &registry);
@@ -1421,7 +1421,7 @@ fn test_exact_angle_validator_rejects_non_canonicalizable() {
     let registry = GateRegistry::new();
 
     let circuit = vec![
-        make_gate(gates::RZ, &[Angle64::from_turns(0.123)]), // Can't canonicalize
+        make_gate(gates::RZ, &[pecos_core::turns!(0.123)]), // Can't canonicalize
     ];
 
     let result = validator.validate(&circuit, &registry);
@@ -1501,7 +1501,7 @@ fn test_validator_is_gate_allowed() {
     assert!(validator.is_gate_allowed(gates::CX, &[], &registry));
     assert!(validator.is_gate_allowed(gates::RZ, &[Angle64::QUARTER_TURN], &registry));
     assert!(!validator.is_gate_allowed(gates::T, &[], &registry));
-    assert!(!validator.is_gate_allowed(gates::RZ, &[Angle64::from_turns(0.1)], &registry));
+    assert!(!validator.is_gate_allowed(gates::RZ, &[pecos_core::turns!(0.1)], &registry));
 }
 
 #[test]
@@ -1590,7 +1590,7 @@ fn test_validation_error_display() {
     let err = ValidationError::NonCanonicalAngle {
         gate_id: gates::RZ,
         gate_name: "RZ".to_string(),
-        angle: Angle64::from_turns(0.123),
+        angle: pecos_core::turns!(0.123),
         position: 3,
     };
     let msg = format!("{err}");
@@ -1759,7 +1759,7 @@ fn rxyxy2q_registry_and_shared_policy() {
     let canon = GateCanonicalizer::standard();
     assert!(canon.can_canonicalize(gates::RXYXY2Q));
     for (theta, phi, named) in [
-        (Angle64::ZERO, Angle64::from_radians(0.123), gates::I),
+        (Angle64::ZERO, pecos_core::radians!(0.123), gates::I),
         (Angle64::QUARTER_TURN, Angle64::ZERO, gates::SXX),
         (Angle64::QUARTER_TURN, Angle64::QUARTER_TURN, gates::SYY),
     ] {
@@ -1777,7 +1777,7 @@ fn rxyxy2q_registry_and_shared_policy() {
         .rxyxy2q(
             &[(0, 1)],
             Angle64::QUARTER_TURN,
-            Angle64::from_radians(0.123),
+            pecos_core::radians!(0.123),
         )
         .build();
     assert!(!is_clifford_circuit(&commands));
@@ -1793,8 +1793,8 @@ fn rxyxy2q_exact_adaptor_matches_dense_execution() {
     use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, DenseStateVec};
     let adaptor = StandardAdaptor::stab_vec();
     assert!(adaptor.can_adapt(gates::RXYXY2Q));
-    let theta = Angle64::from_radians(0.73);
-    let phi = Angle64::from_radians(0.41);
+    let theta = pecos_core::radians!(0.73);
+    let phi = pecos_core::radians!(0.41);
     let qubits = [QubitId(0), QubitId(1), QubitId(3), QubitId(2)];
     let sequence = adaptor.adapt(gates::RXYXY2Q, &qubits, &[theta, phi]);
     let mut runner = crate::CircuitRunner::<DenseStateVec>::rotations();
@@ -1833,7 +1833,7 @@ fn standard_adaptor_batches_match_dense_execution() {
     let adaptor = StandardAdaptor::stab_vec();
     let qubits = [QubitId(0), QubitId(1), QubitId(3), QubitId(2)];
     let pairs = [(qubits[0], qubits[1]), (qubits[2], qubits[3])];
-    let theta = Angle64::from_radians(0.73);
+    let theta = pecos_core::radians!(0.73);
     for gate_id in [
         gates::RX,
         gates::RY,
@@ -1900,7 +1900,7 @@ fn standard_adaptor_rejects_incomplete_batches() {
         gates::SWAP,
     ] {
         let gate_type = gate_id.try_to_gate_type().unwrap();
-        let angles = vec![Angle64::from_radians(0.73); gate_type.angle_arity()];
+        let angles = vec![pecos_core::radians!(0.73); gate_type.angle_arity()];
         for count in [0, 1, 3, 5] {
             let qubits: Vec<_> = (0..count).map(QubitId).collect();
             assert!(

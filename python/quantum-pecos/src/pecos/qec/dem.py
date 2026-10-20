@@ -20,8 +20,8 @@ even when the key also matches another scheduled gate.
 
 This wrapper is intentionally thin: it traces the Guppy program into a
 ``TickCircuit``, compiles Guppy inputs to a HUGR to reject unverified control
-flow and, when requested, recover the sound tag -> measurement binding via
-``pecos.qec._hugr_result_tags.extract_result_tag_measurements``, and hands
+flow, then lowers it once to QIS for both execution and tag -> measurement
+binding via ``pecos.qec._qis_result_tags.extract_result_tag_measurements``, and hands
 the caller's detector/observable JSON to the Rust DEM builder. The metadata
 validation that applies to **every** ingest path (``from_guppy``,
 ``from_circuit``, ``DemSampler.from_circuit``, public ``DemBuilder``) lives
@@ -31,7 +31,7 @@ forms, tracked-Pauli rejection, ``num_measurements`` consistency,
 out-of-range records, ``meas_id`` resolution against the circuit's stable
 stamped ``MeasId``s, and the ``records``-vs-``meas_ids`` redundancy rule.
 
-The ``result_tags`` -> record-offset resolution (loop guard included) is
+The ``result_tags`` -> record-offset resolution (measurement-count guard included) is
 applied **only** through ``from_guppy``: the rewriter
 (``pecos_qec::resolve_result_tags``, invoked via the pyo3
 ``resolve_result_tags_for_guppy`` binding) runs from this wrapper before
@@ -60,7 +60,9 @@ from pecos._traced_circuit import (
     normalize_traced_tick_circuit,
 )
 from pecos.programs import Guppy
+from pecos.qec import _qis_result_tags
 from pecos.qec._idle_noise import _translate_structured_idle_noise
+from pecos.qec._qis_result_tags import _CertificationError
 from pecos.qec.dem_spec import (
     GuppyDemBuild,
     ResultRef,
@@ -451,18 +453,18 @@ class _DetectorErrorModelMixin:
                 - ``result_tags``: Guppy ``result(tag, ...)`` tag strings
                   (e.g. ``[{"id": 0, "result_tags": ["syn_a"]}]``). The
                   reorder-immune ``tag -> measurement`` binding is recovered
-                  from the compiled HUGR by Python static analysis and
+                  from the executed lowered QIS by Python static analysis and
                   resolved to stable runtime ``MeasId`` values in Rust. Supported only for
                   **straight-line, canonical** programs:
                   ``result(tag, measure(q))`` of a raw scalar measurement.
                   Computed (``result(tag, m0 == m1)``), constant
                   (``result(tag, True)``), and array-valued
                   (``result(tag, measure_array(qs))``) forms are not
-                  resolvable and an unknown tag is a hard error. Runtime
-                  ``for _ in range(comptime(n))`` loops (e.g. the surface
-                  code's round structure) have one static measure op per
-                  loop body in the HUGR, not per occurrence -- ``result_tags``
-                  is rejected fail-loud for such programs. ``result_tags``
+                  resolvable and an unknown tag is a hard error. The HUGR
+                  control-flow check rejects branches and runtime loops before
+                  execution. Generator-certified programs bypass that check;
+                  their ``result_tags`` still require lowered-program certification.
+                  ``result_tags``
                   also requires ``guppy`` to be a ``@guppy``-decorated
                   function / ``GuppyFunctionDefinition`` (not an arbitrary
                   ``pecos.sim``-acceptable wrapper); use ``records`` for the
@@ -497,6 +499,8 @@ class _DetectorErrorModelMixin:
                 ``":replace:XX"`` are replacement branches that omit the ideal
                 two-qubit gate before applying the Pauli. ``"~II"`` (or
                 ``":replace:II"``) omits the gate without applying a Pauli.
+                In a label ``"AB"``, ``A`` acts on the gate's first operand and
+                ``B`` on its second, whatever their qubit indices.
                 The two replacement spellings are equivalent and cannot both
                 name the same entry. Values must sum to 1.0; ``p2`` remains the
                 total two-qubit error rate.
@@ -658,7 +662,8 @@ def _result_tags_present(detectors_json: str, observables_json: str) -> bool:
     """Cheap gate: does any entry use ``result_tags``? (substring check).
 
     Only decides whether JSON metadata needs tag resolution. Static extraction
-    is performed in Python; the loop guard and metadata resolution stay in Rust.
+    is performed in Python; JSON metadata resolution and its measurement-count
+    guard stay in Rust.
     """
     return '"result_tags"' in (detectors_json or "") or '"result_tags"' in (observables_json or "")
 
@@ -686,8 +691,8 @@ def _validated_source_measurement_ids(circuit: Any) -> list[int]:
     return source_measurement_ids
 
 
-class _GuppyHugrAnalysis:
-    """Load and analyze a HUGR on demand, sharing results within one DEM build."""
+class _GuppyProgramAnalysis:
+    """Compile and analyze a Guppy program on demand, sharing results within one DEM build."""
 
     def __init__(self, hugr_bytes: bytes) -> None:
         self.hugr_bytes = hugr_bytes
@@ -695,16 +700,32 @@ class _GuppyHugrAnalysis:
     @cached_property
     def hugr(self) -> Hugr:
         """Return the validated module, loading it only on first use."""
-        from pecos.qec._hugr_result_tags import load_hugr_from_bytes
+        from pecos.qec._hugr_preflight import load_hugr_from_bytes
 
         return load_hugr_from_bytes(self.hugr_bytes)
 
     @cached_property
+    def qis(self) -> str:
+        """Lower once with the same defaults as Hugr._to_program."""
+        from pecos_rslib.hugr_lowering import compile_hugr_to_qis
+
+        return compile_hugr_to_qis(self.hugr_bytes)
+
+    @cached_property
+    def _tag_analysis(self) -> tuple[dict[str, list[int | None]], int] | _CertificationError:
+        """Cache certification failures too, for builds with multiple consumers."""
+        try:
+            return _qis_result_tags.extract_result_tag_measurements(self.qis)
+        except _CertificationError as error:
+            return error
+
+    @property
     def result_tags(self) -> tuple[dict[str, list[int | None]], int]:
         """Extract tag occurrences and the static count only on first use."""
-        from pecos.qec._hugr_result_tags import extract_result_tag_measurements, measurement_op_count
-
-        return extract_result_tag_measurements(self.hugr), measurement_op_count(self.hugr)
+        result = self._tag_analysis
+        if isinstance(result, _CertificationError):
+            raise result
+        return result
 
 
 def _preflight_guppy_static_schedule(
@@ -712,7 +733,7 @@ def _preflight_guppy_static_schedule(
     *,
     required_tags: Sequence[str],
     json_result_tags: bool = False,
-) -> tuple[Sequence[Any] | None, _GuppyHugrAnalysis]:
+) -> tuple[Sequence[Any] | None, _GuppyProgramAnalysis]:
     """Validate program-level trust before any runtime trace is captured.
 
     Returns ``(generator_layout, analysis)``. Runs the generator-certificate
@@ -720,7 +741,7 @@ def _preflight_guppy_static_schedule(
     so an unsupported program cannot run (or hang) ahead of its rejection.
     Fails closed on any input whose HUGR cannot be obtained: one sampled
     execution of an uninspectable program is not a certifiable static circuit.
-    The analysis holds the exact bytes the caller must execute. Certified
+    The analysis holds the bytes to lower and caches the exact QIS text to execute. Certified
     generators bypass loading; other programs load for the control-flow check.
     """
     hugr_bytes = _certifiable_hugr_bytes(guppy)
@@ -750,11 +771,11 @@ def _preflight_guppy_static_schedule(
     generator_layout = (
         _generator_certified_layout(certificate_carrier, hugr_bytes) if certificate_carrier is not None else None
     )
-    analysis = _GuppyHugrAnalysis(hugr_bytes)
+    analysis = _GuppyProgramAnalysis(hugr_bytes)
     if generator_layout is not None:
         return generator_layout, analysis
 
-    from pecos.qec._hugr_result_tags import has_nontrivial_control_flow
+    from pecos.qec._hugr_preflight import has_nontrivial_control_flow
 
     if has_nontrivial_control_flow(analysis.hugr):
         msg = (
@@ -766,9 +787,25 @@ def _preflight_guppy_static_schedule(
     return None, analysis
 
 
+def _tag_certification_message(reference: str) -> str:
+    return (
+        f"Cannot bind {reference}: the program's lowered form could not be certified; "
+        "use records, rec[-k], or meas_ids instead."
+    )
+
+
+def _check_measurement_count(static_count: int, source_ids: Sequence[int]) -> None:
+    if static_count != len(source_ids):
+        msg = (
+            f"the certified lowered program has {static_count} measurement(s) but "
+            f"the traced program emitted {len(source_ids)} measurement(s)"
+        )
+        raise _CertificationError(msg)
+
+
 def _compiler_certified_result_traces(
     generator_layout: Sequence[Any] | None,
-    analysis: _GuppyHugrAnalysis,
+    analysis: _GuppyProgramAnalysis,
     circuit: Any,
     runtime_result_traces: Sequence[Mapping[str, Any]],
     *,
@@ -792,18 +829,6 @@ def _compiler_certified_result_traces(
     if not candidate_tags:
         return []
 
-    tag_occurrences, static_measurement_count = analysis.result_tags
-    source_measurement_ids = _validated_source_measurement_ids(circuit)
-    if static_measurement_count != len(source_measurement_ids):
-        if required_tags:
-            msg = (
-                "result_ref(...) is not supported for Guppy programs with runtime loops: "
-                f"the HUGR has {static_measurement_count} static measurement op(s) but "
-                f"the traced program emits {len(source_measurement_ids)} measurement(s)"
-            )
-            raise ValueError(msg)
-        return []
-
     required = set(required_tags)
     runtime_arities: dict[tuple[str, int], int] = {}
     runtime_occurrences: dict[str, int] = {}
@@ -816,6 +841,15 @@ def _compiler_certified_result_traces(
         values = trace.get("values")
         if isinstance(values, list):
             runtime_arities[(tag, occurrence)] = max(len(values), 1)
+    try:
+        tag_occurrences, static_measurement_count = analysis.result_tags
+        source_measurement_ids = _validated_source_measurement_ids(circuit)
+        _check_measurement_count(static_measurement_count, source_measurement_ids)
+    except _CertificationError as error:
+        if required_tags:
+            msg = _tag_certification_message("result_ref")
+            raise ValueError(msg) from error
+        return []
     certified: list[dict[str, Any]] = []
     for tag in candidate_tags:
         occurrences = tag_occurrences.get(tag)
@@ -1223,7 +1257,7 @@ class GuppyDemBuilder:
 
     def build(self) -> GuppyDemBuild:
         """Prepare explicit or inferred annotations and return an audited DEM build."""
-        from pecos.programs import Hugr as _HugrProgram
+        from pecos.programs import Qis as _QisProgram
         from pecos.qec.dem_spec import Detector, InferredOutput, Observable
         from pecos.tracing import _collect_program_result_traces, trace_program_to_tick_circuit
 
@@ -1348,7 +1382,7 @@ class GuppyDemBuilder:
 
             settings = DemInferenceSettings() if self._inference is _UNSET else self._inference
             inference = infer_guppy_dem_annotations(
-                program,
+                _QisProgram(analysis.qis) if analysis is not None else program,
                 num_qubits=num_qubits,
                 raw_tag=settings.raw_tag,
                 detector_tag=settings.detector_tag,
@@ -1391,7 +1425,7 @@ class GuppyDemBuilder:
         else:
             with _collect_program_result_traces() as result_traces:
                 circuit = trace_program_to_tick_circuit(
-                    _HugrProgram(analysis.hugr_bytes),
+                    _QisProgram(analysis.qis),
                     num_qubits,
                     seed=0 if self._seed is _UNSET else self._seed,
                     runtime=None if self._runtime is _UNSET else self._runtime,
@@ -1439,7 +1473,11 @@ class GuppyDemBuilder:
                 "guppy_source_measurement_ids",
             )
             source_measurement_ids = json.loads(source_ids_json) if source_ids_json else []
-            tag_occurrences, static_measurement_count = analysis.result_tags
+            try:
+                tag_occurrences, static_measurement_count = analysis.result_tags
+            except _CertificationError as error:
+                msg = _tag_certification_message("result_tags")
+                raise ValueError(msg) from error
             detectors_json, observables_json = resolve_result_tags_for_guppy(
                 detectors_json,
                 observables_json,
@@ -1637,7 +1675,7 @@ def build_dem_from_guppy(
 
     ``rec[-k]`` references the canonical dense Guppy result-id stream, not the
     runtime's scheduled measurement-gate order. ``result_ref(...)`` resolves
-    through the compiled HUGR's dataflow and is checked against the traced
+    through the executed lowered program's dataflow and is checked against the traced
     measurement count. Both forms lower to stable ``MeasId`` metadata before
     DEM construction.
 

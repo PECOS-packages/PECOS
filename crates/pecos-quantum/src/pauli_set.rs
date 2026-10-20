@@ -69,20 +69,7 @@ struct PauliKey {
 
 impl PauliKey {
     fn from_pauli_string(ps: &PauliString) -> Self {
-        let mut ops: Vec<(QubitId, Pauli)> = ps
-            .paulis()
-            .iter()
-            .filter(|(p, _)| *p != Pauli::I)
-            .map(|(p, q)| (*q, *p))
-            .collect();
-        ops.sort_by_key(|(q, _)| *q);
-        let len_before = ops.len();
-        ops.dedup_by_key(|(q, _)| *q);
-        debug_assert_eq!(
-            len_before,
-            ops.len(),
-            "PauliString has duplicate qubit entries; this is a bug in the PauliString constructor"
-        );
+        let ops = ps.paulis().iter().map(|(p, q)| (*q, *p)).collect();
         Self {
             phase: ps.phase(),
             ops,
@@ -92,6 +79,7 @@ impl PauliKey {
     fn to_pauli_string(&self) -> PauliString {
         let paulis: Vec<(Pauli, QubitId)> = self.ops.iter().map(|(q, p)| (*p, *q)).collect();
         PauliString::with_phase_and_paulis(self.phase, paulis)
+            .expect("PauliKey preserves canonical distinct qubits")
     }
 }
 
@@ -291,7 +279,7 @@ impl PauliSet {
     /// ```
     #[must_use]
     pub fn to_dense_str(&self) -> String {
-        let elements: Vec<String> = self.iter().map(|p| p.to_dense_str(None)).collect();
+        let elements: Vec<String> = self.iter().map(|p| p.to_dense_str()).collect();
         format!("{{{}}}", elements.join(", "))
     }
 }
@@ -416,6 +404,11 @@ impl fmt::Display for PauliSet {
 mod tests {
     use super::*;
     use pecos_core::pauli::*;
+
+    #[test]
+    fn sparse_rejects_duplicate_qubits_in_element() {
+        assert!("{Z2, X0 Z0}".parse::<PauliSet>().is_err());
+    }
 
     #[test]
     fn test_new_empty() {
@@ -561,11 +554,13 @@ mod tests {
         let ps1 = PauliString::with_phase_and_paulis(
             QuarterPhase::PlusOne,
             vec![(Pauli::X, QubitId::new(0)), (Pauli::Z, QubitId::new(1))],
-        );
+        )
+        .unwrap();
         let ps2 = PauliString::with_phase_and_paulis(
             QuarterPhase::PlusOne,
             vec![(Pauli::Z, QubitId::new(1)), (Pauli::X, QubitId::new(0))],
-        );
+        )
+        .unwrap();
         let set = PauliSet::from_iter([ps1, ps2]);
         assert_eq!(set.len(), 1);
     }

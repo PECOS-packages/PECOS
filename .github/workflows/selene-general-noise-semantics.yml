@@ -18,6 +18,8 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -C debuginfo=0
+  LLVM_VERSION: "21.1"
+  LLVM_RELEASE_VERSION: "21.1.8"
 
 jobs:
   extended-semantics:
@@ -57,6 +59,19 @@ jobs:
           prefix-key: v1-selene-general-noise-semantics
           save-if: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
 
+      # The sim() parity tests build PECOS packages that link LLVM.
+      - name: Install just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+
+      - name: Cache LLVM ${{ env.LLVM_VERSION }}
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: ~/.pecos/deps/llvm-21.1
+          key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
+
+      - name: Ensure LLVM ${{ env.LLVM_VERSION }}
+        run: just ci-env
+
       - name: Build semantic-test plugins
         run: |
           cargo build --locked --release \
@@ -70,21 +85,31 @@ jobs:
             python/selene-plugins/pecos-selene-statevec/python/pecos_selene_statevec/_dist/lib/
           uv pip install --system \
             -e 'python/selene-plugins/pecos-selene-general-noise[test]' \
-            -e python/selene-plugins/pecos-selene-statevec
+            -e python/selene-plugins/pecos-selene-statevec \
+            -e python/pecos-rslib-llvm \
+            -e python/pecos-rslib \
+            -e python/quantum-pecos
 
       - name: Run extended semantic matrix
         # `set -o pipefail` is required: the default shell is `bash -e`, where the
         # exit status of a pipeline is `tee`'s, so a failing pytest would be reported
         # as a passing step and this lane could never go red.
         shell: bash
+        # A step timeout below the job's lets the always() steps below publish the
+        # log when the suite runs long; a job timeout cancels them and the log is lost.
+        # The suite takes about 12 minutes on a warm runner.
+        timeout-minutes: 25
         run: |
           set -euo pipefail
           # The whole suite, not just `-m slow`: --require-full-noise-coverage fails
           # the session unless every required channel had a PASSING test, and the fast
           # cases carry evidence for several channels. The package's own addopts filter
           # is overridden so nothing is silently deselected.
+          # faulthandler_timeout dumps every thread's stack when one test runs past
+          # five minutes, so a stalled test names itself in the log.
           pytest python/selene-plugins/pecos-selene-general-noise/tests \
             --override-ini=addopts= --require-full-noise-coverage \
+            -o faulthandler_timeout=300 --durations=30 \
             -v --tb=short | tee general-noise-semantic-results.txt
 
       - name: Publish channel coverage summary

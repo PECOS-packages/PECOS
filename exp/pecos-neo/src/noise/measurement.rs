@@ -30,6 +30,7 @@
 //! Handles asymmetric measurement errors (readout errors).
 
 use super::{NoiseChannel, NoiseContext, NoiseEvent, NoiseResponse};
+use crate::noise::validation::{ValidationResult, validate_probability, validate_rate};
 use pecos_random::PecosRng;
 use smallvec::SmallVec;
 
@@ -40,10 +41,10 @@ use smallvec::SmallVec;
 #[derive(Debug, Clone)]
 pub struct MeasurementChannel {
     /// Probability of flipping a 0 measurement to 1.
-    pub p_meas_0_to_1: f64,
+    p_meas_0_to_1: f64,
 
     /// Probability of flipping a 1 measurement to 0.
-    pub p_meas_1_to_0: f64,
+    p_meas_1_to_0: f64,
 
     // Precomputed probability thresholds for fast sampling
     threshold_0_to_1: u64,
@@ -62,27 +63,46 @@ impl Default for MeasurementChannel {
 }
 
 impl MeasurementChannel {
-    /// Create a symmetric measurement error channel.
+    /// Return the configured `p_meas_0_to_1`.
     #[must_use]
-    pub fn symmetric(p: f64) -> Self {
+    pub fn p_meas_0_to_1(&self) -> f64 {
+        self.p_meas_0_to_1
+    }
+
+    /// Return the configured `p_meas_1_to_0`.
+    #[must_use]
+    pub fn p_meas_1_to_0(&self) -> f64 {
+        self.p_meas_1_to_0
+    }
+
+    /// Create a symmetric measurement error channel.
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn symmetric(p: f64) -> ValidationResult<Self> {
+        validate_probability(p, "p")?;
         let threshold = PecosRng::probability_threshold(p);
-        Self {
+        Ok(Self {
             p_meas_0_to_1: p,
             p_meas_1_to_0: p,
             threshold_0_to_1: threshold,
             threshold_1_to_0: threshold,
-        }
+        })
     }
 
     /// Create an asymmetric measurement error channel.
-    #[must_use]
-    pub fn asymmetric(p_0_to_1: f64, p_1_to_0: f64) -> Self {
-        Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn asymmetric(p_0_to_1: f64, p_1_to_0: f64) -> ValidationResult<Self> {
+        validate_probability(p_0_to_1, "p_0_to_1")?;
+        validate_probability(p_1_to_0, "p_1_to_0")?;
+        Ok(Self {
             p_meas_0_to_1: p_0_to_1,
             p_meas_1_to_0: p_1_to_0,
             threshold_0_to_1: PecosRng::probability_threshold(p_0_to_1),
             threshold_1_to_0: PecosRng::probability_threshold(p_1_to_0),
-        }
+        })
     }
 
     /// Check if this channel has any effect.
@@ -95,13 +115,18 @@ impl MeasurementChannel {
     ///
     /// This multiplies both `p_meas_0_to_1` and `p_meas_1_to_0` by `scale`.
     /// Useful for globally adjusting noise levels.
-    #[must_use]
-    pub fn with_scale(mut self, scale: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_scale(mut self, scale: f64) -> ValidationResult<Self> {
+        validate_rate(scale, "scale")?;
+        validate_probability(self.p_meas_0_to_1 * scale, "p_meas_0_to_1 * scale")?;
+        validate_probability(self.p_meas_1_to_0 * scale, "p_meas_1_to_0 * scale")?;
         self.p_meas_0_to_1 *= scale;
         self.p_meas_1_to_0 *= scale;
         self.threshold_0_to_1 = PecosRng::probability_threshold(self.p_meas_0_to_1);
         self.threshold_1_to_0 = PecosRng::probability_threshold(self.p_meas_1_to_0);
-        self
+        Ok(self)
     }
 }
 
@@ -231,19 +256,28 @@ impl NoiseChannel for MeasurementChannel {
 #[derive(Debug, Clone)]
 pub struct MeasurementStateFlipChannel {
     /// Probability of an X flip before each measurement.
-    pub p: f64,
+    p: f64,
     /// Precomputed probability threshold for fast sampling.
     threshold: u64,
 }
 
 impl MeasurementStateFlipChannel {
-    /// Create a state-flip measurement error channel.
+    /// Return the configured `p`.
     #[must_use]
-    pub fn new(p: f64) -> Self {
-        Self {
+    pub fn p(&self) -> f64 {
+        self.p
+    }
+
+    /// Create a state-flip measurement error channel.
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn new(p: f64) -> ValidationResult<Self> {
+        validate_probability(p, "p")?;
+        Ok(Self {
             p,
             threshold: PecosRng::probability_threshold(p),
-        }
+        })
     }
 }
 
@@ -341,7 +375,7 @@ mod tests {
         let five_sigma = |q: f64| 5.0 * (q * (1.0 - q) / SHOTS as f64).sqrt();
 
         let state_flip = second_meas_rate(
-            ComposableNoiseModel::new().add_channel(MeasurementStateFlipChannel::new(p)),
+            ComposableNoiseModel::new().add_channel(MeasurementStateFlipChannel::new(p).unwrap()),
         );
         let expected_state = 2.0 * p * (1.0 - p);
         assert!(
@@ -350,7 +384,7 @@ mod tests {
         );
 
         let record_flip = second_meas_rate(
-            ComposableNoiseModel::new().add_channel(MeasurementChannel::symmetric(p)),
+            ComposableNoiseModel::new().add_channel(MeasurementChannel::symmetric(p).unwrap()),
         );
         assert!(
             (record_flip - p).abs() < five_sigma(p),
@@ -360,7 +394,7 @@ mod tests {
 
     #[test]
     fn test_symmetric_measurement_error() {
-        let channel = MeasurementChannel::symmetric(1.0); // Always flip
+        let channel = MeasurementChannel::symmetric(1.0).unwrap(); // Always flip
 
         let qubits = [QubitId(0)];
         let outcomes = [false]; // Measured 0
@@ -381,7 +415,7 @@ mod tests {
     #[test]
     fn test_asymmetric_measurement_error() {
         // Only flip 0->1, never 1->0
-        let channel = MeasurementChannel::asymmetric(1.0, 0.0);
+        let channel = MeasurementChannel::asymmetric(1.0, 0.0).unwrap();
 
         let qubits = [QubitId(0), QubitId(1)];
         let outcomes = [false, true]; // 0 and 1
@@ -407,7 +441,7 @@ mod tests {
 
     #[test]
     fn test_no_flip_on_zero_probability() {
-        let channel = MeasurementChannel::symmetric(0.0);
+        let channel = MeasurementChannel::symmetric(0.0).unwrap();
 
         let qubits = [QubitId(0)];
         let outcomes = [false];

@@ -83,6 +83,7 @@ class SurfaceDetectorDescriptor(TypedDict):
 
     id: int
     detector_id: int
+    fault_sector: str | None
     stabilizer_kind: str
     stabilizer_index: int
     round: int
@@ -1684,6 +1685,7 @@ def _build_detector_descriptors(
             {
                 "id": int(det["id"]),
                 "detector_id": int(det["id"]),
+                "fault_sector": det["fault_sector"],
                 "stabilizer_kind": descriptor["stabilizer_kind"],
                 "stabilizer_index": descriptor["stabilizer_index"],
                 "round": coords[2],
@@ -2042,7 +2044,7 @@ class DagCircuitRenderer(CircuitRenderer):
         _basis: str,
     ) -> DagCircuit:
         """Render to PECOS DagCircuit."""
-        from pecos_rslib import DagCircuit, Gate, GateType
+        from pecos_rslib import DagCircuit
 
         circuit = DagCircuit()
         allocated: set[int] = set()
@@ -2067,10 +2069,10 @@ class DagCircuitRenderer(CircuitRenderer):
                 circuit.h([op.qubits[0]])
 
             elif op.op_type == OpType.SX:
-                circuit.add_gate(Gate(GateType.SX, qubits=[op.qubits[0]]))
+                circuit.sx([op.qubits[0]])
 
             elif op.op_type == OpType.SXDG:
-                circuit.add_gate(Gate(GateType.SXdg, qubits=[op.qubits[0]]))
+                circuit.sxdg([op.qubits[0]])
 
             elif op.op_type == OpType.SZ:
                 circuit.sz([op.qubits[0]])
@@ -2084,8 +2086,11 @@ class DagCircuitRenderer(CircuitRenderer):
             elif op.op_type == OpType.Z:
                 circuit.z([op.qubits[0]])
 
-            elif op.op_type in {OpType.T, OpType.TDG}:
-                circuit.add_gate(Gate(GateType.T if op.op_type == OpType.T else GateType.Tdg, qubits=op.qubits))
+            elif op.op_type == OpType.T:
+                circuit.t(op.qubits)
+
+            elif op.op_type == OpType.TDG:
+                circuit.tdg(op.qubits)
 
             elif op.op_type == OpType.CX:
                 circuit.cx([(op.qubits[0], op.qubits[1])])
@@ -2672,6 +2677,7 @@ class TickCircuitRenderer(CircuitRenderer):
                             detectors.append(
                                 {
                                     "id": detector_id,
+                                    "fault_sector": "X",
                                     "coords": [s.index, 0, rnd],
                                     "records": [-curr_offset, -init_offset],
                                 },
@@ -2681,6 +2687,7 @@ class TickCircuitRenderer(CircuitRenderer):
                             detectors.append(
                                 {
                                     "id": detector_id,
+                                    "fault_sector": "X",
                                     "coords": [s.index, 0, rnd],
                                     "records": [-curr_offset],
                                 },
@@ -2692,6 +2699,7 @@ class TickCircuitRenderer(CircuitRenderer):
                         detectors.append(
                             {
                                 "id": detector_id,
+                                "fault_sector": "X",
                                 "coords": [s.index, 0, rnd],
                                 "records": [-curr_offset, -prev_offset],
                             },
@@ -2714,6 +2722,7 @@ class TickCircuitRenderer(CircuitRenderer):
                             detectors.append(
                                 {
                                     "id": detector_id,
+                                    "fault_sector": "Z",
                                     "coords": [det_x, 1, rnd],
                                     "records": [-curr_offset, -init_offset],
                                 },
@@ -2723,6 +2732,7 @@ class TickCircuitRenderer(CircuitRenderer):
                             detectors.append(
                                 {
                                     "id": detector_id,
+                                    "fault_sector": "Z",
                                     "coords": [det_x, 1, rnd],
                                     "records": [-curr_offset],
                                 },
@@ -2734,6 +2744,7 @@ class TickCircuitRenderer(CircuitRenderer):
                         detectors.append(
                             {
                                 "id": detector_id,
+                                "fault_sector": "Z",
                                 "coords": [det_x, 1, rnd],
                                 "records": [-curr_offset, -prev_offset],
                             },
@@ -2761,6 +2772,7 @@ class TickCircuitRenderer(CircuitRenderer):
                 detectors.append(
                     {
                         "id": detector_id,
+                        "fault_sector": stab_type,
                         "coords": [det_x, det_y, num_rounds],
                         "records": records,
                     },
@@ -3491,7 +3503,9 @@ def generate_dem_from_tick_circuit_via_pauli_frame(
         p2: Two-qubit depolarizing error rate
         p2_weights: Optional relative probabilities over the 15 non-identity
             two-qubit Pauli errors (``IX`` through ``ZZ``). Values must sum to
-            1.0; ``p2`` remains the total two-qubit error rate.
+            1.0; ``p2`` remains the total two-qubit error rate. In a label
+            ``"AB"``, ``A`` acts on the gate's first operand and ``B`` on its
+            second, whatever their qubit indices.
         p_meas: Measurement error rate
         p_prep: Initialization (prep) error rate
 
@@ -3983,7 +3997,9 @@ def generate_dem_from_tick_circuit(
         p2: Two-qubit depolarizing error rate
         p2_weights: Optional relative probabilities over the 15 non-identity
             two-qubit Pauli errors (``IX`` through ``ZZ``). Values must sum to
-            1.0; ``p2`` remains the total two-qubit error rate.
+            1.0; ``p2`` remains the total two-qubit error rate. In a label
+            ``"AB"``, ``A`` acts on the gate's first operand and ``B`` on its
+            second, whatever their qubit indices.
         p_meas: Measurement error rate
         p_prep: Initialization (prep) error rate
         p_idle: Optional idle noise rate per explicit idle-gate time unit.

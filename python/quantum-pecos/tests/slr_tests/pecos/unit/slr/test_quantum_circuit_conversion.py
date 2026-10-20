@@ -10,7 +10,7 @@ sys.path.insert(
 
 import pytest
 from pecos.circuits.quantum_circuit import QuantumCircuit
-from pecos.slr import CReg, For, Main, Parallel, QReg, Repeat, Return, SlrConverter, While
+from pecos.slr import CReg, For, If, Main, Parallel, QReg, Repeat, Return, SlrConverter, While
 from pecos.slr.gen_codes.gen_quantum_circuit import QuantumCircuitGenerator
 from pecos.slr.qeclib import qubit
 from pecos.slr.qeclib.qubit.measures import Measure
@@ -426,6 +426,50 @@ class TestQuantumCircuitStaticForAndWhile:
         )
         with pytest.raises(NotImplementedError, match=r"While loops cannot be converted"):
             SlrConverter(prog).quantum_circuit()
+
+
+def _legacy_quantum_circuit(prog: Main) -> QuantumCircuit:
+    generator = QuantumCircuitGenerator(_internal=True)
+    generator.generate_block(prog)
+    return generator.get_output()
+
+
+def _ast_quantum_circuit(prog: Main) -> QuantumCircuit:
+    return SlrConverter(prog).quantum_circuit()
+
+
+class TestQuantumCircuitIf:
+    """The circuit records no classical results, so an If cannot be conditioned.
+
+    Both generators used to emit If branches without their condition: the AST
+    one ran both branches, and the deprecated one dropped the then-branch and
+    ran the else-branch (#1237).
+    """
+
+    @pytest.mark.parametrize("generate", [_ast_quantum_circuit, _legacy_quantum_circuit], ids=["ast", "legacy"])
+    @pytest.mark.parametrize("shape", ["then", "then-else", "inside-repeat"])
+    def test_if_is_rejected(self, generate, shape: str) -> None:
+        q, c = QReg("q", 2), CReg("c", 1)
+        conditional = If(c[0] == 1).Then(qubit.X(q[1]))
+        if shape == "then-else":
+            conditional.Else(qubit.Z(q[1]))
+        body = Repeat(2).block(conditional) if shape == "inside-repeat" else conditional
+        prog = Main(q, c, Measure(q[0]) > c[0], body, Return(c))
+        with pytest.raises(NotImplementedError, match=r"If cannot be converted to QuantumCircuit"):
+            generate(prog)
+
+    @pytest.mark.parametrize("generate", [_ast_quantum_circuit, _legacy_quantum_circuit], ids=["ast", "legacy"])
+    def test_classical_assignments_without_if_still_convert(self, generate) -> None:
+        """Classical values cannot reach a quantum operation without an If, so the circuit stays exact."""
+        prog = Main(
+            q := QReg("q", 1),
+            c := CReg("c", 2),
+            Measure(q[0]) > c[0],
+            c[1].set(c[0] ^ 1),
+            qubit.H(q[0]),
+            Return(c),
+        )
+        assert "{'H': {0}}" in str(generate(prog))
 
 
 if __name__ == "__main__":

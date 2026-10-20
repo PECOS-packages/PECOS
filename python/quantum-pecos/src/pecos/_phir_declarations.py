@@ -11,13 +11,23 @@
 
 """The program-wide declaration namespace specified by PHIR-JSON v0.1."""
 
+import json
+import math
+import reprlib
+
+from pecos_rslib import validate_phir_classical_inputs
+
 
 def validate_declaration_names(operations: list[dict]) -> None:
     """Reject a name declared more than once, regardless of declaration kind."""
     declarations = {}
 
     def register_names(ops: list[dict]) -> None:
+        if not isinstance(ops, list):
+            return
         for node in ops:
+            if not isinstance(node, dict):
+                continue
             kind = {"qvar_define": "quantum", "cvar_define": "classical"}.get(node.get("data"))
             if kind is not None:
                 variable = node["variable"]
@@ -33,3 +43,46 @@ def validate_declaration_names(operations: list[dict]) -> None:
                     register_names(node.get(field) or [])
 
     register_names(operations)
+
+
+def _json_declaration_value(value: object) -> object:
+    """Normalize finite JSON scalars (subclasses included); mark other values for named Rust rejection."""
+    if value is None or isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return str(value)
+    if isinstance(value, int) and -(2**63) <= value < 2**64:
+        return int(value)
+    if isinstance(value, float) and math.isfinite(value):
+        return float(value)
+    return {"python": reprlib.repr(value)}
+
+
+def validate_classical_inputs(program: dict) -> None:
+    """Validate declaration and Result fields without serializing quantum ops or metadata.
+
+    Metadata need not be JSON-serializable. Only declaration and Result fields
+    are relevant here; structural errors belong to the schema/parser.
+    """
+    inputs = []
+
+    def collect(operations: list[dict]) -> None:
+        if not isinstance(operations, list):
+            return
+        for node in operations:
+            if not isinstance(node, dict):
+                continue
+            if node.get("cop") == "Result":
+                inputs.append({key: node[key] for key in ("cop", "args", "returns") if key in node})
+            elif node.get("data") in ("cvar_define", "qvar_define"):
+                declaration = {key: node[key] for key in ("data", "data_type", "variable", "size") if key in node}
+                for field in ("data_type", "variable", "size"):
+                    if field in declaration:
+                        declaration[field] = _json_declaration_value(declaration[field])
+                inputs.append(declaration)
+            if "block" in node:
+                for field in ("ops", "true_branch", "false_branch"):
+                    collect(node.get(field) or [])
+
+    collect(program.get("ops", []))
+    validate_phir_classical_inputs(json.dumps({"ops": inputs}))

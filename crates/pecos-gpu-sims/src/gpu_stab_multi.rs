@@ -12,13 +12,92 @@ use std::fmt::Debug;
 /// Maximum gates in the queue before auto-flush
 const GATE_QUEUE_BUFFER_SIZE: usize = 64 * 1024;
 
+/// Default total device memory budget for persistent per-shot buffers of one simulator.
+///
+/// wgpu does not report device memory, so this budget is explicit. Raise it with
+/// [`GpuStabMulti::with_memory_budget`] on large GPUs. Transient upload/readback
+/// staging and host copies during reset and CPU-side measurement come on top,
+/// using up to roughly the same memory again.
+pub const DEFAULT_MEMORY_BUDGET_BYTES: u64 = 1 << 30;
+
+// Matches the gate and measurement shaders.
+const WORKGROUP_SIZE: u32 = 256;
+
+const NOISE_SEED_BYTES: u64 = 4;
+const MEAS_DATA_BYTES: u64 = 16;
+const MEAS_RANDOM_BYTES: u64 = 4;
+const MEAS_IDS_BYTES: u64 = 4;
+const MEAS_STAGING_BYTES: u64 = 4;
+
+fn per_shot_sizes(num_qubits: u32) -> (u64, u64) {
+    let gen_words = (2 * u64::from(num_qubits)).div_ceil(32);
+    (u64::from(num_qubits) * gen_words * 4, gen_words * 4)
+}
+
+fn calculate_shots_per_batch(
+    num_qubits: u32,
+    num_shots: u32,
+    binding_limit: u64,
+    buffer_limit: u64,
+    max_workgroups: u32,
+    memory_budget_bytes: u64,
+) -> Result<u32, String> {
+    let (tableau_bytes, signs_bytes) = per_shot_sizes(num_qubits);
+    let per_shot_bytes = 4 * tableau_bytes
+        + 2 * signs_bytes
+        + NOISE_SEED_BYTES
+        + MEAS_DATA_BYTES
+        + MEAS_RANDOM_BYTES
+        + MEAS_IDS_BYTES
+        + MEAS_STAGING_BYTES;
+    let per_buffer_cap = binding_limit.min(buffer_limit);
+    let largest_buffer_bytes = [
+        tableau_bytes,
+        signs_bytes,
+        NOISE_SEED_BYTES,
+        MEAS_DATA_BYTES,
+        MEAS_RANDOM_BYTES,
+        MEAS_IDS_BYTES,
+        MEAS_STAGING_BYTES,
+    ]
+    .into_iter()
+    .max()
+    .expect("Per-shot buffers are nonempty");
+    if largest_buffer_bytes > per_buffer_cap {
+        return Err(format!(
+            "GpuStabMulti: {num_qubits} qubits require {tableau_bytes} tableau bytes and {largest_buffer_bytes} bytes in the largest buffer per shot, exceeding device limit {per_buffer_cap} bytes"
+        ));
+    }
+    if memory_budget_bytes < per_shot_bytes {
+        return Err(format!(
+            "GpuStabMulti: memory budget {memory_budget_bytes} bytes cannot hold one shot ({per_shot_bytes} bytes); raise the budget via with_memory_budget"
+        ));
+    }
+    // Dispatches use one invocation per shot, generator word, or qubit.
+    // num_qubits >= gen_words >= 1 for supported registers. Keep the shader's
+    // u32 invocation arithmetic in range even if the device limit is larger.
+    let max_invocations =
+        (u64::from(WORKGROUP_SIZE) * u64::from(max_workgroups)).min(u64::from(u32::MAX));
+    let max_dispatch_shots = max_invocations / u64::from(num_qubits);
+    if max_dispatch_shots == 0 {
+        return Err(format!(
+            "GpuStabMulti: the largest dispatch for {num_qubits} qubits needs {num_qubits} invocations per shot, exceeding the device dispatch limit of {max_invocations} invocations ({max_workgroups} workgroups of {WORKGROUP_SIZE})"
+        ));
+    }
+    let shots = u64::from(num_shots.max(1))
+        .min(memory_budget_bytes / per_shot_bytes)
+        .min(per_buffer_cap / largest_buffer_bytes)
+        .min(max_dispatch_shots);
+    Ok(u32::try_from(shots).expect("Batch shots are bounded by num_shots.max(1), a u32"))
+}
+
 /// Multi-shot GPU stabilizer simulator
 ///
 /// Processes N independent stabilizer simulations in parallel.
 /// All shots see the same circuit but have independent measurement outcomes.
 ///
-/// The simulator automatically queries GPU limits and processes shots in
-/// batches if the requested count exceeds hardware capabilities.
+/// The simulator processes shots in batches bounded by an explicit total
+/// persistent per-shot buffer memory budget and the GPU buffer/dispatch limits.
 pub struct GpuStabMulti<R: Rng + SeedableRng = PecosRng> {
     // GPU resources
     device: wgpu::Device,
@@ -61,7 +140,7 @@ pub struct GpuStabMulti<R: Rng + SeedableRng = PecosRng> {
     // State
     num_qubits: u32,
     num_shots: u32,
-    shots_per_batch: u32, // How many shots fit in GPU memory
+    shots_per_batch: u32, // How many shots fit in the budget and buffer limits
     gen_words: u32,
     gate_queue: Vec<u32>,
     max_buffer_size: u64,
@@ -86,42 +165,76 @@ pub struct GpuStabMulti<R: Rng + SeedableRng = PecosRng> {
 }
 
 impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
-    /// Create a new multi-shot GPU stabilizer simulator
+    fn check_qubit(&self, index: usize) {
+        crate::qubit_validation::check_qubit(index, self.num_qubits as usize, "GpuStabMulti");
+    }
+
+    /// Create a new multi-shot GPU stabilizer simulator with the default memory budget
     ///
     /// # Errors
-    /// Returns an error if no GPU adapter is found or buffer allocation exceeds device limits.
+    /// Returns an error if the register or shot count is unsupported, no GPU adapter
+    /// is found, or one shot exceeds the budget or device limits.
     pub fn new(num_qubits: usize, num_shots: usize) -> Result<Self, String> {
         Self::with_seed(num_qubits, num_shots, 42)
     }
 
-    /// Create with a specific seed for reproducibility
+    /// Create with a specific seed for reproducibility and the default memory budget
     ///
     /// # Errors
-    /// Returns an error if no GPU adapter is found or buffer allocation exceeds device limits.
-    #[allow(clippy::cast_possible_truncation)] // GPU params: qubit/shot counts fit in u32
+    /// Returns an error if the register or shot count is unsupported, no GPU adapter
+    /// is found, or one shot exceeds the budget or device limits.
     pub fn with_seed(num_qubits: usize, num_shots: usize, seed: u64) -> Result<Self, String> {
+        Self::with_memory_budget(num_qubits, num_shots, seed, DEFAULT_MEMORY_BUDGET_BYTES)
+    }
+
+    /// Create with a seed and a total device memory budget for persistent per-shot buffers.
+    ///
+    /// Batches obey the budget and the device's buffer/dispatch limits. Fixed control
+    /// buffers are additional. Transient upload/readback staging and host copies
+    /// during reset and CPU-side measurement come on top, using up to roughly
+    /// the same memory again.
+    ///
+    /// # Errors
+    /// Returns an error if the register or shot count is unsupported, no GPU adapter
+    /// is found, or one shot exceeds the budget or device limits.
+    #[allow(clippy::cast_possible_truncation)] // Validated qubit count is at most 16384
+    pub fn with_memory_budget(
+        num_qubits: usize,
+        num_shots: usize,
+        seed: u64,
+        memory_budget_bytes: u64,
+    ) -> Result<Self, String> {
+        if !(1..=crate::qubit_validation::PACKED_QUBIT_CAPACITY).contains(&num_qubits) {
+            return Err(format!(
+                "GpuStabMulti: register size {num_qubits} is unsupported; construct the simulator with 1..=16384 qubits"
+            ));
+        }
+        let num_shots = u32::try_from(num_shots).map_err(|_| {
+            format!(
+                "GpuStabMulti: requested {num_shots} shots exceeds the limit {}; reduce num_shots and split the request across simulator runs",
+                u32::MAX
+            )
+        })?;
+        let num_qubits = num_qubits as u32;
         let gpu = gpu_context().map_err(|error| error.to_string())?;
         let device = gpu.device;
         let queue = gpu.queue;
 
         // Query actual device limits
         let limits = device.limits();
-        let max_buffer_size = limits.max_storage_buffer_binding_size;
+        let binding_limit = limits.max_storage_buffer_binding_size;
 
-        let num_qubits = num_qubits as u32;
-        let num_shots = num_shots as u32;
         let gen_words = (2 * num_qubits).div_ceil(32); // 2n generators
 
-        // Calculate per-shot memory requirement
-        // Each shot needs: 4 tableau buffers + 2 sign buffers
-        let single_tableau_size = u64::from(num_qubits) * u64::from(gen_words) * 4;
-        let single_signs_size = u64::from(gen_words) * 4;
-        let per_shot_size = single_tableau_size; // Largest single buffer per shot
-
-        // Calculate maximum shots that fit in one buffer
-        // Leave some headroom (use 90% of max)
-        let max_shots_per_buffer = ((max_buffer_size * 9 / 10) / per_shot_size) as u32;
-        let shots_per_batch = num_shots.min(max_shots_per_buffer).max(1);
+        let (single_tableau_size, single_signs_size) = per_shot_sizes(num_qubits);
+        let shots_per_batch = calculate_shots_per_batch(
+            num_qubits,
+            num_shots,
+            binding_limit,
+            limits.max_buffer_size,
+            limits.max_compute_workgroups_per_dimension,
+            memory_budget_bytes,
+        )?;
 
         // Allocate buffers for shots_per_batch (not all shots if batching needed)
         let tableau_size = single_tableau_size * u64::from(shots_per_batch);
@@ -200,7 +313,7 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
         // Noise buffers
         let noise_seeds_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Multi Noise Seeds Buffer"),
-            size: u64::from(shots_per_batch) * 4, // One u32 seed per shot
+            size: u64::from(shots_per_batch) * NOISE_SEED_BYTES, // One u32 seed per shot
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -216,21 +329,21 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
         // meas_data: 4 u32s per shot (chosen_gen, outcome, is_deterministic, padding)
         let meas_data_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Multi Measurement Data Buffer"),
-            size: u64::from(shots_per_batch) * 16,
+            size: u64::from(shots_per_batch) * MEAS_DATA_BYTES,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         let meas_random_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Multi Measurement Random Buffer"),
-            size: u64::from(shots_per_batch) * 4,
+            size: u64::from(shots_per_batch) * MEAS_RANDOM_BYTES,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         let meas_ids_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Multi Measurement Results Buffer"),
-            size: u64::from(shots_per_batch) * 4,
+            size: u64::from(shots_per_batch) * MEAS_IDS_BYTES,
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_SRC
                 | wgpu::BufferUsages::COPY_DST,
@@ -239,7 +352,7 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
 
         let meas_staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Multi Measurement Staging Buffer"),
-            size: u64::from(shots_per_batch) * 4,
+            size: u64::from(shots_per_batch) * MEAS_STAGING_BYTES,
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -617,7 +730,7 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
             shots_per_batch,
             gen_words,
             gate_queue: Vec::with_capacity(GATE_QUEUE_BUFFER_SIZE),
-            max_buffer_size,
+            max_buffer_size: binding_limit,
             noise_enabled: false,
             noise_p1: 0.0,
             noise_p2: 0.0,
@@ -635,56 +748,43 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
         Ok(sim)
     }
 
-    /// Reset all shots to the initial |0...0> state
+    /// Reset the current batch of shots to the initial |0...0> state
     pub fn reset(&mut self) {
         let gen_words = self.gen_words as usize;
         let num_qubits = self.num_qubits as usize;
-        // Use shots_per_batch for buffer sizing (actual batch that fits in GPU memory)
+        // Use shots_per_batch for buffer sizing within the budget and device limits
         let batch_shots = self.shots_per_batch as usize;
 
-        // Initialize destab_x to identity (diagonal 1s) for all shots in batch
-        // destab_x[shot][qubit][word] where bit gen_idx is set if qubit == gen_idx
+        // destab_x and stab_z both start as the identity (diagonal 1s) for all shots:
+        // tableau[shot][qubit][word] has bit gen_idx set if qubit == gen_idx.
+        // For |0...0>, the stabilizers are Z_0, ..., Z_{n-1} and the destabilizers X_0, ..., X_{n-1}.
         let single_tableau_size = num_qubits * gen_words;
-        let mut destab_x = vec![0u32; single_tableau_size * batch_shots];
+        let mut identity = vec![0u32; single_tableau_size * batch_shots];
 
         for shot in 0..batch_shots {
             for q in 0..num_qubits {
                 let word_idx = q / 32;
                 let bit_idx = q % 32;
                 let idx = shot * single_tableau_size + q * gen_words + word_idx;
-                destab_x[idx] = 1u32 << bit_idx;
+                identity[idx] = 1u32 << bit_idx;
             }
         }
 
-        // stab_z also has identity structure
-        // For |0...0> state, stabilizers are Z_0, Z_1, ..., Z_{n-1}
-        // Each row q has Z=1 at generator position q (same as destab_x)
-        let mut stab_z = vec![0u32; single_tableau_size * batch_shots];
-        for shot in 0..batch_shots {
-            for q in 0..num_qubits {
-                let word_idx = q / 32;
-                let bit_idx = q % 32;
-                let idx = shot * single_tableau_size + q * gen_words + word_idx;
-                stab_z[idx] = 1u32 << bit_idx;
-            }
-        }
-
-        // Write to GPU
         self.queue
-            .write_buffer(&self.destab_x_buffer, 0, bytemuck::cast_slice(&destab_x));
+            .write_buffer(&self.destab_x_buffer, 0, bytemuck::cast_slice(&identity));
         self.queue
-            .write_buffer(&self.stab_z_buffer, 0, bytemuck::cast_slice(&stab_z));
+            .write_buffer(&self.stab_z_buffer, 0, bytemuck::cast_slice(&identity));
 
-        // Zero out other buffers
-        let zeros = vec![0u8; single_tableau_size * batch_shots * 4];
-        self.queue.write_buffer(&self.stab_x_buffer, 0, &zeros);
-        self.queue.write_buffer(&self.destab_z_buffer, 0, &zeros);
-
-        // Zero signs
-        let sign_zeros = vec![0u8; gen_words * batch_shots * 4];
-        self.queue
-            .write_buffer(&self.sign_minus_buffer, 0, &sign_zeros);
-        self.queue.write_buffer(&self.sign_i_buffer, 0, &sign_zeros);
+        // All sizes and offsets are multiples of COPY_BUFFER_ALIGNMENT (4 bytes).
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Multi Reset Encoder"),
+            });
+        encoder.clear_buffer(&self.stab_x_buffer, 0, None);
+        encoder.clear_buffer(&self.destab_z_buffer, 0, None);
+        encoder.clear_buffer(&self.sign_minus_buffer, 0, None);
+        encoder.clear_buffer(&self.sign_i_buffer, 0, None);
 
         // Write params (use shots_per_batch for shader dispatch)
         let params = [
@@ -700,6 +800,10 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
         self.queue
             .write_buffer(&self.params_buffer, 0, bytemuck::cast_slice(&params));
 
+        // Submit queued identity/params writes before the clears, and all reset
+        // work before any subsequent writes or dispatches on this queue.
+        self.queue.submit(std::iter::once(encoder.finish()));
+
         self.gate_queue.clear();
 
         // Reset measurement counter for fresh noise seeds
@@ -712,8 +816,14 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     }
 
     /// Queue a single-qubit gate
-    fn queue_single_gate(&mut self, gate_type: u32, qubit: u32) {
-        let packed = (gate_type & 0xF) | ((qubit & 0x3FFF) << 4);
+    fn queue_single_gate(&mut self, gate_type: u32, qubit: usize) {
+        let packed = crate::qubit_validation::pack_gate(
+            gate_type,
+            qubit,
+            None,
+            self.num_qubits as usize,
+            "GpuStabMulti",
+        );
         self.gate_queue.push(packed);
 
         if self.gate_queue.len() >= GATE_QUEUE_BUFFER_SIZE {
@@ -722,8 +832,14 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     }
 
     /// Queue a two-qubit gate
-    fn queue_two_qubit_gate(&mut self, gate_type: u32, control: u32, target: u32) {
-        let packed = (gate_type & 0xF) | ((target & 0x3FFF) << 4) | ((control & 0x3FFF) << 18);
+    fn queue_two_qubit_gate(&mut self, gate_type: u32, control: usize, target: usize) {
+        let packed = crate::qubit_validation::pack_gate(
+            gate_type,
+            target,
+            Some(control),
+            self.num_qubits as usize,
+            "GpuStabMulti",
+        );
         self.gate_queue.push(packed);
 
         if self.gate_queue.len() >= GATE_QUEUE_BUFFER_SIZE {
@@ -731,9 +847,10 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
         }
     }
 
-    /// Internal: Flush pending gates to GPU (without processing measurements)
+    /// Flush pending measurements at their call-time state, then dispatch later gates.
     #[allow(clippy::cast_possible_truncation)] // gate queue length fits in u32
     fn flush_gates(&mut self) {
+        self.flush_measurements();
         if self.gate_queue.is_empty() {
             return;
         }
@@ -751,7 +868,7 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
 
         // Dispatch: one thread per (shot, word) - use shots_per_batch
         let total_words = self.shots_per_batch * self.gen_words;
-        let workgroups = total_words.div_ceil(256);
+        let workgroups = total_words.div_ceil(WORKGROUP_SIZE);
 
         let mut encoder = self
             .device
@@ -781,10 +898,12 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     /// The quantum state persists after flushing, allowing you to queue
     /// more operations and call `flush()` again.
     pub fn flush(&mut self) {
-        // First, flush any pending gates
         self.flush_gates();
+    }
 
-        // Then process any queued measurements
+    // Pending measurements describe the state before the gates currently in
+    // gate_queue, including when that gate queue auto-flushes at capacity.
+    fn flush_measurements(&mut self) {
         if self.meas_queue.is_empty() {
             return;
         }
@@ -919,47 +1038,47 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
 
     #[allow(clippy::cast_possible_truncation)] // qubit index fits in u32
     fn queue_h(&mut self, qubit: usize) {
-        self.queue_single_gate(0, qubit as u32);
+        self.queue_single_gate(0, qubit);
     }
 
     #[allow(clippy::cast_possible_truncation)] // qubit index fits in u32
     fn queue_sz(&mut self, qubit: usize) {
-        self.queue_single_gate(1, qubit as u32);
+        self.queue_single_gate(1, qubit);
     }
 
     #[allow(clippy::cast_possible_truncation)] // qubit index fits in u32
     fn queue_szdg(&mut self, qubit: usize) {
-        self.queue_single_gate(2, qubit as u32);
+        self.queue_single_gate(2, qubit);
     }
 
     #[allow(clippy::cast_possible_truncation)] // qubit index fits in u32
     fn queue_x(&mut self, qubit: usize) {
-        self.queue_single_gate(3, qubit as u32);
+        self.queue_single_gate(3, qubit);
     }
 
     #[allow(clippy::cast_possible_truncation)] // qubit index fits in u32
     fn queue_y(&mut self, qubit: usize) {
-        self.queue_single_gate(4, qubit as u32);
+        self.queue_single_gate(4, qubit);
     }
 
     #[allow(clippy::cast_possible_truncation)] // qubit index fits in u32
     fn queue_z(&mut self, qubit: usize) {
-        self.queue_single_gate(5, qubit as u32);
+        self.queue_single_gate(5, qubit);
     }
 
     #[allow(clippy::cast_possible_truncation)] // qubit index fits in u32
     fn queue_cx(&mut self, control: usize, target: usize) {
-        self.queue_two_qubit_gate(6, control as u32, target as u32);
+        self.queue_two_qubit_gate(6, control, target);
     }
 
     #[allow(clippy::cast_possible_truncation)] // qubit index fits in u32
     fn queue_cz(&mut self, qubit_a: usize, qubit_b: usize) {
-        self.queue_two_qubit_gate(7, qubit_a as u32, qubit_b as u32);
+        self.queue_two_qubit_gate(7, qubit_a, qubit_b);
     }
 
     #[allow(clippy::cast_possible_truncation)] // qubit index fits in u32
     fn queue_swap(&mut self, qubit_a: usize, qubit_b: usize) {
-        self.queue_two_qubit_gate(8, qubit_a as u32, qubit_b as u32);
+        self.queue_two_qubit_gate(8, qubit_a, qubit_b);
     }
 
     /// Get the number of shots requested
@@ -975,7 +1094,7 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     /// Get the number of shots per GPU batch
     ///
     /// This is the maximum number of shots that can be processed in parallel
-    /// given GPU memory constraints. If `num_shots > shots_per_batch()`, the
+    /// given the memory budget and device buffer/dispatch limits. If `num_shots > shots_per_batch()`, the
     /// circuit must be run in multiple batches.
     pub fn shots_per_batch(&self) -> usize {
         self.shots_per_batch as usize
@@ -983,13 +1102,13 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
 
     /// Check if batching is required
     ///
-    /// Returns true if the requested shots exceed GPU memory capacity
+    /// Returns true if the requested shots exceed the memory budget or buffer/dispatch limits
     /// and must be processed in multiple batches.
     pub fn requires_batching(&self) -> bool {
         self.num_shots > self.shots_per_batch
     }
 
-    /// Get the maximum GPU buffer size in bytes
+    /// Get the GPU storage-buffer binding limit in bytes
     pub fn max_buffer_size(&self) -> u64 {
         self.max_buffer_size
     }
@@ -999,7 +1118,7 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
         (self.num_shots as usize).div_ceil(self.shots_per_batch as usize)
     }
 
-    /// Run a circuit across all batches when shots exceed GPU memory capacity.
+    /// Run a circuit across all batches when shots exceed the budget or buffer limits.
     ///
     /// When `num_shots > shots_per_batch()`, the circuit must be run multiple times
     /// to process all shots. This method handles the batching automatically:
@@ -1079,17 +1198,25 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
 
     // Measurement API
 
-    /// Measure qubits in the Z basis for all shots.
+    /// Measure qubits in the Z basis for the current batch.
     ///
-    /// Returns a vector of outcomes for each shot, where each inner vector
-    /// contains one bool per measured qubit (true = outcome 1, false = outcome 0).
+    /// Returns `shots_per_batch()` rows for the current batch. Check
+    /// [`Self::requires_batching`] and use [`Self::run_batched`] for more shots.
+    /// Each inner vector contains one bool per measured qubit (true = outcome 1,
+    /// false = outcome 0).
     ///
     /// If noise is enabled, measurement errors (bit flips) are applied with
     /// probability `p_meas`.
     ///
     /// Non-deterministic measurements are now fully supported with proper tableau updates.
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     #[allow(clippy::cast_possible_truncation)] // qubit/measurement indices and f32 thresholds fit in u32
     pub fn mz(&mut self, qubits: &[QubitId]) -> Vec<Vec<bool>> {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         let qubit_indices: Vec<usize> = qubits.iter().map(pecos_core::QubitId::index).collect();
         self.mz_internal(&qubit_indices)
     }
@@ -1239,43 +1366,73 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
         results
     }
 
-    /// Measure qubits in the X basis for all shots.
+    /// Measure qubits in the X basis for the current batch.
     ///
     /// This is equivalent to applying H gates, measuring in Z basis, then applying H gates again.
-    /// Returns a vector of outcomes for each shot, where each inner vector
-    /// contains one bool per measured qubit (true = outcome 1, false = outcome 0).
+    /// Returns `shots_per_batch()` rows for the current batch. Check
+    /// [`Self::requires_batching`] and use [`Self::run_batched`] for more shots.
+    /// Each inner vector contains one bool per measured qubit (true = outcome 1,
+    /// false = outcome 0).
     ///
     /// If noise is enabled, measurement errors (bit flips) are applied with
     /// probability `p_meas`.
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     pub fn mx(&mut self, qubits: &[QubitId]) -> Vec<Vec<bool>> {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         // X-basis measurement = H, Mz, H
-        self.h(qubits);
-        let results = self.mz(qubits);
-        self.h(qubits);
+        let indices: Vec<usize> = qubits.iter().map(QubitId::index).collect();
+        for &q in &indices {
+            self.queue_h(q);
+        }
+        let results = self.mz_internal(&indices);
+        for &q in &indices {
+            self.queue_h(q);
+        }
         results
     }
 
-    /// Measure qubits in the Y basis for all shots.
+    /// Measure qubits in the Y basis for the current batch.
     ///
     /// This is equivalent to applying Sdg, H gates, measuring in Z basis,
     /// then applying H, S gates to restore the state transformation.
-    /// Returns a vector of outcomes for each shot, where each inner vector
-    /// contains one bool per measured qubit (true = outcome 1, false = outcome 0).
+    /// Returns `shots_per_batch()` rows for the current batch. Check
+    /// [`Self::requires_batching`] and use [`Self::run_batched`] for more shots.
+    /// Each inner vector contains one bool per measured qubit (true = outcome 1,
+    /// false = outcome 0).
     ///
     /// If noise is enabled, measurement errors (bit flips) are applied with
     /// probability `p_meas`.
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     pub fn my(&mut self, qubits: &[QubitId]) -> Vec<Vec<bool>> {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         // Y-basis measurement = Sdg, H, Mz, H, S
         // (transforms Y eigenstates to Z eigenstates)
-        self.szdg(qubits);
-        self.h(qubits);
-        let results = self.mz(qubits);
-        self.h(qubits);
-        self.sz(qubits);
+        let indices: Vec<usize> = qubits.iter().map(QubitId::index).collect();
+        for &q in &indices {
+            self.queue_szdg(q);
+        }
+        for &q in &indices {
+            self.queue_h(q);
+        }
+        let results = self.mz_internal(&indices);
+        for &q in &indices {
+            self.queue_h(q);
+        }
+        for &q in &indices {
+            self.queue_sz(q);
+        }
         results
     }
 
-    /// Measure qubits in the Z basis for all shots (GPU-accelerated version).
+    /// Measure qubits in the Z basis for the current batch (GPU-accelerated version).
     ///
     /// This is an internal implementation detail. Use `mz()` for immediate
     /// measurement or `mz_queue()`/`mz_fetch()` for deferred measurement.
@@ -1285,19 +1442,24 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     /// providing better performance especially when many shots have
     /// non-deterministic outcomes.
     ///
-    /// Returns a vector of outcomes for each shot, where each inner vector
-    /// contains one bool per measured qubit (true = outcome 1, false = outcome 0).
+    /// Returns `shots_per_batch()` rows for the current batch. Check
+    /// [`Self::requires_batching`] and use [`Self::run_batched`] for more shots.
+    /// Each inner vector contains one bool per measured qubit (true = outcome 1,
+    /// false = outcome 0).
     ///
     /// If noise is enabled, measurement errors (bit flips) are applied with
     /// probability `p_meas`.
     #[cfg(test)]
     #[allow(clippy::cast_possible_truncation)] // qubit/measurement indices and f32 thresholds fit in u32
     fn mz_gpu(&mut self, qubits: &[QubitId]) -> Vec<Vec<bool>> {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         if qubits.is_empty() {
             return vec![vec![]; self.shots_per_batch as usize];
         }
 
-        // Flush pending gates first (but not measurement queue - we're handling measurements here)
+        // Complete earlier queued operations before these immediate measurements.
         self.flush_gates();
 
         let batch_shots = self.shots_per_batch;
@@ -1323,9 +1485,9 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
                 label: Some("Batched Measurement Encoder"),
             });
 
-        let shot_workgroups = batch_shots.div_ceil(256);
-        let word_workgroups = (batch_shots * self.gen_words).div_ceil(256);
-        let qubit_workgroups = (batch_shots * self.num_qubits).div_ceil(256);
+        let shot_workgroups = batch_shots.div_ceil(WORKGROUP_SIZE);
+        let word_workgroups = (batch_shots * self.gen_words).div_ceil(WORKGROUP_SIZE);
+        let qubit_workgroups = (batch_shots * self.num_qubits).div_ceil(WORKGROUP_SIZE);
 
         // Process each qubit measurement
         // Note: Measurements must be sequential because each one modifies the tableau
@@ -1481,9 +1643,9 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
         let mut results: Vec<Vec<bool>> =
             vec![vec![false; num_qubits_measured]; batch_shots as usize];
 
-        let shot_workgroups = batch_shots.div_ceil(256);
-        let word_workgroups = (batch_shots * self.gen_words).div_ceil(256);
-        let qubit_workgroups = (batch_shots * self.num_qubits).div_ceil(256);
+        let shot_workgroups = batch_shots.div_ceil(WORKGROUP_SIZE);
+        let word_workgroups = (batch_shots * self.gen_words).div_ceil(WORKGROUP_SIZE);
+        let qubit_workgroups = (batch_shots * self.num_qubits).div_ceil(WORKGROUP_SIZE);
 
         for (meas_idx, &qubit) in qubits.iter().enumerate() {
             // Write random bits and params
@@ -1652,7 +1814,10 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     // Queued Measurement API (fire-and-forget with deferred result retrieval)
     // ========================================================================
 
-    /// Queue measurements for later execution (fire-and-forget).
+    /// Queue measurements for the current batch for later execution (fire-and-forget).
+    ///
+    /// [`Self::mz_fetch`] returns `shots_per_batch()` rows. Check
+    /// [`Self::requires_batching`] and use [`Self::run_batched`] for more shots.
     ///
     /// Measurements are queued but not immediately executed. You can continue
     /// queuing gates and measurements. When you need results, call `mz_fetch()`.
@@ -1679,29 +1844,12 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     /// let results = sim.mz_fetch();
     /// // results[shot][measurement_index] = true/false
     /// ```
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     pub fn mz_queue(&mut self, qubits: &[QubitId]) {
-        // Mid-circuit semantics: each mz_queue call must observe the state at
-        // the TIME of the call. The queue is not drained until mz_fetch (or
-        // flush), but we must execute any previously-queued measurements
-        // BEFORE applying gates that arrived between then and now -- those
-        // prior measurements expect to see the state at their own call point.
-        //
-        // Order within this call:
-        //   1) execute any prior meas_queue items against the current
-        //      un-flushed state buffer (which still reflects the state at
-        //      their queue-time, modulo intervening non-measurement no-ops),
-        //   2) flush pending gates so the NEW measurements below will see
-        //      the state at this call point when later executed,
-        //   3) append the new qubits to meas_queue.
-        //
-        // Before the fix, mz_queue only appended qubit indices; mz_fetch
-        // later flushed every queued gate first, so every queued measurement
-        // saw the same final state regardless of when it was queued.
-        if !self.meas_queue.is_empty() {
-            let prev_qubits = std::mem::take(&mut self.meas_queue);
-            let prev_random = std::mem::take(&mut self.meas_queue_random_bits);
-            let prev_results = self.mz_gpu_sequential(&prev_qubits, &prev_random);
-            self.meas_pending_results.push(prev_results);
+        for q in qubits {
+            self.check_qubit(q.index());
         }
         self.flush_gates();
 
@@ -1719,10 +1867,11 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     /// Execute all queued measurements and return results.
     ///
     /// This processes all measurements queued via `mz_queue()` and returns
-    /// the accumulated results. The queue is cleared after fetching.
+    /// the accumulated results for the current batch. The queue is cleared after fetching.
+    /// Check [`Self::requires_batching`] and use [`Self::run_batched`] for more shots.
     ///
     /// Returns `Vec<Vec<bool>>` where:
-    /// - Outer vec: one entry per shot
+    /// - Outer vec: `shots_per_batch()` entries for the current batch
     /// - Inner vec: one bool per queued measurement (in queue order)
     ///
     /// If noise is enabled, measurement errors are applied to the results.
@@ -1740,55 +1889,21 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     /// // results[shot] has 3 bools: outcomes for qubits 0, 1, 2
     /// ```
     pub fn mz_fetch(&mut self) -> Vec<Vec<bool>> {
-        if self.meas_queue.is_empty() {
-            // Return any previously accumulated results, or empty
-            if self.meas_pending_results.is_empty() {
-                return vec![vec![]; self.shots_per_batch as usize];
-            }
-            // Flatten accumulated results: Vec<Vec<Vec<bool>>> -> Vec<Vec<bool>>
-            // Each entry in pending_results is a batch of measurements
-            let mut combined: Vec<Vec<bool>> = vec![vec![]; self.shots_per_batch as usize];
-            for batch in self.meas_pending_results.drain(..) {
-                for (shot_id, shot_outcomes) in batch.into_iter().enumerate() {
-                    combined[shot_id].extend(shot_outcomes);
-                }
-            }
-            return combined;
-        }
-
-        // Flush pending gates first (but not measurement queue - we're handling it here)
-        self.flush_gates();
-
-        let batch_shots = self.shots_per_batch as usize;
-
-        // Take ownership of queue data
-        let qubits = std::mem::take(&mut self.meas_queue);
-        let all_random_bits = std::mem::take(&mut self.meas_queue_random_bits);
-
-        // Process measurements using the GPU implementation
-        // Note: mz_gpu_sequential already increments measurement_count
-        let results = self.mz_gpu_sequential(&qubits, &all_random_bits);
-
-        // Combine with any previously accumulated results
-        let mut combined: Vec<Vec<bool>> = vec![vec![]; batch_shots];
+        self.flush();
+        let mut combined = vec![Vec::new(); self.shots_per_batch as usize];
         for batch in self.meas_pending_results.drain(..) {
-            for (shot_id, shot_outcomes) in batch.into_iter().enumerate() {
-                combined[shot_id].extend(shot_outcomes);
+            for (shot_id, outcomes) in batch.into_iter().enumerate() {
+                combined[shot_id].extend(outcomes);
             }
         }
-
-        // Append new results
-        for (shot_id, shot_outcomes) in results.into_iter().enumerate() {
-            combined[shot_id].extend(shot_outcomes);
-        }
-
         combined
     }
 
     /// Check if there are measurements still waiting to be executed on the
     /// current state. Does NOT count measurements that have already been
-    /// eagerly executed (by a subsequent `mz_queue` or flush) but not yet
-    /// fetched -- those are always returned in full on the next `mz_fetch`.
+    /// executed (by a subsequent `mz_queue`, an explicit flush, or an automatic
+    /// gate capacity flush) but not yet fetched. Those results are returned in
+    /// full on the next `mz_fetch`.
     pub fn has_queued_measurements(&self) -> bool {
         !self.meas_queue.is_empty()
     }
@@ -1796,14 +1911,19 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     /// Number of measurements currently waiting to be executed on the current
     /// state. With the mid-circuit semantics, each `mz_queue` call eagerly
     /// executes all previously-queued measurements before appending new
-    /// qubits; this count therefore reflects only the latest batch.
+    /// qubits; this count therefore reflects only the latest batch. An explicit
+    /// flush or automatic gate capacity flush also executes queued measurements,
+    /// reducing this count to zero while retaining the results for `mz_fetch`.
     pub fn queued_measurement_count(&self) -> usize {
         self.meas_queue.len()
     }
 
     /// Clear queued measurements without executing them.
     ///
-    /// Use this to discard pending measurements if you decide you don't need them.
+    /// Use this to discard measurements still waiting to execute. A subsequent
+    /// `mz_queue`, an explicit flush, or an automatic gate capacity flush may
+    /// already have executed them. This does not undo executed measurements or
+    /// discard their results, which remain available through `mz_fetch`.
     pub fn mz_clear_queue(&mut self) {
         self.meas_queue.clear();
         self.meas_queue_random_bits.clear();
@@ -1894,7 +2014,13 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     // it has multi-shot semantics (mz returns Vec<Vec<bool>> not Vec<MeasurementResult>)
 
     /// Hadamard gate on specified qubits
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     pub fn h(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         for &q in qubits {
             self.queue_h(q.index());
         }
@@ -1902,7 +2028,13 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     }
 
     /// SZ (sqrt-Z) gate on specified qubits
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     pub fn sz(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         for &q in qubits {
             self.queue_sz(q.index());
         }
@@ -1910,7 +2042,13 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     }
 
     /// SZ-dagger gate on specified qubits
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     pub fn szdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         for &q in qubits {
             self.queue_szdg(q.index());
         }
@@ -1918,7 +2056,13 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     }
 
     /// Pauli X gate on specified qubits
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     pub fn x(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         for &q in qubits {
             self.queue_x(q.index());
         }
@@ -1926,7 +2070,13 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     }
 
     /// Pauli Y gate on specified qubits
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     pub fn y(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         for &q in qubits {
             self.queue_y(q.index());
         }
@@ -1934,7 +2084,13 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     }
 
     /// Pauli Z gate on specified qubits
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     pub fn z(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         for &q in qubits {
             self.queue_z(q.index());
         }
@@ -1942,7 +2098,14 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     }
 
     /// CNOT gate on pairs of qubits (control, target)
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     pub fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for (a, b) in pairs {
+            self.check_qubit(a.index());
+            self.check_qubit(b.index());
+        }
         for &(q0, q1) in pairs {
             self.queue_cx(q0.index(), q1.index());
         }
@@ -1950,7 +2113,14 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     }
 
     /// CZ gate on pairs of qubits
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     pub fn cz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for (a, b) in pairs {
+            self.check_qubit(a.index());
+            self.check_qubit(b.index());
+        }
         for &(q0, q1) in pairs {
             self.queue_cz(q0.index(), q1.index());
         }
@@ -1958,7 +2128,14 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     }
 
     /// SWAP gate on pairs of qubits
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     pub fn swap(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for (a, b) in pairs {
+            self.check_qubit(a.index());
+            self.check_qubit(b.index());
+        }
         for &(q0, q1) in pairs {
             self.queue_swap(q0.index(), q1.index());
         }
@@ -2272,6 +2449,169 @@ fn compute_deterministic_outcome_multi(
 }
 
 #[cfg(test)]
+mod gpu_free_tests {
+    use super::*;
+
+    const LARGE_LIMIT: u64 = 4 << 30;
+
+    #[test]
+    fn test_memory_budget_sizing() {
+        let shots = calculate_shots_per_batch(
+            449,
+            50_000,
+            LARGE_LIMIT,
+            LARGE_LIMIT,
+            65_535,
+            DEFAULT_MEMORY_BUDGET_BYTES,
+        )
+        .unwrap();
+        assert_eq!(per_shot_sizes(449), (52_084, 116));
+        assert_eq!(shots, 5147); // 208_600 bytes per shot
+        assert_eq!(50_000u32.div_ceil(shots), 10);
+        assert_eq!(
+            calculate_shots_per_batch(5, 1000, LARGE_LIMIT, LARGE_LIMIT, 65_535, 36_000).unwrap(),
+            300
+        );
+        assert_eq!(
+            calculate_shots_per_batch(
+                5,
+                10,
+                LARGE_LIMIT,
+                LARGE_LIMIT,
+                65_535,
+                DEFAULT_MEMORY_BUDGET_BYTES
+            )
+            .unwrap(),
+            10
+        );
+    }
+
+    #[test]
+    fn test_buffer_limit_sizing() {
+        // 5 qubits use 20 tableau bytes per shot: 140 / 20 = 7 shots.
+        for (binding, buffer) in [(140, LARGE_LIMIT), (LARGE_LIMIT, 140)] {
+            assert_eq!(
+                calculate_shots_per_batch(
+                    5,
+                    1000,
+                    binding,
+                    buffer,
+                    65_535,
+                    DEFAULT_MEMORY_BUDGET_BYTES
+                )
+                .unwrap(),
+                7
+            );
+        }
+    }
+
+    #[test]
+    fn test_insufficient_memory() {
+        let error =
+            calculate_shots_per_batch(5, 10, LARGE_LIMIT, LARGE_LIMIT, 65_535, 119).unwrap_err();
+        assert!(error.contains("119"));
+        assert!(error.contains("120"));
+        assert!(error.contains("with_memory_budget"));
+        let error =
+            calculate_shots_per_batch(5, 10, LARGE_LIMIT, 19, 65_535, DEFAULT_MEMORY_BUDGET_BYTES)
+                .unwrap_err();
+        assert!(error.contains("19"));
+        assert!(error.contains("20"));
+        assert!(error.contains("5 qubits"));
+    }
+
+    #[test]
+    fn test_dispatch_limit_sizing() {
+        // Largest dispatch has 20 invocations per shot: 256 * 65_535 / 20 = 838_848.
+        assert_eq!(
+            calculate_shots_per_batch(20, 1_000_000, LARGE_LIMIT, LARGE_LIMIT, 65_535, LARGE_LIMIT)
+                .unwrap(),
+            838_848
+        );
+    }
+
+    #[test]
+    fn test_measurement_buffer_limit_sizing() {
+        // One-qubit tableau is 4 bytes, but measurement data is 16: 112 / 16 = 7.
+        assert_eq!(
+            calculate_shots_per_batch(1, 1000, 112, LARGE_LIMIT, 65_535, LARGE_LIMIT).unwrap(),
+            7
+        );
+        assert!(
+            calculate_shots_per_batch(1, 1, 15, LARGE_LIMIT, 65_535, LARGE_LIMIT)
+                .unwrap_err()
+                .contains("15")
+        );
+    }
+
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn test_shot_count_overflow() {
+        let shots = usize::try_from(u64::from(u32::MAX) + 1).unwrap();
+        let error = GpuStabMulti::<PecosRng>::new(2, shots)
+            .err()
+            .expect("Oversized shot count must fail before GPU startup");
+        assert!(error.contains(&shots.to_string()));
+        assert!(error.contains(&u32::MAX.to_string()));
+        assert!(error.contains("reduce num_shots"));
+    }
+
+    #[test]
+    fn test_dispatch_limit_below_one_shot() {
+        // 16_384 qubits need 64 workgroups of 256 for one shot; 63 cannot dispatch it.
+        let error =
+            calculate_shots_per_batch(16_384, 10, LARGE_LIMIT, LARGE_LIMIT, 63, LARGE_LIMIT)
+                .unwrap_err();
+        assert!(error.contains("16384 qubits"));
+        assert!(error.contains("16128 invocations")); // 63 * 256
+        assert!(error.contains("63 workgroups"));
+    }
+
+    #[test]
+    fn test_workgroup_size_matches_shaders() {
+        // Host dispatch counts assume every entry point is WORKGROUP_SIZE x 1 x 1.
+        for (name, source) in [
+            (
+                "stab_gate_shader_multi.wgsl",
+                include_str!("stab_gate_shader_multi.wgsl"),
+            ),
+            (
+                "stab_meas_shader_multi.wgsl",
+                include_str!("stab_meas_shader_multi.wgsl"),
+            ),
+        ] {
+            let module = wgpu::naga::front::wgsl::parse_str(source)
+                .unwrap_or_else(|error| panic!("{name} must parse: {error}"));
+            assert_ne!(module.entry_points.len(), 0, "{name} has no entry points");
+            for entry_point in &module.entry_points {
+                assert_eq!(
+                    entry_point.workgroup_size,
+                    [WORKGROUP_SIZE, 1, 1],
+                    "{name}::{}",
+                    entry_point.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_zero_shots() {
+        assert_eq!(
+            calculate_shots_per_batch(
+                5,
+                0,
+                LARGE_LIMIT,
+                LARGE_LIMIT,
+                65_535,
+                DEFAULT_MEMORY_BUDGET_BYTES
+            )
+            .unwrap(),
+            1
+        );
+    }
+}
+
+#[cfg(test)]
 #[allow(clippy::cast_precision_loss)] // statistical tests use count as f64
 mod tests {
     use super::*;
@@ -2288,27 +2628,10 @@ mod tests {
 
     #[test]
     fn test_adaptive_batching() {
-        // Verify that the simulator correctly caps shots_per_batch and enables
-        // batching when total data exceeds the GPU's buffer limit.
-        // wgpu panics (rather than returning Err) on OOM, so catch panics
-        // to handle GPUs with insufficient VRAM gracefully.
-        let result = std::panic::catch_unwind(|| {
-            let d = 27;
-            let num_qubits = d * d + (d * d - 1); // 1457 qubits
-            let num_shots = 100_000;
-
-            let Ok(sim) = GpuStabMulti::<PecosRng>::new(num_qubits, num_shots) else {
-                return;
-            };
-            if !sim.requires_batching() {
-                return; // GPU has enough memory for all shots in one batch
-            }
-            assert!(sim.shots_per_batch() < num_shots);
-            assert!(sim.num_batches() > 1);
-        });
-        if result.is_err() {
-            eprintln!("test_adaptive_batching: skipped (GPU OOM or no driver)");
-        }
+        let sim = GpuStabMulti::<PecosRng>::with_memory_budget(1457, 100_000, 42, 8 << 20).unwrap();
+        assert_eq!(sim.shots_per_batch(), 3);
+        assert!(sim.requires_batching());
+        assert_eq!(sim.num_batches(), 33_334);
     }
 
     #[test]
@@ -2991,42 +3314,16 @@ mod tests {
 
     #[test]
     fn test_run_batched_multiple_batches() {
-        // Verify batched execution produces correct results across batch boundaries.
-        // Use large qubits so each shot is big, meaning fewer total shots needed
-        // to exceed buffer limits. wgpu panics on OOM, so catch panics.
-        let result = std::panic::catch_unwind(|| {
-            let d = 15;
-            let num_qubits = d * d + (d * d - 1); // 449 qubits
-            let num_shots = 50_000;
-
-            let Ok(mut sim) = GpuStabMulti::<PecosRng>::with_seed(num_qubits, num_shots, 42) else {
-                return;
-            };
-            if !sim.requires_batching() {
-                return; // GPU can fit all shots -- nothing to test
-            }
-            let num_shots = sim.num_shots();
-
-            let results = sim.run_batched(|s| {
-                // Simple circuit: put first qubit in |0> state and measure
-                s.mz(&[QubitId(0)])
-            });
-
-            // Should have exactly num_shots results
-            assert_eq!(
-                results.len(),
-                num_shots,
-                "Should have results for all shots"
-            );
-
-            // All should measure 0 (qubit starts in |0>)
-            for result in &results {
-                assert_eq!(result.len(), 1);
-                assert!(!result[0], "Qubit in |0> should measure 0");
-            }
+        let mut sim = GpuStabMulti::<PecosRng>::with_memory_budget(5, 1000, 42, 36_000).unwrap();
+        assert_eq!(sim.shots_per_batch(), 300);
+        assert_eq!(sim.num_batches(), 4);
+        let results = sim.run_batched(|s| {
+            s.x(&qid(0));
+            s.mz(&[QubitId(0), QubitId(1)])
         });
-        if result.is_err() {
-            eprintln!("test_run_batched_multiple_batches: skipped (GPU OOM or no driver)");
+        assert_eq!(results.len(), 1000);
+        for (shot, result) in results.iter().enumerate() {
+            assert_eq!(result, &[true, false], "shot {shot}");
         }
     }
 
@@ -3208,7 +3505,7 @@ mod tests {
         // Fetch results
         let results = sim.mz_fetch();
 
-        // Should have results for all shots
+        // All shots fit in one batch, so the current batch covers every shot
         assert_eq!(results.len(), num_shots);
         // Each shot should have 2 measurement outcomes
         for shot_result in &results {
@@ -4096,12 +4393,68 @@ mod tests {
     }
 
     #[test]
+    fn test_reset_all_buffers() {
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(5, 8, 42).unwrap();
+        let fresh = GpuStabMulti::<PecosRng>::with_seed(5, 8, 42).unwrap();
+        let qubits: Vec<_> = (0..5).map(QubitId).collect();
+        // H populates stab_x/destab_z; Sdg sets both phase bits on each stabilizer.
+        sim.h(&qubits);
+        sim.szdg(&qubits);
+        sim.sync();
+        for (name, buffer, bytes_per_shot) in [
+            ("stab_x", &sim.stab_x_buffer, 20),
+            ("destab_z", &sim.destab_z_buffer, 20),
+            ("sign_minus", &sim.sign_minus_buffer, 4),
+            ("sign_i", &sim.sign_i_buffer, 4),
+        ] {
+            let data = sim.read_buffer(buffer, bytes_per_shot * 8);
+            assert!(
+                data.chunks_exact(bytes_per_shot)
+                    .all(|shot| shot.iter().any(|&byte| byte != 0)),
+                "{name} must be nonzero in every shot before reset"
+            );
+        }
+        sim.reset();
+        for (name, actual, expected, size) in [
+            ("stab_x", &sim.stab_x_buffer, &fresh.stab_x_buffer, 160),
+            ("stab_z", &sim.stab_z_buffer, &fresh.stab_z_buffer, 160),
+            (
+                "destab_x",
+                &sim.destab_x_buffer,
+                &fresh.destab_x_buffer,
+                160,
+            ),
+            (
+                "destab_z",
+                &sim.destab_z_buffer,
+                &fresh.destab_z_buffer,
+                160,
+            ),
+            (
+                "sign_minus",
+                &sim.sign_minus_buffer,
+                &fresh.sign_minus_buffer,
+                32,
+            ),
+            ("sign_i", &sim.sign_i_buffer, &fresh.sign_i_buffer, 32),
+        ] {
+            assert_eq!(
+                sim.read_buffer(actual, size),
+                fresh.read_buffer(expected, size),
+                "{name} differs after reset"
+            );
+        }
+    }
+
+    #[test]
     fn test_repeated_reset() {
         // Multiple resets should be safe
         let num_shots = 10;
         let mut sim = GpuStabMulti::<PecosRng>::with_seed(2, num_shots, 42).unwrap();
 
         sim.x(&qid(0));
+        sim.sync();
+        assert!(sim.mz(&qid(0)).iter().all(|shot| shot[0]));
         sim.reset();
         sim.reset();
         sim.reset();
@@ -4178,6 +4531,48 @@ mod tests {
 
         for shot in &results {
             assert!(shot[0], "X|0> should measure 1");
+        }
+    }
+}
+
+#[cfg(test)]
+mod queue_capacity_tests {
+    use super::*;
+    use pecos_simulators::{CliffordGateable, SparseStab};
+
+    #[test]
+    fn overflow_preserves_queued_measurement_order() {
+        let mut sim = match GpuStabMulti::<PecosRng>::new(2, 4) {
+            Ok(sim) => sim,
+            Err(error) => {
+                eprintln!("SKIP multi-shot queue overflow: {error}");
+                return;
+            }
+        };
+        let mut cpu = SparseStab::new(2);
+        sim.mz_queue(&[QubitId(0)]);
+        let mut expected = vec![cpu.mz(&[QubitId(0)])[0].outcome];
+        sim.x(&[QubitId(0)]);
+        cpu.x(&[QubitId(0)]);
+        for _ in 0..300_000 {
+            sim.cx(&[(QubitId(0), QubitId(1))]);
+            cpu.cx(&[(QubitId(0), QubitId(1))]);
+        }
+        sim.mz_queue(&[QubitId(0), QubitId(1)]);
+        expected.extend(cpu.mz(&[QubitId(0), QubitId(1)]).iter().map(|r| r.outcome));
+        // A later gate below the capacity must also follow the last measurement.
+        sim.x(&[QubitId(0)]);
+        cpu.x(&[QubitId(0)]);
+        for actual in sim.mz_fetch() {
+            assert_eq!(actual, expected);
+        }
+        let expected: Vec<bool> = cpu
+            .mz(&[QubitId(0), QubitId(1)])
+            .iter()
+            .map(|r| r.outcome)
+            .collect();
+        for actual in sim.mz(&[QubitId(0), QubitId(1)]) {
+            assert_eq!(actual, expected);
         }
     }
 }

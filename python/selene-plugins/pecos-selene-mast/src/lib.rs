@@ -54,6 +54,8 @@ impl MastSimulator {
     }
 
     fn rxy(&mut self, qubit: u64, theta: f64, phi: f64) -> Result<()> {
+        let theta_angle = Angle64::try_from_radians(theta)?;
+        let phi_angle = Angle64::try_from_radians(phi)?;
         if qubit >= self.n_qubits {
             return Err(anyhow!(
                 "RXY(qubit={qubit}) out of bounds (n_qubits={})",
@@ -62,27 +64,27 @@ impl MastSimulator {
         }
         let q = QubitId(Self::to_usize(qubit));
         self.simulator
-            .rz(Angle64::from_radians(-phi), &[q])
-            .rx(Angle64::from_radians(theta), &[q])
-            .rz(Angle64::from_radians(phi), &[q]);
+            .rz(Angle64::try_from_radians(-phi)?, &[q])
+            .rx(theta_angle, &[q])
+            .rz(phi_angle, &[q]);
         Ok(())
     }
 
     fn rz(&mut self, qubit: u64, theta: f64) -> Result<()> {
+        let theta_angle = Angle64::try_from_radians(theta)?;
         if qubit >= self.n_qubits {
             return Err(anyhow!(
                 "RZ(qubit={qubit}) out of bounds (n_qubits={})",
                 self.n_qubits
             ));
         }
-        self.simulator.rz(
-            Angle64::from_radians(theta),
-            &[QubitId(Self::to_usize(qubit))],
-        );
+        self.simulator
+            .rz(theta_angle, &[QubitId(Self::to_usize(qubit))]);
         Ok(())
     }
 
     fn rzz(&mut self, qubit1: u64, qubit2: u64, theta: f64) -> Result<()> {
+        let theta_angle = Angle64::try_from_radians(theta)?;
         if qubit1 >= self.n_qubits || qubit2 >= self.n_qubits {
             return Err(anyhow!(
                 "RZZ(qubit1={qubit1}, qubit2={qubit2}) out of bounds (n_qubits={})",
@@ -90,7 +92,7 @@ impl MastSimulator {
             ));
         }
         self.simulator.rzz(
-            Angle64::from_radians(theta),
+            theta_angle,
             &[(
                 QubitId(Self::to_usize(qubit1)),
                 QubitId(Self::to_usize(qubit2)),
@@ -100,6 +102,8 @@ impl MastSimulator {
     }
 
     fn rxyxy2q(&mut self, qubit1: u64, qubit2: u64, theta: f64, phi: f64) -> Result<()> {
+        let theta_angle = Angle64::try_from_radians(theta)?;
+        let phi_angle = Angle64::try_from_radians(phi)?;
         if qubit1 >= self.n_qubits || qubit2 >= self.n_qubits || qubit1 == qubit2 {
             return Err(anyhow!(
                 "RXYXY2Q requires two distinct qubits below {}, got ({qubit1}, {qubit2})",
@@ -107,8 +111,8 @@ impl MastSimulator {
             ));
         }
         self.simulator.rxyxy2q(
-            Angle64::from_radians(theta),
-            Angle64::from_radians(phi),
+            theta_angle,
+            phi_angle,
             &[(
                 QubitId(Self::to_usize(qubit1)),
                 QubitId(Self::to_usize(qubit2)),
@@ -295,6 +299,28 @@ mod tests {
     use super::MastSimulatorFactory;
     use selene_core::simulator::conformance_testing::run_basic_tests;
     use std::sync::Arc;
+
+    #[test]
+    fn nonfinite_runtime_angles_are_errors() {
+        use selene_core::operation::{BatchOperation, Operation};
+        use selene_core::simulator::{SimulatorInterface, interface::SimulatorInterfaceFactory};
+        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let mut sim = std::sync::Arc::new(super::MastSimulatorFactory)
+                .init(2, &[String::new()])
+                .unwrap();
+            sim.shot_start(0, 17).unwrap();
+            let error = sim
+                .handle_operations(BatchOperation::error_model(vec![Operation::RPPGate {
+                    qubit_id_1: 0,
+                    qubit_id_2: 1,
+                    theta: 0.0,
+                    phi: value,
+                }]))
+                .err()
+                .expect("nonfinite axis must fail");
+            assert!(error.to_string().contains(&value.to_string()));
+        }
+    }
 
     #[test]
     fn basic_conformance_test() {

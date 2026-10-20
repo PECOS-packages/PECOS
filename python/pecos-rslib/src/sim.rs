@@ -38,6 +38,19 @@ fn unwrap_engine_builder_proxy(py: Python, engine_builder: Py<PyAny>) -> PyResul
     }
 }
 
+fn normalize_noise_builder(py: Python, noise_builder: Py<PyAny>) -> PyResult<Py<PyAny>> {
+    match noise_builder
+        .bind(py)
+        .getattr(pyo3::intern!(py, "__pecos_noise_builder__"))
+    {
+        Ok(converter) => Ok(converter.call0()?.into_any().unbind()),
+        Err(err) if err.is_instance_of::<pyo3::exceptions::PyAttributeError>(py) => {
+            Ok(noise_builder)
+        }
+        Err(err) => Err(err),
+    }
+}
+
 /// Check if a Python object is a Guppy function
 fn is_guppy_function(py: Python, obj: &Py<PyAny>) -> PyResult<bool> {
     // Check if guppylang module is available
@@ -231,9 +244,10 @@ impl PySimBuilder {
                         let mut inner = qis_engine.inner;
                         if let Some(program) = &sim_builder.qis_program {
                             inner = inner.try_program(program.clone()).map_err(|e| {
-                                PyRuntimeError::new_err(format!(
-                                    "Failed to re-attach QIS program to the new engine builder: {e}"
-                                ))
+                                crate::errors::simulation_error(
+                                    e,
+                                    "Failed to re-attach QIS program to the new engine builder",
+                                )
                             })?;
                         }
                         sim_builder.engine_builder = Arc::new(Mutex::new(Some(inner)));
@@ -396,8 +410,13 @@ impl PySimBuilder {
         })
     }
 
-    /// Set noise model builder
+    /// Set a noise model builder or portable noise-parameter object.
+    ///
+    /// Parameter objects can define ``__pecos_noise_builder__()`` to convert
+    /// themselves into a native PECOS noise builder. ``GeneralNoiseParameters``
+    /// implements this protocol.
     fn noise(&mut self, noise_builder: Py<PyAny>) -> PyResult<Self> {
+        let noise_builder = Python::attach(|py| normalize_noise_builder(py, noise_builder))?;
         if crate::scheduled_adapter::is_event_noise(&noise_builder)
             && !matches!(self.inner, SimBuilderInner::QisControl(_))
         {
@@ -531,6 +550,12 @@ impl PySimBuilder {
 
         match &self.inner {
             SimBuilderInner::QisControl(builder) => {
+                let n = builder.explicit_num_qubits.ok_or_else(|| {
+                    PyValueError::new_err(
+                        "QIS programs require explicit qubit specification. \
+                        Please call .qubits(N) before capture_operation_trace().",
+                    )
+                })?;
                 let engine_builder = builder.engine_builder()?;
                 let collector: pecos_qis::OperationTraceStore = Arc::new(Mutex::new(Vec::new()));
                 let engine_builder =
@@ -549,12 +574,6 @@ impl PySimBuilder {
                 if let Some(workers) = builder.workers {
                     sim_builder = sim_builder.workers(workers);
                 }
-                let n = builder.explicit_num_qubits.ok_or_else(|| {
-                    PyRuntimeError::new_err(
-                        "QIS programs require explicit qubit specification. \
-                        Please call .qubits(N) before capture_operation_trace().",
-                    )
-                })?;
                 sim_builder = sim_builder.qubits(n);
 
                 if let Some(ref qe_py) = builder.quantum_engine_builder {
@@ -630,11 +649,11 @@ impl PySimBuilder {
                     } else if let Ok(depolarizing) =
                         noise_py.extract::<PyDepolarizingNoiseModelBuilder>(py)
                     {
-                        sim_builder.noise(depolarizing.inner.clone())
+                        sim_builder.noise(depolarizing.validated_inner()?)
                     } else if let Ok(biased) =
                         noise_py.extract::<PyBiasedDepolarizingNoiseModelBuilder>(py)
                     {
-                        sim_builder.noise(biased.inner.clone())
+                        sim_builder.noise(biased.validated_inner()?)
                     } else {
                         return Err(PyTypeError::new_err(UNRECOGNIZED_NOISE_BUILDER));
                     };
@@ -646,7 +665,7 @@ impl PySimBuilder {
                     ));
                 }
                 sim_builder.run(shots).map_err(|e| {
-                    PyRuntimeError::new_err(format!("Trace capture simulation failed: {e}"))
+                    crate::errors::simulation_error(e, "Trace capture simulation failed")
                 })?;
 
                 let trace = collector.lock().expect("lock poisoned").clone();
@@ -708,6 +727,18 @@ impl PySimBuilder {
             SimBuilderInner::Qasm(builder) => run_qasm_via_facade(builder, shots),
             SimBuilderInner::QisControl(builder) => {
                 // Implementation for QIS Engine
+                let n = builder.explicit_num_qubits.ok_or_else(|| {
+                    PyValueError::new_err(
+                        "QIS programs require explicit qubit specification. \
+                        Please call .qubits(N) to specify the number of qubits.\n\
+                        \n\
+                        Example:\n\
+                        sim(qis_program).qubits(10).run(100)\n\
+                        \n\
+                        Unlike QASM programs which declare qubit registers explicitly, \
+                        QIS programs need the qubit count to be specified for proper simulation.",
+                    )
+                })?;
                 let engine_builder = builder.engine_builder()?;
                 let engine_builder = if let Some(ref trace_dir) = builder.operation_trace_dir {
                     engine_builder.trace_operations_to(trace_dir)
@@ -724,19 +755,6 @@ impl PySimBuilder {
                 if let Some(workers) = builder.workers {
                     sim_builder = sim_builder.workers(workers);
                 }
-                // QIS programs require explicit qubit specification since they don't inherently specify qubit count
-                let n = builder.explicit_num_qubits.ok_or_else(|| {
-                    PyRuntimeError::new_err(
-                        "QIS programs require explicit qubit specification. \
-                        Please call .qubits(N) to specify the number of qubits.\n\
-                        \n\
-                        Example:\n\
-                        sim(qis_program).qubits(10).run(100)\n\
-                        \n\
-                        Unlike QASM programs which declare qubit registers explicitly, \
-                        QIS programs need the qubit count to be specified for proper simulation.",
-                    )
-                })?;
                 sim_builder = sim_builder.qubits(n);
                 // Apply quantum engine if present
                 if let Some(ref qe_py) = builder.quantum_engine_builder {
@@ -822,11 +840,11 @@ impl PySimBuilder {
                         } else if let Ok(depolarizing) =
                             noise_py.extract::<PyDepolarizingNoiseModelBuilder>(py)
                         {
-                            Ok(sim_builder.noise(depolarizing.inner.clone()))
+                            Ok(sim_builder.noise(depolarizing.validated_inner()?))
                         } else if let Ok(biased) =
                             noise_py.extract::<PyBiasedDepolarizingNoiseModelBuilder>(py)
                         {
-                            Ok(sim_builder.noise(biased.inner.clone()))
+                            Ok(sim_builder.noise(biased.validated_inner()?))
                         } else {
                             Err(PyTypeError::new_err(UNRECOGNIZED_NOISE_BUILDER))
                         }
@@ -835,7 +853,7 @@ impl PySimBuilder {
 
                 match Python::attach(|py| py.detach(move || sim_builder.run(shots))) {
                     Ok(shot_vec) => Ok(PyShotVec::new(shot_vec)),
-                    Err(e) => Err(PyRuntimeError::new_err(format!("Simulation failed: {e}"))),
+                    Err(e) => Err(crate::errors::simulation_error(e, "Simulation failed")),
                 }
             }
             SimBuilderInner::PhirJson(builder) => {
@@ -861,7 +879,7 @@ impl PySimBuilder {
 
                 match sim_builder.run(shots) {
                     Ok(shot_vec) => Ok(PyShotVec::new(shot_vec)),
-                    Err(e) => Err(PyRuntimeError::new_err(format!("Simulation failed: {e}"))),
+                    Err(e) => Err(crate::errors::simulation_error(e, "Simulation failed")),
                 }
             }
             SimBuilderInner::Phir(builder) => {
@@ -884,7 +902,7 @@ impl PySimBuilder {
 
                 match sim_builder.run(shots) {
                     Ok(shot_vec) => Ok(PyShotVec::new(shot_vec)),
-                    Err(e) => Err(PyRuntimeError::new_err(format!("Simulation failed: {e}"))),
+                    Err(e) => Err(crate::errors::simulation_error(e, "Simulation failed")),
                 }
             }
             SimBuilderInner::Empty => Err(PyRuntimeError::new_err(
@@ -912,7 +930,7 @@ impl PySimBuilder {
             _ => false,
         };
         if neo_selected {
-            return Err(PyRuntimeError::new_err(
+            return Err(PyValueError::new_err(
                 "build() is not available on the neo stack (it has no reusable \
                  MonteCarloEngine); call run(shots) directly or use the engines stack",
             ));
@@ -1038,11 +1056,11 @@ impl PySimBuilder {
                             } else if let Ok(depolarizing) =
                                 noise_py.extract::<PyDepolarizingNoiseModelBuilder>(py)
                             {
-                                Ok(sim_builder.noise(depolarizing.inner.clone()))
+                                Ok(sim_builder.noise(depolarizing.validated_inner()?))
                             } else if let Ok(biased) =
                                 noise_py.extract::<PyBiasedDepolarizingNoiseModelBuilder>(py)
                             {
-                                Ok(sim_builder.noise(biased.inner.clone()))
+                                Ok(sim_builder.noise(biased.validated_inner()?))
                             } else {
                                 Err(PyTypeError::new_err(UNRECOGNIZED_NOISE_BUILDER))
                             }
@@ -1051,7 +1069,7 @@ impl PySimBuilder {
 
                     // Build the MonteCarloEngine
                     let engine = sim_builder.build().map_err(|e| {
-                        PyRuntimeError::new_err(format!("Failed to build simulation: {e}"))
+                        crate::errors::simulation_error(e, "Failed to build simulation")
                     })?;
 
                     Ok(Py::new(
@@ -1084,7 +1102,7 @@ impl PySimBuilder {
                     // TODO: Add quantum and noise builder support for PHIR JSON
 
                     let engine = sim_builder.build().map_err(|e| {
-                        PyRuntimeError::new_err(format!("Failed to build simulation: {e}"))
+                        crate::errors::simulation_error(e, "Failed to build simulation")
                     })?;
 
                     Ok(Py::new(
@@ -1114,7 +1132,7 @@ impl PySimBuilder {
                     }
 
                     let engine = sim_builder.build().map_err(|e| {
-                        PyRuntimeError::new_err(format!("Failed to build simulation: {e}"))
+                        crate::errors::simulation_error(e, "Failed to build simulation")
                     })?;
 
                     Ok(Py::new(
@@ -1127,6 +1145,12 @@ impl PySimBuilder {
                 }
                 SimBuilderInner::QisControl(builder) => {
                     // Implementation for QIS Engine build()
+                    let n = builder.explicit_num_qubits.ok_or_else(|| {
+                        PyValueError::new_err(
+                            "QIS programs require explicit qubit specification. \
+                            Please call .qubits(N) to specify the number of qubits.",
+                        )
+                    })?;
                     let engine_builder = builder.engine_builder()?;
                     let engine_builder = if let Some(ref trace_dir) = builder.operation_trace_dir {
                         engine_builder.trace_operations_to(trace_dir)
@@ -1143,13 +1167,6 @@ impl PySimBuilder {
                     if let Some(workers) = builder.workers {
                         sim_builder = sim_builder.workers(workers);
                     }
-                    // QIS programs require explicit qubit specification
-                    let n = builder.explicit_num_qubits.ok_or_else(|| {
-                        PyRuntimeError::new_err(
-                            "QIS programs require explicit qubit specification. \
-                            Please call .qubits(N) to specify the number of qubits.",
-                        )
-                    })?;
                     sim_builder = sim_builder.qubits(n);
 
                     // Apply quantum engine if present
@@ -1241,11 +1258,11 @@ impl PySimBuilder {
                             } else if let Ok(depolarizing) =
                                 noise_py.extract::<PyDepolarizingNoiseModelBuilder>(py)
                             {
-                                Ok(sim_builder.noise(depolarizing.inner.clone()))
+                                Ok(sim_builder.noise(depolarizing.validated_inner()?))
                             } else if let Ok(biased) =
                                 noise_py.extract::<PyBiasedDepolarizingNoiseModelBuilder>(py)
                             {
-                                Ok(sim_builder.noise(biased.inner.clone()))
+                                Ok(sim_builder.noise(biased.validated_inner()?))
                             } else {
                                 Err(PyTypeError::new_err(UNRECOGNIZED_NOISE_BUILDER))
                             }
@@ -1254,7 +1271,7 @@ impl PySimBuilder {
 
                     // Build the MonteCarloEngine
                     let engine = sim_builder.build().map_err(|e| {
-                        PyRuntimeError::new_err(format!("Failed to build simulation: {e}"))
+                        crate::errors::simulation_error(e, "Failed to build simulation")
                     })?;
 
                     // Handle intermediate file saving if requested
@@ -1349,11 +1366,11 @@ fn run_qasm_via_facade(
     // rejections below — otherwise a sourceless `.classical()` + neo would
     // misreport the missing source as an unrouted classical override.
     let program = engine_builder.get_program().ok_or_else(|| {
-        PyRuntimeError::new_err("No QASM source specified. Use .qasm() or .qasm_file()")
+        PyValueError::new_err("No QASM source specified. Use .qasm() or .qasm_file()")
     })?;
 
     if builder.stack == Some(PySimStack::Neo) && engine_builder.has_wasm() {
-        return Err(PyRuntimeError::new_err(
+        return Err(PyValueError::new_err(
             "WASM foreign objects are not routed to the neo stack; \
              remove .wasm()/.foreign_object() or use the engines stack",
         ));
@@ -1363,7 +1380,7 @@ fn run_qasm_via_facade(
         // stack (the Rust sim().stack(Neo) path rejects it the same way).
         // Refuse rather than silently dropping the explicit engine and
         // running with only its program.
-        return Err(PyRuntimeError::new_err(
+        return Err(PyValueError::new_err(
             "Explicit .classical() engine builders are not routed to the neo stack; \
              remove .classical() or use the engines stack",
         ));
@@ -1402,7 +1419,7 @@ fn run_qasm_via_facade(
     }
     match facade.shots(shots).run() {
         Ok(shot_vec) => Ok(crate::shot_results_bindings::PyShotVec::new(shot_vec)),
-        Err(e) => Err(PyRuntimeError::new_err(format!("Simulation failed: {e}"))),
+        Err(e) => Err(crate::errors::simulation_error(e, "Simulation failed")),
     }
 }
 
@@ -1455,9 +1472,9 @@ fn apply_noise_to_facade(
         } else if let Ok(general) = noise_py.extract::<PyGeneralNoiseModelBuilder>(py) {
             Ok(facade.noise(general.validated_inner()?))
         } else if let Ok(depolarizing) = noise_py.extract::<PyDepolarizingNoiseModelBuilder>(py) {
-            Ok(facade.noise(depolarizing.inner.clone()))
+            Ok(facade.noise(depolarizing.validated_inner()?))
         } else if let Ok(biased) = noise_py.extract::<PyBiasedDepolarizingNoiseModelBuilder>(py) {
-            Ok(facade.noise(biased.inner.clone()))
+            Ok(facade.noise(biased.validated_inner()?))
         } else {
             Err(PyTypeError::new_err(UNRECOGNIZED_NOISE_BUILDER))
         }
@@ -1535,4 +1552,74 @@ pub fn register_sim_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(self::sim, m)?)?;
     m.add_function(wrap_pyfunction!(self::sim_builder, m)?)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod preflight_tests {
+    use super::*;
+
+    fn assert_input_error<T>(py: Python<'_>, result: PyResult<T>, message: &str) {
+        let error = result
+            .err()
+            .expect("preflight must reject the configuration");
+        assert!(error.is_instance_of::<PyValueError>(py), "{error}");
+        assert!(error.to_string().contains(message), "{error}");
+    }
+
+    #[test]
+    fn qis_missing_count_is_value_error_on_every_entry_point() {
+        pyo3::Python::initialize();
+        Python::attach(|py| {
+            let builder = PySimBuilder {
+                inner: SimBuilderInner::QisControl(PyQisControlSimBuilder {
+                    // No cached engine or program: attempting engine resolution would fail.
+                    // Missing count must be rejected before any native runtime is needed.
+                    engine_builder: Arc::new(Mutex::new(None)),
+                    seed: None,
+                    workers: None,
+                    shots: None,
+                    quantum_engine_builder: None,
+                    noise_builder: None,
+                    explicit_num_qubits: None,
+                    keep_intermediate_files: false,
+                    qis_program: None,
+                    operation_trace_dir: None,
+                }),
+            };
+            assert_input_error(py, builder.run(Some(1)), ".qubits(N)");
+            assert_input_error(py, builder.build(), ".qubits(N)");
+            assert_input_error(py, builder.capture_operation_trace(py, 1), ".qubits(N)");
+        });
+    }
+
+    #[test]
+    fn unsupported_neo_configuration_is_value_error() {
+        pyo3::Python::initialize();
+        Python::attach(|py| {
+            for wasm in [false, true] {
+                let engine = pecos_qasm::qasm_engine().qasm("OPENQASM 2.0; qreg q[1];");
+                let engine = if wasm {
+                    engine.wasm(QasmEngineWasm::from_bytes(Vec::new()))
+                } else {
+                    engine
+                };
+                let builder = PySimBuilder {
+                    inner: SimBuilderInner::Qasm(PyQasmSimBuilder {
+                        engine_builder: Arc::new(Mutex::new(Some(engine))),
+                        seed: None,
+                        workers: None,
+                        shots: None,
+                        quantum_engine_builder: None,
+                        noise_builder: None,
+                        explicit_num_qubits: None,
+                        foreign_object: None,
+                        stack: Some(PySimStack::Neo),
+                        classical_override: !wasm,
+                    }),
+                };
+                assert_input_error(py, builder.build(), "call run(shots)");
+                assert_input_error(py, builder.run(Some(1)), "not routed to the neo stack");
+            }
+        });
+    }
 }

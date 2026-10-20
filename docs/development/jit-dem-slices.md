@@ -310,6 +310,15 @@ omitted `buffer` derives the safe forward overlap. An explicit `buffer` also
 adds that many look-behind rounds and is rejected if it is smaller than the
 derived forward requirement.
 
+## Composition invariants
+
+Detector `fault_sector` labels travel with emitted declarations, just like
+coordinates. Slice extraction takes the label from the source detector emitted
+at relative round zero; port-only source detectors do not contribute labels.
+Declarations for the same composed address must agree on coordinates and labels,
+including whether a label is present. Disagreement is a
+`ConflictingDetectorDeclaration` error.
+
 ## Window boundaries
 
 `DemWindowSpec` describes a half-open commit region followed by a half-open
@@ -344,10 +353,12 @@ The decoder-core crate owns the flattened `StructuredDem` input boundary used
 by streaming and windowed decoders. The type can retain independent-error
 grouping, decomposition components, hyperedges, standard observable columns,
 and detector coordinates. `DetectorErrorModel::to_structured_decoder_dem()`
-uses the same equal-effect grouping and XOR probability combination as
-`to_mechanisms()` and the default rendered model; this avoids introducing a
-second factorization policy at the decoder boundary. PECOS tracked-Pauli outputs
-are rejected explicitly because they are not standard DEM observables.
+parses exactly its standard `to_string()` text, then overlays each detector's
+opaque `fault_sector` label by ID. Probabilities use standard text formatting,
+including its rounding (issue #1260), rather than exact mechanism probabilities.
+Tracked-Pauli outputs are omitted by standard text rendering. Sparse detector
+IDs retain the dimensions declared by the text. This is also the definition used
+by all Python object decode paths; corpus identity certifies that same text.
 
 `StreamingWindowedDecoder::from_structured_dem` accepts the model directly;
 `from_dem` parses the flattened text once. Decoder specifications also accept

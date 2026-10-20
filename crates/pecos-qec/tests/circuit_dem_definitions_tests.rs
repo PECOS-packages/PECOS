@@ -105,7 +105,7 @@ fn double_h_tick(annotation: bool) -> TickCircuit {
         circuit.detector(&measurements).unwrap();
     } else {
         circuit
-            .add_detector_metadata(&[-1], None, None, None)
+            .add_detector_metadata(&[-1], None, None, None, None)
             .unwrap();
     }
     circuit

@@ -34,10 +34,10 @@ dependencies = [
     "networkx>=2.1.0",
     # Guppy 1.0 release candidates and Selene 0.3 use the current tket/HUGR format.
     "guppylang~=1.0.1",
-    "tket~=0.15.0",
+    "tket~=0.15.9",
     "hugr~=0.18.0",
     "selene-sim~=0.3.0",
-    "selene-hugr-qis-compiler~=0.4.2",
+    "selene-hugr-qis-compiler~=0.4.3",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",

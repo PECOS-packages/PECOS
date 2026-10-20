@@ -171,7 +171,7 @@ impl DemBuild {
     /// These are measurement parities; no unknown noiseless references are invented.
     ///
     /// # Errors
-    /// Rejects invalid bits, wrong widths and tracked-Pauli outputs.
+    /// Rejects invalid bits and wrong widths. Tracked Paulis are not readout definitions.
     pub fn evaluate_runtime_record(
         &self,
         values: &[u8],
@@ -195,11 +195,6 @@ impl DemBuild {
         }
         let mut observables = ObsMask::new();
         for observable in &self.definitions.observables {
-            if observable.pauli.is_some() {
-                return Err(DemBuildError::Configuration(
-                    "tracked-Pauli outputs cannot be evaluated from measurement records".into(),
-                ));
-            }
             if parity(&observable.measurements) != 0 {
                 observables.set(observable.id as usize);
             }
@@ -667,12 +662,12 @@ fn requested_outputs(
     }
     let mut outputs = Vec::new();
     for definition in definitions {
-        if let Some(coords) = definition.coords {
-            if !detectors || coords.iter().any(|value| !value.is_finite()) {
-                return Err(DemBuildError::Configuration(
-                    "coordinates require a detector and three finite values".into(),
-                ));
-            }
+        if let Some(coords) = definition.coords
+            && (!detectors || coords.iter().any(|value| !value.is_finite()))
+        {
+            return Err(DemBuildError::Configuration(
+                "coordinates require a detector and three finite values".into(),
+            ));
         }
         for key in [
             "id",

@@ -17,6 +17,10 @@
 
 use super::response::CompositeResponse;
 use crate::command::{GateCommand, GatePayload, GateType};
+use crate::noise::validation::{
+    MAX_ANGLE_FRACTION, MAX_ANGLE_RATE, ValidationResult, validate_bounded, validate_finite,
+    validate_probability, validate_weights_sum,
+};
 use crate::noise::{NoiseContext, NoiseGateRequirement};
 use pecos_core::QubitId;
 use pecos_random::PecosRng;
@@ -195,11 +199,11 @@ impl GateAction for Inject {
 #[derive(Debug, Clone, Copy)]
 pub struct PauliWeights {
     /// Weight for X error.
-    pub x: f64,
+    pub(crate) x: f64,
     /// Weight for Y error.
-    pub y: f64,
+    pub(crate) y: f64,
     /// Weight for Z error.
-    pub z: f64,
+    pub(crate) z: f64,
 }
 
 impl Default for PauliWeights {
@@ -209,20 +213,41 @@ impl Default for PauliWeights {
 }
 
 impl PauliWeights {
+    /// Return the validated `x` weight.
+    #[must_use]
+    pub fn x(&self) -> f64 {
+        self.x
+    }
+
+    /// Return the validated `y` weight.
+    #[must_use]
+    pub fn y(&self) -> f64 {
+        self.y
+    }
+
+    /// Return the validated `z` weight.
+    #[must_use]
+    pub fn z(&self) -> f64 {
+        self.z
+    }
+
     /// Uniform weights (1/3 each).
     #[must_use]
     pub fn uniform() -> Self {
         Self {
-            x: 1.0,
-            y: 1.0,
-            z: 1.0,
+            x: 1.0 / 3.0,
+            y: 1.0 / 3.0,
+            z: 1.0 / 3.0,
         }
     }
 
     /// Custom weights.
-    #[must_use]
-    pub fn custom(x: f64, y: f64, z: f64) -> Self {
-        Self { x, y, z }
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn custom(x: f64, y: f64, z: f64) -> ValidationResult<Self> {
+        validate_weights_sum(&[x, y, z], "PauliWeights")?;
+        Ok(Self { x, y, z })
     }
 
     /// Z-only (dephasing).
@@ -236,17 +261,17 @@ impl PauliWeights {
     }
 
     /// Normalize weights to sum to 1.
-    #[must_use]
-    pub fn normalized(&self) -> Self {
+    ///
+    /// # Errors
+    /// Rejects invalid weights or a non-finite or non-positive total.
+    pub fn normalized(&self) -> ValidationResult<Self> {
+        validate_weights_sum(&[self.x, self.y, self.z], "PauliWeights")?;
         let total = self.x + self.y + self.z;
-        if total <= 0.0 {
-            return Self::uniform();
-        }
-        Self {
+        Ok(Self {
             x: self.x / total,
             y: self.y / total,
             z: self.z / total,
-        }
+        })
     }
 }
 
@@ -258,23 +283,29 @@ pub struct Pauli {
 
 impl Pauli {
     /// Create a Pauli action with specified weights.
-    #[must_use]
-    pub fn new(weights: PauliWeights) -> Self {
-        Self {
-            weights: weights.normalized(),
-        }
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn new(weights: PauliWeights) -> ValidationResult<Self> {
+        Ok(Self {
+            weights: weights.normalized()?,
+        })
     }
 
     /// Uniform depolarizing (equal X, Y, Z probability).
     #[must_use]
     pub fn uniform() -> Self {
-        Self::new(PauliWeights::uniform())
+        Self {
+            weights: PauliWeights::uniform(),
+        }
     }
 
     /// Z-only (dephasing).
     #[must_use]
     pub fn dephasing() -> Self {
-        Self::new(PauliWeights::z_only())
+        Self {
+            weights: PauliWeights::z_only(),
+        }
     }
 }
 
@@ -331,11 +362,13 @@ impl Seep {
     }
 
     /// Create a seep action with custom Pauli weights.
-    #[must_use]
-    pub fn with_weights(weights: PauliWeights) -> Self {
-        Self {
-            pauli_weights: weights.normalized(),
-        }
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_weights(weights: PauliWeights) -> ValidationResult<Self> {
+        Ok(Self {
+            pauli_weights: weights.normalized()?,
+        })
     }
 }
 
@@ -358,7 +391,7 @@ impl GateAction for Seep {
 
         // Scale to remaining 75%
         let r_scaled = (r - 0.25) / 0.75;
-        let weights = self.pauli_weights.normalized();
+        let weights = self.pauli_weights;
 
         let gate_type = if r_scaled < weights.x {
             GateType::X
@@ -410,17 +443,23 @@ impl TwoQubitPauli {
     }
 
     /// Create with custom weights.
-    #[must_use]
-    pub fn with_weights(weights: crate::noise::TwoQubitPauliWeights) -> Self {
-        Self { weights }
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_weights(weights: crate::noise::TwoQubitPauliWeights) -> ValidationResult<Self> {
+        weights.validate()?;
+        Ok(Self { weights })
     }
 
     /// Create with ZZ-biased weights.
-    #[must_use]
-    pub fn zz_biased(zz_weight: f64) -> Self {
-        Self {
-            weights: crate::noise::TwoQubitPauliWeights::zz_biased(zz_weight),
-        }
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn zz_biased(zz_weight: f64) -> ValidationResult<Self> {
+        validate_probability(zz_weight, "zz_weight")?;
+        Ok(Self {
+            weights: crate::noise::TwoQubitPauliWeights::zz_biased(zz_weight)?,
+        })
     }
 }
 
@@ -504,9 +543,14 @@ impl Emission {
     }
 
     /// Create with custom weights.
-    #[must_use]
-    pub fn with_weights(weights: crate::noise::SingleQubitEmissionWeights) -> Self {
-        Self { weights }
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_weights(
+        weights: crate::noise::SingleQubitEmissionWeights,
+    ) -> ValidationResult<Self> {
+        weights.validate()?;
+        Ok(Self { weights })
     }
 
     /// Create with Pauli-only weights (no leakage).
@@ -520,14 +564,17 @@ impl Emission {
     /// Create with leakage probability.
     ///
     /// Remaining probability is split equally among X, Y, Z.
-    #[must_use]
-    pub fn with_leakage(leak_prob: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_leakage(leak_prob: f64) -> ValidationResult<Self> {
+        validate_probability(leak_prob, "leak_prob")?;
         let pauli_prob = (1.0 - leak_prob) / 3.0;
-        Self {
+        Ok(Self {
             weights: crate::noise::SingleQubitEmissionWeights::custom(
                 pauli_prob, pauli_prob, pauli_prob, leak_prob,
-            ),
-        }
+            )?,
+        })
     }
 }
 
@@ -597,9 +644,12 @@ impl TwoQubitEmission {
     }
 
     /// Create with custom weights.
-    #[must_use]
-    pub fn with_weights(weights: crate::noise::TwoQubitEmissionWeights) -> Self {
-        Self { weights }
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_weights(weights: crate::noise::TwoQubitEmissionWeights) -> ValidationResult<Self> {
+        weights.validate()?;
+        Ok(Self { weights })
     }
 }
 
@@ -732,11 +782,13 @@ pub struct SampleEmissionWithProb {
 
 impl SampleEmissionWithProb {
     /// Create with given emission probability.
-    #[must_use]
-    pub fn new(prob: f64) -> Self {
-        Self {
-            prob: prob.clamp(0.0, 1.0),
-        }
+    ///
+    /// # Errors
+    /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
+    pub fn new(prob: f64) -> ValidationResult<Self> {
+        Ok(Self {
+            prob: validate_probability(prob, "prob")?,
+        })
     }
 }
 
@@ -783,7 +835,7 @@ impl GateAction for SampleEmissionWithProb {
 /// use pecos_neo::noise::composite::prelude::*;
 ///
 /// // Two-qubit gate with emission probability and partner depolarizing
-/// let tq_noise = prob(0.01, two_qubit_emission_with_partner_depolarize());
+/// let tq_noise = prob(0.01, two_qubit_emission_with_partner_depolarize()).unwrap();
 /// ```
 #[derive(Debug, Clone, Default)]
 pub struct TwoQubitEmissionWithPartnerDepolarize {
@@ -801,11 +853,13 @@ impl TwoQubitEmissionWithPartnerDepolarize {
     }
 
     /// Create with custom partner depolarizing weights.
-    #[must_use]
-    pub fn with_partner_weights(weights: PauliWeights) -> Self {
-        Self {
-            partner_pauli_weights: weights.normalized(),
-        }
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_partner_weights(weights: PauliWeights) -> ValidationResult<Self> {
+        Ok(Self {
+            partner_pauli_weights: weights.normalized()?,
+        })
     }
 
     /// Sample a random Pauli gate type based on weights.
@@ -890,19 +944,23 @@ pub struct IndependentEmissionWithPartnerDepolarize {
 
 impl IndependentEmissionWithPartnerDepolarize {
     /// Create with given emission probability.
-    #[must_use]
-    pub fn new(emission_prob: f64) -> Self {
-        Self {
-            emission_prob: emission_prob.clamp(0.0, 1.0),
+    ///
+    /// # Errors
+    /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
+    pub fn new(emission_prob: f64) -> ValidationResult<Self> {
+        Ok(Self {
+            emission_prob: validate_probability(emission_prob, "emission_prob")?,
             partner_pauli_weights: PauliWeights::uniform(),
-        }
+        })
     }
 
     /// Create with custom partner depolarizing weights.
-    #[must_use]
-    pub fn with_partner_weights(mut self, weights: PauliWeights) -> Self {
-        self.partner_pauli_weights = weights.normalized();
-        self
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_partner_weights(mut self, weights: PauliWeights) -> ValidationResult<Self> {
+        self.partner_pauli_weights = weights.normalized()?;
+        Ok(self)
     }
 
     fn sample_pauli(&self, rng: &mut PecosRng) -> GateType {
@@ -1021,11 +1079,13 @@ impl PartnerDepolarize {
     }
 
     /// Create with custom Pauli weights.
-    #[must_use]
-    pub fn with_weights(weights: PauliWeights) -> Self {
-        Self {
-            weights: weights.normalized(),
-        }
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_weights(weights: PauliWeights) -> ValidationResult<Self> {
+        Ok(Self {
+            weights: weights.normalized()?,
+        })
     }
 }
 
@@ -1085,9 +1145,12 @@ pub struct InjectCoherentRZ {
 
 impl InjectCoherentRZ {
     /// Create with a given dephasing rate.
-    #[must_use]
-    pub fn new(rate: f64) -> Self {
-        Self { rate }
+    ///
+    /// # Errors
+    /// Returns an error for a non-finite value or a rate/fraction whose runtime angle can overflow.
+    pub fn new(rate: f64) -> ValidationResult<Self> {
+        validate_bounded(rate, MAX_ANGLE_RATE, "rate")?;
+        Ok(Self { rate })
     }
 }
 
@@ -1112,7 +1175,10 @@ impl GateAction for InjectCoherentRZ {
         let cmd = GateCommand {
             gate_type: GateType::RZ,
             qubits: smallvec![qubit],
-            payload: GatePayload::Angles(smallvec![pecos_core::Angle64::from_radians(angle)]),
+            payload: GatePayload::Angles(smallvec![
+                pecos_core::Angle64::try_from_radians(angle)
+                    .expect("validated bounded rate times a TimeUnits duration is finite")
+            ]),
         };
         CompositeResponse::InjectGates(vec![cmd])
     }
@@ -1195,29 +1261,35 @@ pub struct BiasedAmplitudeDamping {
 
 impl BiasedAmplitudeDamping {
     /// Create with given X probability (remainder is Z).
-    #[must_use]
-    pub fn new(x_probability: f64) -> Self {
-        Self {
-            x_probability: x_probability.clamp(0.0, 1.0),
-        }
+    ///
+    /// # Errors
+    /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
+    pub fn new(x_probability: f64) -> ValidationResult<Self> {
+        Ok(Self {
+            x_probability: validate_probability(x_probability, "x_probability")?,
+        })
     }
 
     /// Standard T1 approximation (50% X, 50% Z).
     #[must_use]
     pub fn standard() -> Self {
-        Self::new(0.5)
+        Self { x_probability: 0.5 }
     }
 
     /// X-biased (more aggressive relaxation).
     #[must_use]
     pub fn x_biased() -> Self {
-        Self::new(0.75)
+        Self {
+            x_probability: 0.75,
+        }
     }
 
     /// Z-biased (more conservative, mostly dephasing).
     #[must_use]
     pub fn z_biased() -> Self {
-        Self::new(0.25)
+        Self {
+            x_probability: 0.25,
+        }
     }
 }
 
@@ -1267,26 +1339,35 @@ pub struct CoherentRotation {
 
 impl CoherentRotation {
     /// Create a coherent rotation error.
-    #[must_use]
-    pub fn new(gate_type: GateType, angle: f64) -> Self {
-        Self { gate_type, angle }
+    ///
+    /// # Errors
+    /// Returns an error for a non-finite value or a rate/fraction whose runtime angle can overflow.
+    pub fn new(gate_type: GateType, angle: f64) -> ValidationResult<Self> {
+        validate_finite(angle, "angle")?;
+        Ok(Self { gate_type, angle })
     }
 
     /// RX rotation error.
-    #[must_use]
-    pub fn rx(angle: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for a non-finite value or a rate/fraction whose runtime angle can overflow.
+    pub fn rx(angle: f64) -> ValidationResult<Self> {
         Self::new(GateType::RX, angle)
     }
 
     /// RY rotation error.
-    #[must_use]
-    pub fn ry(angle: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for a non-finite value or a rate/fraction whose runtime angle can overflow.
+    pub fn ry(angle: f64) -> ValidationResult<Self> {
         Self::new(GateType::RY, angle)
     }
 
     /// RZ rotation error (phase error).
-    #[must_use]
-    pub fn rz(angle: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for a non-finite value or a rate/fraction whose runtime angle can overflow.
+    pub fn rz(angle: f64) -> ValidationResult<Self> {
         Self::new(GateType::RZ, angle)
     }
 }
@@ -1305,7 +1386,10 @@ impl GateAction for CoherentRotation {
         let cmd = GateCommand {
             gate_type: self.gate_type,
             qubits: smallvec![qubit],
-            payload: GatePayload::Angles(smallvec![pecos_core::Angle64::from_radians(self.angle)]),
+            payload: GatePayload::Angles(smallvec![
+                pecos_core::Angle64::try_from_radians(self.angle)
+                    .expect("the constructor validated the stored coherent angle as finite")
+            ]),
         };
         CompositeResponse::InjectGates(vec![cmd])
     }
@@ -1322,8 +1406,8 @@ impl GateAction for CoherentRotation {
 /// Over-rotation error: adds a fraction of the gate's angle as extra rotation.
 ///
 /// Models systematic calibration errors where gates rotate slightly more
-/// or less than intended. The error angle is computed as:
-/// `error_angle = gate_angle * over_rotation_fraction`
+/// or less than intended. The error angle is the gate's signed principal rotation
+/// in (-pi, pi] multiplied by `over_rotation_fraction`; a half turn is +pi.
 ///
 /// # Example
 ///
@@ -1332,7 +1416,7 @@ impl GateAction for CoherentRotation {
 /// use pecos_neo::command::GateType;
 ///
 /// // 1% over-rotation on all gates
-/// let error = over_rotation(GateType::RZ, 0.01);
+/// let error = over_rotation(GateType::RZ, 0.01).unwrap();
 /// ```
 #[derive(Debug, Clone)]
 pub struct OverRotation {
@@ -1342,20 +1426,26 @@ pub struct OverRotation {
 
 impl OverRotation {
     /// Create an over-rotation error.
+    /// Uses the signed principal convention documented on [`OverRotation`].
     ///
     /// - `fraction > 0`: over-rotation (gate rotates too much)
     /// - `fraction < 0`: under-rotation (gate rotates too little)
-    #[must_use]
-    pub fn new(gate_type: GateType, fraction: f64) -> Self {
-        Self {
+    ///
+    /// # Errors
+    /// Returns an error for a non-finite value or a rate/fraction whose runtime angle can overflow.
+    pub fn new(gate_type: GateType, fraction: f64) -> ValidationResult<Self> {
+        validate_bounded(fraction, MAX_ANGLE_FRACTION, "fraction")?;
+        Ok(Self {
             gate_type,
             fraction,
-        }
+        })
     }
 
     /// RZ over-rotation.
-    #[must_use]
-    pub fn rz(fraction: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for a non-finite value or a rate/fraction whose runtime angle can overflow.
+    pub fn rz(fraction: f64) -> ValidationResult<Self> {
         Self::new(GateType::RZ, fraction)
     }
 }
@@ -1371,9 +1461,9 @@ impl GateAction for OverRotation {
         let base_angle = ctx
             .current_gate()
             .and_then(super::super::context::GateInfo::angle)
-            .map_or(0.0, |a| a.to_radians());
+            .unwrap_or(pecos_core::Angle64::ZERO);
 
-        let error_angle = base_angle * self.fraction;
+        let error_angle = base_angle.to_radians_signed() * self.fraction;
 
         if error_angle.abs() < 1e-10 {
             return CompositeResponse::None;
@@ -1382,7 +1472,11 @@ impl GateAction for OverRotation {
         let cmd = GateCommand {
             gate_type: self.gate_type,
             qubits: smallvec![qubit],
-            payload: GatePayload::Angles(smallvec![pecos_core::Angle64::from_radians(error_angle)]),
+            payload: GatePayload::Angles(smallvec![
+                base_angle
+                    .try_scale_signed(self.fraction)
+                    .expect("OverRotation constructors validate that the scale factor is finite")
+            ]),
         };
         CompositeResponse::InjectGates(vec![cmd])
     }
@@ -1411,17 +1505,23 @@ pub struct ZZDephasing {
 
 impl ZZDephasing {
     /// Create ZZ dephasing with fixed angle.
-    #[must_use]
-    pub fn new(angle: f64) -> Self {
-        Self { angle }
+    ///
+    /// # Errors
+    /// Returns an error for a non-finite value or a rate/fraction whose runtime angle can overflow.
+    pub fn new(angle: f64) -> ValidationResult<Self> {
+        validate_finite(angle, "angle")?;
+        Ok(Self { angle })
     }
 
     /// Create ZZ dephasing scaled by idle duration.
     ///
     /// The actual angle will be `rate * duration` from the idle context.
-    #[must_use]
-    pub fn from_rate(rate: f64) -> ZZDephasingRate {
-        ZZDephasingRate { rate }
+    ///
+    /// # Errors
+    /// Returns an error for a non-finite value or a rate/fraction whose runtime angle can overflow.
+    pub fn from_rate(rate: f64) -> ValidationResult<ZZDephasingRate> {
+        validate_bounded(rate, MAX_ANGLE_RATE, "rate")?;
+        Ok(ZZDephasingRate { rate })
     }
 }
 
@@ -1442,9 +1542,10 @@ impl GateAction for ZZDephasing {
             let cmd = GateCommand {
                 gate_type: GateType::RZ,
                 qubits: smallvec![qubit],
-                payload: GatePayload::Angles(smallvec![pecos_core::Angle64::from_radians(
-                    self.angle
-                )]),
+                payload: GatePayload::Angles(smallvec![
+                    pecos_core::Angle64::try_from_radians(self.angle)
+                        .expect("the constructor validated the stored coherent angle as finite")
+                ]),
             };
             return CompositeResponse::InjectGates(vec![cmd]);
         };
@@ -1454,9 +1555,10 @@ impl GateAction for ZZDephasing {
             let cmd = GateCommand {
                 gate_type: GateType::RZZ,
                 qubits: smallvec![qubit, other],
-                payload: GatePayload::Angles(smallvec![pecos_core::Angle64::from_radians(
-                    self.angle
-                )]),
+                payload: GatePayload::Angles(smallvec![
+                    pecos_core::Angle64::try_from_radians(self.angle)
+                        .expect("the constructor validated the stored coherent angle as finite")
+                ]),
             };
             CompositeResponse::InjectGates(vec![cmd])
         } else {
@@ -1507,7 +1609,10 @@ impl GateAction for ZZDephasingRate {
             let cmd = GateCommand {
                 gate_type: GateType::RZ,
                 qubits: smallvec![qubit],
-                payload: GatePayload::Angles(smallvec![pecos_core::Angle64::from_radians(angle)]),
+                payload: GatePayload::Angles(smallvec![
+                    pecos_core::Angle64::try_from_radians(angle)
+                        .expect("validated bounded rate times a TimeUnits duration is finite")
+                ]),
             };
             return CompositeResponse::InjectGates(vec![cmd]);
         };
@@ -1516,7 +1621,10 @@ impl GateAction for ZZDephasingRate {
             let cmd = GateCommand {
                 gate_type: GateType::RZZ,
                 qubits: smallvec![qubit, other],
-                payload: GatePayload::Angles(smallvec![pecos_core::Angle64::from_radians(angle)]),
+                payload: GatePayload::Angles(smallvec![
+                    pecos_core::Angle64::try_from_radians(angle)
+                        .expect("validated bounded rate times a TimeUnits duration is finite")
+                ]),
             };
             CompositeResponse::InjectGates(vec![cmd])
         } else {
@@ -1719,9 +1827,12 @@ pub struct CrosstalkAction {
 
 impl CrosstalkAction {
     /// Create with the given transition model.
-    #[must_use]
-    pub fn new(transitions: crate::noise::CrosstalkTransitions) -> Self {
-        Self { transitions }
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn new(transitions: crate::noise::CrosstalkTransitions) -> ValidationResult<Self> {
+        transitions.validate()?;
+        Ok(Self { transitions })
     }
 
     /// Create with flip-only transitions (50% stay, 50% flip, no leakage).
@@ -1865,20 +1976,25 @@ pub struct RandomOutcome {
 
 impl RandomOutcome {
     /// Create an action that randomizes the outcome.
-    #[must_use]
-    pub fn new(prob_one: f64) -> Self {
-        Self { prob_one }
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn new(prob_one: f64) -> ValidationResult<Self> {
+        validate_probability(prob_one, "prob_one")?;
+        Ok(Self { prob_one })
     }
 
     /// Random with 50/50 probability (unbiased).
     #[must_use]
     pub fn uniform() -> Self {
-        Self::new(0.5)
+        Self { prob_one: 0.5 }
     }
 
     /// Biased towards 1 (models leaked qubits returning 1 more often).
-    #[must_use]
-    pub fn biased_one(bias: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn biased_one(bias: f64) -> ValidationResult<Self> {
         Self::new(bias)
     }
 }
@@ -1941,6 +2057,7 @@ pub mod actions {
         RandomOutcome, SampleEmission, SampleEmissionWithProb, Seep, SkipGate, TwoQubitEmission,
         TwoQubitEmissionWithPartnerDepolarize, TwoQubitPauli, Unleak, ZZDephasing, ZZDephasingRate,
     };
+    use crate::noise::validation::ValidationResult;
 
     /// No-op action.
     #[must_use]
@@ -1997,9 +2114,11 @@ pub mod actions {
     }
 
     /// Random Pauli with custom weights.
-    #[must_use]
-    pub fn pauli_weighted(x: f64, y: f64, z: f64) -> Pauli {
-        Pauli::new(PauliWeights::custom(x, y, z))
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities, weights, or noise configuration.
+    pub fn pauli_weighted(x: f64, y: f64, z: f64) -> ValidationResult<Pauli> {
+        Pauli::new(PauliWeights::custom(x, y, z)?)
     }
 
     /// Dephasing (Z only).
@@ -2051,8 +2170,10 @@ pub mod actions {
     /// Randomize the measurement outcome with bias towards 1.
     ///
     /// This models leaked qubits which may return 1 more often.
-    #[must_use]
-    pub fn random_outcome_biased(prob_one: f64) -> RandomOutcome {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities, weights, or noise configuration.
+    pub fn random_outcome_biased(prob_one: f64) -> ValidationResult<RandomOutcome> {
         RandomOutcome::new(prob_one)
     }
 
@@ -2084,10 +2205,12 @@ pub mod actions {
     }
 
     /// State-dependent crosstalk action with custom transitions.
-    #[must_use]
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities, weights, or noise configuration.
     pub fn crosstalk_transitions(
         transitions: crate::noise::CrosstalkTransitions,
-    ) -> CrosstalkAction {
+    ) -> ValidationResult<CrosstalkAction> {
         CrosstalkAction::new(transitions)
     }
 
@@ -2102,14 +2225,20 @@ pub mod actions {
     }
 
     /// Correlated two-qubit Pauli with custom weights.
-    #[must_use]
-    pub fn two_qubit_pauli_weighted(weights: crate::noise::TwoQubitPauliWeights) -> TwoQubitPauli {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities, weights, or noise configuration.
+    pub fn two_qubit_pauli_weighted(
+        weights: crate::noise::TwoQubitPauliWeights,
+    ) -> ValidationResult<TwoQubitPauli> {
         TwoQubitPauli::with_weights(weights)
     }
 
     /// Correlated two-qubit Pauli biased towards ZZ errors.
-    #[must_use]
-    pub fn two_qubit_pauli_zz_biased(zz_weight: f64) -> TwoQubitPauli {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities, weights, or noise configuration.
+    pub fn two_qubit_pauli_zz_biased(zz_weight: f64) -> ValidationResult<TwoQubitPauli> {
         TwoQubitPauli::zz_biased(zz_weight)
     }
 
@@ -2126,10 +2255,12 @@ pub mod actions {
     }
 
     /// Correlated two-qubit emission with custom weights.
-    #[must_use]
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities, weights, or noise configuration.
     pub fn two_qubit_emission_weighted(
         weights: crate::noise::TwoQubitEmissionWeights,
-    ) -> TwoQubitEmission {
+    ) -> ValidationResult<TwoQubitEmission> {
         TwoQubitEmission::with_weights(weights)
     }
 
@@ -2144,14 +2275,20 @@ pub mod actions {
     /// Emission error with specified leakage probability.
     ///
     /// Remaining probability is split equally among X, Y, Z.
-    #[must_use]
-    pub fn emission_with_leakage(leak_prob: f64) -> Emission {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities, weights, or noise configuration.
+    pub fn emission_with_leakage(leak_prob: f64) -> ValidationResult<Emission> {
         Emission::with_leakage(leak_prob)
     }
 
     /// Emission error with custom weights.
-    #[must_use]
-    pub fn emission_weighted(weights: crate::noise::SingleQubitEmissionWeights) -> Emission {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities, weights, or noise configuration.
+    pub fn emission_weighted(
+        weights: crate::noise::SingleQubitEmissionWeights,
+    ) -> ValidationResult<Emission> {
         Emission::with_weights(weights)
     }
 
@@ -2171,8 +2308,10 @@ pub mod actions {
     ///
     /// Unlike `sample_emission()` which should be wrapped in `prob()`,
     /// this action handles the probability sampling itself.
-    #[must_use]
-    pub fn sample_emission_with_prob(prob: f64) -> SampleEmissionWithProb {
+    ///
+    /// # Errors
+    /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
+    pub fn sample_emission_with_prob(prob: f64) -> ValidationResult<SampleEmissionWithProb> {
         SampleEmissionWithProb::new(prob)
     }
 
@@ -2181,8 +2320,10 @@ pub mod actions {
     /// Inject coherent RZ dephasing with given rate.
     ///
     /// The angle is computed as `rate * idle_duration`.
-    #[must_use]
-    pub fn coherent_rz(rate: f64) -> InjectCoherentRZ {
+    ///
+    /// # Errors
+    /// Returns an error for a non-finite value or a rate/fraction whose runtime angle can overflow.
+    pub fn coherent_rz(rate: f64) -> ValidationResult<InjectCoherentRZ> {
         InjectCoherentRZ::new(rate)
     }
 
@@ -2206,9 +2347,15 @@ pub mod actions {
     }
 
     /// Apply depolarizing noise to the partner qubit with custom weights.
-    #[must_use]
-    pub fn partner_depolarize_weighted(x: f64, y: f64, z: f64) -> PartnerDepolarize {
-        PartnerDepolarize::with_weights(PauliWeights::custom(x, y, z))
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities, weights, or noise configuration.
+    pub fn partner_depolarize_weighted(
+        x: f64,
+        y: f64,
+        z: f64,
+    ) -> ValidationResult<PartnerDepolarize> {
+        PartnerDepolarize::with_weights(PauliWeights::custom(x, y, z)?)
     }
 
     // --- Two-Qubit Emission with Partner Depolarize ---
@@ -2224,7 +2371,7 @@ pub mod actions {
     /// ```
     /// # use pecos_neo::noise::composite::prelude::*;
     /// // 1% chance of emission, with automatic partner depolarizing
-    /// let noise = prob(0.01, two_qubit_emission_with_partner_depolarize());
+    /// let noise = prob(0.01, two_qubit_emission_with_partner_depolarize()).unwrap();
     /// ```
     #[must_use]
     pub fn two_qubit_emission_with_partner_depolarize() -> TwoQubitEmissionWithPartnerDepolarize {
@@ -2242,10 +2389,14 @@ pub mod actions {
     /// ```
     /// # use pecos_neo::noise::composite::prelude::*;
     /// // Each qubit has 1% independent emission probability
-    /// let noise = independent_emission(0.01);
+    /// let noise = independent_emission(0.01).unwrap();
     /// ```
-    #[must_use]
-    pub fn independent_emission(emission_prob: f64) -> IndependentEmissionWithPartnerDepolarize {
+    ///
+    /// # Errors
+    /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
+    pub fn independent_emission(
+        emission_prob: f64,
+    ) -> ValidationResult<IndependentEmissionWithPartnerDepolarize> {
         IndependentEmissionWithPartnerDepolarize::new(emission_prob)
     }
 
@@ -2258,56 +2409,74 @@ pub mod actions {
     }
 
     /// Biased amplitude damping with custom X probability.
-    #[must_use]
-    pub fn amplitude_damping_biased(x_probability: f64) -> BiasedAmplitudeDamping {
+    ///
+    /// # Errors
+    /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
+    pub fn amplitude_damping_biased(
+        x_probability: f64,
+    ) -> ValidationResult<BiasedAmplitudeDamping> {
         BiasedAmplitudeDamping::new(x_probability)
     }
 
     // --- Coherent Errors ---
 
     /// Coherent RX rotation error.
-    #[must_use]
-    pub fn coherent_rx(angle: f64) -> CoherentRotation {
+    ///
+    /// # Errors
+    /// Returns an error for a non-finite value or a rate/fraction whose runtime angle can overflow.
+    pub fn coherent_rx(angle: f64) -> ValidationResult<CoherentRotation> {
         CoherentRotation::rx(angle)
     }
 
     /// Coherent RY rotation error.
-    #[must_use]
-    pub fn coherent_ry(angle: f64) -> CoherentRotation {
+    ///
+    /// # Errors
+    /// Returns an error for a non-finite value or a rate/fraction whose runtime angle can overflow.
+    pub fn coherent_ry(angle: f64) -> ValidationResult<CoherentRotation> {
         CoherentRotation::ry(angle)
     }
 
     /// Coherent RZ rotation error (phase error).
-    #[must_use]
-    pub fn coherent_rz_fixed(angle: f64) -> CoherentRotation {
+    ///
+    /// # Errors
+    /// Returns an error for a non-finite value or a rate/fraction whose runtime angle can overflow.
+    pub fn coherent_rz_fixed(angle: f64) -> ValidationResult<CoherentRotation> {
         CoherentRotation::rz(angle)
     }
 
     /// Over-rotation error (fraction of gate angle).
     ///
     /// The error angle is `gate_angle * fraction`.
-    #[must_use]
-    pub fn over_rotation(gate_type: GateType, fraction: f64) -> OverRotation {
+    ///
+    /// # Errors
+    /// Returns an error for a non-finite value or a rate/fraction whose runtime angle can overflow.
+    pub fn over_rotation(gate_type: GateType, fraction: f64) -> ValidationResult<OverRotation> {
         OverRotation::new(gate_type, fraction)
     }
 
     /// RZ over-rotation error.
-    #[must_use]
-    pub fn over_rotation_rz(fraction: f64) -> OverRotation {
+    ///
+    /// # Errors
+    /// Returns an error for a non-finite value or a rate/fraction whose runtime angle can overflow.
+    pub fn over_rotation_rz(fraction: f64) -> ValidationResult<OverRotation> {
         OverRotation::rz(fraction)
     }
 
     // --- Correlated Dephasing (ZZ) ---
 
     /// ZZ dephasing with fixed angle.
-    #[must_use]
-    pub fn zz_dephasing(angle: f64) -> ZZDephasing {
+    ///
+    /// # Errors
+    /// Returns an error for a non-finite value or a rate/fraction whose runtime angle can overflow.
+    pub fn zz_dephasing(angle: f64) -> ValidationResult<ZZDephasing> {
         ZZDephasing::new(angle)
     }
 
     /// ZZ dephasing with rate (angle = rate * duration).
-    #[must_use]
-    pub fn zz_dephasing_rate(rate: f64) -> ZZDephasingRate {
+    ///
+    /// # Errors
+    /// Returns an error for a non-finite value or a rate/fraction whose runtime angle can overflow.
+    pub fn zz_dephasing_rate(rate: f64) -> ValidationResult<ZZDephasingRate> {
         ZZDephasing::from_rate(rate)
     }
 
@@ -2356,8 +2525,9 @@ pub mod actions {
     /// // Use a traditional channel inside a composite decision tree
     /// let noise = seq![
     ///     skip_if_leaked(),
-    ///     prob(0.5, channel_action(SingleQubitChannel::depolarizing(1.0))),
+    ///     prob(0.5, channel_action(SingleQubitChannel::depolarizing(1.0)?))?,
     /// ];
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
     /// # Limitations
@@ -2529,8 +2699,9 @@ pub mod actions {
     /// // Use a traditional channel inside a composite decision tree
     /// let noise = seq![
     ///     skip_if_leaked(),
-    ///     prob(0.5, channel_action(SingleQubitChannel::depolarizing(1.0))),
+    ///     prob(0.5, channel_action(SingleQubitChannel::depolarizing(1.0)?))?,
     /// ];
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     #[must_use]
     pub fn channel_action<C: crate::noise::NoiseChannel + 'static>(channel: C) -> ChannelAdapter {
@@ -2745,7 +2916,7 @@ mod tests {
     fn test_emission_with_leakage() {
         let mut ctx = make_test_context();
         let mut rng = PecosRng::seed_from_u64(42);
-        let action = Emission::with_leakage(0.25); // 25% leakage
+        let action = Emission::with_leakage(0.25).unwrap(); // 25% leakage
 
         let mut leak_count = 0;
 
@@ -2766,10 +2937,57 @@ mod tests {
     }
 
     #[test]
+    fn over_rotation_scales_signed_angles_symmetrically() {
+        use pecos_core::Angle64;
+        let apply = |angle| {
+            let mut ctx = make_test_context();
+            ctx.set_current_gate(GateType::RZ, &[angle], 1);
+            OverRotation::rz(0.01)
+                .unwrap()
+                .apply(QubitId(0), &mut ctx, &mut PecosRng::seed_from_u64(42))
+                .collect_gates()
+        };
+        for angle in [
+            pecos_core::radians!(0.73),
+            pecos_core::radians!(0.001),
+            pecos_core::radians!(0.000_001),
+            Angle64::new((1 << 63) - 1),
+        ] {
+            let positive = apply(angle);
+            let negative = apply(-angle);
+            assert_eq!(positive.len(), 1);
+            assert_eq!(negative.len(), 1);
+            assert_eq!(negative[0].angles()[0], -positive[0].angles()[0]);
+        }
+        // Both signs of a tiny rotation must take the same magnitude-based skip.
+        let tiny = pecos_core::radians!(0.000_000_000_000_001);
+        assert_eq!(apply(tiny), Vec::<GateCommand>::new());
+        assert_eq!(apply(-tiny), Vec::<GateCommand>::new());
+        // The self-inverse half turn uses +pi; half of binary64 0.01 is exact.
+        assert_eq!(
+            apply(Angle64::HALF_TURN)[0].angles()[0],
+            pecos_core::turns!(0.005)
+        );
+    }
+
+    #[test]
+    fn over_rotation_preserves_full_precision_angle() {
+        let mut ctx = make_test_context();
+        let angle = pecos_core::radians!(-0.73);
+        ctx.set_current_gate(GateType::RZ, &[angle], 1);
+        let response = OverRotation::rz(1.0).unwrap().apply(
+            QubitId(0),
+            &mut ctx,
+            &mut PecosRng::seed_from_u64(42),
+        );
+        assert_eq!(response.collect_gates()[0].angles()[0], angle);
+    }
+
+    #[test]
     fn test_coherent_rz_with_duration() {
         let mut ctx = make_test_context();
         let mut rng = PecosRng::seed_from_u64(42);
-        let action = InjectCoherentRZ::new(0.1); // 0.1 rad per time unit
+        let action = InjectCoherentRZ::new(0.1).unwrap(); // 0.1 rad per time unit
 
         // Set idle duration
         ctx.set_current_idle(pecos_core::TimeUnits::new(5)); // 5 time units
@@ -2791,7 +3009,7 @@ mod tests {
     fn test_coherent_rz_no_duration() {
         let mut ctx = make_test_context();
         let mut rng = PecosRng::seed_from_u64(42);
-        let action = InjectCoherentRZ::new(0.1);
+        let action = InjectCoherentRZ::new(0.1).unwrap();
 
         // No idle duration set
         let response = action.apply(QubitId(0), &mut ctx, &mut rng);
@@ -2891,9 +3109,10 @@ mod tests {
         // Create asymmetric transitions:
         // From 0: 100% flip
         // From 1: 100% stay
-        let action = CrosstalkAction::new(crate::noise::CrosstalkTransitions::custom(
-            0.0, 1.0, 0.0, 1.0, 0.0, 0.0,
-        ));
+        let action = CrosstalkAction::new(
+            crate::noise::CrosstalkTransitions::custom(0.0, 1.0, 0.0, 1.0, 0.0, 0.0).unwrap(),
+        )
+        .unwrap();
 
         // Set outcome to 0 -> should always flip (X gate)
         ctx.set_current_outcome(false);
@@ -2941,7 +3160,7 @@ mod tests {
     fn test_random_outcome_biased() {
         let mut ctx = make_test_context();
         let mut rng = PecosRng::seed_from_u64(42);
-        let action = RandomOutcome::biased_one(0.8); // 80% towards 1
+        let action = RandomOutcome::biased_one(0.8).unwrap(); // 80% towards 1
 
         let mut ones = 0;
 
@@ -2986,7 +3205,7 @@ mod tests {
     fn test_sample_emission_with_prob() {
         let mut ctx = make_test_context();
         let mut rng = PecosRng::seed_from_u64(42);
-        let action = SampleEmissionWithProb::new(0.5); // 50% emission probability
+        let action = SampleEmissionWithProb::new(0.5).unwrap(); // 50% emission probability
 
         let mut fired_count = 0;
 
@@ -3019,14 +3238,14 @@ mod tests {
         // === Stage 1: Sample emission for each qubit ===
 
         // Qubit 0: sample with 100% probability (always fires for testing)
-        let action0 = SampleEmissionWithProb::new(1.0);
+        let action0 = SampleEmissionWithProb::new(1.0).unwrap();
         ctx.set_current_qubit_index(0, &qubits);
         action0.apply(QubitId(0), &mut ctx, &mut rng);
 
         assert!(ctx.is_fired(0), "Qubit 0 should have fired");
 
         // Qubit 1: sample with 0% probability (never fires for testing)
-        let action1 = SampleEmissionWithProb::new(0.0);
+        let action1 = SampleEmissionWithProb::new(0.0).unwrap();
         ctx.set_current_qubit_index(1, &qubits);
         action1.apply(QubitId(1), &mut ctx, &mut rng);
 

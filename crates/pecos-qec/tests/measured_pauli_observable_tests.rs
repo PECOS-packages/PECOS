@@ -45,7 +45,7 @@ fn annotation_parities(circuit: &TickCircuit, num_qubits: usize) -> (Vec<bool>, 
             AnnotationKind::Observable { measurement_ids } => {
                 observables.push(parity(measurement_ids));
             }
-            AnnotationKind::TrackedPauli => {}
+            AnnotationKind::TrackedPauli { .. } => {}
         }
     }
     (detectors, observables)
@@ -223,5 +223,32 @@ fn steane_memory_dems_have_no_detector_silent_logical_faults() {
     for (basis, label) in [(MemoryBasis::X, "Steane X"), (MemoryBasis::Z, "Steane Z")] {
         let circuit = coloration_memory_circuit(&h, &h, 2, basis).unwrap();
         assert_no_detector_silent_logical_faults(&circuit, label);
+    }
+}
+
+#[test]
+fn css_memory_fault_sectors_follow_measurement_families() {
+    use pecos_qec::fault_tolerance::circuit_definitions::definitions_from_tick_circuit;
+    let h = ParityCheckMatrix::from_dense(vec![
+        vec![1, 0, 1, 0, 1, 0, 1],
+        vec![0, 1, 1, 0, 0, 1, 1],
+        vec![0, 0, 0, 1, 1, 1, 1],
+    ])
+    .unwrap();
+    for basis in [MemoryBasis::X, MemoryBasis::Z] {
+        let circuit = coloration_memory_circuit(&h, &h, 2, basis).unwrap();
+        let definitions = definitions_from_tick_circuit(&circuit).unwrap();
+        let (mut x_detectors, mut z_detectors) = (0, 0);
+        for detector in definitions.detectors {
+            let expected = if detector.label.unwrap().starts_with('X') {
+                x_detectors += 1;
+                "X"
+            } else {
+                z_detectors += 1;
+                "Z"
+            };
+            assert_eq!(detector.fault_sector.as_deref(), Some(expected));
+        }
+        assert!(x_detectors > 0 && z_detectors > 0);
     }
 }

@@ -249,7 +249,20 @@ def test_role_mixing_does_not_require_unused_tags(explicit_role: str) -> None:
     assert build.evaluate_runtime_record([1, 1, 0]) == ([1], 1 if explicit_role == "detectors" else 0)
 
 
-def test_mixed_named_explicit_binding_keeps_compiler_provenance() -> None:
+def test_mixed_named_explicit_binding_keeps_compiler_provenance(monkeypatch: pytest.MonkeyPatch) -> None:
+    from unittest.mock import Mock
+
+    from pecos.qec import _qis_result_tags, guppy_output_dem
+    from pecos_rslib import hugr_lowering
+
+    compiler = Mock(wraps=hugr_lowering.compile_hugr_to_qis)
+    wrapper = Mock(wraps=pecos.Qis)
+    inference = Mock(wraps=guppy_output_dem.infer_guppy_dem_annotations)
+    extractor = Mock(wraps=_qis_result_tags.extract_result_tag_measurements)
+    monkeypatch.setattr(hugr_lowering, "compile_hugr_to_qis", compiler)
+    monkeypatch.setattr(pecos.programs, "Qis", wrapper)
+    monkeypatch.setattr(guppy_output_dem, "infer_guppy_dem_annotations", inference)
+    monkeypatch.setattr(_qis_result_tags, "extract_result_tag_measurements", extractor)
     build = (
         DetectorErrorModel.builder()
         .with_program(_selected_program)
@@ -258,6 +271,10 @@ def test_mixed_named_explicit_binding_keeps_compiler_provenance() -> None:
         .with_observables([Observable("m1")])
         .build()
     )
+    assert compiler.call_count == wrapper.call_count == inference.call_count == 1
+    assert isinstance(inference.call_args.args[0], pecos.Qis)
+    extractor.assert_called_once_with(wrapper.call_args.args[0])
+    assert extractor.call_args.args[0] is wrapper.call_args.args[0]
     assert build.evaluate_runtime_record([1, 1, 0]) == ([1], 1)
     assert build.evaluate_result_columns({"raw measurements": [[0, 1, 1]], "m1": [[1]]}) == [([1], 1)]
     with pytest.raises(ValueError, match="direct scalar"):

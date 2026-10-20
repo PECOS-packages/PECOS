@@ -33,7 +33,7 @@
 
 use crate::decoder_spec_bindings::PyDecoderSpec;
 use pecos_decoder_core::{DecoderError, ObservableDecoder, obs_mask::ObsMask};
-use pecos_decoders::batch::DecoderFactory;
+use pecos_decoders::batch::{DecoderFactory, PreparedModel};
 use pecos_decoders::{DecodeModel, DecoderSpec, spec::ExecutionTraits};
 use pyo3::exceptions::{PyAttributeError, PyTypeError};
 use pyo3::prelude::*;
@@ -139,10 +139,26 @@ impl DecoderFactory for BatchDecoderSpec {
             Self::Provider { .. } => false,
         }
     }
-    fn decode_model(&self, dem: &str) -> DecodeModel {
+    fn decode_model(&self, dem: &str) -> Result<PreparedModel, Self::BuildError> {
         match self {
-            Self::Builtin(spec) => spec.decode_model(dem),
-            Self::Provider { .. } => DecodeModel::SingleDem(dem.to_string()),
+            Self::Builtin(spec) => spec.decode_model(dem).map_err(DecoderBuildError::Decoder),
+            Self::Provider { .. } => Ok(PreparedModel {
+                model: DecodeModel::SingleDem(dem.to_string()),
+                projection: None,
+            }),
+        }
+    }
+    fn decode_structured_model(
+        &self,
+        dem: &pecos_decoder_core::window::StructuredDem,
+    ) -> Result<PreparedModel, Self::BuildError> {
+        match self {
+            Self::Builtin(spec) => spec.decode_structured_model(dem).map_err(DecoderBuildError::Decoder),
+            Self::Provider { .. } => Err(DecoderBuildError::Decoder(
+                DecoderError::InvalidConfiguration(
+                    "decoder providers require DEM text by protocol; DetectorErrorModel objects are not supported".into(),
+                ),
+            )),
         }
     }
     fn build(&self, model: &DecodeModel) -> Result<Box<dyn ObservableDecoder>, DecoderBuildError> {
@@ -218,5 +234,32 @@ impl ObservableDecoder for ProviderDecoder {
             )));
         }
         Ok(mask)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // contract: structured input is rejected before any Python provider build call.
+    #[test]
+    fn provider_refuses_structured_preparation() {
+        Python::initialize();
+        Python::attach(|py| {
+            let spec = BatchDecoderSpec::Provider {
+                spec: py.None(),
+                traits: ExecutionTraits::default(),
+            };
+            let dem =
+                pecos_decoder_core::window::StructuredDem::from_dem_str("error(0.1) D0").unwrap();
+            let Err(error) = spec.decode_structured_model(&dem) else {
+                panic!("provider accepted structured input");
+            };
+            assert!(
+                error
+                    .to_string()
+                    .contains("providers require DEM text by protocol")
+            );
+        });
     }
 }

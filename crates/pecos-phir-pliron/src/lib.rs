@@ -2249,50 +2249,55 @@ pub fn emit_parsed(
     measured: &mut HashMap<u64, Value>,
     reg: &mut MeasurementRegistry,
 ) -> std::result::Result<(), PecosError> {
+    let slot = |qubit: usize| {
+        slot_of.get(&qubit).copied().ok_or_else(|| {
+        PecosError::Input(format!("qubit {qubit} has no allocated slot; add it to slot_of before emitting the operation"))
+    })
+    };
     match *p {
         ParsedOp::H(q) => {
-            HOp::new(ctx, slot_of[&q])
+            HOp::new(ctx, slot(q)?)
                 .get_operation()
                 .insert_at_back(block, ctx);
         }
         // .ll angles are f64 radians (the wire format); convert to fixed-point Angle64 at the boundary.
         ParsedOp::Rz(q, t) => {
-            RzOp::new(ctx, slot_of[&q], Angle64::from_radians(t))
+            RzOp::new(ctx, slot(q)?, Angle64::try_from_radians(t)?)
                 .get_operation()
                 .insert_at_back(block, ctx);
         }
         ParsedOp::Rx(q, t) => {
-            RxOp::new(ctx, slot_of[&q], Angle64::from_radians(t))
+            RxOp::new(ctx, slot(q)?, Angle64::try_from_radians(t)?)
                 .get_operation()
                 .insert_at_back(block, ctx);
         }
         ParsedOp::Ry(q, t) => {
-            RyOp::new(ctx, slot_of[&q], Angle64::from_radians(t))
+            RyOp::new(ctx, slot(q)?, Angle64::try_from_radians(t)?)
                 .get_operation()
                 .insert_at_back(block, ctx);
         }
         ParsedOp::Szz(a, b) => {
-            SzzOp::new(ctx, slot_of[&a], slot_of[&b])
+            SzzOp::new(ctx, slot(a)?, slot(b)?)
                 .get_operation()
                 .insert_at_back(block, ctx);
         }
         ParsedOp::Cz(a, b) => {
-            CzOp::new(ctx, slot_of[&a], slot_of[&b])
+            CzOp::new(ctx, slot(a)?, slot(b)?)
                 .get_operation()
                 .insert_at_back(block, ctx);
         }
         ParsedOp::Swap(a, b) => {
-            SwapOp::new(ctx, slot_of[&a], slot_of[&b])
+            SwapOp::new(ctx, slot(a)?, slot(b)?)
                 .get_operation()
                 .insert_at_back(block, ctx);
         }
         ParsedOp::X(q) => {
-            XOp::new(ctx, slot_of[&q])
+            XOp::new(ctx, slot(q)?)
                 .get_operation()
                 .insert_at_back(block, ctx);
         }
         ParsedOp::M(q, rid) => {
-            let m = MeasureOp::new(ctx, slot_of[&q]);
+            let m = MeasureOp::new(ctx, slot(q)?);
             m.get_operation().insert_at_back(block, ctx);
             let v = m.get_result(ctx);
             measured.insert(rid, v);
@@ -2731,6 +2736,81 @@ pub fn from_qis_llvm_ir_pliron(
 // ===================== regression tests (the milestones, run via `cargo test`) =====================
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn non_rotation_missing_slots_return_errors() {
+        for op in [
+            ParsedOp::H(7),
+            ParsedOp::Szz(7, 8),
+            ParsedOp::Cz(7, 8),
+            ParsedOp::Swap(7, 8),
+            ParsedOp::X(7),
+        ] {
+            let ctx = &mut Context::new();
+            let block = BasicBlock::new(ctx, None, vec![]);
+            let error = emit_parsed(
+                ctx,
+                &op,
+                block,
+                &HashMap::new(),
+                &mut HashMap::new(),
+                &mut MeasurementRegistry::default(),
+            )
+            .unwrap_err();
+            assert!(error.to_string().contains("qubit 7"));
+        }
+    }
+
+    #[test]
+    fn missing_rx_slot_returns_error() {
+        let ctx = &mut Context::new();
+        let block = BasicBlock::new(ctx, None, vec![]);
+        let error = emit_parsed(
+            ctx,
+            &ParsedOp::Rx(7, 0.0),
+            block,
+            &HashMap::new(),
+            &mut HashMap::new(),
+            &mut MeasurementRegistry::default(),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("qubit 7"));
+        assert!(error.to_string().contains("slot_of"));
+    }
+
+    #[test]
+    fn missing_ry_slot_returns_error() {
+        let ctx = &mut Context::new();
+        let block = BasicBlock::new(ctx, None, vec![]);
+        let error = emit_parsed(
+            ctx,
+            &ParsedOp::Ry(7, 0.0),
+            block,
+            &HashMap::new(),
+            &mut HashMap::new(),
+            &mut MeasurementRegistry::default(),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("qubit 7"));
+        assert!(error.to_string().contains("slot_of"));
+    }
+
+    #[test]
+    fn missing_rz_slot_returns_error() {
+        let ctx = &mut Context::new();
+        let block = BasicBlock::new(ctx, None, vec![]);
+        let error = emit_parsed(
+            ctx,
+            &ParsedOp::Rz(7, 0.0),
+            block,
+            &HashMap::new(),
+            &mut HashMap::new(),
+            &mut MeasurementRegistry::default(),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("qubit 7"));
+        assert!(error.to_string().contains("slot_of"));
+    }
+
     use super::*;
 
     // ---- strangler differential vs the existing pecos-phir QIS->PHIR->sim path ----
@@ -3060,7 +3140,7 @@ mod tests {
         let ctx = &mut Context::new();
         let alloc = QallocOp::new(ctx);
         // rz on a qec.alloc handle (not a qubitref).
-        let bad = RzOp::new(ctx, alloc.get_result(ctx), Angle64::from_radians(0.5));
+        let bad = RzOp::new(ctx, alloc.get_result(ctx), pecos_core::radians!(0.5));
         assert!(
             verify_op(&bad, ctx).is_err(),
             "qec.rz on a qec.alloc handle must fail verification"
@@ -3139,7 +3219,7 @@ mod tests {
         }
         let q = push!(QallocOp::new(ctx));
         let sv = push!(SlotOp::new(ctx, q.get_result(ctx), 0)).get_result(ctx);
-        let angle = Angle64::from_radians(1.07);
+        let angle = pecos_core::radians!(1.07);
         let rz = push!(RzOp::new(ctx, sv, angle));
         let got = get_angle(ctx, rz.get_operation());
         assert_eq!(

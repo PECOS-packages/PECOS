@@ -103,7 +103,11 @@ fn inventory_covers_entire_trait() {
         .filter_map(|line| line.strip_prefix("    fn "))
         .map(|line| line.split('(').next().unwrap())
         .collect();
-    let listed: BTreeSet<_> = all_methods().into_iter().collect();
+    // Operand validation is an observational hook, covered separately below.
+    let listed: BTreeSet<_> = all_methods()
+        .into_iter()
+        .chain(["validate_qubits"])
+        .collect();
     assert_eq!(
         listed, declared,
         "update the oracle inventory for every trait method"
@@ -417,4 +421,12 @@ fn forced_preparation_matches_measurement_then_x() {
             }
         }
     }
+}
+
+#[test]
+fn operand_validation_hook_does_not_apply_gates() {
+    let sim = prefix(2, 42);
+    let before = sim.stab_tableau();
+    sim.validate_qubits(&[QubitId(0), QubitId(1)]);
+    assert_eq!(sim.stab_tableau(), before);
 }

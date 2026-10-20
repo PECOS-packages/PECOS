@@ -72,6 +72,7 @@ nav:
   - Quantum Information Primitives: user-guide/quantum-info.md
   - Stabilizer Codes: user-guide/stabilizer-codes.md
   - Pauli Algebra and QEC in Python: user-guide/python-pauli-qec.md
+  - Pauli and Stabilizer Analysis: user-guide/stabilizer-analysis.md
   - Stabilizer-Code Verification: user-guide/stabilizer-code-verification.md
   - Fault-Tolerance Analysis and Distance Certification: user-guide/fault-tolerance-analysis.md
   - Fault Tolerance Analysis: user-guide/fault-tolerance.md

@@ -5,11 +5,15 @@ from pathlib import Path
 
 from guppylang import guppy
 from guppylang.std.builtins import array, comptime, result
+from guppylang.std.lang import owned
 from guppylang.std.quantum import (
     collect_measurements,
+    cx,
+    h,
     measure,
     measure_array,
     qubit,
+    x,
 )
 
 
@@ -49,6 +53,29 @@ def arr() -> None:
     result("pair", collect_measurements(measure_array(qs)))
 
 
+@guppy
+def measure_owned(q: qubit @ owned) -> bool:
+    return measure(q).read()
+
+
+@guppy
+def inlined() -> None:
+    # Issue #1001: the inlined helper's measurement runs first but gets a later HUGR node.
+    q0 = qubit()
+    q1 = qubit()
+    q2 = qubit()
+    h(q1)
+    cx(q1, q2)
+    x(q2)
+    x(q2)
+    b = measure_owned(q1)
+    a = measure(q0).read()
+    c = measure(q2).read()
+    result("a", a)
+    result("b", b)
+    result("c", c)
+
+
 @guppy.declare
 def mystery(b: bool) -> bool: ...
 
@@ -66,6 +93,7 @@ def main() -> None:
         "computed.hugr": computed,
         "arr.hugr": arr,
         "funcdecl.hugr": funcdecl,
+        "inlined.hugr": inlined,
     }
     output_dir = Path(__file__).resolve().parents[1] / "python/quantum-pecos/tests/qec/fixtures/result_tags"
     output_dir.mkdir(parents=True, exist_ok=True)

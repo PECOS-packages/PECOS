@@ -1033,8 +1033,10 @@ of [arXiv:0904.2557](https://arxiv.org/abs/0904.2557).
 Here the resource is a projected logical-Y state whose sign depends on the
 syndrome projection outcomes. It is prepared by H followed by a physical SZ
 layer on every ancilla data qubit, then syndrome projection. Both forms prepare
-the data in |0_L>, an S eigenstate, so this experiment cannot distinguish S
-from identity. The projected resource is (-1)^r times logical Y, where r is
+the data in |0_L>, an S eigenstate, so *this* experiment cannot distinguish S
+from identity. That is a property of the Z-prepared example, not of the gadget:
+an X-prepared, Y-read program does distinguish them, and emits a deterministic
+observable for the corrected quantity. See below. The projected resource is (-1)^r times logical Y, where r is
 the parity of selected round-0 checks in the ancilla's first projection segment
 XOR `resource_sign_reference`.
 `rounds_before` must be at least one so these checks precede the CX.
@@ -1058,10 +1060,50 @@ contributions compensate when a positive check changes the representative's
 overlap from one to three; omitting the logical-Y phase would invert the sign.
 A logical Z correction on the data is required when the logical readout parity
 and resource sign parity disagree: XOR the two parities to decide.
-No decoder applies the correction today.
+
+For a program whose data readout is deterministic in X or Y, that correction is
+now folded into the observable's own parity mask, so the gadget's action is a
+decodable statement rather than something only a noiseless replay can show. The
+mask gains the consumed ancilla's logical readout records and the resource-sign
+records, alongside the data readout and any fold the readout lowers to. This
+mask is the DEM in all cases.
+
+The rendered factory `make_sz_teleportation(..., correction="physical")` executes
+logical Z after ancilla readout when `m XOR c XOR resource_sign_reference` is 1,
+and outputs the decision as `sz_correction`. Here m is the ancilla logical Z
+parity and c is the selected first-round check parity. Executing the correction
+is the default and matches the Guppy/Helios authoring idiom.
+With `correction="record"`, the factory outputs the same frame bit and applies
+no Z. Recording matches frame-tracking hardware, where a controller or a
+post-processor applies the frame bit. Mask extraction on recorded rows is exactly
+that post-processing: the mask's correction records apply the frame bit, with no
+extra step. The mode must be exactly `"physical"` or `"record"`; other values,
+including booleans, raise `ValueError`.
+
+The builder circuit never executes the correction. Its deterministic X/Y
+observable masks absorb the correction records. Observables export the crossed
+ancilla labels as `crossed_teleportations`; a future executed-run transcription
+will use them to remove each crossed teleportation's readout and resource-sign
+records and XOR its resource-sign reference into the observable reference.
+That transcription does not exist yet. Applying mask extraction to rows from
+a program that executed the correction counts it twice. In physical mode, noise on
+the conditional Z gates is a small omission from the static builder circuit and
+its DEM.
+
+That observable inherits the injection's distance-1 character. Its error model
+contains one mechanism that flips it with no detector firing, and that
+mechanism's probability *grows* with distance. With `p1`, `p2`, `p_meas` and
+`p_prep` all at 1e-3 it is about 2.4 percent at distance 3 and 6.4 percent at
+distance 5. The exact figure depends on which noise parameters are set, so treat
+the direction as the point rather than the number. A logical
+error rate swept over distance on this observable therefore gets worse, which is
+the resource injection's cost and not a code failure. The equivalent
+fold-transversal program has no such mechanism.
 
 ```python
 program = module["make_sz_teleportation"](2, 2, 2)
+recording_program = module["make_sz_teleportation"](2, 2, 2, correction="record")
+assert callable(recording_program.compile)
 builder = new_builder(two_patches=True)
 builder.add_sz_via_teleportation("D", "A", 2, 2)
 builder.add_memory("D", 2, "Z")
@@ -1220,6 +1262,114 @@ tracking through the fold correction. Merely adding syndrome rounds does not
 provide those features. No logical-error-rate or fault-distance guarantee is
 claimed for the complete raw-resource experiment.
 
+#### First-decision window model
+
+`t_teleportation_decision_model(patch, rounds_before)` builds the pre-decision
+window: both injection rounds, the requested rounds on both patches, and the
+resource's destructive Z readout. Its one observable is the flip of the resource
+logical-Z parity. `detection_events(results)` returns fired detector ids and the
+raw decision per shot; an external decoder predicts the flip, giving
+`decoded_decision = raw XOR predicted_flip`. This does not change the branch
+executed by the program. In a program with several T/TDG decisions, only the
+first decision is covered. Later windows include executed correction rounds and
+are out of scope.
+
+The model assumes raw resources and canonical inputs with no pending frame. Its
+DEM source is a native trace (the default Selene runtime's Helios-native lowering)
+of a straight-line Z-seed stand-in, matching the program's noise per native gate.
+It omits the sign-fix Z Paulis, which change no fault propagation but leave their
+single-qubit noise uncounted: a one-sided omission of about 2.4% of single-qubit
+locations at d = 3. The seed's T and the input seed's single-qubit gates are
+logical, not detectable; their X parts flip the observable undetectably, so
+DEM-sampled observable rates miss about `2 * p1` of floor without affecting
+decoding. There is no idle noise. The native trace is built once per model, on
+the first `build_dem`; constructing a model or extracting detection events does
+not trace a program.
+
+This self-contained noiseless example checks the transcription, including the
+raw parity used by the program:
+
+```python
+import pecos_rslib as prs
+from pecos import sim, stab_vec
+from pecos.guppy_gen import make_surface_t_teleportation
+from pecos.qec.surface import SurfacePatch, t_teleportation_decision_model
+
+decision_patch = SurfacePatch.create(distance=3)
+decision_model = t_teleportation_decision_model(decision_patch, rounds_before=1)
+decision_dem = decision_model.build_dem(p1=0.001, p2=0.001, p_meas=0.001, p_prep=0.001)
+decision_program = make_surface_t_teleportation(decision_patch, rounds_before=1)
+decision_engine = prs.qis_engine().selene_runtime().interface(prs.qis_helios_interface())
+decision_results = (
+    sim(decision_program)
+    .classical(decision_engine)
+    .quantum(stab_vec())
+    .qubits(decision_patch.geometry.num_data + decision_patch.geometry.num_qubits)
+    .seed(712)
+    .run(4)
+    .to_dict()
+)
+events, raw = decision_model.detection_events(decision_results)
+assert all(not fired for fired in events)
+assert raw == [bool(bit) for bit in decision_results["t_correction"]]
+```
+
+#### Decoded first correction
+
+`make_surface_t_teleportation(..., forced_decision=False)` and the `True`
+variant preserve the resource readout and force the first physical correction.
+The default `None` uses raw parity. `model.decode_decisions(results, decoder,
+dem=dem)` returns `(raw, decoded)`, applying the decoder's predicted flip to
+that parity.
+
+`model.run_decoded(run, decoder, dem=dem)` calls `run(False)` then `run(True)`.
+Bind the same program parameters, noise, seed and shot count in `run`. It checks
+that both variants have matching tags and shot counts, forced corrections, and
+identical decision windows, then decodes once. The returned `DecodedDecisionRun`
+has `raw` and `decoded` decisions, `results` selected per shot by the decoded bit,
+and `raw_results` selected by the raw bit. These are exact seeded records:
+the programs share their pre-branch source, each shot is seeded from the run seed
+and shot index, and QIS operations execute in program order.
+
+This costs two full runs (2x the shots). Only the first decision is decoded;
+later decisions retain their program behavior. Hook resources are unsupported.
+
+This self-contained example runs eight noiseless shots, so the decoder agrees
+with raw parity on every shot. The DEM's rates are the decoder's prior:
+
+```python
+import pecos_rslib as prs
+from pecos import sim, stab_vec
+from pecos.decoders import tesseract
+from pecos.guppy_gen import make_surface_t_teleportation
+from pecos.qec.surface import SurfacePatch, t_teleportation_decision_model
+
+patch = SurfacePatch.create(distance=3)
+model = t_teleportation_decision_model(patch, rounds_before=1)
+p = 0.001
+dem = model.build_dem(p1=p, p2=p, p_meas=p, p_prep=p)
+
+
+def run(forced):
+    program = make_surface_t_teleportation(patch, rounds_before=1, forced_decision=forced)
+    engine = prs.qis_engine().selene_runtime().interface(prs.qis_helios_interface())
+    return (
+        sim(program)
+        .classical(engine)
+        .quantum(stab_vec())
+        .qubits(patch.geometry.num_data + patch.geometry.num_qubits)
+        .seed(712)
+        .run(8)
+        .to_dict()
+    )
+
+
+result = model.run_decoded(run, tesseract(), dem=dem)
+assert len(result.decoded) == 8
+assert result.decoded == result.raw
+assert result.results == result.raw_results
+```
+
 #### Postselected hook resources
 
 PECOS also implements the CNOT schedule from
@@ -1361,13 +1511,13 @@ assert callable(program.compile)
 ```
 
 !!! note "Resource and correction limits"
-    These factories generate uncorrected protocol experiments: the S factory
-    uses a projected Y resource with no conditional correction, and the T
-    **placeholder** is entirely Clifford (no T gate, no magic resource).
+    The S factory uses a projected Y resource and executes its conditional Z
+    correction by default, or records the frame bit with `correction="record"`.
+    The T **placeholder** remains entirely Clifford (no T gate, no magic resource,
+    no conditional S correction).
     The executable T factory above is a separate adaptive implementation.
     The builder records teleportation readouts in the circuit metadata and in
     `build_algorithm_descriptor()`; those records do not apply a correction.
-    The Guppy factories emit measurement outputs only.
     Chen, Chen, Lu and Pan ([arXiv:2412.01391](https://arxiv.org/abs/2412.01391))
     describe a mid-cycle fold-transversal logical SZ, available separately as
     the [fold round gadget](#fold-transversal-sz), outside these protocol factories.
@@ -1453,6 +1603,14 @@ for factory, arguments in (
         else:
             raise AssertionError(f"{factory} unexpectedly accepted for a traced DEM")
 ```
+
+The logical-circuit builder's `build_dem()` returns a `DetectorErrorModel`
+object retaining detector `fault_sector` labels used by graph decoders. Pass
+the object directly to `batch.decode(dem, "pymatching")` or other decode APIs
+that accept it. Use `str(dem)` or `dem.to_string()` for standard DEM text
+(for example, for Stim or text-only decoders). `build_sampler_and_decoder()`
+still returns text as its third item, and `build_algorithm_descriptor()`
+keeps its `full_dem` field as text.
 
 ## Validating a gadget
 

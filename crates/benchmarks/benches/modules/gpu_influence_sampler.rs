@@ -107,8 +107,9 @@ fn build_influence_maps(
 ) -> (DagFaultInfluenceMap, GpuInfluenceMapData) {
     let tracked_pauli_qubits: Vec<usize> = (0..num_data).collect();
     let builder = InfluenceBuilder::new(circuit)
-        .unwrap()
-        .with_z(&tracked_pauli_qubits);
+        .expect("benchmark circuit uses supported Clifford gates")
+        .with_z(&tracked_pauli_qubits)
+        .expect("benchmark support is a literal list or enumerated range of distinct qubits");
     let influence_map = builder.build().expect("circuit is replayable");
 
     let (

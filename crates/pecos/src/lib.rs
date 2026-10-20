@@ -19,7 +19,7 @@ pub mod core {
     pub use pecos_core::*;
 }
 #[cfg(feature = "core")]
-pub use pecos_core::{QubitId, errors::PecosError};
+pub use pecos_core::{QubitId, errors::PecosError, radians, turns};
 
 // Internal modules
 #[cfg(feature = "sim")]
@@ -48,8 +48,9 @@ pub mod engines {
 #[cfg(feature = "quantum")]
 pub mod quantum {
     pub use pecos_quantum::{
-        Attribute, Circuit, CircuitMut, CustomGateError, DagCircuit, DagWouldCycleError, Gate,
-        GateHandle, GateType, GateView, QubitId, Tick, TickCircuit, TickGateError,
+        Attribute, Circuit, CircuitMut, CustomGateError, DagCircuit, DagGateError, DagWireError,
+        DagWouldCycleError, Gate, GateHandle, GateType, GateView, QubitId, Tick, TickCircuit,
+        TickGateError,
     };
     pub use pecos_quantum::{F2Matrix, PauliSequence, PauliSet, PauliStabilizerGroup};
 }
@@ -75,8 +76,11 @@ pub mod simulators {
 #[cfg(feature = "sim")]
 pub mod noise {
     pub use pecos_engines::noise::{
-        BiasedDepolarizingNoiseModelBuilder, DepolarizingNoiseModel, DepolarizingNoiseModelBuilder,
-        GeneralNoiseModelBuilder, IntoNoiseModel, NoiseModel, PassThroughNoiseModel,
+        BiasedDepolarizingNoiseModelBuilder, ChannelValidationError, DepolarizingNoiseModel,
+        DepolarizingNoiseModelBuilder, GeneralNoiseModelBuilder, IntoNoiseModel, NoiseModel,
+        P2PauliLeakageStep, P2TransitionStep, PassThroughNoiseModel, PauliLeakageChannel,
+        PauliLeakageDict, PauliLeakageEvent, QubitTransitionState, StateTransitionChannel,
+        TransitionDict, TwoQubitPauliLeakageChannel, TwoQubitStateTransitionChannel,
         general::GeneralNoiseModel,
     };
     pub use pecos_engines::{BiasedDepolarizingNoise, DepolarizingNoise, PassThroughNoise};

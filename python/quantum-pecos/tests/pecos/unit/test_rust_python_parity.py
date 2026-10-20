@@ -834,16 +834,16 @@ def test_undefined_variable_raises_key_error(interp: str, read_expr: dict) -> No
     ],
     ids=["assign-simple", "assign-indexed"],
 )
-def test_assign_to_undeclared_variable_raises_key_error(interp: str, ops: list) -> None:
-    """Assigning to an undeclared classical variable raises ``KeyError`` in both interpreters."""
+def test_assign_to_undeclared_variable_raises_value_error(interp: str, ops: list) -> None:
+    """Assigning to an undeclared classical variable raises ``ValueError`` in both interpreters."""
     phir = {"format": "PHIR/JSON", "version": "0.1.0", "ops": ops}
-    with pytest.raises(KeyError):
+    with pytest.raises(ValueError, match="unknown classical variable"):
         HybridEngine(cinterp=interp).run(phir, shots=1, seed=42)
 
 
 @pytest.mark.parametrize("interp", ["python", "rust"])
-def test_measure_to_undeclared_variable_raises_key_error(interp: str) -> None:
-    """Measuring into an undeclared classical variable raises ``KeyError`` in both interpreters."""
+def test_measure_to_undeclared_variable_raises_value_error(interp: str) -> None:
+    """Measuring into an undeclared classical variable raises ``ValueError`` in both interpreters."""
     phir = {
         "format": "PHIR/JSON",
         "version": "0.1.0",
@@ -852,13 +852,13 @@ def test_measure_to_undeclared_variable_raises_key_error(interp: str) -> None:
             {"qop": "Measure", "args": [["q", 0]], "returns": [["undeclared", 0]]},
         ],
     }
-    with pytest.raises(KeyError):
+    with pytest.raises(ValueError, match=r"unknown classical variable.*undeclared"):
         HybridEngine(cinterp=interp, qsim="stabilizer").run(phir, shots=1, seed=42)
 
 
 @pytest.mark.parametrize("interp", ["python", "rust"])
-def test_ffcall_return_to_undeclared_variable_raises_key_error(interp: str) -> None:
-    """An ffcall returning into an undeclared classical variable raises ``KeyError`` in both."""
+def test_ffcall_return_to_undeclared_variable_raises_value_error(interp: str) -> None:
+    """An ffcall returning into an undeclared classical variable raises ``ValueError`` in both."""
 
     class _ForeignObj:
         def init(self) -> None: ...
@@ -874,7 +874,7 @@ def test_ffcall_return_to_undeclared_variable_raises_key_error(interp: str) -> N
         "version": "0.1.0",
         "ops": [{"cop": "ffcall", "function": "f", "args": [], "returns": ["undeclared"]}],
     }
-    with pytest.raises(KeyError):
+    with pytest.raises(ValueError, match="unknown classical variable"):
         HybridEngine(cinterp=interp).run(phir, foreign_object=_ForeignObj(), shots=1, seed=42)
 
 
@@ -1347,7 +1347,7 @@ def test_shift_rule_parity_boundaries() -> None:
 
 
 def test_shift_rule_parity_negative() -> None:
-    """Compatibility pin: both raise on signed negative literal/register counts."""
+    """Both interpreters raise ValueError on signed negative literal/register counts."""
     for count in (-1, "count"):
         phir = _make_classical_program(
             [("x", "u64", 64), ("count", "i64", 63)],
@@ -1358,7 +1358,7 @@ def test_shift_rule_parity_negative() -> None:
         )
         for interpreter, error in [
             (PhirClassicalInterpreter(), ValueError),
-            (RustPhirClassicalInterpreter(), RuntimeError),
+            (RustPhirClassicalInterpreter(), ValueError),
         ]:
             with pytest.raises(error, match="Negative shift amount: -1"):
                 HybridEngine(cinterp=interpreter, qsim="stabilizer").run(phir)
@@ -1381,3 +1381,554 @@ def test_shift_rule_fuzzer_coverage() -> None:
     assert {31, 32, 33, 63, 64, 65, 65535, 65536, 2**63, 2**64 - 1, -1, "negative_count", "unsigned_count"} <= set(
         counts,
     )
+
+
+@pytest.mark.parametrize(
+    ("op", "message"),
+    [
+        ({"qop": "H", "args": []}, "has 0 arguments"),
+        ({"qop": "H", "args": [["q", 9]], "angles": [[0.2], "rad"]}, "Index 9 out of bounds"),
+        ({"qop": "CPhase", "args": [[["q", 0], ["q", 1]]], "angles": [[0.2], "rad"]}, "Unsupported quantum gate"),
+        ({"qop": "H", "args": [["q", 0], ["q", 0]]}, "repeats qubit IDs"),
+        ({"qop": "CX", "args": [[["q", 0], ["q", 1], ["q", 2]]]}, "supply groups of 2 qubits"),
+        (
+            {"qop": "RXYXY2Q", "args": [["q", 0], ["q", 1]], "angles": [[0.2, 0.3], "rad"]},
+            "supply groups of 2 qubits",
+        ),
+        ({"qop": "H", "args": [["q", 0]], "angles": [[0.2], "rad"]}, "exactly 0 angles"),
+        ({"qop": "UnknownGate", "args": [["q", 0]]}, "Unsupported quantum gate"),
+    ],
+)
+def test_interpreters_reject_invalid_quantum_arguments_identically(op: dict, message: str) -> None:
+    """HybridEngine's default interpreter validates qops before yielding them."""
+    source = json.dumps(
+        {
+            "format": "PHIR/JSON",
+            "version": "0.1.0",
+            "ops": [{"data": "qvar_define", "variable": "q", "size": 3}, op],
+        },
+    )
+    messages = []
+    for interpreter in (RustPhirClassicalInterpreter(), PhirClassicalInterpreter()):
+        # Runtime invariants must hold even when optional schema checking is disabled.
+        interpreter.phir_validate = False
+        with pytest.raises(ValueError, match=message) as error:
+            HybridEngine(cinterp=interpreter, qsim="stabilizer").run(source)
+        messages.append(str(error.value))
+    assert messages[0] == messages[1]
+
+
+@pytest.mark.parametrize(("args", "returns"), [(["a"], []), ([], []), (["a", "a"], ["x"]), (["a"], ["x", "y"])])
+def test_interpreters_reject_invalid_result_counts_identically(args, returns) -> None:
+    """Neither interpreter silently truncates a Result mapping."""
+    source = _make_classical_program(
+        [("a", "u32", 2)],
+        [{"cop": "Result", "args": args, "returns": returns}],
+    )
+    messages = []
+    for interpreter in (RustPhirClassicalInterpreter(), PhirClassicalInterpreter()):
+        interpreter.phir_validate = False
+        with pytest.raises(ValueError, match="Result: invalid counts") as error:
+            HybridEngine(cinterp=interpreter, qsim="stabilizer").run(source)
+        messages.append(str(error.value))
+    assert messages[0] == messages[1]
+
+
+@pytest.mark.parametrize(("dtype", "size", "bit"), [("i32", 3, 3), ("u32", 3, 3), ("u8", 4, 4)])
+def test_measurement_declared_bounds_match(dtype: str, size: int, bit: int) -> None:
+    """Neither interpreter may discard a measurement beyond the declared bits."""
+    source = _make_classical_program([("a", dtype, size)], [])
+    messages = []
+    for interpreter in (RustPhirClassicalInterpreter(), PhirClassicalInterpreter()):
+        interpreter.init(source)
+        with pytest.raises(ValueError, match=f"Measurement write a\\[{bit}\\].*declared size {size}") as error:
+            interpreter.receive_results([{("a", bit): 1}])
+        messages.append(str(error.value))
+    assert messages[0] == messages[1]
+
+
+@pytest.mark.parametrize("destination", ["q", ["q", 0]])
+def test_result_rejects_quantum_destinations(destination) -> None:
+    """Result exports must not overwrite quantum declarations."""
+    source = _make_classical_program(
+        [("a", "u32", 3)],
+        [
+            {"data": "qvar_define", "variable": "q", "size": 1},
+            {"cop": "Result", "args": ["a"], "returns": [destination]},
+        ],
+    )
+    messages = []
+    for interpreter in (RustPhirClassicalInterpreter(), PhirClassicalInterpreter()):
+        interpreter.phir_validate = False
+        with pytest.raises(ValueError, match='Result: destination "q" is quantum') as error:
+            HybridEngine(cinterp=interpreter, qsim="stabilizer").run(source)
+        messages.append(str(error.value))
+    assert messages[0] == messages[1]
+
+
+def test_result_indices_and_narrowing_preserve_values() -> None:
+    """Indexed copies extract/replace bits; whole copies honor destination widths."""
+    source = _make_classical_program(
+        [("a", "u8", 4), ("small", "u8", 1)],
+        [
+            {"cop": "=", "args": [4], "returns": ["a"]},
+            {"cop": "Result", "args": [["a", 2], ["a", 0]], "returns": [["out", 40], ["out", 1]]},
+            {"cop": "Result", "args": [["a", 2], ["a", 1]], "returns": [["a", 0], ["a", 2]]},
+            {"cop": "Result", "args": ["a"], "returns": ["small"]},
+        ],
+    )
+    python, rust = _run_classical(source)
+    assert python == rust == {"a": 1, "small": 1, "out": 1 << 40}
+
+
+@pytest.mark.parametrize(
+    ("dtype", "size"),
+    [("i8", 3), ("i8", 7), ("i16", 3), ("i16", 15), ("i32", 31), ("i64", 3), ("i64", 63)],
+)
+@pytest.mark.parametrize(("destination", "destination_size", "expected"), [("i64", 63, -8), ("u64", 64, (1 << 64) - 8)])
+def test_result_signed_sources_match_i64_assignment(
+    dtype: str,
+    size: int,
+    destination: str,
+    destination_size: int,
+    expected: int,
+) -> None:
+    """Signed whole copies agree with assignment, independently of backing width."""
+    source = _make_classical_program(
+        [("s", dtype, size), ("assigned", destination, destination_size), ("copied", destination, destination_size)],
+        [
+            {"cop": "=", "args": [-8], "returns": ["s"]},
+            {"cop": "=", "args": ["s"], "returns": ["assigned"]},
+            {"cop": "Result", "args": ["s"], "returns": ["copied"]},
+        ],
+    )
+    python, rust = _run_classical(source)
+    assert python == rust == {"s": -8, "assigned": expected, "copied": expected}
+
+
+@pytest.mark.parametrize(
+    ("args", "returns", "message"),
+    [
+        (["unknown"], ["out"], 'unknown classical variable "unknown"'),
+        ([["a", 3]], ["out"], "bit index 3"),
+        (["a"], [["a", 3]], "bit index 3"),
+        (["a"], [["out", 64]], "bit index 64"),
+    ],
+)
+def test_result_reference_errors_match(args, returns, message: str) -> None:
+    """Bad Result references produce the same named, actionable ValueError."""
+    source = _make_classical_program(
+        [("a", "i32", 3)],
+        [{"cop": "Result", "args": args, "returns": returns}],
+    )
+    messages = []
+    for interpreter in (RustPhirClassicalInterpreter(), PhirClassicalInterpreter()):
+        interpreter.phir_validate = False
+        with pytest.raises(ValueError, match=message) as error:
+            HybridEngine(cinterp=interpreter, qsim="stabilizer").run(source)
+        messages.append(str(error.value))
+    assert messages[0] == messages[1]
+
+
+@pytest.mark.parametrize("validate", [False, True])
+@pytest.mark.parametrize("size", [None, 1])
+def test_bool_declarations_and_measurements_match(size, validate: bool) -> None:
+    """Bool declarations use one bit and survive measurement and Result copies."""
+    from pecos import PhirJson, sim, state_vector
+
+    declaration = {"data": "cvar_define", "data_type": "bool", "variable": "flag"}
+    if size is not None:
+        declaration["size"] = size
+    source = {
+        "format": "PHIR/JSON",
+        "version": "0.1.0",
+        "ops": [
+            {"data": "qvar_define", "variable": "q", "size": 1},
+            declaration,
+            {"qop": "X", "args": [["q", 0]]},
+            {"qop": "Measure", "args": [["q", 0]], "returns": [["flag", 0]]},
+            {"cop": "Result", "args": ["flag"], "returns": ["out"]},
+        ],
+    }
+    for interpreter in (RustPhirClassicalInterpreter(), PhirClassicalInterpreter()):
+        interpreter.phir_validate = validate
+        result = HybridEngine(cinterp=interpreter, qsim="stabilizer").run(source, return_int=True)
+        assert result["out"] == [1]
+    assert sim(PhirJson(json.dumps(source))).quantum(state_vector()).run(1).to_dict()["out"] == [1]
+
+
+@pytest.mark.parametrize("validate", [False, True])
+def test_bool_declaration_size_error_is_shared(validate: bool) -> None:
+    from pecos.reps.pyphir import PyPHIR
+
+    source = _make_classical_program([("flag", "bool", 4)], [])
+    messages = []
+    for interpreter in (RustPhirClassicalInterpreter(), PhirClassicalInterpreter()):
+        interpreter.phir_validate = validate
+        with pytest.raises(ValueError, match="bool with size 4; use size 1") as error:
+            interpreter.init(source)
+        messages.append(str(error.value))
+    with pytest.raises(ValueError, match="bool with size 4; use size 1") as error:
+        PyPHIR.from_phir(source)
+    assert messages[0] == messages[1] == str(error.value)
+
+
+@pytest.mark.parametrize("cop", ["=", "ffcall"])
+@pytest.mark.parametrize("target", [["a", 5], ["a", 3], ["missing", 0], "missing", ["非ASCII", 0]])
+def test_assignment_and_ffcall_target_errors_match(cop: str, target) -> None:
+    class Foreign:
+        def init(self) -> None: ...
+        def shot_reinit(self) -> None: ...
+        def get_funcs(self) -> list:
+            return ["f"]
+
+        def exec(self, _func: str, _args: list) -> list:
+            pytest.fail("invalid destinations must be rejected before calling foreign code")
+
+    operation = {"cop": cop, "args": [1], "returns": [target]}
+    if cop == "ffcall":
+        operation["function"] = "f"
+    source = _make_classical_program([("a", "u32", 3)], [operation])
+    messages = []
+    for interpreter in (RustPhirClassicalInterpreter(), PhirClassicalInterpreter()):
+        interpreter.phir_validate = False
+        engine = HybridEngine(cinterp=interpreter, qsim="stabilizer")
+        options = {"foreign_object": Foreign()} if cop == "ffcall" else {}
+        with pytest.raises(ValueError, match=r"Assignment write|unknown classical variable") as error:
+            engine.run(source, **options)
+        messages.append(str(error.value))
+    assert messages[0] == messages[1]
+    assert "PHIR interpreter failed: Assignment" in messages[0]
+    assert "declare it" in messages[0] or "use an index below 3" in messages[0]
+
+
+@pytest.mark.parametrize("validate", [False, True])
+@pytest.mark.parametrize("field", ["args", "returns"])
+@pytest.mark.parametrize(
+    ("entry", "exception"),
+    [
+        (7, TypeError),
+        (None, TypeError),
+        (True, TypeError),
+        ({"bad": True}, TypeError),
+        (["a", -1], ValueError),
+        (["a", True], TypeError),
+        (["a", 1.5], TypeError),
+        (["a"], TypeError),
+    ],
+)
+def test_malformed_result_json_errors_match_all_paths(entry, exception, field: str, validate: bool) -> None:
+    from pecos import PhirJson, sim, state_vector
+    from pecos.reps.pyphir import PyPHIR
+    from pecos_rslib import PhirJsonEngine
+
+    operation = {"cop": "Result", "args": ["a"], "returns": ["out"]}
+    operation[field] = [entry]
+    source = _make_classical_program([("a", "u32", 3)], [operation])
+    messages = []
+    for interpreter in (RustPhirClassicalInterpreter(), PhirClassicalInterpreter()):
+        interpreter.phir_validate = validate
+        with pytest.raises(exception) as error:
+            HybridEngine(cinterp=interpreter, qsim="stabilizer").run(source)
+        messages.append(str(error.value))
+    for action in [
+        lambda: PyPHIR.from_phir(source),
+        lambda: PhirJsonEngine(json.dumps(source)),
+        lambda: sim(PhirJson(json.dumps(source))).quantum(state_vector()).run(1),
+    ]:
+        with pytest.raises(exception) as error:
+            action()
+        messages.append(str(error.value))
+    assert len(set(messages)) == 1
+    encoded = json.dumps(entry, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    assert f"Result: invalid {field} entry {encoded}" in messages[0]
+
+
+@pytest.mark.parametrize("reset", [False, True])
+def test_python_measurements_and_shot_reset_do_not_revalidate(monkeypatch, reset: bool) -> None:
+    """Decode each executed Result once per init; later shots do no JSON/FFI work."""
+    from types import SimpleNamespace
+
+    import pecos.classical_interpreters.phir_classical_interpreter as implementation
+
+    source = _make_classical_program(
+        [("flag", "bool", 1), ("a", "u32", 3), ("out", "u32", 3)],
+        [{"cop": "Result", "args": ["a"], "returns": ["out"]}],
+    )
+    interpreter = PhirClassicalInterpreter()
+    interpreter.init(source)
+    calls = {"counts": 0, "references": 0, "json": 0}
+
+    def counted(name, function):
+        def wrapper(*args, **kwargs):
+            calls[name] += 1
+            return function(*args, **kwargs)
+
+        return wrapper
+
+    # Patch this module's JSON reference, leaving shared load-time validation intact.
+    with monkeypatch.context() as first_use:
+        first_use.setattr(implementation, "json", SimpleNamespace(dumps=counted("json", json.dumps)))
+        first_use.setattr(
+            implementation,
+            "validate_phir_result_counts",
+            counted("counts", implementation.validate_phir_result_counts),
+        )
+        first_use.setattr(
+            implementation,
+            "validate_phir_result_reference",
+            counted("references", implementation.validate_phir_result_reference),
+        )
+        interpreter.handle_cops(interpreter.program.ops[0])
+        interpreter.handle_cops(interpreter.program.ops[0])
+        assert calls == {"counts": 1, "references": 2, "json": 2}
+    interpreter.init(interpreter.program)
+    # A new init discards the successful decode from the previous program.
+    with monkeypatch.context() as new_load:
+        new_load.setattr(
+            implementation,
+            "validate_phir_result_counts",
+            counted("counts", implementation.validate_phir_result_counts),
+        )
+        interpreter.handle_cops(interpreter.program.ops[0])
+        assert calls["counts"] == 2
+
+    def unexpected(*_args, **_kwargs):
+        pytest.fail("later shots must not serialize or validate Result syntax or declarations")
+
+    monkeypatch.setattr(implementation, "json", SimpleNamespace(dumps=unexpected))
+    monkeypatch.setattr(implementation, "validate_phir_result_counts", unexpected)
+    monkeypatch.setattr(implementation, "validate_phir_result_reference", unexpected)
+    monkeypatch.setattr(implementation, "validate_phir_classical_declaration", unexpected)
+    monkeypatch.setattr(interpreter, "_check_register_width", unexpected)
+    for _shot in range(10):
+        if reset:
+            interpreter.shot_reinit()
+        interpreter.receive_results([{("flag", 0): 1, ("a", 2): 1}])
+        interpreter.handle_cops(interpreter.program.ops[0])
+        assert interpreter.results() == {"flag": True, "a": 4, "out": 4}
+        interpreter.receive_results([{("flag", 0): 0, ("a", 2): 0}])
+        interpreter.handle_cops(interpreter.program.ops[0])
+        assert interpreter.results() == {"flag": False, "a": 0, "out": 0}
+
+
+@pytest.mark.parametrize("reference", [["flag", 1], ["missing", 0]])
+def test_unexecuted_measurement_destinations_match_native(reference) -> None:
+    from pecos_rslib import run_phir_sim
+
+    source = {
+        "format": "PHIR/JSON",
+        "version": "0.1.0",
+        "ops": [
+            {"data": "qvar_define", "variable": "q", "size": 1},
+            {"data": "cvar_define", "data_type": "bool", "variable": "flag"},
+            {
+                "block": "if",
+                "condition": {"cop": "==", "args": [0, 1]},
+                "true_branch": [
+                    {"qop": "Measure", "args": [["q", 0]], "returns": [reference]},
+                ],
+            },
+        ],
+    }
+    python, rust = run_both(source, return_int=True)
+    assert python == rust == {"flag": [0]}
+    assert run_phir_sim(json.dumps(source))["flag"] == ["0"]
+
+
+@pytest.mark.parametrize("index", [True, 1.0])
+def test_measurement_indices_cannot_alias_integer_cache_keys(index) -> None:
+    interpreter = PhirClassicalInterpreter()
+    interpreter.init(_make_classical_program([("a", "u32", 2)], []))
+    with pytest.raises(TypeError, match="Measurement: invalid destination"):
+        interpreter.receive_results([{("a", index): 1}])
+
+
+def test_python_malformed_measurement_result_has_measurement_label() -> None:
+    interpreter = PhirClassicalInterpreter()
+    interpreter.init(_make_classical_program([("flag", "bool", 1)], []))
+    with pytest.raises(TypeError, match="Measurement: invalid destination 7"):
+        interpreter.receive_results([{7: 1}])
+
+
+@pytest.mark.parametrize("validate", [False, True])
+def test_python_parsed_phir_preserves_scalar_metadata(validate: bool) -> None:
+    """Classical validation must not serialize unrelated metadata."""
+    import pecos as pc
+    from pecos.reps.pyphir import PyPHIR
+
+    circuit = pc.QuantumCircuit()
+    circuit.append("RZ", {0}, angle=0.5)
+    source = circuit.to_phir_dict()
+    rotation = next(op for op in source["ops"] if op.get("qop") == "RZ")
+    rotation["metadata"] = {"scalar": pc.i64(7)}
+    source["metadata"]["scalar"] = pc.i64(9)
+    pyphir = PyPHIR.from_phir(source)
+    assert int(pyphir.metadata["scalar"]) == 9
+    interpreter = PhirClassicalInterpreter()
+    interpreter.phir_validate = validate
+    assert interpreter.init(source) == 1
+    assert float(interpreter.program.ops[0].angles[0]) == 0.5
+
+
+@pytest.mark.parametrize(
+    "ops",
+    [
+        [7],
+        [None],
+        ["unexpected"],
+        [{"block": "if", "condition": {"cop": "==", "args": [0, 1]}, "true_branch": 7}],
+        [{"block": "sequence", "ops": {}}],
+    ],
+)
+def test_classical_projection_preserves_schema_errors(ops) -> None:
+    from pecos._phir_declarations import validate_classical_inputs
+    from pydantic import ValidationError
+
+    source = {"format": "PHIR/JSON", "version": "0.1.0", "ops": ops}
+    validate_classical_inputs(source)
+    with pytest.raises(ValidationError):
+        PhirClassicalInterpreter().init(source)
+
+
+@pytest.mark.parametrize("validate", [False, True])
+def test_unexecuted_result_count_mismatch_matches_native(validate: bool) -> None:
+    from pecos_rslib import run_phir_sim
+
+    source = _make_classical_program(
+        [("a", "u32", 3)],
+        [
+            {
+                "block": "if",
+                "condition": {"cop": "==", "args": [0, 1]},
+                "true_branch": [{"cop": "Result", "args": ["a", "a"], "returns": ["x"]}],
+            },
+        ],
+    )
+    native = run_phir_sim(json.dumps(source))
+    for interpreter in (RustPhirClassicalInterpreter(), PhirClassicalInterpreter()):
+        interpreter.phir_validate = validate
+        actual = HybridEngine(cinterp=interpreter).run(source, return_int=True)
+        assert actual == {"a": [0]}
+        assert actual == {name: [int(value) for value in values] for name, values in native.items()}
+
+
+@pytest.mark.parametrize("method", ["handle_cops", "execute"])
+def test_python_direct_result_decodes_on_first_execution(method: str) -> None:
+    from pecos.reps.pyphir.op_types import COp
+
+    interpreter = PhirClassicalInterpreter()
+    interpreter.init(_make_classical_program([("a", "u32", 3)], []))
+    interpreter.assign_int("a", 5)
+    operation = COp("Result", ["a"], ["out"])
+    if method == "handle_cops":
+        interpreter.handle_cops(operation)
+    else:
+        assert list(interpreter.execute([operation])) == []
+    assert interpreter.results() == {"a": 5, "out": 5}
+
+
+def test_python_full_reset_releases_result_operations() -> None:
+    """Forgetting the program releases its operations and their cached decoding."""
+    from weakref import ref
+
+    interpreter = PhirClassicalInterpreter()
+    interpreter.init(
+        _make_classical_program(
+            [("a", "u32", 3)],
+            [{"cop": "Result", "args": ["a"], "returns": ["out"]}],
+        ),
+    )
+    operation = interpreter.program.ops[0]
+    retained = ref(operation)
+    interpreter.handle_cops(operation)
+    del operation
+    assert retained() is not None
+    interpreter.reset()
+    assert retained() is None
+
+
+def test_python_invalid_result_is_validated_on_every_execution(monkeypatch) -> None:
+    import pecos.classical_interpreters.phir_classical_interpreter as implementation
+    from pecos.reps.pyphir.op_types import COp
+
+    interpreter = PhirClassicalInterpreter()
+    interpreter.init(_make_classical_program([("a", "u32", 3)], []))
+    operation = COp("Result", ["a", "a"], ["out"])
+    validate_counts = implementation.validate_phir_result_counts
+    counts = []
+
+    def record_counts(*args):
+        counts.append(args)
+        return validate_counts(*args)
+
+    monkeypatch.setattr(implementation, "validate_phir_result_counts", record_counts)
+    for _attempt in range(2):
+        with pytest.raises(ValueError, match="Result"):
+            interpreter.handle_cops(operation)
+    assert counts == [(2, 1), (2, 1)]
+
+
+@pytest.mark.parametrize("validate", [False, True])
+@pytest.mark.parametrize("dtype", ["u32", "bool"])
+@pytest.mark.parametrize("size_fields", [{"size": -1}, {"size": None}, {}], ids=["negative", "null", "omitted"])
+def test_python_declaration_sizes_reject_explicit_null(dtype: str, size_fields: dict, validate: bool) -> None:
+    """Shared validation rejects present invalid sizes with or without schema checking."""
+    from pecos.reps.pyphir import PyPHIR
+
+    declaration = {"data": "cvar_define", "data_type": dtype, "variable": "a", **size_fields}
+    source = {"format": "PHIR/JSON", "version": "0.1.0", "ops": [declaration]}
+    interpreter = PhirClassicalInterpreter()
+    interpreter.phir_validate = validate
+    if "size" in size_fields:
+        expected = (
+            f"PHIR interpreter failed: Register 'a' has invalid size {json.dumps(size_fields['size'])}; "
+            "use a positive integer size that fits the data type"
+        )
+        for reader in [interpreter.init, PyPHIR.from_phir]:
+            with pytest.raises(ValueError, match="invalid size") as error:
+                reader(source)
+            assert str(error.value) == expected
+    else:
+        interpreter.init(source)
+        assert interpreter.cvar_meta[0].size == (1 if dtype == "bool" else 32)
+        interpreter.receive_results([{("a", 0): 1}])
+        assert interpreter.results() == {"a": 1}
+
+
+@pytest.mark.parametrize("validate", [False, True])
+def test_python_quantum_null_size_has_shared_error(validate: bool) -> None:
+    from pecos.reps.pyphir import PyPHIR
+
+    source = {
+        "format": "PHIR/JSON",
+        "version": "0.1.0",
+        "ops": [
+            {"data": "qvar_define", "variable": "q", "size": None},
+        ],
+    }
+    interpreter = PhirClassicalInterpreter()
+    interpreter.phir_validate = validate
+    for reader in [interpreter.init, PyPHIR.from_phir]:
+        with pytest.raises(ValueError, match="invalid size null") as error:
+            reader(source)
+        assert str(error.value) == (
+            "PHIR interpreter failed: Register 'q' has invalid size null; use a positive integer size"
+        )
+
+
+def test_python_full_reset_releases_direct_result_operation() -> None:
+    """A directly supplied Result stays cached until a full reset forgets it."""
+    from weakref import ref
+
+    from pecos.reps.pyphir.op_types import COp
+
+    interpreter = PhirClassicalInterpreter()
+    interpreter.init(_make_classical_program([("a", "u32", 3)], []))
+    operation = COp("Result", ["a"], ["out"])
+    retained = ref(operation)
+    interpreter.handle_cops(operation)
+    del operation
+    assert retained() is not None
+    interpreter.reset()
+    assert retained() is None

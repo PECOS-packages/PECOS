@@ -36,6 +36,7 @@ use super::{
     TwoQubitPauliWeights,
 };
 use crate::command::{GateCommand, GateType};
+use crate::noise::validation::{ValidationResult, validate_probability, validate_rate};
 use pecos_core::Angle64;
 use pecos_random::PecosRng;
 use rand::RngExt;
@@ -84,6 +85,51 @@ impl Default for AngleScaling {
 }
 
 impl AngleScaling {
+    /// Validate that this polynomial produces a valid probability for every angle.
+    ///
+    /// # Errors
+    /// Rejects non-finite coefficients, negative powers, or extrema outside [0, 1].
+    pub fn validate_for_probability(&self, probability: f64) -> ValidationResult<()> {
+        use crate::noise::validation::{validate_finite, validate_rate};
+        validate_probability(probability, "error_probability")?;
+        validate_rate(self.power, "angle_scaling power")?;
+        validate_probability(
+            probability * ((self.neg_offset + self.pos_offset) * 0.5),
+            "angle-scaled probability at zero",
+        )?;
+        for (branch, a, b, c) in [
+            ("negative", self.neg_offset, self.neg_linear, self.neg_scale),
+            ("positive", self.pos_offset, self.pos_linear, self.pos_scale),
+        ] {
+            for (name, value) in [("offset", a), ("linear", b), ("scale", c)] {
+                validate_finite(value, &format!("angle_scaling {branch} {name}"))?;
+            }
+            let check = |t: f64| {
+                validate_probability(
+                    probability * (a + b * t + c * t.powf(self.power)),
+                    &format!("angle-scaled probability ({branch}, normalized angle {t})"),
+                )
+                .map(|_| ())
+            };
+            check(0.0)?;
+            check(1.0)?;
+            // The derivative b + c*d*t^(d-1) has at most one interior root.
+            // Logarithms avoid overflow while locating that root.
+            if self.power != 0.0
+                && self.power.total_cmp(&1.0).is_ne()
+                && b != 0.0
+                && c != 0.0
+                && b.is_sign_positive() != c.is_sign_positive()
+            {
+                let log_root = (b.abs().ln() - c.abs().ln() - self.power.ln()) / (self.power - 1.0);
+                if log_root < 0.0 {
+                    check(log_root.exp())?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// No angle dependence (constant error rate = 1.0).
     #[must_use]
     pub fn constant() -> Self {
@@ -259,29 +305,29 @@ impl AngleScaling {
 #[derive(Debug, Clone)]
 pub struct TwoQubitChannel {
     /// Base probability of any error occurring.
-    pub error_probability: f64,
+    error_probability: f64,
 
     /// Angle scaling for parameterized gates.
-    pub angle_scaling: AngleScaling,
+    angle_scaling: AngleScaling,
 
     /// Distribution of two-qubit Pauli errors.
-    pub pauli_weights: TwoQubitPauliWeights,
+    pauli_weights: TwoQubitPauliWeights,
 
     /// Fraction of errors that are emission errors (vs Pauli errors).
     ///
     /// When an error occurs:
     /// - With probability `emission_ratio`, it's an emission error
     /// - Otherwise, it's a Pauli error from `pauli_weights`
-    pub emission_ratio: f64,
+    emission_ratio: f64,
 
     /// Distribution of emission errors (Pauli gates and/or leakage).
     ///
     /// When an emission error occurs, sample from this distribution
     /// to determine whether to apply Pauli errors and/or cause leakage.
-    pub emission_weights: TwoQubitEmissionWeights,
+    emission_weights: TwoQubitEmissionWeights,
 
     /// Seepage probability for leaked qubits.
-    pub seepage_probability: f64,
+    seepage_probability: f64,
 
     // Precomputed probability thresholds for fast sampling
     seepage_threshold: u64,
@@ -304,10 +350,48 @@ impl Default for TwoQubitChannel {
 }
 
 impl TwoQubitChannel {
+    /// Return the configured `error_probability`.
+    #[must_use]
+    pub fn error_probability(&self) -> f64 {
+        self.error_probability
+    }
+
+    /// Return the configured `angle_scaling`.
+    #[must_use]
+    pub fn angle_scaling(&self) -> &AngleScaling {
+        &self.angle_scaling
+    }
+
+    /// Return the configured `pauli_weights`.
+    #[must_use]
+    pub fn pauli_weights(&self) -> &TwoQubitPauliWeights {
+        &self.pauli_weights
+    }
+
+    /// Return the configured `emission_ratio`.
+    #[must_use]
+    pub fn emission_ratio(&self) -> f64 {
+        self.emission_ratio
+    }
+
+    /// Return the configured `emission_weights`.
+    #[must_use]
+    pub fn emission_weights(&self) -> &TwoQubitEmissionWeights {
+        &self.emission_weights
+    }
+
+    /// Return the configured `seepage_probability`.
+    #[must_use]
+    pub fn seepage_probability(&self) -> f64 {
+        self.seepage_probability
+    }
+
     /// Create a new channel with all parameters specified.
     ///
     /// Precomputes probability thresholds for faster sampling.
-    #[must_use]
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
     pub fn new(
         error_probability: f64,
         angle_scaling: AngleScaling,
@@ -315,8 +399,14 @@ impl TwoQubitChannel {
         emission_ratio: f64,
         emission_weights: TwoQubitEmissionWeights,
         seepage_probability: f64,
-    ) -> Self {
-        Self {
+    ) -> ValidationResult<Self> {
+        pauli_weights.validate()?;
+        emission_weights.validate()?;
+        validate_probability(error_probability, "error_probability")?;
+        angle_scaling.validate_for_probability(error_probability)?;
+        validate_probability(emission_ratio, "emission_ratio")?;
+        validate_probability(seepage_probability, "seepage_probability")?;
+        Ok(Self {
             error_probability,
             angle_scaling,
             pauli_weights,
@@ -325,70 +415,99 @@ impl TwoQubitChannel {
             seepage_probability,
             seepage_threshold: PecosRng::probability_threshold(seepage_probability),
             emission_threshold: PecosRng::probability_threshold(emission_ratio),
-        }
+        })
     }
 
     /// Create a depolarizing noise channel.
-    #[must_use]
-    pub fn depolarizing(p: f64) -> Self {
-        Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn depolarizing(p: f64) -> ValidationResult<Self> {
+        validate_probability(p, "p")?;
+        Ok(Self {
             error_probability: p,
             ..Default::default()
-        }
+        })
     }
 
     /// Set angle-dependent scaling.
-    #[must_use]
-    pub fn with_angle_scaling(mut self, scaling: AngleScaling) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_angle_scaling(mut self, scaling: AngleScaling) -> ValidationResult<Self> {
+        scaling.validate_for_probability(self.error_probability)?;
         self.angle_scaling = scaling;
-        self
+        Ok(self)
     }
 
     /// Set the emission error ratio with uniform leakage on both qubits.
     ///
     /// This is a convenience method that configures emission weights
     /// to include leakage with the specified probability on both qubits.
-    #[must_use]
-    pub fn with_leakage(mut self, ratio: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_leakage(mut self, ratio: f64) -> ValidationResult<Self> {
+        validate_probability(ratio, "ratio")?;
         self.emission_ratio = ratio;
         self.emission_threshold = PecosRng::probability_threshold(ratio);
         // Use uniform with leakage distribution
         self.emission_weights = TwoQubitEmissionWeights::uniform_with_leakage();
-        self
+        Ok(self)
     }
 
     /// Set the emission error ratio with custom emission weights.
-    #[must_use]
-    pub fn with_emission_weights(mut self, ratio: f64, weights: TwoQubitEmissionWeights) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_emission_weights(
+        mut self,
+        ratio: f64,
+        weights: TwoQubitEmissionWeights,
+    ) -> ValidationResult<Self> {
+        weights.validate()?;
+        validate_probability(ratio, "ratio")?;
         self.emission_ratio = ratio;
         self.emission_threshold = PecosRng::probability_threshold(ratio);
         self.emission_weights = weights;
-        self
+        Ok(self)
     }
 
     /// Set the seepage probability.
-    #[must_use]
-    pub fn with_seepage(mut self, p: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_seepage(mut self, p: f64) -> ValidationResult<Self> {
+        validate_probability(p, "p")?;
         self.seepage_probability = p;
         self.seepage_threshold = PecosRng::probability_threshold(p);
-        self
+        Ok(self)
     }
 
     /// Set the Pauli error distribution.
-    #[must_use]
-    pub fn with_pauli_weights(mut self, weights: TwoQubitPauliWeights) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_pauli_weights(mut self, weights: TwoQubitPauliWeights) -> ValidationResult<Self> {
+        weights.validate()?;
         self.pauli_weights = weights;
-        self
+        Ok(self)
     }
 
     /// Scale the error probability by a factor.
     ///
     /// This multiplies the current error probability by `scale`.
     /// Useful for globally adjusting noise levels.
-    #[must_use]
-    pub fn with_scale(mut self, scale: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_scale(mut self, scale: f64) -> ValidationResult<Self> {
+        validate_rate(scale, "scale")?;
+        validate_probability(self.error_probability * scale, "error_probability * scale")?;
+        self.angle_scaling
+            .validate_for_probability(self.error_probability * scale)?;
         self.error_probability *= scale;
-        self
+        Ok(self)
     }
 
     /// Get the effective error probability for a gate, considering angle scaling.
@@ -405,7 +524,7 @@ impl TwoQubitChannel {
             _ => 1.0,
         };
 
-        (self.error_probability * scale).min(1.0)
+        self.error_probability * scale
     }
 }
 
@@ -673,7 +792,7 @@ mod tests {
 
     #[test]
     fn test_batched_two_qubit_faults() {
-        let channel = TwoQubitChannel::depolarizing(0.5);
+        let channel = TwoQubitChannel::depolarizing(0.5).unwrap();
         let qubits = [QubitId(0), QubitId(1), QubitId(2), QubitId(3)];
         let trailing = [QubitId(4), QubitId(5)];
         for seed in 0..32 {
@@ -719,7 +838,7 @@ mod tests {
 
     #[test]
     fn test_depolarizing_channel() {
-        let channel = TwoQubitChannel::depolarizing(1.0);
+        let channel = TwoQubitChannel::depolarizing(1.0).unwrap();
 
         let qubits = [QubitId(0), QubitId(1)];
         let angles = [];
@@ -742,7 +861,7 @@ mod tests {
 
     #[test]
     fn test_no_error_on_single_qubit_gate() {
-        let channel = TwoQubitChannel::depolarizing(1.0);
+        let channel = TwoQubitChannel::depolarizing(1.0).unwrap();
 
         let qubits = [QubitId(0)];
         let angles = [];
@@ -758,7 +877,7 @@ mod tests {
 
     #[test]
     fn zero_error_probability_keeps_both_dispatch_guards() {
-        let channel = TwoQubitChannel::depolarizing(0.0);
+        let channel = TwoQubitChannel::depolarizing(0.0).unwrap();
         let qubits = [QubitId(0), QubitId(1)];
         let event = NoiseEvent::AfterGate {
             gate_type: GateType::CX,
@@ -781,10 +900,15 @@ mod tests {
         let mut weights = [0.0; 15];
         weights[14] = 1.0;
         let two_qubit = TwoQubitChannel::depolarizing(0.5)
-            .with_pauli_weights(TwoQubitPauliWeights::custom(weights));
+            .unwrap()
+            .with_pauli_weights(TwoQubitPauliWeights::custom(weights).unwrap())
+            .unwrap();
         let idle = IdleChannel::linear(1.0)
-            .with_linear_weights(PauliWeights::custom(1.0, 0.0, 0.0))
-            .with_idle_after_2q(1.0);
+            .unwrap()
+            .with_linear_weights(PauliWeights::custom(1.0, 0.0, 0.0).unwrap())
+            .unwrap()
+            .with_idle_after_2q(1.0)
+            .unwrap();
         let qubits = [QubitId(0), QubitId(1)];
         let event = NoiseEvent::AfterGate {
             gate_type: GateType::CX,
@@ -833,7 +957,10 @@ mod tests {
 
     #[test]
     fn test_angle_dependent_probability() {
-        let channel = TwoQubitChannel::depolarizing(0.1).with_angle_scaling(AngleScaling::linear());
+        let channel = TwoQubitChannel::depolarizing(0.1)
+            .unwrap()
+            .with_angle_scaling(AngleScaling::linear())
+            .unwrap();
 
         // For RZZ with angle pi, scaling = 1.0 (normalized)
         let p = channel.effective_probability(GateType::RZZ, &[Angle64::HALF_TURN]);
@@ -846,7 +973,10 @@ mod tests {
 
     #[test]
     fn rxyxy2q_noise_scaling_uses_theta() {
-        let channel = TwoQubitChannel::depolarizing(0.1).with_angle_scaling(AngleScaling::linear());
+        let channel = TwoQubitChannel::depolarizing(0.1)
+            .unwrap()
+            .with_angle_scaling(AngleScaling::linear())
+            .unwrap();
         for phi in [Angle64::ZERO, Angle64::HALF_TURN] {
             let p = channel.effective_probability(GateType::RXYXY2Q, &[Angle64::QUARTER_TURN, phi]);
             assert!((p - 0.05).abs() < 1e-10);
@@ -869,7 +999,7 @@ mod tests {
         // For negative pi/2: 0.1 + 2.0 * 0.5 + 0 = 1.1
         // Note: Angle64 normalizes angles, so -pi/2 becomes 3pi/2 internally,
         // but to_radians_signed() converts back to -pi/2
-        let neg_quarter = Angle64::from_radians(-std::f64::consts::FRAC_PI_2);
+        let neg_quarter = Angle64::THREE_QUARTERS_TURN;
         assert!((scaling.scale(neg_quarter) - 1.1).abs() < 1e-10);
 
         // For zero: average of offsets = (0.1 + 0.2) / 2 = 0.15
@@ -893,7 +1023,7 @@ mod tests {
         ] {
             for turns in [-4.0, -1.0, 0.0, 1.0, 4.0] {
                 let input = angle + turns * TAU;
-                let actual = scaling.scale(Angle64::from_radians(input));
+                let actual = scaling.scale(Angle64::try_from_radians(input).unwrap());
                 assert!(
                     (actual - expected).abs() < 1e-12,
                     "angle {input}: expected {expected}, got {actual}"
@@ -932,7 +1062,7 @@ mod tests {
 
     #[test]
     fn test_skip_gate_for_leaked_qubit() {
-        let channel = TwoQubitChannel::depolarizing(1.0);
+        let channel = TwoQubitChannel::depolarizing(1.0).unwrap();
 
         let qubits = [QubitId(0), QubitId(1)];
         let angles = [];
@@ -958,7 +1088,9 @@ mod tests {
         let mut weights = [0.0; 15];
         weights[14] = 1.0; // ZZ only
         let channel = TwoQubitChannel::depolarizing(1.0)
-            .with_pauli_weights(TwoQubitPauliWeights::custom(weights));
+            .unwrap()
+            .with_pauli_weights(TwoQubitPauliWeights::custom(weights).unwrap())
+            .unwrap();
 
         let qubits = [QubitId(0), QubitId(1)];
         let angles = [];
@@ -1000,7 +1132,7 @@ mod tests {
         );
 
         // Negative π/2: 0.1 + 0.5 * 0.5 = 0.35
-        let neg_quarter = Angle64::from_radians(-std::f64::consts::FRAC_PI_2);
+        let neg_quarter = Angle64::THREE_QUARTERS_TURN;
         assert!((scaling.scale(neg_quarter) - 0.35).abs() < 1e-10);
 
         // Positive π/2: 0.2 + 1.0 * 0.5 = 0.7
@@ -1008,7 +1140,7 @@ mod tests {
 
         // Negative 3π/4: 0.1 + 0.5 * 0.75 = 0.475
         // (Using 3π/4 instead of π since -π and +π are equivalent)
-        let neg_three_quarter_pi = Angle64::from_radians(-3.0 * std::f64::consts::FRAC_PI_4);
+        let neg_three_quarter_pi = Angle64::from_turn_ratio(5, 8);
         assert!((scaling.scale(neg_three_quarter_pi) - 0.475).abs() < 1e-10);
     }
 
@@ -1022,7 +1154,7 @@ mod tests {
         assert!((scaling.scale(full) - 0.0).abs() < 1e-10);
 
         // 3/4 turn = 3π/2 radians, signed = -π/2, normalized = 0.5
-        let three_quarter = Angle64::from_radians(3.0 * std::f64::consts::FRAC_PI_2);
+        let three_quarter = Angle64::THREE_QUARTERS_TURN;
         assert!((scaling.scale(three_quarter) - 0.5).abs() < 1e-10);
     }
 
@@ -1054,7 +1186,7 @@ mod tests {
             Angle64::ZERO,
             Angle64::QUARTER_TURN,
             Angle64::HALF_TURN,
-            Angle64::from_radians(std::f64::consts::FRAC_PI_4),
+            Angle64::from_turn_ratio(1, 8),
         ] {
             let q_val = quadratic.scale(angle);
             let p_val = polynomial.scale(angle);
@@ -1075,7 +1207,7 @@ mod tests {
             Angle64::ZERO,
             Angle64::QUARTER_TURN,
             Angle64::HALF_TURN,
-            Angle64::from_radians(std::f64::consts::FRAC_PI_4),
+            Angle64::from_turn_ratio(1, 8),
         ] {
             let l_val = linear.scale(angle);
             let p_val = polynomial.scale(angle);
@@ -1096,7 +1228,7 @@ mod tests {
             Angle64::ZERO,
             Angle64::QUARTER_TURN,
             Angle64::HALF_TURN,
-            Angle64::from_radians(-std::f64::consts::FRAC_PI_2),
+            Angle64::THREE_QUARTERS_TURN,
         ] {
             let c_val = constant.scale(angle);
             let p_val = polynomial.scale(angle);
@@ -1131,7 +1263,7 @@ mod tests {
         let scaling = AngleScaling::polynomial(0.01, 0.1, 1.0, 2.0);
 
         // Very small angle: should be dominated by constant term
-        let tiny = Angle64::from_radians(0.001);
+        let tiny = pecos_core::radians!(0.001);
         let result = scaling.scale(tiny);
         // 0.01 + 0.1 * (0.001/π) + 1.0 * (0.001/π)^2 ≈ 0.01
         assert!(result > 0.009 && result < 0.011);

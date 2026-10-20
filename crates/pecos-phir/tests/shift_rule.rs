@@ -140,3 +140,14 @@ fn shift_rule_processor_unsigned_high_count() {
         }
     }
 }
+
+#[test]
+fn noninteger_unary_operand_is_an_input_validation_error() {
+    let error = run(TypedValue::F64(1.5), None, &ClassicalOp::Shl(1)).unwrap_err();
+    assert!(matches!(error, PhirError::Validation(_)), "{error}");
+    let message = error.to_string();
+    assert!(
+        message.contains("1.5") && message.contains("use an integer operand"),
+        "{message}"
+    );
+}

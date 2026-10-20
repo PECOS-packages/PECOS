@@ -48,7 +48,9 @@ pub use definitions::{
 };
 pub use gate_id::{GateId, gates};
 pub use gate_spec::{GateCategory, GateSpec};
-pub use noise_integration::{DecompositionNoiseStrategy, GateIdNoiseConfig, GateNoiseParams};
+pub use noise_integration::{
+    DecompositionNoiseStrategy, GateIdNoiseConfig, GateNoiseParams, HighLevelWeight,
+};
 pub use op_builder::{ConversionError, GateLibrary, OpBuilder, Subcircuit};
 pub use operation::{
     AdaptedOp, AdaptedSequence, AncillaRequirements, ConditionalOp, MeasBasis, PrepBasis, ResultId,

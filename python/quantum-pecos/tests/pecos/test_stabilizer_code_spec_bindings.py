@@ -341,3 +341,24 @@ def test_quantum_namespace_exports_distance_search_types() -> None:
         "ParityCheckMatrix",
         "SymplecticMatrix",
     } <= set(quantum.__all__)
+
+
+@pytest.mark.parametrize("role", ["stabilizer", "logical_z", "logical_x"])
+def test_spec_rejects_out_of_width_operator(role: str) -> None:
+    outside = PauliString.from_sparse_str("Z5")
+    inside = PauliString.from_sparse_str("X0")
+    stabilizers = [outside] if role == "stabilizer" else []
+    logical_zs = [outside] if role == "logical_z" else [inside]
+    logical_xs = [outside] if role == "logical_x" else [inside]
+    label = {"stabilizer": "stabilizer", "logical_z": "logical Z", "logical_x": "logical X"}[role]
+    with pytest.raises(ValueError, match=f"{label} operator 0: qubit 5 is outside num_qubits 3"):
+        StabilizerCodeSpec(3, stabilizers, logical_zs, logical_xs)
+
+
+def test_spec_builder_preserves_width_error_through_discovery() -> None:
+    outside = PauliString.from_sparse_str("Z5")
+    for method in ["build", "build_verified", "build_with_discovered_logicals"]:
+        builder = StabilizerCodeSpec.builder(3)
+        builder.check(outside)
+        with pytest.raises(ValueError, match="stabilizer operator 0: qubit 5 is outside num_qubits 3"):
+            getattr(builder, method)()

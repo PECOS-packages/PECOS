@@ -6,6 +6,168 @@ concern Rust and direct-runtime callers. For timing and noise on the scheduled
 route, see [Scheduled idle simulation](scheduled-idle-simulation.md). For operation
 capture, see [Runtime QIS tracing](runtime-qis-tracing.md).
 
+## Shot identity and randomness
+
+`QisEngine` calls runtime `shot_start` with IDs `0, 1, 2, ...` per engine
+instance. Reset and reseeding retain the sequence; a template clone starts its
+own sequence at zero. A failed `shot_start` consumes its ID because the plugin
+may already have observed it. Exhaustion returns an error instead of wrapping.
+Scheduled envelopes use that same runtime ID, including terminal batches.
+Operation trace `shot_index` remains one-based for compatibility.
+
+These runtime IDs are local to each worker engine. Monte Carlo derives seeds
+from the global shot index independently of worker partitioning, and its host
+`ShotContext` identifies the run, worker and local shot separately. Changing the
+runtime ID origin does not change PECOS's seed derivation or consume extra RNG
+draws. A plugin that uses the ID itself to choose a random stream can nevertheless
+produce different results; record the PECOS revision when comparing old runs.
+Selene's own driver uses component base seeds plus the shot ID, so matching IDs
+alone does not establish identical random streams between the two drivers.
+
+### Program-visible shot indices
+
+The QIS `get_current_shot()` import and `selene_get_current_shot` adapter both
+return the job-wide program index. Monte Carlo assigns `0..shots-1` independently
+of worker partitioning, after reset and before program execution. Every new run
+starts at zero; seed-report replay uses each worker's recorded `first_shot`
+offset, including nonzero offsets. The value survives measurement feedback and
+the compiled wrapper's local shot-start hook. Each invocation still executes
+one shot, so `selene_shot_count` returns one.
+
+Direct Rust `QisEngine` callers default to the engine's local runtime ID. Hosts
+can assign the next invocation with `ClassicalEngine::set_program_shot` after
+reset. The override is consumed when an admitted start is attempted, including
+execution failure. A successful reset or template clone clears it. The override
+does not change runtime callback IDs, trace indices or seed derivation.
+
+Program-seeded Guppy RNGs use their explicit seed separately from simulator and
+noise seeds. `RNG(seed)` restarts the same stream on each invocation;
+`RNG(seed + get_current_shot())` selects a shot-dependent stream that is invariant
+to worker partitioning. Querying the index does not consume RNG state. This also
+supports parameter-array selection by shot index. Program indices alone do not
+make simulator/noise streams identical between PECOS and Selene.
+
+The legacy `___set_random_index` import and broader WASM RNG integration remain
+unsupported by this change. See the remaining work in
+[issue #941](https://github.com/PECOS-packages/PECOS/issues/941).
+
+### Guppy RNG compatibility coverage
+
+The live Selene comparisons in `tests/guppy/test_qis_classical_rng.py` cover both
+Guppy RNG implementations:
+
+- `guppylang.std.qsystem.random.RNG`: signed integers, bounded sampling, floats,
+  random angles, Clifford angles, forward/backward jumps, shuffle and discrete
+  distributions. Tests include signed seed boundaries, large jumps, rejection
+  sampling, handle recreation and multiple live handles.
+- `guppylang.std.random.seeded_pcg32`: native Guppy integer and bounded draws,
+  with interleaved generators and a platform RNG to check state independence.
+
+The platform RNG has shared state within one program execution; multiple handles
+must not be assumed to provide independent streams. Native Guppy PCG32 values
+keep their state locally. See the [Guppy RNG guide](https://docs.quantinuum.com/guppy/language_guide/random.html).
+
+Comparisons preserve repeated output labels so every draw in a loop is checked.
+Additional tests cover shot-dependent seeds, quantum measurement feedback,
+invalid distribution weights, oversized bounds and a valid simulation after an
+aborted invocation. These are functional comparisons using the installed Guppy,
+compiler and Selene versions; they do not establish a speed advantage or equality
+of simulator/noise RNG streams.
+
+
+The expanded RNG test file passed 44 tests in each of these local environments
+on October 18, 2026 (live Selene controls plus PECOS validation/recovery tests):
+
+| Stack | Guppy | Selene | HUGR-QIS compiler |
+| --- | --- | --- | --- |
+| Pinned | 1.0.1 | 0.3.4 | 0.4.3 |
+| Isolated newer stack | 1.1.3 | 0.3.5 | 0.5.1 |
+
+Both used selene-core 0.3.3, HUGR 0.18.8 and tket 0.15.11. The newer-stack
+experiment used PECOS source imports and the same local native extension; it does
+not change package dependency constraints or certify the whole package on those
+versions. It emits compiler API deprecation warnings.
+
+Boundary coverage includes signed jump extremes, unsigned native seed extremes,
+empty/singleton shuffles, deterministic distributions and reset/reuse after an
+RNG error following measurement feedback. The shuffle tests inspect length,
+elements and subsequent draws: Selene rejects empty-array output, and PECOS
+presents a single-element result as a scalar, so raw output layouts differ.
+
+Known limitations and intentional validation differences:
+
+- PECOS rejects nonpositive platform bounds with a Python exception. In both
+  tested Selene versions, zero aborts the reference subprocess and negative
+  bounds are reinterpreted as unsigned. Those reference behaviors are outside
+  the valid input domain and are not a compatibility target.
+- Native Guppy PCG32 handles a zero bound by exiting the shot. PECOS exposes its
+  reason/code through `program_exits`, as described below. A missing sample is
+  not evidence of a successful RNG draw.
+- This suite does not establish exhaustive behavior for all invalid inputs,
+  other dependency versions, WASM integration or simulation speed.
+
+## Per-shot program exits
+
+Ordinary Guppy exits (QIS codes 0 through 999) finish the current shot and preserve
+its outputs recorded before the exit. Codes 1000 and above fail the job, matching
+Selene's launcher and result parser. Panics and other execution failures raise an
+error; they do not return an ordinary-exit metadata entry.
+
+**Compatibility change:** code 1000 previously finished a shot in PECOS. It now
+fails the job. Programs that intentionally request a recoverable exit must use a
+code below 1000. Guppy's prose documents signals through 1000, but live Selene
+0.3.4/0.3.5 and the inspected Selene source use the strict boundary. See
+[the launcher](https://github.com/Quantinuum/selene/blob/458d640dc4cf84a7a7988ea65ce5a9f7bcb8c511/selene-ext/interfaces/helios_qis/c/src/interface.c#L63)
+and [issue #1372](https://github.com/PECOS-packages/PECOS/issues/1372).
+Negative QIS codes also fail: the C adapter passes their 32-bit pattern to Selene
+as an unsigned value. PECOS retains the signed QIS code in its exception text,
+while Selene reports the unsigned value; compare the bit pattern at these ABI
+edges rather than requiring identical exception strings.
+
+```python
+from guppylang import guppy
+from guppylang.std.platform import exit as guppy_exit
+from guppylang.std.qsystem.utils import get_current_shot
+from pecos import Guppy, selene_engine, sim
+
+
+@guppy
+def program() -> None:
+    if get_current_shot() == 1:
+        guppy_exit("done", 1)
+
+
+shots = sim(Guppy(program)).classical(selene_engine()).qubits(1).run(4)
+print(shots.program_exits)
+assert shots.program_exits == [None, {"code": 1, "message": "done"}, None, None]
+```
+
+`program_exits` has one entry per result row, in the same order as the shot data.
+`None` means the engine reported no ordinary exit; it is not a capability claim
+for other engines. A dictionary contains the original integer code and message.
+The dictionaries are copies. Diagnostics remain available even if branch-dependent
+outputs make `to_dict()` or `to_shot_map()` reject inconsistent registers.
+Successful `to_shot_map()` conversions preserve `program_exits` and the shot count,
+including shots that produced no registers.
+
+Diagnostics are separate from named outputs. `to_dict()`, binary/display output,
+and register-oriented JSON export retain their existing data-only formats; no
+exit markers enter detector or observable columns. Selene presents an ordinary
+exit as `("exit: <message>", code)` in its per-shot results. Compare that marker
+with PECOS metadata rather than expecting identical result dictionaries.
+For example, native `seeded_pcg32(...).next_int_bounded(nat(0))` produces no sample
+and reports code 1 with message `PCG32.next_int_bounded: bound must be positive`.
+
+Rust callers use `Shot.program_exit: Option<ProgramExit>` or
+`ShotMap::program_exits()`. Serde serialization preserves this metadata; older
+serialized results without it remain readable. Rust struct literals that specify
+`Shot.data` must also initialize `program_exit` (or use `..Default::default()`).
+Reset, template cloning and subsequent shots do not inherit an earlier exit.
+Both the direct QIS termination entry and Selene's termination adapter report
+metadata. The standalone `selene_print_exit` diagnostic printer does not terminate
+a shot, and the `selene_exit` instance-teardown hook does not represent a program
+exit; their behavior is unchanged.
+
 ## Native gate lowering
 
 All Selene runtimes receive gates through their native entry points. Flat,
@@ -81,6 +243,22 @@ through the normal metadata-aware path. Any queued native gates become one final
 batch, retaining their source labels; an empty drain adds no batch. Certification
 then checks for unexpected late operations and still fails if any remain. Scheduled
 execution retains its own terminal batch drain.
+
+After that pre-end drain, the host calls the runtime end hook exactly once and
+executes its final operations before certifying completion. Native extraction
+polls after `shot_end` without submitting another barrier. Scheduled output keeps
+its original complete batches, timestamps, duration, order and runtime shot ID;
+it is processed by the same noise model and simulator as the program's output.
+No new schedule is constructed for the tail.
+
+`QisRuntime::finish_operations` and `finish_scheduled_operations` expose this
+final delivery to host implementations. A runtime whose ordinary drain cannot be
+used after end must override these methods. Direct `SeleneRuntime::shot_end`
+callers receive an error if native end emits work they would otherwise discard.
+Post-end measurements requiring feedback are currently unsupported and fail the
+shot explicitly. End-hook, extraction, admission and custom-event failures remain
+sticky until reset; no completed trace is emitted on failure. Native final
+extraction uses the existing per-batch and aggregate transport retention bounds.
 
 ## Allocation lifetimes and capacity
 

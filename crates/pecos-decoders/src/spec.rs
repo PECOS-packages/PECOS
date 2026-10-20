@@ -4,6 +4,7 @@ pub mod config;
 
 mod build;
 mod parse;
+pub(crate) mod prepare;
 
 use pecos_decoder_core::{DecoderError, ObservableDecoder, window::StructuredDem};
 
@@ -44,7 +45,7 @@ pub enum DecoderSpec {
     Tesseract(TesseractConfig),
     TesseractTrellis(TesseractTrellisConfig),
     KMwpm(KMwpmConfig),
-    AStar,
+    AStar(AStarConfig),
     AStarFull,
     FusionBlossom(FusionBlossomConfig),
     PerturbedFusionBlossomCorrelated(PerturbedFusionBlossomConfig),
@@ -54,7 +55,7 @@ pub enum DecoderSpec {
     UnionFind,
     RelayBp(RelayBpConfig),
     MinSumBp(MinSumBpConfig),
-    PecosUf(PecosUfPreset),
+    PecosUf(PecosUfConfig),
     BeliefMatching(BeliefMatchingConfig),
     Windowed(WindowedConfig),
     Mwpf(MwpfConfig),
@@ -65,6 +66,8 @@ pub enum DecoderSpec {
 
 impl DecoderSpec {
     /// Parse the strict, one-way legacy type-string grammar.
+    ///
+    /// Ensemble strings split members on commas; multi-parameter members require typed specs.
     ///
     /// # Errors
     ///
@@ -124,24 +127,13 @@ impl DecoderSpec {
         matches!(self, Self::PyMatching(_))
     }
 
-    /// Whether this specification can only decode a graphlike model.
+    /// Whether this leaf requires graphlike input at its backend boundary.
     ///
-    /// Matching-style decoders build a graph whose edges carry at most two
-    /// detectors. Their DEM parser drops mechanisms with more detectors, so a
-    /// hyperedge model would silently decode against a truncated version of
-    /// itself; [`build`](Self::build) rejects that instead. `AStar` builds
-    /// from the same matching graph (`AStarFull` uses the full check matrix
-    /// and stays exempt). Uncorrelated `PyMatching` silently keeps only one-
-    /// and two-detector mechanisms; correlated `PyMatching` errors upstream
-    /// on an undecomposed hyperedge, so guarding it here only makes the
-    /// rejection earlier and the message actionable. Decomposed models
-    /// (`^` separators) pass: each component is graphlike.
-    ///
-    /// Deliberately leaf-only. Composite specs are not classified here: each
-    /// member build runs this guard against the exact model that member
-    /// receives, and windowing can legitimately slice a top-level hyperedge
-    /// into graphlike pieces per window, so a top-level answer for a
-    /// composite would be wrong in both directions.
+    /// Build projects raw hyperedges with the leaf's irreducible policy.
+    /// Supplied `^` decompositions pass through when each component is graphlike.
+    /// Hybrid belief matching still requires its separate full/decomposed inputs.
+    /// Membership is deliberately leaf-only: composites prepare or delegate to
+    /// their members, and `AStarFull` uses the full check matrix.
     #[must_use]
     pub const fn requires_graphlike_model(&self) -> bool {
         matches!(
@@ -151,7 +143,7 @@ impl DecoderSpec {
                 | Self::KMwpm(_)
                 | Self::PecosUf(_)
                 | Self::BeliefMatching(_)
-                | Self::AStar
+                | Self::AStar(_)
                 | Self::PyMatching(_)
         )
     }
@@ -163,6 +155,7 @@ impl DecoderSpec {
             Self::BeliefMatching(BeliefMatchingConfig {
                 mode: BeliefMatchingMode::Hybrid,
                 embedded_full_dem,
+                ..
             }) => embedded_full_dem.as_deref(),
             _ => None,
         }

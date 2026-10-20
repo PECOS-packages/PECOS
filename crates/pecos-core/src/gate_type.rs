@@ -588,13 +588,21 @@ impl GateType {
     ///
     /// `MeasureLeaked` is a measurement to `Gate::validate` and collapses the
     /// qubit, but it produces no classical result and so consumes no record.
-    /// Deciding otherwise means changing this function and nothing else.
+    /// Record-producing gates and their bases are defined by [`Self::measured_pauli`].
     #[must_use]
     pub const fn consumes_measurement_record(self) -> bool {
-        matches!(
-            self,
-            GateType::MX | GateType::MZ | GateType::MeasureFree | GateType::MPZ
-        )
+        self.measured_pauli().is_some()
+    }
+
+    /// Returns the Pauli basis of a gate that produces a measurement record.
+    /// Record-less gates, including `MeasureLeaked`, return `None`.
+    #[must_use]
+    pub const fn measured_pauli(self) -> Option<crate::Pauli> {
+        match self {
+            Self::MX => Some(crate::Pauli::X),
+            Self::MZ | Self::MeasureFree | Self::MPZ => Some(crate::Pauli::Z),
+            _ => None,
+        }
     }
 
     /// Returns the number of angle parameters this gate type requires
@@ -966,6 +974,20 @@ impl std::str::FromStr for GateType {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn measurement_bases_match_record_gates() {
+        for value in u8::MIN..=u8::MAX {
+            if let Ok(gate) = GateType::try_from(value) {
+                let expected = match gate {
+                    GateType::MX => Some(crate::Pauli::X),
+                    GateType::MZ | GateType::MeasureFree | GateType::MPZ => Some(crate::Pauli::Z),
+                    _ => None,
+                };
+                assert_eq!(gate.measured_pauli(), expected, "{gate:?}");
+            }
+        }
+    }
 
     const CLOSURE_TOLERANCE: f64 = 1e-14;
 

@@ -5,12 +5,31 @@ plugin boundary. The framework is deliberately device-neutral: circuits use only
 standard one- and two-qubit operations, and local crosstalk topology is supplied
 as ordinary qubit groups rather than inferred from a hardware layout.
 
-`general_noise_conformance.py` provides three reusable pieces:
+`general_noise_conformance.py` provides four reusable pieces:
 
 - `ExpectedDistribution` describes a small analytic reference distribution.
 - `ConformanceExperiment` samples the native plugin with explicit component seeds.
 - A Hoeffding bound compares every observed frequency with its reference without
   adding SciPy as a test dependency.
+- `OutcomeSample.assert_statistically_equivalent` compares two independent
+  runtime samples with per-outcome Fisher exact tests under a Bonferroni
+  correction, which resolves far smaller differences than a Hoeffding bound.
+
+`test_sim_parity.py` sends the same Guppy programs and immutable
+`GeneralNoiseParameters` through PECOS `sim()` and through Selene's error-model
+plugin. Both routes use PECOS state-vector simulation so the comparison isolates
+the general-noise integration boundary. Fast cases each target one channel:
+asymmetric readout, one- and two-qubit Pauli faults, preparation leakage, and
+one- and two-qubit seepage. Where an analytic or `basis_state_reference.py`
+distribution exists, both samples must also match it. The slow repetition-code
+case runs one check round under a combined profile and records data as well as
+check outcomes. Every case lists single-channel mutant profiles, and a slow test
+confirms that the parity check rejects a PECOS sample drawn from each mutant at
+the case's shot count. The combined repetition-code profile is only claimed to
+detect its listed mutants; leakage and seepage parity come from the targeted
+cases. `test_pecos_sim_bridge.py` covers passing these parameters to `sim()`
+directly. Both modules import PECOS unconditionally; CI provisions it on Linux
+and excludes the modules by name elsewhere.
 
 `basis_state_reference.py` is an independent exact oracle for arbitrary circuits
 that remain in the computational basis. It propagates a full distribution over

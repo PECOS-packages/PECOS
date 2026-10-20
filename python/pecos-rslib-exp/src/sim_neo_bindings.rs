@@ -247,48 +247,58 @@ impl PyNoiseModelBuilder {
     }
 
     /// Single-qubit depolarizing rate (X/Y/Z each with p/3 after unitary 1q gates).
-    fn p1(&self, p: f64) -> Self {
-        Self {
+    fn p1(&self, p: f64) -> PyResult<Self> {
+        pecos_neo::noise::validation::validate_probability(p, "p1")
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        Ok(Self {
             p1: p,
             ..self.clone()
-        }
+        })
     }
 
     /// Two-qubit depolarizing rate (15 Paulis each with p/15 after unitary 2q gates).
-    fn p2(&self, p: f64) -> Self {
-        Self {
+    fn p2(&self, p: f64) -> PyResult<Self> {
+        pecos_neo::noise::validation::validate_probability(p, "p2")
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        Ok(Self {
             p2: p,
             ..self.clone()
-        }
+        })
     }
 
     /// Measurement bit-flip rate (symmetric, after MZ).
-    fn p_meas(&self, p: f64) -> Self {
-        Self {
+    fn p_meas(&self, p: f64) -> PyResult<Self> {
+        pecos_neo::noise::validation::validate_probability(p, "p_meas")
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        Ok(Self {
             p_meas: p,
             ..self.clone()
-        }
+        })
     }
 
     /// Preparation error rate (X flip after PZ/QAlloc).
-    fn p_prep(&self, p: f64) -> Self {
-        Self {
+    fn p_prep(&self, p: f64) -> PyResult<Self> {
+        pecos_neo::noise::validation::validate_probability(p, "p_prep")
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        Ok(Self {
             p_prep: p,
             ..self.clone()
-        }
+        })
     }
 
     /// Coherent idle RZ angle (radians) applied to both qubits after each CX.
-    fn idle_rz(&self, angle: f64) -> Self {
-        Self {
+    fn idle_rz(&self, angle: f64) -> PyResult<Self> {
+        Angle64::try_from_radians(angle)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        Ok(Self {
             idle_rz_angle: angle,
             ..self.clone()
-        }
+        })
     }
 }
 
 impl PyNoiseModelBuilder {
-    fn build_noise(&self) -> Option<ComposableNoiseModel> {
+    fn build_noise(&self) -> PyResult<Option<ComposableNoiseModel>> {
         let has_noise = self.p1 > 0.0
             || self.p2 > 0.0
             || self.p_meas > 0.0
@@ -296,28 +306,41 @@ impl PyNoiseModelBuilder {
             || self.idle_rz_angle > 0.0;
 
         if !has_noise {
-            return None;
+            return Ok(None);
         }
 
         let mut noise = ComposableNoiseModel::new();
         if self.p1 > 0.0 {
-            noise = noise.add_channel(SingleQubitChannel::depolarizing(self.p1));
+            noise = noise.add_channel(
+                SingleQubitChannel::depolarizing(self.p1)
+                    .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?,
+            );
         }
         if self.p2 > 0.0 {
-            noise = noise.add_channel(TwoQubitChannel::depolarizing(self.p2));
+            noise = noise.add_channel(
+                TwoQubitChannel::depolarizing(self.p2)
+                    .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?,
+            );
         }
         if self.p_meas > 0.0 {
-            noise = noise.add_channel(MeasurementChannel::symmetric(self.p_meas));
+            noise = noise.add_channel(
+                MeasurementChannel::symmetric(self.p_meas)
+                    .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?,
+            );
         }
         if self.p_prep > 0.0 {
-            noise = noise.add_channel(PreparationChannel::new(self.p_prep));
+            noise = noise.add_channel(
+                PreparationChannel::new(self.p_prep)
+                    .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?,
+            );
         }
         if self.idle_rz_angle > 0.0 {
             noise = noise.add_channel(crate::coherent_idle_channel::CoherentIdleChannel::new(
-                self.idle_rz_angle,
+                Angle64::try_from_radians(self.idle_rz_angle)
+                    .expect("idle_rz validated the stored angle as finite"),
             ));
         }
-        Some(noise)
+        Ok(Some(noise))
     }
 }
 
@@ -916,7 +939,9 @@ impl PySimNeoBuilder {
         let noise = self
             .noise_config
             .as_ref()
-            .and_then(PyNoiseModelBuilder::build_noise);
+            .map(PyNoiseModelBuilder::build_noise)
+            .transpose()?
+            .flatten();
 
         let mut builder = sim_neo(self.commands.clone())
             .sampling(pecos_neo::tool::monte_carlo(shots).workers(workers));
@@ -1055,7 +1080,9 @@ impl PySimNeoBuilder {
         let noise = self
             .noise_config
             .as_ref()
-            .and_then(PyNoiseModelBuilder::build_noise);
+            .map(PyNoiseModelBuilder::build_noise)
+            .transpose()?
+            .flatten();
 
         let num_qubits = self
             .commands
@@ -1602,12 +1629,21 @@ fn build_rust_tick_circuit_from_gates(
                         let lowered = match gate_name.as_str() {
                             "CRX" => {
                                 pecos_core::controlled_rotations::lower_crx(angle, pair[0], pair[1])
+                                    .map_err(|error| {
+                                        pyo3::exceptions::PyValueError::new_err(error.to_string())
+                                    })?
                             }
                             "CRY" => {
                                 pecos_core::controlled_rotations::lower_cry(angle, pair[0], pair[1])
+                                    .map_err(|error| {
+                                        pyo3::exceptions::PyValueError::new_err(error.to_string())
+                                    })?
                             }
                             "CRZ" => {
                                 pecos_core::controlled_rotations::lower_crz(angle, pair[0], pair[1])
+                                    .map_err(|error| {
+                                        pyo3::exceptions::PyValueError::new_err(error.to_string())
+                                    })?
                                     .into_iter()
                                     .collect()
                             }
@@ -1816,10 +1852,7 @@ fn parse_python_pauli_string(text: &str) -> Option<PauliString> {
         paulis.push((p, pecos_core::QubitId(qubit)));
     }
 
-    Some(PauliString::with_phase_and_paulis(
-        pecos_core::QuarterPhase::PlusOne,
-        paulis,
-    ))
+    PauliString::with_phase_and_paulis(pecos_core::QuarterPhase::PlusOne, paulis).ok()
 }
 
 fn channel_expr_from_python_gate(gate: &Bound<'_, PyAny>) -> PyResult<ChannelExpr> {
@@ -1842,7 +1875,8 @@ fn channel_expr_from_python_gate(gate: &Bound<'_, PyAny>) -> PyResult<ChannelExp
             };
             paulis.push((pauli, QubitId(qubit)));
         }
-        let pauli_string = PauliString::with_phase_and_paulis(QuarterPhase::PlusOne, paulis);
+        let pauli_string = PauliString::with_phase_and_paulis(QuarterPhase::PlusOne, paulis)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         ops.push((probability, pecos_core::UnitaryRep::from(pauli_string)));
     }
     Ok(ChannelExpr::MixedUnitary(ops))
@@ -1905,13 +1939,19 @@ fn build_gate_from_python(
     if let Ok(py_angle) = gate.getattr("angle")
         && let Ok(a) = py_angle.extract::<f64>()
     {
-        angles.push(pecos_core::Angle64::from_radians(a));
+        angles.push(
+            pecos_core::Angle64::try_from_radians(a)
+                .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?,
+        );
     }
     if let Ok(py_angles) = gate.getattr("angles")
         && let Ok(a_list) = py_angles.extract::<Vec<f64>>()
     {
         for a in a_list {
-            angles.push(pecos_core::Angle64::from_radians(a));
+            angles.push(
+                pecos_core::Angle64::try_from_radians(a)
+                    .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?,
+            );
         }
     }
 
@@ -1935,7 +1975,11 @@ fn extract_exact_gate_angles(
             angles.len()
         )));
     }
-    Ok(angles.into_iter().map(Angle64::from_radians).collect())
+    angles
+        .into_iter()
+        .map(Angle64::try_from_radians)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
 }
 
 fn extract_boundary_rotation_angle(gate: &Bound<'_, PyAny>, name: &str) -> PyResult<f64> {
@@ -1946,6 +1990,8 @@ fn extract_boundary_rotation_angle(gate: &Bound<'_, PyAny>, name: &str) -> PyRes
             angles.len()
         )));
     };
+    Angle64::try_from_radians(*angle)
+        .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
     Ok(*angle)
 }
 
@@ -2145,17 +2191,26 @@ fn extract_commands(py_tc: &Bound<'_, PyAny>) -> PyResult<pecos_neo::command::Co
                                 angle,
                                 QubitId(pair[0]),
                                 QubitId(pair[1]),
-                            ),
+                            )
+                            .map_err(|error| {
+                                pyo3::exceptions::PyValueError::new_err(error.to_string())
+                            })?,
                             "CRY" => pecos_core::controlled_rotations::lower_cry(
                                 angle,
                                 QubitId(pair[0]),
                                 QubitId(pair[1]),
-                            ),
+                            )
+                            .map_err(|error| {
+                                pyo3::exceptions::PyValueError::new_err(error.to_string())
+                            })?,
                             "CRZ" => pecos_core::controlled_rotations::lower_crz(
                                 angle,
                                 QubitId(pair[0]),
                                 QubitId(pair[1]),
                             )
+                            .map_err(|error| {
+                                pyo3::exceptions::PyValueError::new_err(error.to_string())
+                            })?
                             .into_iter()
                             .collect(),
                             _ => unreachable!(),

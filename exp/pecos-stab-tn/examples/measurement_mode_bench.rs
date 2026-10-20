@@ -22,7 +22,7 @@
 //! and event counters are summed across those shots. Each reported field is
 //! the median of the seven timed-run aggregates.
 
-use pecos_core::{Angle64, QubitId};
+use pecos_core::QubitId;
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable};
 use pecos_stab_tn::stab_mps::{MeasurementMode, StabMps};
 use rand_chacha::ChaCha12Rng;
@@ -250,7 +250,7 @@ fn run_shot(
         .build();
     prepare_code_state(&mut stn, workload);
 
-    let rz = Angle64::from_radians(COHERENT_RZ_RADIANS);
+    let rz = pecos_core::radians!(COHERENT_RZ_RADIANS);
     let mut noise_cursor = 0;
     let mut syndrome_checksum = 0_u64;
     for round in 0..ROUNDS {

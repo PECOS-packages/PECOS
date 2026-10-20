@@ -101,7 +101,7 @@ fn run_qec(total_qubits: usize, repeats: usize) -> (Counts, u64, usize, usize, f
                 let angle = if (q + round) & 1 == 0 {
                     Angle64::QUARTER_TURN / 2_u64
                 } else {
-                    Angle64::from_radians(0.03125)
+                    pecos_core::radians!(0.03125)
                 };
                 stn.rz(angle, &[QubitId(q)]);
             }

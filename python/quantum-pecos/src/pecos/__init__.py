@@ -276,7 +276,7 @@ from pecos._engine_builders import (
 )
 
 # Simulation entry point
-from pecos._sim import get_guppy_backends, sim
+from pecos._sim import sim
 from pecos.circuits.quantum_circuit import QuantumCircuit
 from pecos.engines import circuit_runners
 from pecos.engines.cvm import (
@@ -315,6 +315,14 @@ density_matrix = pecos_rslib.density_matrix
 
 # Re-export noise model builder classes for direct instantiation
 GeneralNoiseModelBuilder = pecos_rslib.GeneralNoiseModelBuilder
+PauliLeakageDict = pecos_rslib.PauliLeakageDict
+PauliLeakageChannel = pecos_rslib.PauliLeakageChannel
+TwoQubitPauliLeakageChannel = pecos_rslib.TwoQubitPauliLeakageChannel
+P2PauliLeakageStep = pecos_rslib.P2PauliLeakageStep
+TransitionDict = pecos_rslib.TransitionDict
+StateTransitionChannel = pecos_rslib.StateTransitionChannel
+TwoQubitStateTransitionChannel = pecos_rslib.TwoQubitStateTransitionChannel
+P2TransitionStep = pecos_rslib.P2TransitionStep
 
 
 __all__ = [
@@ -347,7 +355,11 @@ __all__ = [
     "Nanoseconds",
     "NoiseParameters",
     "Numeric",
+    "P2PauliLeakageStep",
+    "P2TransitionStep",
     "Pauli",
+    "PauliLeakageChannel",
+    "PauliLeakageDict",
     "PauliString",
     "PhirJson",
     "PhirJsonEngineBuilder",
@@ -361,7 +373,11 @@ __all__ = [
     "ShotMap",
     "ShotVec",
     "SignedInteger",
+    "StateTransitionChannel",
     "TimeUnits",
+    "TransitionDict",
+    "TwoQubitPauliLeakageChannel",
+    "TwoQubitStateTransitionChannel",
     "UnsignedClassicalSemantics",
     "UnsignedInteger",
     "Wasm",
@@ -415,7 +431,6 @@ __all__ = [
     "f64",
     "floor",
     "general_noise",
-    "get_guppy_backends",
     "graph",
     "guppy",  # Deprecated alias for guppy_gen, resolved lazily via __getattr__
     "guppy_gen",

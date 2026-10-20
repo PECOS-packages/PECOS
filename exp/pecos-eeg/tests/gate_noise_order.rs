@@ -105,8 +105,8 @@ fn noncommuting_rotations_follow_list_order() {
     let old = 0.5;
     assert!((expected - old).abs() > 1e-3);
     let mut state = StateVec::new(1);
-    state.rx(Angle64::from_radians(2.0 * a), &[QubitId(0)]);
-    state.rz(Angle64::from_radians(2.0 * b), &[QubitId(0)]);
+    state.rx(Angle64::try_from_radians(2.0 * a).unwrap(), &[QubitId(0)]);
+    state.rz(Angle64::try_from_radians(2.0 * b).unwrap(), &[QubitId(0)]);
     state.h(&[QubitId(0)]);
     assert_close(state.probability(1), expected);
     let noise = IdentityNoise(GateNoise {
@@ -141,7 +141,7 @@ fn overlapping_channel_follows_injection() {
         state.h(&q0);
         state.cx(&pair);
         state.szdg(&q0);
-        state.rxx(Angle64::from_radians(2.0 * a), &pair);
+        state.rxx(Angle64::try_from_radians(2.0 * a).unwrap(), &pair);
         state.sz(&q0);
         match branch {
             1 => {
@@ -183,8 +183,8 @@ fn commuting_rotations_preserve_probability() {
     let expected = (1.0 - (2.0 * (a + b)).cos()) / 2.0;
     let mut state = StateVec::new(1);
     state.h(&[QubitId(0)]);
-    state.rz(Angle64::from_radians(2.0 * a), &[QubitId(0)]);
-    state.rz(Angle64::from_radians(2.0 * b), &[QubitId(0)]);
+    state.rz(Angle64::try_from_radians(2.0 * a).unwrap(), &[QubitId(0)]);
+    state.rz(Angle64::try_from_radians(2.0 * b).unwrap(), &[QubitId(0)]);
     state.h(&[QubitId(0)]);
     assert_close(state.probability(1), expected);
     let noise = IdentityNoise(GateNoise {

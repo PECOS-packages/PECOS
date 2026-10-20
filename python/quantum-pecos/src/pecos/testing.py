@@ -365,6 +365,10 @@ def measurement_partition_from_trace(
     rounds: dict[str, int] = defaultdict(int)
     seen_labels: dict[str, set[tuple[str, int]]] = defaultdict(set)
     for record in records:
+        # Records without measurement provenance are skipped: aggregate syndrome
+        # arrays and classical derivations such as sz_correction and t_correction.
+        if record.get("result_ids") == []:
+            continue
         name = record.get("name")
         if not isinstance(name, str):
             msg = f"Invalid measurement tag: {name!r}"
@@ -388,8 +392,6 @@ def measurement_partition_from_trace(
                 family = "Z" if family == "X" else "X"
         else:
             prefix, separator, scope = name.partition("_")
-            if separator and prefix in {"synx", "synz"} and scope in tag_patches:
-                continue
             if not separator or prefix != "final":
                 msg = f"Unsupported measurement tag: {name!r}"
                 raise ValueError(msg)

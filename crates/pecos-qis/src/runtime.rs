@@ -92,6 +92,12 @@ impl std::fmt::Display for RuntimeError {
 
 impl std::error::Error for RuntimeError {}
 
+impl From<pecos_core::NonFiniteAngleError> for RuntimeError {
+    fn from(error: pecos_core::NonFiniteAngleError) -> Self {
+        Self::ExecutionError(error.to_string())
+    }
+}
+
 /// Classical state maintained by the runtime
 #[derive(Debug, Clone, Default)]
 pub struct ClassicalState {
@@ -227,7 +233,10 @@ pub trait QisRuntime: Send + Sync + dyn_clone::DynClone {
     /// Start a new shot
     ///
     /// This resets the runtime state for a new execution of the program.
-    /// Inspired by Selene's `shot_start()`.
+    /// Inspired by Selene's `shot_start()`. `QisEngine` supplies zero-based,
+    /// increasing IDs per engine instance, retained across resets. Template
+    /// clones start a new sequence. IDs are not global Monte Carlo indices and
+    /// are independent of the supplied seed. Direct callers choose their IDs.
     ///
     /// # Errors
     /// Returns an error if the shot cannot be started.
@@ -257,6 +266,37 @@ pub trait QisRuntime: Send + Sync + dyn_clone::DynClone {
             registers: state.registers.clone(),
             metadata: BTreeMap::new(),
         })
+    }
+
+    /// End the shot and return every final flat operation before certification.
+    /// The caller executes the returned work before reporting completion. Terminal
+    /// measurements are unsupported by `QisEngine` and cause a sticky failure.
+    /// Override this if the ordinary drain submits work that is illegal after end.
+    /// Non-lowering runtimes must not generate quantum work in their end hook.
+    ///
+    /// # Errors
+    /// Returns end-hook or final-drain errors; callers must not retry a failed end.
+    fn finish_operations(&mut self) -> Result<Vec<LoweredQuantumOp>> {
+        self.shot_end()?;
+        if self.supports_operation_lowering() {
+            self.drain_pending_operations()
+                .map(|ops| ops.into_iter().map(LoweredQuantumOp::from).collect())
+        } else {
+            Ok(Vec::new())
+        }
+    }
+
+    /// End the shot and return its complete final native batches, with original
+    /// timing and identities. The end hook must release all remaining work;
+    /// terminal feedback is unsupported. The default calls
+    /// `drain_pending_scheduled_operations` after `shot_end`; override this when
+    /// that drain submits a barrier or is otherwise invalid after end.
+    ///
+    /// # Errors
+    /// Returns end-hook or final-drain errors. A partial drain cannot be retried.
+    fn finish_scheduled_operations(&mut self) -> Result<Vec<crate::scheduled::ScheduledBatch>> {
+        self.shot_end()?;
+        self.drain_pending_scheduled_operations()
     }
 
     /// Check if program execution is complete

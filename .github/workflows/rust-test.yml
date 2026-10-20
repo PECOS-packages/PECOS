@@ -316,3 +316,10 @@ jobs:
       - name: Run tests (Windows)
         if: runner.os == 'Windows'
         run: .\target\release\pecos.exe rust test
+
+      - name: Test native DEM inference with optional HUGR compiler
+        # The default workspace suite does not enable pecos-qec/hugr.
+        run: |
+          cargo build --locked -p pecos-qis-ffi -p selene-simple-runtime -p selene-soft-rz-runtime
+          cargo test --locked -p pecos-qec --features hugr --lib dem_
+          cargo test --locked -p pecos-qec --features hugr --test dem_inference_builder --test dem_selene_builder

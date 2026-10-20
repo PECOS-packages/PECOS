@@ -79,6 +79,14 @@ def apply_logical_x(surf: SurfaceCode_3x3) -> None:
 
 
 @guppy
+def apply_logical_z(surf: SurfaceCode_3x3) -> None:
+    """Apply logical Z (string along top edge)."""
+    z(surf.data[0])
+    z(surf.data[1])
+    z(surf.data[2])
+
+
+@guppy
 def transversal_h(surf: SurfaceCode_3x3) -> None:
     """Apply physical transversal H."""
     for i in range(9):
@@ -946,6 +954,20 @@ def syndrome_extraction_swapped_a(surf: SurfaceCode_3x3) -> Syndrome_3x3:
     return Syndrome_3x3(synx, synz)
 
 
+@guppy
+def sz_teleportation_decision(first: Syndrome_3x3, final: array[bool, 9]) -> bool:
+    """Raw SZ correction decision: ancilla logical-Z readout XOR resource-sign checks XOR reference."""
+    # The reference is 0 for every odd square patch, the only geometry this renderer accepts.
+    return final[0] ^ final[1] ^ final[2] ^ first.synx[1] ^ first.synx[3] ^ first.synz[0] ^ first.synz[2]
+
+
+@guppy
+def correct_sz_teleportation(data: SurfaceCode_3x3, decision: bool) -> None:
+    output("sz_correction", decision)
+    if decision:
+        apply_logical_z(data)
+
+
 def make_h_experiment(num_rounds: int, *, logical_x: bool = False):
     """Prepare Z, extract full rounds, apply H, extract swapped rounds, read X."""
     def h_experiment() -> None:
@@ -997,15 +1019,29 @@ def make_transversal_cx(num_rounds: int, *, control_x: bool = False):
     return guppy(variant_scoped(transversal_cx_experiment, num_rounds, control_x))
 
 
-def make_sz_teleportation(rounds_before: int, rounds_after: int, trailing_data_rounds: int):
-    """Y-ancilla teleportation followed by data-only memory and Z readout."""
+def make_sz_teleportation(
+    rounds_before: int, rounds_after: int, trailing_data_rounds: int, *, correction: str = "physical",
+):
+    """Y-ancilla SZ teleportation followed by data-only memory and Z readout.
+
+    ``correction="physical"`` (default) executes the conditional logical Z;
+    ``"record"`` applies nothing. Both modes output ``sz_correction``.
+    Other values raise ValueError; accepted values are "physical" and "record"."""
+    if correction not in ("physical", "record"):
+        raise ValueError("correction must be physical or record")
     if rounds_before < 1:
         raise ValueError("SZ teleportation requires rounds_before >= 1 to record the resource sign before CX")
     def sz_teleportation() -> None:
         """SZ teleportation experiment."""
         data = prep_z_basis()
         anc = prep_y_basis()
-        for _ in range(comptime(rounds_before)):
+        syn = syndrome_extraction_data(data)
+        output("synx_data", syn.synx)
+        output("synz_data", syn.synz)
+        first = syndrome_extraction_anc(anc)
+        output("synx_anc", first.synx)
+        output("synz_anc", first.synz)
+        for _ in range(comptime(rounds_before - 1)):
             syn = syndrome_extraction_data(data)
             output("synx_data", syn.synx)
             output("synz_data", syn.synz)
@@ -1022,13 +1058,19 @@ def make_sz_teleportation(rounds_before: int, rounds_after: int, trailing_data_r
             output("synz_anc", syn.synz)
         final = measure_z_basis(anc)
         output("final_anc", final)
+        if comptime(correction == "physical"):
+            correct_sz_teleportation(data, sz_teleportation_decision(first, final))
+        else:
+            output("sz_correction", sz_teleportation_decision(first, final))
         for _ in range(comptime(trailing_data_rounds)):
             syn = syndrome_extraction_data(data)
             output("synx_data", syn.synx)
             output("synz_data", syn.synz)
         final = measure_z_basis(data)
         output("final_data", final)
-    return guppy(variant_scoped(sz_teleportation, rounds_before, rounds_after, trailing_data_rounds))
+    return guppy(variant_scoped(
+        sz_teleportation, rounds_before, rounds_after, trailing_data_rounds, correction,
+    ))
 
 
 def make_t_teleportation_placeholder(rounds_before: int, rounds_after: int):
@@ -1333,7 +1375,8 @@ def apply_t_teleportation(data: SurfaceCode_3x3, resource: SurfaceCode_3x3 @ own
 
 
 def make_t_teleportation(rounds_before: int = 0, rounds_after: int = 0, *,
-                     input_state: str = "X", readout_basis: str = "X", dagger: bool = False):
+                     input_state: str = "X", readout_basis: str = "X", dagger: bool = False,
+                     forced_decision: bool | None = None):
     """Raw resource + corrected logical T/TDG. Syndrome rounds are recorded, not decoded."""
     if (type(rounds_before) is not int or type(rounds_after) is not int
             or min(rounds_before, rounds_after) < 0):
@@ -1346,6 +1389,8 @@ def make_t_teleportation(rounds_before: int = 0, rounds_after: int = 0, *,
         raise ValueError("readout_basis must be X, Y, or Z")
     if type(dagger) is not bool:
         raise ValueError("dagger must be a boolean")
+    if forced_decision is not None and type(forced_decision) is not bool:
+        raise ValueError("forced_decision must be None or a boolean")
     def experiment() -> None:
         if comptime(input_state == "Z"):
             data = prepare_injected_z()
@@ -1372,7 +1417,11 @@ def make_t_teleportation(rounds_before: int = 0, rounds_after: int = 0, *,
             output("data_synz", syn_data.synz)
             output("resource_synx", syn_resource.synx)
             output("resource_synz", syn_resource.synz)
-        apply_t_teleportation(data, resource, comptime(dagger))
+        if comptime(forced_decision is None):
+            apply_t_teleportation(data, resource, comptime(dagger))
+        else:
+            consume_t_resource(data, resource)
+            correct_t_teleportation(data, comptime(forced_decision is True), comptime(dagger))
         for _ in range(comptime(rounds_after)):
             syn = syndrome_extraction_data(data)
             output("data_synx", syn.synx)
@@ -1387,4 +1436,4 @@ def make_t_teleportation(rounds_before: int = 0, rounds_after: int = 0, *,
             final = measure_x_basis(data)
         output("final_data", final)
     return guppy(variant_scoped(
-        experiment, rounds_before, rounds_after, input_state, readout_basis, dagger))
+        experiment, rounds_before, rounds_after, input_state, readout_basis, dagger, forced_decision))

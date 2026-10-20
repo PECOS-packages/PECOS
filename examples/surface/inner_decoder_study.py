@@ -162,7 +162,7 @@ def measure_cell(
         stim_str = builder.to_stim(p1=p, p2=p, p_meas=p)
         dem = str(stim.Circuit(stim_str).detector_error_model(ignore_decomposition_failures=True))
     else:
-        dem = builder.build_dem(p1=p, p2=p, p_meas=p)
+        dem = str(builder.build_dem(p1=p, p2=p, p_meas=p))
     sc = builder.stab_coords()
     batch = ParsedDem.from_string(dem).to_dem_sampler().sample_batch(n, seed=seed)
 

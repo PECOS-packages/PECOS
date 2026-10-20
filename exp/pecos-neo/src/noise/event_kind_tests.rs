@@ -146,50 +146,71 @@ fn builtin_channel_kind_declarations_have_positive_witnesses() {
     let gates = EventKinds::of(BeforeGate).with(AfterGate);
     let after_gate = EventKinds::of(AfterGate);
     let channels: Vec<(Box<dyn NoiseChannel>, EventKinds)> = vec![
-        (Box::new(SingleQubitChannel::depolarizing(0.2)), gates),
-        (Box::new(TwoQubitChannel::depolarizing(0.2)), gates),
+        (
+            Box::new(SingleQubitChannel::depolarizing(0.2).unwrap()),
+            gates,
+        ),
+        (Box::new(TwoQubitChannel::depolarizing(0.2).unwrap()), gates),
         (
             Box::new(LeakageChannel::new()),
             gates.with(BeforeMeasurement),
         ),
         (
-            Box::new(MeasurementChannel::symmetric(0.2)),
+            Box::new(MeasurementChannel::symmetric(0.2).unwrap()),
             EventKinds::of(AfterMeasurement),
         ),
         (
-            Box::new(MeasurementStateFlipChannel::new(0.2)),
+            Box::new(MeasurementStateFlipChannel::new(0.2).unwrap()),
             EventKinds::of(BeforeMeasurement),
         ),
         (
-            Box::new(PreparationChannel::new(0.2)),
+            Box::new(PreparationChannel::new(0.2).unwrap()),
             EventKinds::of(AfterPreparation),
         ),
         (
-            Box::new(IdleChannel::linear(0.2).with_idle_after_2q(1.0)),
+            Box::new(
+                IdleChannel::linear(0.2)
+                    .unwrap()
+                    .with_idle_after_2q(1.0)
+                    .unwrap(),
+            ),
             EventKinds::of(IdleTime).with(AfterGate),
         ),
         (
-            Box::new(CrosstalkChannel::global_only(0.2)),
+            Box::new(CrosstalkChannel::global_only(0.2).unwrap()),
             after_gate.with(AfterPreparation).with(AfterMeasurement),
         ),
-        (Box::new(CorrelatedNoiseChannel::new(0.2, 0.5)), after_gate),
         (
-            Box::new(CategoryBasedChannel::new().with_default(0.2)),
+            Box::new(CorrelatedNoiseChannel::new(0.2, 0.5).unwrap()),
             after_gate,
         ),
         (
-            Box::new(GateDependentChannel::new().with_gate_error(GateType::H, 0.2)),
+            Box::new(CategoryBasedChannel::new().with_default(0.2).unwrap()),
             after_gate,
         ),
         (
-            Box::new(GateIdDependentChannel::new().with_gate_type_error(GateType::H, 0.2)),
+            Box::new(
+                GateDependentChannel::new()
+                    .with_gate_error(GateType::H, 0.2)
+                    .unwrap(),
+            ),
+            after_gate,
+        ),
+        (
+            Box::new(
+                GateIdDependentChannel::new()
+                    .with_gate_type_error(GateType::H, 0.2)
+                    .unwrap(),
+            ),
             after_gate,
         ),
         (
             Box::new(
                 PerGatePauliChannel::new()
                     .with_base(0.2, 0.2)
-                    .with_meas_init(0.2, 0.2),
+                    .unwrap()
+                    .with_meas_init(0.2, 0.2)
+                    .unwrap(),
             ),
             after_gate.with(BeforeMeasurement).with(AfterPreparation),
         ),
@@ -200,9 +221,11 @@ fn builtin_channel_kind_declarations_have_positive_witnesses() {
 
     // The wrapper conservatively declares ALL: its default try_apply consults
     // responds_to, not the inner channel's potentially optimized try_apply.
-    let inner = SingleQubitChannel::depolarizing(0.2);
-    let wrapper =
-        ImportanceSamplingChannel::new(inner.clone(), ImportanceConfig::with_boost(0.02, 10.0));
+    let inner = SingleQubitChannel::depolarizing(0.2).unwrap();
+    let wrapper = ImportanceSamplingChannel::new(
+        inner.clone(),
+        ImportanceConfig::with_boost(0.02, 10.0).unwrap(),
+    );
     assert_eq!(wrapper.event_kinds(), EventKinds::ALL);
     for event in witnesses() {
         assert_eq!(wrapper.responds_to(&event), inner.responds_to(&event));
@@ -221,15 +244,18 @@ fn builtin_channel_kind_declarations_have_positive_witnesses() {
 
 #[test]
 fn per_gate_optional_kind_declarations_follow_configuration() {
-    let base = PerGatePauliChannel::new().with_base(0.2, 0.2);
+    let base = PerGatePauliChannel::new().with_base(0.2, 0.2).unwrap();
     let after_gate = EventKinds::of(NoiseEventKind::AfterGate);
     assert_channel_kinds(&base, after_gate);
     assert_channel_kinds(
-        &base.clone().with_meas_rate_for_qubit(QubitId(0), 0.2),
+        &base
+            .clone()
+            .with_meas_rate_for_qubit(QubitId(0), 0.2)
+            .unwrap(),
         after_gate.with(NoiseEventKind::BeforeMeasurement),
     );
     assert_channel_kinds(
-        &base.with_init_rate_for_qubit(QubitId(0), 0.2),
+        &base.with_init_rate_for_qubit(QubitId(0), 0.2).unwrap(),
         after_gate.with(NoiseEventKind::AfterPreparation),
     );
 }

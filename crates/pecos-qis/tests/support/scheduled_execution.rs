@@ -5,6 +5,8 @@
 //! engine. It admits an entire extraction result before quantum mutation. It is
 //! not connected to Python or `QisEngine`. Only the optional idle-Z profile below
 //! consumes timing; arbitrary noise configurations and all custom events reject.
+//! Shot completion drains feedback first, then executes the end-hook tail without
+//! feedback. Measurements in that tail poison the owner before tail execution.
 
 use pecos_core::{Angle64, errors::PecosError};
 use pecos_engines::runtime_frame::ShotContext;
@@ -213,10 +215,12 @@ impl ScheduledExecutor {
         Ok(output)
     }
 
-    /// Force terminal release, execute it, deliver results and end the runtime shot.
+    /// Drain pending work and deliver its results, then end the runtime shot and
+    /// execute its final batches. Return all terminal batches and classical state.
     ///
     /// # Errors
     /// Any drain, execution, feedback or shot-end failure poisons the owner.
+    /// End-hook measurements reject the entire tail before quantum mutation.
     pub fn finish_shot(&mut self) -> Result<(ScheduledExecutionOutput, Shot), PecosError> {
         let context = self.require_active()?;
         self.poisoned = true;
@@ -237,10 +241,31 @@ impl ScheduledExecutor {
             output.batches.extend(next.batches);
             output.measurements.extend(next.measurements);
         }
-        let shot = self
+        let batches = self
             .runtime
-            .shot_end()
+            .finish_scheduled_operations()
             .map_err(|error| runtime_error(&error))?;
+        if batches.iter().any(|batch| {
+            !batch.measurements.is_empty()
+                || batch.operations.iter().any(|op| {
+                    matches!(
+                        op,
+                        RuntimeScheduledOp::Measure { .. }
+                            | RuntimeScheduledOp::MeasureLeaked { .. }
+                    )
+                })
+        }) {
+            return Err(error("measurements emitted by shot_end are unsupported"));
+        }
+        let tail = self.execute(context, batches)?;
+        output.batches.extend(tail.batches);
+        output.measurements.extend(tail.measurements);
+        let state = self.runtime.get_classical_state();
+        let shot = Shot {
+            measurements: state.measurements.clone(),
+            registers: state.registers.clone(),
+            ..Default::default()
+        };
         self.context = None;
         self.poisoned = false;
         Ok((output, shot))
@@ -279,9 +304,11 @@ impl ScheduledExecutor {
                 return Err(error("scheduled measurement count mismatch"));
             }
             let feedback = ids.into_iter().zip(outcomes).collect::<Vec<_>>();
-            self.runtime
-                .provide_measurement_outcomes(feedback.clone())
-                .map_err(|error| runtime_error(&error))?;
+            if !feedback.is_empty() {
+                self.runtime
+                    .provide_measurement_outcomes(feedback.clone())
+                    .map_err(|error| runtime_error(&error))?;
+            }
             measurements.extend(feedback);
         }
         self.next_batch = next_batch;
@@ -382,21 +409,24 @@ impl ScheduledExecutor {
                 match op {
                     RuntimeScheduledOp::Rxy { theta, phi, .. } => {
                         builder.rxy1q(
-                            Angle64::from_radians(*theta),
-                            Angle64::from_radians(*phi),
+                            Angle64::try_from_radians(*theta).unwrap(),
+                            Angle64::try_from_radians(*phi).unwrap(),
                             &targets,
                         );
                     }
                     RuntimeScheduledOp::Rz { theta, .. } => {
-                        builder.rz(Angle64::from_radians(*theta), &targets);
+                        builder.rz(Angle64::try_from_radians(*theta).unwrap(), &targets);
                     }
                     RuntimeScheduledOp::Rzz { theta, .. } => {
-                        builder.rzz(Angle64::from_radians(*theta), &[(targets[0], targets[1])]);
+                        builder.rzz(
+                            Angle64::try_from_radians(*theta).unwrap(),
+                            &[(targets[0], targets[1])],
+                        );
                     }
                     RuntimeScheduledOp::Rpp { theta, phi, .. } => {
                         builder.rxyxy2q(
-                            Angle64::from_radians(*theta),
-                            Angle64::from_radians(*phi),
+                            Angle64::try_from_radians(*theta).unwrap(),
+                            Angle64::try_from_radians(*phi).unwrap(),
                             &[(targets[0], targets[1])],
                         );
                     }

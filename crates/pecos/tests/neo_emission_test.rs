@@ -112,7 +112,7 @@ fn neo_zero_count() -> u64 {
     let results = sim_neo(Qasm::from_string(X_MEASURE))
         .auto()
         .sampling(monte_carlo(SHOTS))
-        .noise(noise)
+        .noise(noise.build().unwrap())
         .seed(99) // independent of the engines seed; agreement must be physical
         .run()
         .expect("neo simulation should succeed");
@@ -237,7 +237,7 @@ fn neo_2q_zero_count() -> u64 {
     let results = sim_neo(Qasm::from_string(CX_MEASURE))
         .auto()
         .sampling(monte_carlo(SHOTS))
-        .noise(noise)
+        .noise(noise.build().unwrap())
         .seed(99)
         .run()
         .expect("neo simulation should succeed");

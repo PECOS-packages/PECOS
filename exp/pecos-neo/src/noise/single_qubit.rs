@@ -38,6 +38,7 @@ use super::{
     SingleQubitEmissionWeights,
 };
 use crate::command::{GateCommand, GateType};
+use crate::noise::validation::{ValidationResult, validate_probability, validate_rate};
 use pecos_core::Angle64;
 use pecos_random::PecosRng;
 use rand::RngExt;
@@ -52,31 +53,38 @@ use smallvec::SmallVec;
 /// This matches the structure of `GeneralNoiseModel`'s single-qubit noise.
 ///
 /// See also: `CompositeChannel` for composable, primitive-based noise models.
+///
+/// Validated inputs are read through accessors and changed through checked setters.
+/// ```compile_fail,E0616
+/// use pecos_neo::noise::SingleQubitChannel;
+/// let mut channel = SingleQubitChannel::default();
+/// channel.error_probability = f64::NAN;
+/// ```
 #[derive(Debug, Clone)]
 pub struct SingleQubitChannel {
     /// Probability of any error occurring (total error rate).
-    pub error_probability: f64,
+    error_probability: f64,
 
     /// Distribution of Pauli errors when a Pauli error occurs.
-    pub pauli_weights: PauliWeights,
+    pauli_weights: PauliWeights,
 
     /// Fraction of errors that are emission errors (vs Pauli errors).
     ///
     /// When an error occurs:
     /// - With probability `emission_ratio`, it's an emission error
     /// - Otherwise, it's a Pauli error from `pauli_weights`
-    pub emission_ratio: f64,
+    emission_ratio: f64,
 
     /// Distribution of emission errors (Pauli gates and/or leakage).
     ///
     /// When an emission error occurs on a non-leaked qubit, sample from this
     /// distribution to determine whether to apply a Pauli error or cause leakage.
-    pub emission_weights: SingleQubitEmissionWeights,
+    emission_weights: SingleQubitEmissionWeights,
 
     /// Probability of seepage when an emission error occurs on a leaked qubit.
     ///
     /// Seepage returns a leaked qubit to the computational subspace.
-    pub seepage_probability: f64,
+    seepage_probability: f64,
 
     // Precomputed probability thresholds for fast sampling (avoids f64 conversion)
     error_threshold: u64,
@@ -100,18 +108,55 @@ impl Default for SingleQubitChannel {
 }
 
 impl SingleQubitChannel {
+    /// Return the configured `error_probability`.
+    #[must_use]
+    pub fn error_probability(&self) -> f64 {
+        self.error_probability
+    }
+
+    /// Return the configured `pauli_weights`.
+    #[must_use]
+    pub fn pauli_weights(&self) -> &PauliWeights {
+        &self.pauli_weights
+    }
+
+    /// Return the configured `emission_ratio`.
+    #[must_use]
+    pub fn emission_ratio(&self) -> f64 {
+        self.emission_ratio
+    }
+
+    /// Return the configured `emission_weights`.
+    #[must_use]
+    pub fn emission_weights(&self) -> &SingleQubitEmissionWeights {
+        &self.emission_weights
+    }
+
+    /// Return the configured `seepage_probability`.
+    #[must_use]
+    pub fn seepage_probability(&self) -> f64 {
+        self.seepage_probability
+    }
+
     /// Create a new channel with all parameters specified.
     ///
     /// Precomputes probability thresholds for faster sampling.
-    #[must_use]
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
     pub fn new(
         error_probability: f64,
         pauli_weights: PauliWeights,
         emission_ratio: f64,
         emission_weights: SingleQubitEmissionWeights,
         seepage_probability: f64,
-    ) -> Self {
-        Self {
+    ) -> ValidationResult<Self> {
+        pauli_weights.validate()?;
+        emission_weights.validate()?;
+        validate_probability(error_probability, "error_probability")?;
+        validate_probability(emission_ratio, "emission_ratio")?;
+        validate_probability(seepage_probability, "seepage_probability")?;
+        Ok(Self {
             error_probability,
             pauli_weights,
             emission_ratio,
@@ -120,96 +165,123 @@ impl SingleQubitChannel {
             error_threshold: PecosRng::probability_threshold(error_probability),
             emission_threshold: PecosRng::probability_threshold(emission_ratio),
             seepage_threshold: PecosRng::probability_threshold(seepage_probability),
-        }
+        })
     }
 
     /// Create a uniform depolarizing noise channel.
     ///
     /// With probability `p`, applies a uniformly random Pauli (X, Y, or Z).
-    #[must_use]
-    pub fn depolarizing(p: f64) -> Self {
-        Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn depolarizing(p: f64) -> ValidationResult<Self> {
+        validate_probability(p, "p")?;
+        Ok(Self {
             error_probability: p,
             error_threshold: PecosRng::probability_threshold(p),
             pauli_weights: PauliWeights::uniform(),
             ..Default::default()
-        }
+        })
     }
 
     /// Create a channel with a specific Pauli distribution.
-    #[must_use]
-    pub fn with_pauli_weights(mut self, weights: PauliWeights) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_pauli_weights(mut self, weights: PauliWeights) -> ValidationResult<Self> {
+        weights.validate()?;
         self.pauli_weights = weights;
-        self
+        Ok(self)
     }
 
     /// Set the emission error ratio with simple leakage probability.
     ///
     /// This is a convenience method that configures emission weights
     /// as uniform Pauli errors with the specified leakage probability.
-    #[must_use]
-    pub fn with_emission(mut self, ratio: f64, leakage_prob: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_emission(mut self, ratio: f64, leakage_prob: f64) -> ValidationResult<Self> {
+        validate_probability(ratio, "ratio")?;
+        validate_probability(leakage_prob, "leakage_prob")?;
         self.emission_ratio = ratio;
         self.emission_threshold = PecosRng::probability_threshold(ratio);
         // Distribute remaining probability among X, Y, Z
         let pauli_prob = (1.0 - leakage_prob) / 3.0;
         self.emission_weights =
-            SingleQubitEmissionWeights::custom(pauli_prob, pauli_prob, pauli_prob, leakage_prob);
-        self
+            SingleQubitEmissionWeights::custom(pauli_prob, pauli_prob, pauli_prob, leakage_prob)?;
+        Ok(self)
     }
 
     /// Set the emission error ratio with custom emission weights.
-    #[must_use]
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
     pub fn with_emission_weights(
         mut self,
         ratio: f64,
         weights: SingleQubitEmissionWeights,
-    ) -> Self {
+    ) -> ValidationResult<Self> {
+        weights.validate()?;
+        validate_probability(ratio, "ratio")?;
         self.emission_ratio = ratio;
         self.emission_threshold = PecosRng::probability_threshold(ratio);
         self.emission_weights = weights;
-        self
+        Ok(self)
     }
 
     /// Set the seepage probability.
-    #[must_use]
-    pub fn with_seepage(mut self, p: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_seepage(mut self, p: f64) -> ValidationResult<Self> {
+        validate_probability(p, "p")?;
         self.seepage_probability = p;
         self.seepage_threshold = PecosRng::probability_threshold(p);
-        self
+        Ok(self)
     }
 
     /// Create a Z-biased dephasing channel.
-    #[must_use]
-    pub fn dephasing(p: f64) -> Self {
-        Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn dephasing(p: f64) -> ValidationResult<Self> {
+        validate_probability(p, "p")?;
+        Ok(Self {
             error_probability: p,
             error_threshold: PecosRng::probability_threshold(p),
-            pauli_weights: PauliWeights::custom(0.0, 0.0, 1.0),
+            pauli_weights: PauliWeights::z_only(),
             ..Default::default()
-        }
+        })
     }
 
     /// Create a bit-flip channel (X errors only).
-    #[must_use]
-    pub fn bit_flip(p: f64) -> Self {
-        Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn bit_flip(p: f64) -> ValidationResult<Self> {
+        validate_probability(p, "p")?;
+        Ok(Self {
             error_probability: p,
             error_threshold: PecosRng::probability_threshold(p),
-            pauli_weights: PauliWeights::custom(1.0, 0.0, 0.0),
+            pauli_weights: PauliWeights::x_only(),
             ..Default::default()
-        }
+        })
     }
 
     /// Scale the error probability by a factor.
     ///
     /// This multiplies the current error probability by `scale`.
     /// Useful for globally adjusting noise levels.
-    #[must_use]
-    pub fn with_scale(mut self, scale: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_scale(mut self, scale: f64) -> ValidationResult<Self> {
+        validate_rate(scale, "scale")?;
+        validate_probability(self.error_probability * scale, "error_probability * scale")?;
         self.error_probability *= scale;
         self.error_threshold = PecosRng::probability_threshold(self.error_probability);
-        self
+        Ok(self)
     }
 }
 
@@ -432,7 +504,7 @@ mod tests {
 
     #[test]
     fn test_depolarizing_channel() {
-        let channel = SingleQubitChannel::depolarizing(1.0);
+        let channel = SingleQubitChannel::depolarizing(1.0).unwrap();
 
         let qubits = [QubitId(0)];
         let angles = [];
@@ -455,7 +527,7 @@ mod tests {
 
     #[test]
     fn test_no_error_on_two_qubit_gate() {
-        let channel = SingleQubitChannel::depolarizing(1.0);
+        let channel = SingleQubitChannel::depolarizing(1.0).unwrap();
 
         let qubits = [QubitId(0), QubitId(1)];
         let angles = [];
@@ -471,7 +543,10 @@ mod tests {
 
     #[test]
     fn test_leakage() {
-        let channel = SingleQubitChannel::depolarizing(1.0).with_emission(1.0, 1.0);
+        let channel = SingleQubitChannel::depolarizing(1.0)
+            .unwrap()
+            .with_emission(1.0, 1.0)
+            .unwrap();
 
         let qubits = [QubitId(0)];
         let angles = [];
@@ -513,7 +588,7 @@ mod tests {
 
     #[test]
     fn test_skip_gate_for_leaked_qubit() {
-        let channel = SingleQubitChannel::depolarizing(1.0);
+        let channel = SingleQubitChannel::depolarizing(1.0).unwrap();
 
         let qubits = [QubitId(0)];
         let angles = [];
@@ -535,7 +610,7 @@ mod tests {
 
     #[test]
     fn test_z_biased_channel() {
-        let channel = SingleQubitChannel::dephasing(1.0);
+        let channel = SingleQubitChannel::dephasing(1.0).unwrap();
 
         let qubits = [QubitId(0)];
         let angles = [];

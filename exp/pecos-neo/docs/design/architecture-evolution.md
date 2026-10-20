@@ -91,7 +91,7 @@ let mut program = ClassicalEngineAdapter::new(engine);
 // Use with pecos-neo infrastructure
 let mut runner = ProgramRunner::new(SparseStab::new(2))
     .with_noise(ComposableNoiseModel::new()
-        .add_channel(SingleQubitChannel::depolarizing(0.01)));
+        .add_channel(SingleQubitChannel::depolarizing(0.01)?));
 
 let result = runner.run_shot(&mut program);
 ```

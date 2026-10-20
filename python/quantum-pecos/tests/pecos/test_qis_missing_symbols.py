@@ -9,15 +9,16 @@ from pathlib import Path
 
 def test_missing_qis_symbol_raises_and_process_survives(tmp_path: Path) -> None:
     """The dynamic loader reports the missing import before executing QIS."""
+    # Use an invented symbol so adding a real QIS feature cannot invalidate this test.
     program = r"""
 declare void @__quantum__qis__h__body(i64)
 declare i32 @__quantum__qis__m__body(i64, i64)
 declare void @__quantum__rt__result_record_output(i64, i8*)
-declare i64 @get_current_shot()
+declare i64 @pecos_test_missing_import()
 
 define i64 @qmain(i64 %arg) #0 {
     call void @__quantum__qis__h__body(i64 0)
-    %s = call i64 @get_current_shot()
+    %s = call i64 @pecos_test_missing_import()
     %r = call i32 @__quantum__qis__m__body(i64 0, i64 0)
     call void @__quantum__rt__result_record_output(i64 0, i8* null)
     ret i64 0
@@ -40,12 +41,12 @@ attributes #0 = { "EntryPoint" }
         try:
             run(code)
         except RuntimeError as error:
-            assert "get_current_shot" in str(error), str(error)
-            print("caught missing get_current_shot", flush=True)
+            assert "pecos_test_missing_import" in str(error), str(error)
+            print("caught missing pecos_test_missing_import", flush=True)
         else:
             raise AssertionError("An undefined QIS import must raise")
 
-        valid = code.replace("%s = call i64 @get_current_shot()", "")
+        valid = code.replace("%s = call i64 @pecos_test_missing_import()", "")
         result = run(valid).to_dict()
         assert result and all(len(values) == 4 for values in result.values()), result
         print("after", flush=True)
@@ -65,7 +66,7 @@ attributes #0 = { "EntryPoint" }
             timeout=120,
         )
         assert completed.returncode == 0, completed.stdout + completed.stderr
-        assert "caught missing get_current_shot" in completed.stdout
+        assert "caught missing pecos_test_missing_import" in completed.stdout
         assert "after" in completed.stdout
     cached = [path for path in (cache_dir / "qis-programs-v2").iterdir() if path.suffix in {".so", ".dll"}]
     assert len(cached) == 1, cached

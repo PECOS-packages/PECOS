@@ -242,7 +242,11 @@ fn should_include_gpu_sims(gpu_probe: &GpuProbeResult) -> bool {
     matches!(gpu_probe, GpuProbeResult::Available)
 }
 
-fn maybe_print_gpu_probe_status(gpu_probe: &GpuProbeResult, include_gpu_sims: bool) {
+fn maybe_print_gpu_probe_status(
+    gpu_probe: &GpuProbeResult,
+    include_gpu_sims: bool,
+    unavailable_action: &str,
+) {
     if include_gpu_sims {
         if matches!(gpu_probe, GpuProbeResult::Available) {
             println!("GPU probe succeeded - including pecos-gpu-sims");
@@ -250,10 +254,10 @@ fn maybe_print_gpu_probe_status(gpu_probe: &GpuProbeResult, include_gpu_sims: bo
     } else {
         match gpu_probe {
             GpuProbeResult::Unavailable => {
-                println!("GPU not detected - excluding pecos-gpu-sims");
+                println!("GPU not detected - {unavailable_action}");
             }
             GpuProbeResult::ProbeFailed(details) => {
-                println!("GPU probe failed - excluding pecos-gpu-sims:\n{details}");
+                println!("GPU probe failed - {unavailable_action}:\n{details}");
             }
             GpuProbeResult::Available => {}
         }
@@ -309,7 +313,7 @@ fn run_check(include_ffi: bool) -> Result<()> {
     let gpu_probe = probe_gpu_availability();
     let include_gpu_sims = should_include_gpu_sims(&gpu_probe);
 
-    maybe_print_gpu_probe_status(&gpu_probe, include_gpu_sims);
+    maybe_print_gpu_probe_status(&gpu_probe, include_gpu_sims, "excluding pecos-gpu-sims");
 
     println!("Checking workspace packages...");
     let mut args: Vec<&str> = vec![
@@ -376,7 +380,7 @@ fn run_clippy(include_ffi: bool, fix: bool) -> Result<()> {
     let gpu_probe = probe_gpu_availability();
     let include_gpu_sims = should_include_gpu_sims(&gpu_probe);
 
-    maybe_print_gpu_probe_status(&gpu_probe, include_gpu_sims);
+    maybe_print_gpu_probe_status(&gpu_probe, include_gpu_sims, "excluding pecos-gpu-sims");
 
     let fix_args: Vec<&str> = if fix {
         vec!["--fix", "--allow-staged", "--allow-dirty"]
@@ -460,7 +464,11 @@ fn run_test(profile: super::BuildProfile, include_ffi: bool) -> Result<()> {
     let gpu_probe = probe_gpu_availability();
     let include_gpu_sims = should_include_gpu_sims(&gpu_probe);
 
-    maybe_print_gpu_probe_status(&gpu_probe, include_gpu_sims);
+    maybe_print_gpu_probe_status(
+        &gpu_probe,
+        include_gpu_sims,
+        "running the GPU-free pecos-gpu-sims tests",
+    );
 
     // Map our profile to the cargo flags that select the corresponding profile.
     // Native goes through `--profile native` (not `--release`) so artifacts land
@@ -509,7 +517,7 @@ fn run_test(profile: super::BuildProfile, include_ffi: bool) -> Result<()> {
         "--exclude",
         "pecos-decoders",
         "--exclude",
-        "pecos-gpu-sims", // Always exclude from workspace test, test separately if GPU available
+        "pecos-gpu-sims", // Test separately: full suite with a GPU, gpu_free subset otherwise
     ]);
 
     args.extend(profile_args);
@@ -562,13 +570,15 @@ fn run_test(profile: super::BuildProfile, include_ffi: bool) -> Result<()> {
 
     if include_gpu_sims {
         println!("Including pecos-gpu-sims in Rust tests");
-        let mut args = vec!["test", "-p", "pecos-gpu-sims"];
-        args.extend(profile_args);
-        if !run(&args) {
-            return Err(Error::Config(
-                "cargo test (pecos-gpu-sims) failed".to_string(),
-            ));
-        }
+    } else {
+        println!("Testing the GPU-free pecos-gpu-sims subset");
+    }
+    let mut args = gpu_test_args(include_gpu_sims);
+    args.extend(profile_args);
+    if !run(&args) {
+        return Err(Error::Config(
+            "cargo test (pecos-gpu-sims) failed".to_string(),
+        ));
     }
 
     println!("Testing pecos-decoders...");
@@ -600,9 +610,28 @@ fn run_test(profile: super::BuildProfile, include_ffi: bool) -> Result<()> {
     Ok(())
 }
 
+// Keep hardware tests unchanged when the probe succeeds. The `gpu_free` marker
+// selects only tests that neither request an adapter nor create GPU resources.
+fn gpu_test_args(include_gpu_sims: bool) -> Vec<&'static str> {
+    let mut args = vec!["test", "-p", "pecos-gpu-sims"];
+    if !include_gpu_sims {
+        args.extend(["--lib", "gpu_free"]);
+    }
+    args
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gpu_probe_selects_full_or_gpu_free_suite() {
+        assert_eq!(super::gpu_test_args(true), ["test", "-p", "pecos-gpu-sims"]);
+        assert_eq!(
+            super::gpu_test_args(false),
+            ["test", "-p", "pecos-gpu-sims", "--lib", "gpu_free"]
+        );
+    }
 
     #[test]
     fn llvm_link_mode_parses_llvm_config_output() {

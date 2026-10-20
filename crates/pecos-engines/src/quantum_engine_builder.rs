@@ -51,6 +51,9 @@ pub trait QuantumEngineBuilder: Send + Sync {
     /// Returns an error if the engine cannot be built (e.g., missing required configuration)
     fn build(&mut self) -> Result<Box<dyn QuantumEngine>, PecosError>;
 
+    /// Return the explicitly configured capacity, if any.
+    fn num_qubits(&self) -> Option<usize>;
+
     /// Set the number of qubits if not already set
     /// This allows `SimBuilder` to provide qubits at build time if needed
     fn set_qubits_if_needed(&mut self, num_qubits: usize);
@@ -147,6 +150,10 @@ impl QuantumEngineBuilder for StateVectorEngineBuilder {
         }
     }
 
+    fn num_qubits(&self) -> Option<usize> {
+        self.num_qubits
+    }
+
     fn set_qubits_if_needed(&mut self, num_qubits: usize) {
         if self.num_qubits.is_none() {
             self.num_qubits = Some(num_qubits);
@@ -193,6 +200,10 @@ impl QuantumEngineBuilder for SparseStabEngineBuilder {
             PecosError::Input("Number of qubits not specified for quantum engine".to_string())
         })?;
         Ok(Box::new(SparseStabEngine::new(num_qubits)))
+    }
+
+    fn num_qubits(&self) -> Option<usize> {
+        self.num_qubits
     }
 
     fn set_qubits_if_needed(&mut self, num_qubits: usize) {
@@ -252,6 +263,10 @@ impl QuantumEngineBuilder for CoinTossEngineBuilder {
             CoinTossEngine::new(num_qubits)
         };
         Ok(Box::new(engine))
+    }
+
+    fn num_qubits(&self) -> Option<usize> {
+        self.num_qubits
     }
 
     fn set_qubits_if_needed(&mut self, num_qubits: usize) {
@@ -314,6 +329,10 @@ impl QuantumEngineBuilder for StabilizerEngineBuilder {
         Ok(Box::new(crate::quantum::StabilizerEngine::new(num_qubits)))
     }
 
+    fn num_qubits(&self) -> Option<usize> {
+        self.num_qubits
+    }
+
     fn set_qubits_if_needed(&mut self, num_qubits: usize) {
         if self.num_qubits.is_none() {
             self.num_qubits = Some(num_qubits);
@@ -362,6 +381,10 @@ impl QuantumEngineBuilder for StabVecEngineBuilder {
             PecosError::Input("Number of qubits not specified for Clifford+RZ engine".to_string())
         })?;
         Ok(Box::new(crate::quantum::StabVecEngine::new(num_qubits)))
+    }
+
+    fn num_qubits(&self) -> Option<usize> {
+        self.num_qubits
     }
 
     fn set_qubits_if_needed(&mut self, num_qubits: usize) {
@@ -414,6 +437,10 @@ impl QuantumEngineBuilder for DensityMatrixEngineBuilder {
         Ok(Box::new(crate::quantum::DensityMatrixEngine::new(
             num_qubits,
         )))
+    }
+
+    fn num_qubits(&self) -> Option<usize> {
+        self.num_qubits
     }
 
     fn set_qubits_if_needed(&mut self, num_qubits: usize) {

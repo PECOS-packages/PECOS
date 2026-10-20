@@ -40,9 +40,10 @@ from pecos_rslib.qec import DEM_SLICE_ROUND_ATTRIBUTE, transform_two_patch_pauli
 
 from pecos.qec._replay import _replay_measurements
 from pecos.qec.surface import gadgets
-from pecos.qec.surface.circuit_builder import OpType, QubitAllocation
+from pecos.qec.surface.circuit_builder import OpType, QubitAllocation, _build_observable_descriptors
 
 if TYPE_CHECKING:
+    from pecos.qec import DetectorErrorModel
     from pecos.qec.surface.circuit_builder import SurfaceCircuitStep
     from pecos.qec.surface.patch import Stabilizer, SurfacePatch
 
@@ -724,6 +725,10 @@ class PatchState:
     x_z_swapped: bool = False
     stabilizers_by_index: dict[str, dict[int, Stabilizer]] = field(default_factory=dict)
 
+    def code_family(self, measured_family: str) -> str:
+        """Map a measured check family to its invariant code-frame family."""
+        return ("Z" if measured_family == "X" else "X") if self.x_z_swapped else measured_family
+
     @property
     def current_x_stabilizers(self) -> list[Stabilizer]:
         """Stabilizers currently measuring X-type checks."""
@@ -752,7 +757,8 @@ class LogicalOp:
     # from deterministic observables on the data.
     teleportation: bool = False
     # Gate implemented by resource consumption: "T", "SZ", or None.
-    # Used by build_algorithm_descriptor() to emit the correct boundary gate.
+    # build_algorithm_descriptor() emits TGateInjection for "T"; an "SZ"
+    # teleportation stays a Cnot boundary, its correction carried by the masks.
     teleportation_type: str | None = None
     # Phase variant of a one-round fold segment; absent on every other operation.
     fold: Literal["SZ", "SZdg"] | None = None
@@ -946,14 +952,20 @@ def _logical_readout_flow(
     segment_idx: int,
     patch: str,
     logical_type: str,
-) -> tuple[bool, tuple[tuple[str, int], ...]]:
+) -> tuple[bool, tuple[tuple[str, int], ...], tuple[str, ...]]:
     """Propagate a final logical readout backwards to product preparations.
 
     ``logical_type`` is X or Z in the readout's current orientation (its
     measurement basis). Each crossed H swaps the type during the walk; callers
     must not also swap the initial type. Fold SZ/SZdg exchanges X and Y;
     the returned folds tuple contains each (patch, segment) crossed as X or Y
-    so the caller can include that round's Z records in the logical parity. Y cannot
+    so the caller can include that round's Z records in the logical parity.
+    The third element contains consumed-ancilla labels for crossed SZ teleportations;
+    the emitter resolves their readout and resource-sign records after emission.
+    On the control, this conditional logical image replaces physical CX conjugation.
+    Callers exclude the consumed ancilla's own random readout; this is not a
+    rewrite for surviving post-consumption ancilla terms. T retains ordinary CX
+    conjugation because its non-Pauli correction cannot enter a parity mask. Y cannot
     close at product preparation because its logical sign depends on syndrome.
     Physical SZ/SZdg preserves Z but has no supported logical X or Y image,
     including the unmodelled distance-1 case.
@@ -993,6 +1005,7 @@ def _logical_readout_flow(
         raise ValueError(msg)
 
     crossed_folds: list[tuple[str, int]] = []
+    crossed_teleportations: list[str] = []
     terms = {(patch, logical_type): None}
     for index in range(start, -1, -1):
         op = operations[index]
@@ -1000,10 +1013,10 @@ def _logical_readout_flow(
             for label, kind in tuple(terms):
                 if first_memory.get(label) == index:
                     if kind == "Y" or op.per_patch_basis.get(label, op.basis) != kind:
-                        return False, ()
+                        return False, (), ()
                     del terms[label, kind]
             if not terms:
-                return True, tuple(crossed_folds)
+                return True, tuple(crossed_folds), tuple(crossed_teleportations)
             continue
 
         bits: dict[str, int] = {}
@@ -1015,20 +1028,23 @@ def _logical_readout_flow(
             ):
                 # Physical SZ is not logical SZ: its X/Y image leaves the code.
                 # A fold has a supported Y_L image with measured Z-check parity.
-                return False, ()
+                return False, (), ()
             if op.fold and label in op.patches and kind in {"X", "Y"}:
                 crossed_folds.append((label, fold_segments[index]))
+                mapped = [(label, {"X": "Y", "Y": "X"}[kind])]
+            elif op.teleportation and op.teleportation_type == "SZ" and label == op.patches[0] and kind in {"X", "Y"}:
+                crossed_teleportations.append(op.patches[1])
                 mapped = [(label, {"X": "Y", "Y": "X"}[kind])]
             else:
                 mapped = _conjugate_pauli(op, label, kind)
             for term_patch, term_kind in mapped:
                 if term_patch in op.patches and term_patch in last_memory and last_memory[term_patch] < index:
-                    return False, ()
+                    return False, (), ()
                 # Products on the same logical patch must combine: X times Z is Y.
                 bits[term_patch] = bits.get(term_patch, 0) ^ {"X": 1, "Y": 3, "Z": 2}[term_kind]
         terms = {(label, {1: "X", 2: "Z", 3: "Y"}[value]): None for label, value in bits.items() if value}
         if not terms:
-            return True, tuple(crossed_folds)
+            return True, tuple(crossed_folds), tuple(crossed_teleportations)
 
     msg = f"Logical readout for patch '{patch}' has terms without preparation: {list(terms)}"
     raise ValueError(msg)
@@ -1309,10 +1325,20 @@ class LogicalCircuitBuilder:
         (absolute measurement IDs) and ``resource_sign_records`` (relative
         records), alongside the logical readout's ``meas_ids`` and ``records``.
         The ancilla must have odd dx and dz for encoded logical-Y content.
-        ``teleportation_readouts`` is emitted for a future consumer; no decoder
-        applies the correction today.
+        Deterministic X/Y data observables absorb these correction records into
+        their parity masks, and the ancilla's random readout remains separate.
+        The rendered program can execute or record the correction. Extracting
+        observables from rows of a program that executed it must remove those
+        records and adjust the reference. That transcription does not exist yet;
+        observables export ``crossed_teleportations`` for it. The mask remains
+        the DEM in all cases.
 
         Note: The |+Y> injection is non-fault-tolerant (distance-1).
+        The corrected observable retains undetectable single-fault logical
+        errors. At fixed physical error rate, their combined probability can
+        grow with patch distance, so a distance sweep can worsen rather than
+        suppress logical errors. Absorbing the correction records does not
+        provide the protection of a fold-transversal SZ gate.
         For fault-tolerant SZ, use magic state distillation on the
         injected state before consumption.
 
@@ -1594,7 +1620,7 @@ class LogicalCircuitBuilder:
                     if label in teleportation_ancillas:
                         continue
                     basis = operation.per_patch_basis.get(label, operation.basis)
-                    deterministic, _crossed_folds = _logical_readout_flow(
+                    deterministic, _crossed_folds, _crossed_teleportations = _logical_readout_flow(
                         operations,
                         segment_idx,
                         label,
@@ -2264,7 +2290,7 @@ class LogicalCircuitBuilder:
         p2: float = 0.001,
         p_meas: float = 0.001,
         p_prep: float = 0.0,
-    ) -> str:
+    ) -> DetectorErrorModel:
         """Generate a DEM using the PECOS-native fault analysis pipeline.
 
         TickCircuit -> DagCircuit -> DagFaultAnalyzer -> DemBuilder.
@@ -2280,7 +2306,9 @@ class LogicalCircuitBuilder:
             p_prep: Preparation error rate.
 
         Returns:
-            DEM string in Stim-compatible format.
+            DetectorErrorModel retaining detector ``fault_sector`` labels used by
+            graph decoders. ``str(dem)`` or ``dem.to_string()`` gives the
+            standard DEM text in Stim-compatible format.
         """
         cached = self._build_structured_dem_from_cached_slices(
             p1=p1,
@@ -2292,7 +2320,7 @@ class LogicalCircuitBuilder:
             dem, _, _ = self._build_structured_dem(p1=p1, p2=p2, p_meas=p_meas, p_prep=p_prep)
         else:
             dem, _ = cached
-        return str(dem)
+        return dem
 
     def build_sampler_and_decoder(
         self,
@@ -2367,8 +2395,9 @@ class LogicalCircuitBuilder:
             measurement IDs, separately from deterministic observables and frame slots.
             The SZ resource sign is the parity of its records XOR
             ``resource_sign_reference``, derived from the logical representatives.
-            It is emitted for a future consumer; no decoder applies the
-            correction today. T decision-point execution remains unsupported.
+            Deterministic X/Y data observable masks include the SZ correction
+            records; frame-slot counts are unchanged. T decision-point execution
+            remains unsupported.
         """
         if buffer is not None and buffer < 0:
             msg = "buffer must be non-negative or None"
@@ -2641,14 +2670,14 @@ class LogicalCircuitBuilder:
             dem = circuit.detector_error_model(ignore_decomposition_failures=True).flattened()
             dem_str = str(dem)
         else:
-            dem_str = self.build_dem(p1=p1, p2=p2, p_meas=p_meas, p_prep=p_prep)
+            dem_str = str(self.build_dem(p1=p1, p2=p2, p_meas=p_meas, p_prep=p_prep))
 
         sc = self.stab_coords()
         decoder = LogicalSubgraphDecoder(dem_str, sc, inner_decoder)
         return circuit, decoder
 
 
-def _resource_sign_checks(patch: SurfacePatch) -> tuple[list[tuple[str, int]], int]:
+def resource_sign_checks(patch: SurfacePatch) -> tuple[list[tuple[str, int]], int]:
     """Solve all-Y times logical Y as a product of geometry checks over GF(2).
 
     X and Z supports can be solved independently for this CSS code. Tracking
@@ -2737,6 +2766,8 @@ class _CircuitGenerator:
         self.stab_meas: dict[tuple[str, str, int, int, int], int] = {}
         self._stab_meas_by_round: dict[tuple[str, int, int], list[tuple[str, str, int, int, int]]] = {}
         self._last_round: dict[tuple[str, str, int], int] = {}
+        self._untyped_measurements: set[int] = set()
+        self._pending_phase_patches: set[str] = set()
         self._fold_maps: dict[tuple[str, int], tuple[dict[int, int], dict[int, int]]] = {}
         self._boundary_terms: dict[tuple[str, str, int], list[tuple[str, str, int]] | None] = {}
         self._propagation_context = _PropagationContext.from_operations(operations)
@@ -2752,6 +2783,7 @@ class _CircuitGenerator:
 
         self._det_json: list[dict] = []
         self._obs_json: list[dict] = []
+        self._observable_descriptors: list[dict] = []
 
     def _new_tick(self) -> object:
         self._current_tick = self.tc.tick()
@@ -2834,20 +2866,10 @@ class _CircuitGenerator:
                 "coords": d["coords"],
                 "records": [idx - total for idx in d["abs_records"]],
                 "meas_ids": d["abs_records"],
+                "fault_sector": d["fault_sector"],
             }
             for d in self._det_json
         ]
-        reference_measurements = _replay_measurements(self.tc, total) if self._obs_json else []
-        obs_out = [
-            {
-                "id": o["id"],
-                "records": [idx - total for idx in o["abs_records"]],
-                "meas_ids": o["abs_records"],
-                "reference": sum(reference_measurements[idx] for idx in o["abs_records"]) % 2,
-            }
-            for o in self._obs_json
-        ]
-
         for label in self._teleportation_ancillas:
             if label not in self._teleportation_readouts:
                 msg = f"Teleportation ancilla '{label}' has no logical operator for its readout"
@@ -2860,7 +2882,7 @@ class _CircuitGenerator:
                 if ps.x_z_swapped:
                     msg = f"Resource sign for teleportation ancilla '{label}' requires an unswapped patch state"
                     raise ValueError(msg)
-                checks, reference = _resource_sign_checks(ps.patch)
+                checks, reference = resource_sign_checks(ps.patch)
                 meas_ids = []
                 if checks:
                     # Freshness and the pre-CX round guard make this the resource projection.
@@ -2872,8 +2894,32 @@ class _CircuitGenerator:
                     resource_sign_reference=reference,
                 )
 
+        # Resolve symbolic crossings only after every readout and resource sign
+        # exists. Detector emission and measurement order do not depend on them.
+        for observable in self._obs_json:
+            for label in observable["crossed_teleportations"]:
+                readout = self._teleportation_readouts[label]
+                observable["abs_records"].extend(readout["meas_ids"])
+                observable["abs_records"].extend(readout["resource_sign_meas_ids"])
+        reference_measurements = _replay_measurements(self.tc, total) if self._obs_json else []
+        obs_out = [
+            {
+                "id": o["id"],
+                "records": [idx - total for idx in o["abs_records"]],
+                "meas_ids": o["abs_records"],
+                "crossed_teleportations": o["crossed_teleportations"],
+                # This is the raw mask's noiseless parity, not the corrected
+                # signed logical result. Replay already includes resource signs.
+                "reference": sum(reference_measurements[idx] for idx in o["abs_records"]) % 2,
+            }
+            for o in self._obs_json
+        ]
+
         self.tc.set_meta("detectors", json.dumps(det_out))
         self.tc.set_meta("observables", json.dumps(obs_out))
+        for descriptor, observable in zip(self._observable_descriptors, obs_out, strict=True):
+            descriptor["records"] = observable["records"]
+        self.tc.set_meta("observable_descriptors", json.dumps(self._observable_descriptors))
         self.tc.set_meta("num_measurements", str(total))
         # Semantic provenance of every measurement ordinal, for cross-form
         # comparison against Guppy sidebands without reaching into the generator.
@@ -3066,8 +3112,12 @@ class _CircuitGenerator:
                     )
                 rounds.append(gadget.steps)
             measurements = self._emit_steps(rounds)
+            if op.fold:
+                self._untyped_measurements.update(measurements.values())
             for (position, qubit), index in measurements.items():
                 label = op.patches[position]
+                if label in self._pending_phase_patches:
+                    self._untyped_measurements.add(index)
                 allocation = allocations[label]
                 if qubit in allocation.x_ancilla_qubits:
                     family, register = "X", allocation.x_ancilla_qubits
@@ -3082,6 +3132,7 @@ class _CircuitGenerator:
                 self.stab_meas[key] = index
                 self._last_round[label, family, self.segment_idx] = rnd
                 self._stab_meas_by_round.setdefault((label, self.segment_idx, rnd), []).append(key)
+            self._pending_phase_patches.difference_update(op.patches)
             for label in op.patches:
                 self._emit_round_detectors(label, rnd)
             self.round_time += 1.0
@@ -3140,9 +3191,7 @@ class _CircuitGenerator:
         curr_meas_indices: list[int],
     ) -> None:
         """Compare the current check with its backwards-propagated measurements."""
-        base_family = stab_type
-        if self.patches[patch_label].x_z_swapped:
-            base_family = "Z" if stab_type == "X" else "X"
+        base_family = self.patches[patch_label].code_family(stab_type)
         cache_key = (patch_label, base_family, self.segment_idx)
         if cache_key not in self._boundary_terms:
             self._boundary_terms[cache_key] = _propagate_stabilizer_terms(
@@ -3247,7 +3296,7 @@ class _CircuitGenerator:
         ps = self.patches[patch_label]
         geom = ps.patch.geometry
         cx, cy = ps.coord_offset
-        base_family = ("Z" if stab_type == "X" else "X") if ps.x_z_swapped else stab_type
+        base_family = ps.code_family(stab_type)
         s = ps.stabilizers_by_index[base_family].get(stab_index)
         if s is None:
             msg = f"Patch '{patch_label}' has no {base_family} stabilizer with index {stab_index}"
@@ -3264,6 +3313,7 @@ class _CircuitGenerator:
         stab_index: int,
         meas_indices: list[int],
     ) -> None:
+        base_family = self.patches[patch_label].code_family(stab_type)
         anc_x, anc_y = self._ancilla_spatial_coords(patch_label, stab_type, stab_index)
         # Store absolute indices; convert to relative offsets in generate()
         self._det_json.append(
@@ -3271,6 +3321,12 @@ class _CircuitGenerator:
                 "id": len(self._det_json),
                 "coords": [anc_x, anc_y, self.round_time],
                 "abs_records": list(meas_indices),
+                # Labels follow the code family: transversal H conjugates both
+                # the error and the check, leaving the code-frame family invariant.
+                # Fold rounds introduce Z-partner terms via _fold_maps. Their
+                # fault sectors are unverified, including comparisons across a fold.
+                # The first measurements after physical SZ/SZdg are also untyped.
+                "fault_sector": None if self._untyped_measurements.intersection(meas_indices) else base_family,
             },
         )
 
@@ -3289,11 +3345,15 @@ class _CircuitGenerator:
 
     def _emit_transversal_sz(self, op: LogicalOp) -> None:
         self._emit_transversal_layer(op, "SZ")
+        self._pending_phase_patches.update(op.patches)
 
     def _emit_transversal_szdg(self, op: LogicalOp) -> None:
         self._emit_transversal_layer(op, "SZDG")
+        self._pending_phase_patches.update(op.patches)
 
     def _emit_transversal_cx(self, op: LogicalOp) -> None:
+        if self._pending_phase_patches.intersection(op.patches):
+            self._pending_phase_patches.update(op.patches)
         ctrl_label, tgt_label = op.patches[0], op.patches[1]
         ctrl_ps = self.patches[ctrl_label]
         tgt_ps = self.patches[tgt_label]
@@ -3328,6 +3388,9 @@ class _CircuitGenerator:
                 ).steps,
             ],
         )
+        if patch_label in self._pending_phase_patches:
+            self._untyped_measurements.update(measured.values())
+            self._pending_phase_patches.remove(patch_label)
         for q in range(ps.patch.geometry.num_data):
             self.data_meas[patch_label, q] = measured[0, ps.qubit_offset + q]
 
@@ -3363,14 +3426,7 @@ class _CircuitGenerator:
                 syn_idx = self.stab_meas.get(syn_key)
                 if syn_idx is not None:
                     all_idx = [*data_rec, syn_idx]
-                    anc_x, anc_y = self._ancilla_spatial_coords(patch_label, lookup_type, s.index)
-                    self._det_json.append(
-                        {
-                            "id": len(self._det_json),
-                            "coords": [anc_x, anc_y, self.round_time],
-                            "abs_records": list(all_idx),
-                        },
-                    )
+                    self._add_detector(patch_label, lookup_type, s.index, all_idx)
 
         else:
             # A zero-round final segment reads data right after the previous
@@ -3389,7 +3445,7 @@ class _CircuitGenerator:
             # correction; it is not a deterministic DEM observable.
             self._teleportation_readouts[patch_label] = {"basis": meas_basis, "meas_ids": obs_indices}
             return
-        deterministic, crossed_folds = _logical_readout_flow(
+        deterministic, crossed_folds, crossed_teleportations = _logical_readout_flow(
             self.operations,
             self.segment_idx,
             patch_label,
@@ -3411,5 +3467,17 @@ class _CircuitGenerator:
             {
                 "id": obs_idx,
                 "abs_records": list(obs_indices),
+                "crossed_teleportations": crossed_teleportations,
             },
         )
+        # The generic reader has only one patch and a default basis. Record the
+        # actual patch support here, including orientation, for every observable.
+        logical_type = {"X": "Z", "Z": "X"}[meas_basis] if ps.x_z_swapped else meas_basis
+        descriptor = _build_observable_descriptors(
+            [{"id": obs_idx, "measurements": []}],
+            ps.patch,
+            logical_type,
+            self.meas_count,
+        )[0]
+        descriptor["basis"] = meas_basis
+        self._observable_descriptors.append(descriptor)

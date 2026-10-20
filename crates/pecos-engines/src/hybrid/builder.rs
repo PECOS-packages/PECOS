@@ -14,6 +14,8 @@ use super::engine::HybridEngine;
 use crate::engine_system::{ClassicalControlEngine, QuantumEngine};
 use crate::noise::{DepolarizingNoiseModel, NoiseModel, PassThroughNoiseModel};
 use crate::quantum_system::QuantumSystem;
+use pecos_core::errors::PecosError;
+
 /// Builder for creating a `HybridEngine` with customizable configuration
 ///
 /// This builder provides a fluent interface for constructing a `HybridEngine`
@@ -27,6 +29,7 @@ use crate::quantum_system::QuantumSystem;
 /// use pecos_engines::quantum;
 /// use pecos_engines::monte_carlo::engine::ExternalClassicalEngine;
 ///
+/// # fn main() -> Result<(), pecos_core::errors::PecosError> {
 /// // Create a HybridEngine with default settings (no noise)
 /// let engine = HybridEngineBuilder::new()
 ///     .with_classical_engine(Box::new(ExternalClassicalEngine::new()))
@@ -37,7 +40,7 @@ use crate::quantum_system::QuantumSystem;
 /// let engine_with_noise = HybridEngineBuilder::new()
 ///     .with_classical_engine(Box::new(ExternalClassicalEngine::new()))
 ///     .with_quantum_engine(quantum::new_quantum_engine_with_seed(2, 42))
-///     .with_depolarizing_noise(0.01)
+///     .with_depolarizing_noise(0.01)?
 ///     .build();
 ///
 /// // Create a HybridEngine with a specific seed
@@ -46,13 +49,14 @@ use crate::quantum_system::QuantumSystem;
 ///     .with_quantum_engine(quantum::new_quantum_engine_with_seed(2, 0))
 ///     .with_seed(42)
 ///     .build();
+/// # Ok(())
+/// # }
 /// ```
 #[derive(Clone)]
 pub struct HybridEngineBuilder {
     classical_engine: Option<Box<dyn ClassicalControlEngine>>,
     quantum_engine: Option<Box<dyn QuantumEngine>>,
     noise_model: Option<Box<dyn NoiseModel>>,
-    quantum_system: Option<QuantumSystem>,
     seed: Option<u64>,
 }
 
@@ -71,7 +75,6 @@ impl HybridEngineBuilder {
             classical_engine: None,
             quantum_engine: None,
             noise_model: None,
-            quantum_system: None,
             seed: None,
         }
     }
@@ -92,7 +95,8 @@ impl HybridEngineBuilder {
     /// Set the quantum engine component
     ///
     /// This will be combined with the noise model (if set) to create a quantum system.
-    /// If a quantum system is already set, this will replace it.
+    /// If a quantum system was supplied via `with_quantum_system`, only its quantum
+    /// engine is replaced.
     ///
     /// # Arguments
     /// * `engine` - The quantum engine to use
@@ -102,14 +106,14 @@ impl HybridEngineBuilder {
     #[must_use]
     pub fn with_quantum_engine(mut self, engine: Box<dyn QuantumEngine>) -> Self {
         self.quantum_engine = Some(engine);
-        self.quantum_system = None; // Reset quantum_system as it's now invalid
         self
     }
 
     /// Set a custom noise model
     ///
     /// This will be combined with the quantum engine (if set) to create a quantum system.
-    /// If a quantum system is already set, this will replace it.
+    /// If a quantum system was supplied via `with_quantum_system`, only its noise
+    /// model is replaced.
     ///
     /// # Arguments
     /// * `model` - The noise model to use
@@ -119,7 +123,6 @@ impl HybridEngineBuilder {
     #[must_use]
     pub fn with_noise_model(mut self, model: Box<dyn NoiseModel>) -> Self {
         self.noise_model = Some(model);
-        self.quantum_system = None; // Reset quantum_system as it's now invalid
         self
     }
 
@@ -132,18 +135,27 @@ impl HybridEngineBuilder {
     /// * `probability` - The probability parameter for depolarizing noise (between 0.0 and 1.0)
     ///
     /// # Returns
-    /// The builder for method chaining
-    #[must_use]
-    pub fn with_depolarizing_noise(mut self, probability: f64) -> Self {
-        self.noise_model = Some(Box::new(DepolarizingNoiseModel::new_uniform(probability)));
-        self.quantum_system = None; // Reset quantum_system as it's now invalid
-        self
+    /// `Ok(builder)` with the noise model installed for further method chaining,
+    /// or `Err(PecosError)` when the probability is invalid.
+    ///
+    /// # Errors
+    /// Returns an error for a non-finite probability or one outside `0.0..=1.0`.
+    pub fn with_depolarizing_noise(self, probability: f64) -> Result<Self, PecosError> {
+        Ok(
+            self.with_noise_model(Box::new(DepolarizingNoiseModel::try_new_uniform(
+                probability,
+            )?)),
+        )
     }
 
     /// Set a pre-configured quantum system
     ///
     /// This can be used when you need precise control over the quantum system configuration.
     /// If quantum engine or noise model are already set, this will replace them.
+    /// Retains both components and their RNG state, discarding transient shot state.
+    /// Building composes a fresh execution owner, ready for its first shot. The
+    /// components keep any state from a shot they already ran or failed; see
+    /// [`QuantumSystem::into_components`].
     ///
     /// # Arguments
     /// * `system` - The pre-configured quantum system
@@ -152,9 +164,9 @@ impl HybridEngineBuilder {
     /// The builder for method chaining
     #[must_use]
     pub fn with_quantum_system(mut self, system: QuantumSystem) -> Self {
-        self.quantum_system = Some(system);
-        self.quantum_engine = None; // Reset as they're now managed by quantum_system
-        self.noise_model = None;
+        let (noise_model, quantum_engine) = system.into_components();
+        self.noise_model = Some(noise_model);
+        self.quantum_engine = Some(quantum_engine);
         self
     }
 
@@ -190,23 +202,14 @@ impl HybridEngineBuilder {
             .classical_engine
             .expect("Classical engine is required. Use with_classical_engine() to set one.");
 
-        // Determine the quantum system
-        let quantum_system = if let Some(system) = self.quantum_system {
-            system
-        } else {
-            // Get the quantum engine or panic if not set
-            let quantum_engine = self.quantum_engine.expect(
-                "Either quantum engine or quantum system is required. Use with_quantum_engine() or with_quantum_system() to set one.",
-            );
-
-            // Create a noise model (default to PassThroughNoise if not set)
-            let noise_model = self
-                .noise_model
-                .unwrap_or_else(|| Box::new(PassThroughNoiseModel::builder().build()));
-
-            // Create the quantum system
-            QuantumSystem::new(noise_model, quantum_engine)
-        };
+        // Get the quantum engine or panic if not set.
+        let quantum_engine = self.quantum_engine.expect(
+            "Either quantum engine or quantum system is required. Use with_quantum_engine() or with_quantum_system() to set one.",
+        );
+        let noise_model = self
+            .noise_model
+            .unwrap_or_else(|| Box::new(PassThroughNoiseModel::builder().build()));
+        let quantum_system = QuantumSystem::new(noise_model, quantum_engine);
 
         // Create the HybridEngine
         let mut engine = HybridEngine {
@@ -251,6 +254,19 @@ impl HybridEngineBuilder {
     }
 }
 
+/// Move an existing engine into a builder, retaining component state and RNGs.
+/// Transient quantum-system shot state is discarded; building creates a fresh owner.
+/// If the engine already ran or failed a shot, call `reset()` on the built engine
+/// before `run_shot()`; see [`QuantumSystem::into_components`].
+/// An explicit `with_seed` overrides those RNG states when built.
+impl From<HybridEngine> for HybridEngineBuilder {
+    fn from(engine: HybridEngine) -> Self {
+        Self::new()
+            .with_classical_engine(engine.classical_engine)
+            .with_quantum_system(engine.quantum_system)
+    }
+}
+
 impl Default for HybridEngineBuilder {
     fn default() -> Self {
         Self::new()
@@ -282,6 +298,7 @@ mod tests {
             .with_classical_engine(Box::new(ExternalClassicalEngine::new()))
             .with_quantum_engine(quantum::new_quantum_engine_with_seed(2, 42))
             .with_depolarizing_noise(0.01)
+            .unwrap()
             .build();
 
         // Verify the engine was created successfully

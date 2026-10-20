@@ -159,6 +159,7 @@ impl ParityCheckMatrix {
                     .map(|qubit| (pauli, QubitId::new(qubit)))
                     .collect();
                 PauliString::with_phase_and_paulis(QuarterPhase::PlusOne, paulis)
+                    .expect("matrix column indices are distinct")
             })
             .collect()
     }

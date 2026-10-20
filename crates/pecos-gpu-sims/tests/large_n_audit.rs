@@ -56,7 +56,7 @@ fn apply_cpu(sim: &mut StateVecSoA, op: Op) {
             sim.h(&[QubitId(q)]);
         }
         Op::Rz(q, t) => {
-            sim.rz(Angle64::from_radians(t), &[QubitId(q)]);
+            sim.rz(Angle64::try_from_radians(t).unwrap(), &[QubitId(q)]);
         }
         Op::Cx(a, b) => {
             sim.cx(&[(QubitId(a), QubitId(b))]);
@@ -73,7 +73,7 @@ fn apply_gpu32(sim: &mut GpuStateVec32, op: Op) {
             sim.h(&[QubitId(q)]);
         }
         Op::Rz(q, t) => {
-            sim.rz(Angle64::from_radians(t), &[QubitId(q)]);
+            sim.rz(Angle64::try_from_radians(t).unwrap(), &[QubitId(q)]);
         }
         Op::Cx(a, b) => {
             sim.cx(&[(QubitId(a), QubitId(b))]);
@@ -90,7 +90,7 @@ fn apply_gpu64(sim: &mut GpuStateVec64, op: Op) {
             sim.h(&[QubitId(q)]);
         }
         Op::Rz(q, t) => {
-            sim.rz(Angle64::from_radians(t), &[QubitId(q)]);
+            sim.rz(Angle64::try_from_radians(t).unwrap(), &[QubitId(q)]);
         }
         Op::Cx(a, b) => {
             sim.cx(&[(QubitId(a), QubitId(b))]);

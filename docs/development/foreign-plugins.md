@@ -236,15 +236,23 @@ Foreign code can create and run PECOS quantum engines via the C ABI:
 
 | Function | Gate | Parameters |
 |----------|------|------------|
-| `pecos_circuit_h` | Hadamard | qubits |
-| `pecos_circuit_x` | Pauli X | qubits |
-| `pecos_circuit_z` | Pauli Z | qubits |
-| `pecos_circuit_sz` | S (phase) | qubits |
-| `pecos_circuit_cx` | CNOT | pairs |
-| `pecos_circuit_rx` | RX rotation | theta (radians), qubits |
-| `pecos_circuit_rz` | RZ rotation | theta (radians), qubits |
-| `pecos_circuit_rzz` | RZZ rotation | theta (radians), pairs |
-| `pecos_circuit_mz` | Z measurement | qubits |
+| `int32_t pecos_circuit_h` | Hadamard | qubits |
+| `int32_t pecos_circuit_x` | Pauli X | qubits |
+| `int32_t pecos_circuit_z` | Pauli Z | qubits |
+| `int32_t pecos_circuit_sz` | S (phase) | qubits |
+| `int32_t pecos_circuit_cx` | CNOT | pairs |
+| `int32_t pecos_circuit_rx` | RX rotation | theta (radians), qubits |
+| `int32_t pecos_circuit_rz` | RZ rotation | theta (radians), qubits |
+| `int32_t pecos_circuit_rzz` | RZZ rotation | theta (radians), pairs |
+| `int32_t pecos_circuit_mz` | Z measurement | qubits |
+
+All gate appenders return `0` on success and `-1` if the qubit count (or
+twice the pair count for CX/RZZ) exceeds the slice size limit. The three
+rotation functions also return `-1` for a non-finite angle. Indices above
+`UINT32_MAX` and gate payloads above 255 operands (127 pairs) are rejected; MZ
+emits individual gates, so it has no 255-operand limit. Appends that would
+exceed the batch's u32 byte/message limits also return `-1`; split such input
+into smaller batches. Rejected calls leave the circuit builder unchanged.
 
 ### C Example
 
@@ -286,7 +294,24 @@ pecos_engine_reset(engine);
 pecos_engine_free(engine);
 ```
 
-The v1 `ByteMessage` readers reject malformed framing and batches containing the
+Gate batches use `ByteMessage` version **5**. The 16-byte batch header contains
+little-endian magic `0x50454353`, version byte 5, flags and reserved bytes, then
+u32 message count and total byte length. Each message has an eight-byte header
+(type byte, flags byte, two reserved bytes, u32 payload length), followed by its
+payload and padding to a four-byte boundary. Each Gate payload starts with four bytes
+(gate type, qubit count, has-parameters flag, reserved), followed by u32 qubit
+indices. Leading angle words are **little-endian u64 `Angle64` fractions**:
+`fraction / 2^64` turns. Remaining non-angle parameters are little-endian f64.
+The gate type determines the number of angle words; Custom treats every word
+as an angle. The C circuit-building rotation functions still accept finite f64
+radians, convert them once to `Angle64`, and serialize the exact fraction.
+
+Version 1 encoded angles as f64 radians and is rejected. Rebuild saved batches
+and external producers for version 5; changing only the version byte is incorrect.
+Version 2 retains its separate runtime envelope. Legacy scheduled versions 3
+and 4 are rejected; rebuild scheduled frames/events with versions 6 and 7.
+
+The v5 `ByteMessage` readers reject malformed framing and batches containing the
 wrong message type. Gate processing accepts only Gate messages; outcome parsing
 accepts only Outcome messages with exactly four payload bytes. The length passed
 with a batch must equal the batch header's `total_size`, so pass the exact message

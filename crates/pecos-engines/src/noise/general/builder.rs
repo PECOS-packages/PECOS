@@ -1,9 +1,53 @@
+use super::HookChannel;
 use crate::GateType;
+use crate::noise::weighted_sampler::{P2PauliLeakageWeightedStep, P2TransitionWeightedStep};
 use crate::noise::{
-    CrosstalkWeightedSampler, GeneralNoiseModel, NoiseRng, SingleQubitWeightedSampler,
-    TwoQubitWeightedSampler,
+    CrosstalkWeightedSampler, GeneralNoiseModel, NoiseRng, P2PauliLeakageStep, P2TransitionStep,
+    PauliLeakageChannel, PauliLeakageWeightedSampler, QubitTransitionWeightedSampler,
+    SingleQubitWeightedSampler, StateTransitionChannel, TwoQubitWeightedSampler,
 };
+use pecos_core::errors::PecosError;
 use std::collections::{BTreeMap, BTreeSet};
+
+fn validate_hook_probabilities(
+    p1_transitions: [&[QubitTransitionWeightedSampler]; 2],
+    p1_events: [&[PauliLeakageWeightedSampler]; 2],
+    p2_transitions: [&[P2TransitionWeightedStep]; 2],
+    p2_events: [&[P2PauliLeakageWeightedStep]; 2],
+    p1_scale: f64,
+    p2_scale: f64,
+) -> Result<(), &'static str> {
+    let valid = |p: f64| p.is_finite() && (0.0..=1.0).contains(&p);
+    if !p1_transitions
+        .into_iter()
+        .flatten()
+        .map(QubitTransitionWeightedSampler::probability)
+        .chain(
+            p1_events
+                .into_iter()
+                .flatten()
+                .map(PauliLeakageWeightedSampler::probability),
+        )
+        .all(|p| valid(p * p1_scale))
+    {
+        return Err("scaled one-qubit hook probabilities must be finite and between zero and one");
+    }
+    if !p2_transitions
+        .into_iter()
+        .flatten()
+        .flat_map(P2TransitionWeightedStep::probabilities)
+        .chain(
+            p2_events
+                .into_iter()
+                .flatten()
+                .flat_map(P2PauliLeakageWeightedStep::probabilities),
+        )
+        .all(|p| valid(p * p2_scale))
+    {
+        return Err("scaled two-qubit hook probabilities must be finite and between zero and one");
+    }
+    Ok(())
+}
 
 /// The plain-Pauli probabilities plus optional angle-dependent two-qubit
 /// scaling and the spontaneous-emission ratios, as returned by
@@ -26,9 +70,18 @@ pub type PauliWithAngleScaling = (
     f64,
 );
 
-/// Builder for creating general noise models
+/// Builder for creating general noise models.
+///
+/// Invalid setters preserve their previous fields and record the first failure.
+/// Use [`Self::try_build`] or [`Self::validate_configuration`] to report it;
+/// [`Self::build`] panics with the same validation message.
 #[derive(Debug, Clone)]
 pub struct GeneralNoiseModelBuilder {
+    setter_error: Option<String>,
+    p1_hook_order_before_gate: Vec<HookChannel>,
+    p1_hook_order_after_gate: Vec<HookChannel>,
+    p2_hook_order_before_gate: Vec<HookChannel>,
+    p2_hook_order_after_gate: Vec<HookChannel>,
     // global params
     noiseless_gates: Option<BTreeSet<GateType>>,
     seed: Option<u64>,
@@ -53,6 +106,10 @@ pub struct GeneralNoiseModelBuilder {
     p1_emission_model: Option<SingleQubitWeightedSampler>,
     p1_seepage_prob: Option<f64>,
     p1_pauli_model: Option<SingleQubitWeightedSampler>,
+    p1_transition_channels_before_gate: Vec<QubitTransitionWeightedSampler>,
+    p1_transition_channels_after_gate: Vec<QubitTransitionWeightedSampler>,
+    p1_pauli_leakage_channels_before_gate: Vec<PauliLeakageWeightedSampler>,
+    p1_pauli_leakage_channels_after_gate: Vec<PauliLeakageWeightedSampler>,
     p1_scale: Option<f64>,
     // two-qubit gate noise
     p2: Option<f64>,
@@ -62,6 +119,10 @@ pub struct GeneralNoiseModelBuilder {
     p2_emission_model: Option<TwoQubitWeightedSampler>,
     p2_seepage_prob: Option<f64>,
     p2_pauli_model: Option<TwoQubitWeightedSampler>,
+    p2_transition_steps_before_gate: Vec<P2TransitionWeightedStep>,
+    p2_transition_steps_after_gate: Vec<P2TransitionWeightedStep>,
+    p2_pauli_leakage_steps_before_gate: Vec<P2PauliLeakageWeightedStep>,
+    p2_pauli_leakage_steps_after_gate: Vec<P2PauliLeakageWeightedStep>,
     /// Duration of the idle-noise sites applied after two-qubit gates.
     ///
     /// These sites use the configured linear and quadratic idle mechanisms; this value is not a
@@ -89,6 +150,11 @@ impl GeneralNoiseModelBuilder {
     #[must_use]
     pub fn new() -> Self {
         Self {
+            setter_error: None,
+            p1_hook_order_before_gate: Vec::new(),
+            p1_hook_order_after_gate: Vec::new(),
+            p2_hook_order_before_gate: Vec::new(),
+            p2_hook_order_after_gate: Vec::new(),
             // global params
             noiseless_gates: None,
             seed: None,
@@ -113,6 +179,10 @@ impl GeneralNoiseModelBuilder {
             p1_emission_model: None,
             p1_seepage_prob: None,
             p1_pauli_model: None,
+            p1_transition_channels_before_gate: Vec::new(),
+            p1_transition_channels_after_gate: Vec::new(),
+            p1_pauli_leakage_channels_before_gate: Vec::new(),
+            p1_pauli_leakage_channels_after_gate: Vec::new(),
             p1_scale: None,
             // two-qubit gate noise
             p2: None,
@@ -122,6 +192,10 @@ impl GeneralNoiseModelBuilder {
             p2_emission_model: None,
             p2_seepage_prob: None,
             p2_pauli_model: None,
+            p2_transition_steps_before_gate: Vec::new(),
+            p2_transition_steps_after_gate: Vec::new(),
+            p2_pauli_leakage_steps_before_gate: Vec::new(),
+            p2_pauli_leakage_steps_after_gate: Vec::new(),
             idle_after_2q: None,
             p2_scale: None,
             // measurement noise
@@ -174,12 +248,26 @@ impl GeneralNoiseModelBuilder {
     /// A `GeneralNoiseModel`
     ///
     /// # Panics
-    /// Panics if any probabilities are not set or are not between 0 and 1.
+    /// Panics if the configuration contains invalid probabilities, scale factors,
+    /// or overflowing idle-rate products at `idle_after_2q`. Use [`Self::try_build`]
+    /// to report invalid caller configuration without panicking.
     #[must_use]
-    pub fn build(mut self) -> GeneralNoiseModel {
+    pub fn build(self) -> GeneralNoiseModel {
         self.validate_configuration()
             .unwrap_or_else(|message| panic!("{message}"));
+        self.build_validated()
+    }
 
+    /// Build the model, reporting invalid setters or cross-field configuration.
+    ///
+    /// # Errors
+    /// Returns [`PecosError::Input`] with the first validation failure.
+    pub fn try_build(self) -> Result<GeneralNoiseModel, PecosError> {
+        self.validate_configuration().map_err(PecosError::Input)?;
+        Ok(self.build_validated())
+    }
+
+    fn build_validated(mut self) -> GeneralNoiseModel {
         // Start with the default noise model as a base
         let mut model = GeneralNoiseModel::default();
 
@@ -254,6 +342,17 @@ impl GeneralNoiseModelBuilder {
             model.p1_pauli_model = model_map;
         }
 
+        model.p1_hook_order_before_gate = self.p1_hook_order_before_gate.clone();
+        model.p1_hook_order_after_gate = self.p1_hook_order_after_gate.clone();
+        model.p2_hook_order_before_gate = self.p2_hook_order_before_gate.clone();
+        model.p2_hook_order_after_gate = self.p2_hook_order_after_gate.clone();
+        model.p1_transition_channels_before_gate = self.p1_transition_channels_before_gate.clone();
+        model.p1_transition_channels_after_gate = self.p1_transition_channels_after_gate.clone();
+        model.p1_pauli_leakage_channels_before_gate =
+            self.p1_pauli_leakage_channels_before_gate.clone();
+        model.p1_pauli_leakage_channels_after_gate =
+            self.p1_pauli_leakage_channels_after_gate.clone();
+
         // two-qubit gate noise
         // -----------------------------------------------------------------------------------------
         if let Some(p2) = self.p2 {
@@ -285,6 +384,11 @@ impl GeneralNoiseModelBuilder {
         if let Some(model_map) = self.p2_pauli_model.clone() {
             model.p2_pauli_model = model_map;
         }
+
+        model.p2_transition_steps_before_gate = self.p2_transition_steps_before_gate.clone();
+        model.p2_transition_steps_after_gate = self.p2_transition_steps_after_gate.clone();
+        model.p2_pauli_leakage_steps_before_gate = self.p2_pauli_leakage_steps_before_gate.clone();
+        model.p2_pauli_leakage_steps_after_gate = self.p2_pauli_leakage_steps_after_gate.clone();
 
         if let Some(idle_after_2q) = self.idle_after_2q {
             model.idle_after_2q = idle_after_2q;
@@ -363,7 +467,9 @@ impl GeneralNoiseModelBuilder {
     /// replaced by completely depolarizing noise.
     #[must_use]
     pub fn with_leakage_scale(mut self, scale: f64) -> Self {
-        self.leakage_scale = Some(Self::validate_probability(scale));
+        if let Some(value) = self.record_result(Self::validate_probability(scale)) {
+            self.leakage_scale = Some(value);
+        }
         self
     }
 
@@ -380,8 +486,10 @@ impl GeneralNoiseModelBuilder {
     /// Set the probability of a leaked qubit being seeped (released from leakage)
     #[must_use]
     pub fn with_seepage_prob(mut self, prob: f64) -> Self {
-        self.p1_seepage_prob = Some(Self::validate_probability(prob));
-        self.p2_seepage_prob = Some(Self::validate_probability(prob));
+        if let Some(value) = self.record_result(Self::validate_probability(prob)) {
+            self.p1_seepage_prob = Some(value);
+            self.p2_seepage_prob = Some(value);
+        }
         self
     }
 
@@ -407,8 +515,12 @@ impl GeneralNoiseModelBuilder {
     /// aligns the units and axis alphabet, not that sampling structure.
     #[must_use]
     pub fn with_p_idle_linear(mut self, rate: f64, model: &BTreeMap<String, f64>) -> Self {
-        self.p_idle_linear_rate = Some(Self::validate_non_negative(rate, "linear idling rate"));
-        self.p_idle_linear_model = Some(SingleQubitWeightedSampler::new(model));
+        let update = Self::validate_non_negative(rate, "linear idling rate")
+            .and_then(|rate| SingleQubitWeightedSampler::try_new(model).map(|model| (rate, model)));
+        if let Some((rate, model)) = self.record_result(update) {
+            self.p_idle_linear_rate = Some(rate);
+            self.p_idle_linear_model = Some(model);
+        }
         self
     }
 
@@ -436,15 +548,16 @@ impl GeneralNoiseModelBuilder {
     /// independent per-axis mechanisms. The difference is second order in the rates; this setter
     /// aligns the units and axis alphabet, not that sampling structure.
     ///
-    /// # Panics
-    ///
-    /// Panics if `rate` or a multiplier is not finite and non-negative, or if `model` contains a
-    /// key other than X, Y, Z, or L.
+    /// Invalid input is recorded and reported by [`Self::try_build`] or
+    /// [`Self::validate_configuration`]: `rate` and multipliers must be finite and non-negative;
+    /// the model must not contain a key other than X, Y, Z, or L.
     #[must_use]
     pub fn with_p_idle_sin_squared(mut self, rate: f64, model: &BTreeMap<String, f64>) -> Self {
-        let rate = Self::validate_finite_non_negative(rate, "sine-squared idling rate");
-        Self::validate_sine_model(model);
-        self.p_idle_sin_squared = Some((rate, model.clone()));
+        let update = Self::validate_finite_non_negative(rate, "sine-squared idling rate")
+            .and_then(|rate| Self::validate_sine_model(model).map(|()| rate));
+        if let Some(rate) = self.record_result(update) {
+            self.p_idle_sin_squared = Some((rate, model.clone()));
+        }
         self
     }
 
@@ -465,15 +578,16 @@ impl GeneralNoiseModelBuilder {
     /// with an RZ generator; and a simulator applies it only when its rotation executor is
     /// installed. PECOS #437 documents how a missing executor could otherwise silently drop it.
     ///
-    /// # Panics
-    ///
-    /// Panics if `rate` or a multiplier is not finite and non-negative, or if `model` contains a
-    /// key other than RX, RY, or RZ.
+    /// Invalid input is recorded and reported by [`Self::try_build`] or
+    /// [`Self::validate_configuration`]: `rate` and multipliers must be finite and non-negative;
+    /// the model must not contain a key other than RX, RY, or RZ.
     #[must_use]
     pub fn with_p_idle_coherent(mut self, rate: f64, model: &BTreeMap<String, f64>) -> Self {
-        let rate = Self::validate_finite_non_negative(rate, "coherent idling rate");
-        Self::validate_coherent_model(model);
-        self.p_idle_coherent = Some((rate, model.clone()));
+        let update = Self::validate_finite_non_negative(rate, "coherent idling rate")
+            .and_then(|rate| Self::validate_coherent_model(model).map(|()| rate));
+        if let Some(rate) = self.record_result(update) {
+            self.p_idle_coherent = Some((rate, model.clone()));
+        }
         self
     }
 
@@ -494,21 +608,27 @@ impl GeneralNoiseModelBuilder {
     /// Set the probability of error during preparation
     #[must_use]
     pub fn with_p_prep(mut self, probability: f64) -> Self {
-        self.p_prep = Some(Self::validate_probability(probability));
+        if let Some(value) = self.record_result(Self::validate_probability(probability)) {
+            self.p_prep = Some(value);
+        }
         self
     }
 
     /// Set the preparation leakage ratio
     #[must_use]
     pub fn with_prep_leak_ratio(mut self, ratio: f64) -> Self {
-        self.p_prep_leak_ratio = Some(Self::validate_probability(ratio));
+        if let Some(value) = self.record_result(Self::validate_probability(ratio)) {
+            self.p_prep_leak_ratio = Some(value);
+        }
         self
     }
 
     /// Set the probability of crosstalk during initialization operations
     #[must_use]
     pub fn with_p_prep_crosstalk(mut self, prob: f64) -> Self {
-        self.p_prep_crosstalk = Some(Self::validate_probability(prob));
+        if let Some(value) = self.record_result(Self::validate_probability(prob)) {
+            self.p_prep_crosstalk = Some(value);
+        }
         self
     }
 
@@ -516,8 +636,16 @@ impl GeneralNoiseModelBuilder {
     /// Set the average prep crosstalk
     #[must_use]
     pub fn with_average_p_prep_crosstalk(mut self, prob: f64) -> Self {
-        let prob: f64 = prob * 18.0 / 5.0;
-        self.p_prep_crosstalk = Some(prob);
+        let value = if prob.is_finite() && (0.0..=5.0 / 18.0).contains(&prob) {
+            Ok(prob * 18.0 / 5.0)
+        } else {
+            Err(format!(
+                "average preparation crosstalk probability must be between 0 and 5/18, got {prob}"
+            ))
+        };
+        if let Some(value) = self.record_result(value) {
+            self.p_prep_crosstalk = Some(value);
+        }
         self
     }
 
@@ -536,10 +664,12 @@ impl GeneralNoiseModelBuilder {
     /// Additional scaling factor specifically for initialization crosstalk probability.
     #[must_use]
     pub fn with_p_prep_crosstalk_scale(mut self, scale: f64) -> Self {
-        self.p_prep_crosstalk_scale = Some(Self::validate_non_negative(
+        if let Some(value) = self.record_result(Self::validate_non_negative(
             scale,
             "Preparation crosstalk rescale factor",
-        ));
+        )) {
+            self.p_prep_crosstalk_scale = Some(value);
+        }
         self
     }
 
@@ -550,7 +680,9 @@ impl GeneralNoiseModelBuilder {
     /// Set the probability of error after single-qubit gates
     #[must_use]
     pub fn with_p1(mut self, probability: f64) -> Self {
-        self.p1 = Some(Self::validate_probability(probability));
+        if let Some(value) = self.record_result(Self::validate_probability(probability)) {
+            self.p1 = Some(value);
+        }
         self
     }
 
@@ -565,35 +697,190 @@ impl GeneralNoiseModelBuilder {
     /// the ratio of total error rate to average error rate is 3/2.
     #[must_use]
     pub fn with_average_p1(mut self, probability: f64) -> Self {
-        self.p1 = Some(Self::validate_probability(probability * 3.0 / 2.0));
+        if let Some(value) = self.record_result(Self::validate_probability(probability * 3.0 / 2.0))
+        {
+            self.p1 = Some(value);
+        }
         self
     }
 
     /// Set the emission ratio for single-qubit gate errors
     #[must_use]
     pub fn with_p1_emission_ratio(mut self, ratio: f64) -> Self {
-        self.p1_emission_ratio = Some(Self::validate_probability(ratio));
+        if let Some(value) = self.record_result(Self::validate_probability(ratio)) {
+            self.p1_emission_ratio = Some(value);
+        }
         self
     }
 
     /// Set the emission error model for single-qubit gates
     #[must_use]
     pub fn with_p1_emission_model(mut self, model: &BTreeMap<String, f64>) -> Self {
-        self.p1_emission_model = Some(SingleQubitWeightedSampler::new(model));
+        if let Some(value) = self.record_result(SingleQubitWeightedSampler::try_new(model)) {
+            self.p1_emission_model = Some(value);
+        }
         self
     }
 
     /// Set the probability of a leaked qubit being seeped (released from leakage)
     #[must_use]
     pub fn with_p1_seepage_prob(mut self, prob: f64) -> Self {
-        self.p1_seepage_prob = Some(Self::validate_probability(prob));
+        if let Some(value) = self.record_result(Self::validate_probability(prob)) {
+            self.p1_seepage_prob = Some(value);
+        }
         self
     }
 
     /// Set the Pauli error model for single-qubit gates
     #[must_use]
     pub fn with_p1_pauli_model(mut self, model: &BTreeMap<String, f64>) -> Self {
-        self.p1_pauli_model = Some(SingleQubitWeightedSampler::new(model));
+        if let Some(value) = self.record_result(SingleQubitWeightedSampler::try_new(model)) {
+            self.p1_pauli_model = Some(value);
+        }
+        self
+    }
+
+    /// Replace the ordered Pauli-plus-leakage channel stack before single-qubit gates.
+    ///
+    /// This stack is appended in builder insertion order across both channel families.
+    /// A sampled `L` can suppress the ideal gate,
+    /// while a later before-gate transition channel can recover it. Outer probabilities follow
+    /// the global and p1 scale factors.
+    #[must_use]
+    pub fn with_p1_pauli_leakage_channels_before_gate(
+        mut self,
+        channels: &[PauliLeakageChannel],
+    ) -> Self {
+        self.p1_pauli_leakage_channels_before_gate = channels
+            .iter()
+            .map(PauliLeakageWeightedSampler::new)
+            .collect();
+        self.p1_hook_order_before_gate
+            .retain(|entry| !matches!(entry, HookChannel::PauliLeakage(_)));
+        self.p1_hook_order_before_gate.extend(
+            (0..self.p1_pauli_leakage_channels_before_gate.len()).map(HookChannel::PauliLeakage),
+        );
+        self
+    }
+
+    /// Append one Pauli-plus-leakage channel before single-qubit gates.
+    #[must_use]
+    pub fn add_p1_pauli_leakage_channel_before_gate(
+        mut self,
+        channel: &PauliLeakageChannel,
+    ) -> Self {
+        self.p1_pauli_leakage_channels_before_gate
+            .push(PauliLeakageWeightedSampler::new(channel));
+        self.p1_hook_order_before_gate
+            .push(HookChannel::PauliLeakage(
+                self.p1_pauli_leakage_channels_before_gate.len() - 1,
+            ));
+        self
+    }
+
+    /// Replace the ordered Pauli-plus-leakage channel stack after single-qubit noise sites.
+    ///
+    /// This stack runs after ordinary p1 noise, in insertion order across both families.
+    #[must_use]
+    pub fn with_p1_pauli_leakage_channels_after_gate(
+        mut self,
+        channels: &[PauliLeakageChannel],
+    ) -> Self {
+        self.p1_pauli_leakage_channels_after_gate = channels
+            .iter()
+            .map(PauliLeakageWeightedSampler::new)
+            .collect();
+        self.p1_hook_order_after_gate
+            .retain(|entry| !matches!(entry, HookChannel::PauliLeakage(_)));
+        self.p1_hook_order_after_gate.extend(
+            (0..self.p1_pauli_leakage_channels_after_gate.len()).map(HookChannel::PauliLeakage),
+        );
+        self
+    }
+
+    /// Append one Pauli-plus-leakage channel after single-qubit noise sites.
+    #[must_use]
+    pub fn add_p1_pauli_leakage_channel_after_gate(
+        mut self,
+        channel: &PauliLeakageChannel,
+    ) -> Self {
+        self.p1_pauli_leakage_channels_after_gate
+            .push(PauliLeakageWeightedSampler::new(channel));
+        self.p1_hook_order_after_gate
+            .push(HookChannel::PauliLeakage(
+                self.p1_pauli_leakage_channels_after_gate.len() - 1,
+            ));
+        self
+    }
+
+    /// Replace the ordered transition-channel stack before every single-qubit gate.
+    ///
+    /// Channels execute in slice order. State changes from one channel are visible to the next.
+    /// Recovery can allow an incoming leaked qubit to participate in the ideal gate, while leakage
+    /// can suppress it. Channel probabilities are affected by global and p1 scale factors.
+    #[must_use]
+    pub fn with_p1_transition_channels_before_gate(
+        mut self,
+        channels: &[StateTransitionChannel],
+    ) -> Self {
+        self.p1_transition_channels_before_gate = channels
+            .iter()
+            .map(QubitTransitionWeightedSampler::new)
+            .collect();
+        self.p1_hook_order_before_gate
+            .retain(|entry| !matches!(entry, HookChannel::Transition(_)));
+        self.p1_hook_order_before_gate.extend(
+            (0..self.p1_transition_channels_before_gate.len()).map(HookChannel::Transition),
+        );
+        self
+    }
+
+    /// Append one transition channel before every single-qubit gate.
+    #[must_use]
+    pub fn add_p1_transition_channel_before_gate(
+        mut self,
+        channel: &StateTransitionChannel,
+    ) -> Self {
+        self.p1_transition_channels_before_gate
+            .push(QubitTransitionWeightedSampler::new(channel));
+        self.p1_hook_order_before_gate.push(HookChannel::Transition(
+            self.p1_transition_channels_before_gate.len() - 1,
+        ));
+        self
+    }
+
+    /// Replace the ordered transition-channel stack after every single-qubit noise site.
+    ///
+    /// These channels run after the ideal gate or its suppression and after ordinary p1
+    /// Pauli/emission noise. Recovery does not retroactively execute a suppressed gate. Prefer
+    /// [`Self::with_p1_pauli_model`] for ordinary gate-local Pauli noise.
+    #[must_use]
+    pub fn with_p1_transition_channels_after_gate(
+        mut self,
+        channels: &[StateTransitionChannel],
+    ) -> Self {
+        self.p1_transition_channels_after_gate = channels
+            .iter()
+            .map(QubitTransitionWeightedSampler::new)
+            .collect();
+        self.p1_hook_order_after_gate
+            .retain(|entry| !matches!(entry, HookChannel::Transition(_)));
+        self.p1_hook_order_after_gate
+            .extend((0..self.p1_transition_channels_after_gate.len()).map(HookChannel::Transition));
+        self
+    }
+
+    /// Append one transition channel after every single-qubit noise site.
+    #[must_use]
+    pub fn add_p1_transition_channel_after_gate(
+        mut self,
+        channel: &StateTransitionChannel,
+    ) -> Self {
+        self.p1_transition_channels_after_gate
+            .push(QubitTransitionWeightedSampler::new(channel));
+        self.p1_hook_order_after_gate.push(HookChannel::Transition(
+            self.p1_transition_channels_after_gate.len() - 1,
+        ));
         self
     }
 
@@ -614,7 +901,9 @@ impl GeneralNoiseModelBuilder {
     /// Set the probability of error after two-qubit gates
     #[must_use]
     pub fn with_p2(mut self, probability: f64) -> Self {
-        self.p2 = Some(Self::validate_probability(probability));
+        if let Some(value) = self.record_result(Self::validate_probability(probability)) {
+            self.p2 = Some(value);
+        }
         self
     }
 
@@ -629,7 +918,10 @@ impl GeneralNoiseModelBuilder {
     /// the ratio of total error rate to average error rate is 5/4.
     #[must_use]
     pub fn with_average_p2(mut self, probability: f64) -> Self {
-        self.p2 = Some(Self::validate_probability(probability * 5.0 / 4.0));
+        if let Some(value) = self.record_result(Self::validate_probability(probability * 5.0 / 4.0))
+        {
+            self.p2 = Some(value);
+        }
         self
     }
 
@@ -669,36 +961,205 @@ impl GeneralNoiseModelBuilder {
     /// * `power` - The power to which theta is raised in the RZZ error rate formula
     #[must_use]
     pub fn with_p2_angle_power(mut self, power: f64) -> Self {
-        self.p2_angle_power = Some(Self::validate_positive(power, "RZZ power parameter"));
+        if let Some(value) =
+            self.record_result(Self::validate_positive(power, "RZZ power parameter"))
+        {
+            self.p2_angle_power = Some(value);
+        }
         self
     }
 
     /// Set the two-qubit emission ratio
     #[must_use]
     pub fn with_p2_emission_ratio(mut self, ratio: f64) -> Self {
-        self.p2_emission_ratio = Some(Self::validate_probability(ratio));
+        if let Some(value) = self.record_result(Self::validate_probability(ratio)) {
+            self.p2_emission_ratio = Some(value);
+        }
         self
     }
 
     /// Set the probability model for two-qubit emission errors
     #[must_use]
     pub fn with_p2_emission_model(mut self, model: &BTreeMap<String, f64>) -> Self {
-        self.p2_emission_model = Some(TwoQubitWeightedSampler::new(model));
+        if let Some(value) = self.record_result(TwoQubitWeightedSampler::try_new(model)) {
+            self.p2_emission_model = Some(value);
+        }
         self
     }
 
     /// Set the probability of a leaked qubit being seeped (released from leakage)
     #[must_use]
     pub fn with_p2_seepage_prob(mut self, prob: f64) -> Self {
-        self.p2_seepage_prob = Some(Self::validate_probability(prob));
+        if let Some(value) = self.record_result(Self::validate_probability(prob)) {
+            self.p2_seepage_prob = Some(value);
+        }
         self
     }
 
     /// Set the probability model for two-qubit Pauli errors
     #[must_use]
     pub fn with_p2_pauli_model(mut self, model: &BTreeMap<String, f64>) -> Self {
-        self.p2_pauli_model = Some(TwoQubitWeightedSampler::new(model));
+        if let Some(value) = self.record_result(TwoQubitWeightedSampler::try_new(model)) {
+            self.p2_pauli_model = Some(value);
+        }
         self
+    }
+
+    /// Replace the ordered Pauli-plus-leakage step stack before two-qubit gates.
+    ///
+    /// This stack is appended in builder insertion order across both channel families.
+    /// Each step is either two independently drawn
+    /// single-qubit channels or one correlated joint event channel.
+    #[must_use]
+    pub fn with_p2_pauli_leakage_steps_before_gate(mut self, steps: &[P2PauliLeakageStep]) -> Self {
+        self.p2_pauli_leakage_steps_before_gate =
+            steps.iter().map(P2PauliLeakageWeightedStep::new).collect();
+        self.p2_hook_order_before_gate
+            .retain(|entry| !matches!(entry, HookChannel::PauliLeakage(_)));
+        self.p2_hook_order_before_gate.extend(
+            (0..self.p2_pauli_leakage_steps_before_gate.len()).map(HookChannel::PauliLeakage),
+        );
+        self
+    }
+
+    /// Append one Pauli-plus-leakage step before two-qubit gates.
+    #[must_use]
+    pub fn add_p2_pauli_leakage_step_before_gate(mut self, step: &P2PauliLeakageStep) -> Self {
+        self.p2_pauli_leakage_steps_before_gate
+            .push(P2PauliLeakageWeightedStep::new(step));
+        self.p2_hook_order_before_gate
+            .push(HookChannel::PauliLeakage(
+                self.p2_pauli_leakage_steps_before_gate.len() - 1,
+            ));
+        self
+    }
+
+    /// Append the same independently drawn single-qubit channel to both two-qubit gate legs.
+    #[must_use]
+    pub fn add_p2_pauli_leakage_channel_before_gate(self, channel: &PauliLeakageChannel) -> Self {
+        self.add_p2_pauli_leakage_step_before_gate(&P2PauliLeakageStep::same_on_each(
+            channel.clone(),
+        ))
+    }
+
+    /// Replace the ordered Pauli-plus-leakage step stack after two-qubit noise sites.
+    ///
+    /// This stack runs after ordinary p2 noise, in insertion order across both families.
+    #[must_use]
+    pub fn with_p2_pauli_leakage_steps_after_gate(mut self, steps: &[P2PauliLeakageStep]) -> Self {
+        self.p2_pauli_leakage_steps_after_gate =
+            steps.iter().map(P2PauliLeakageWeightedStep::new).collect();
+        self.p2_hook_order_after_gate
+            .retain(|entry| !matches!(entry, HookChannel::PauliLeakage(_)));
+        self.p2_hook_order_after_gate.extend(
+            (0..self.p2_pauli_leakage_steps_after_gate.len()).map(HookChannel::PauliLeakage),
+        );
+        self
+    }
+
+    /// Append one Pauli-plus-leakage step after two-qubit noise sites.
+    #[must_use]
+    pub fn add_p2_pauli_leakage_step_after_gate(mut self, step: &P2PauliLeakageStep) -> Self {
+        self.p2_pauli_leakage_steps_after_gate
+            .push(P2PauliLeakageWeightedStep::new(step));
+        self.p2_hook_order_after_gate
+            .push(HookChannel::PauliLeakage(
+                self.p2_pauli_leakage_steps_after_gate.len() - 1,
+            ));
+        self
+    }
+
+    /// Append the same independently drawn single-qubit channel after both gate legs.
+    #[must_use]
+    pub fn add_p2_pauli_leakage_channel_after_gate(self, channel: &PauliLeakageChannel) -> Self {
+        self.add_p2_pauli_leakage_step_after_gate(&P2PauliLeakageStep::same_on_each(
+            channel.clone(),
+        ))
+    }
+
+    /// Replace the ordered transition-step stack before every two-qubit gate.
+    ///
+    /// A step is either two single-qubit channels applied independently to their respective gate
+    /// legs, or one joint conditional matrix on the nine pair states from `00` through `LL`.
+    /// Steps execute in slice order before PECOS checks the pair for leakage and before ordinary
+    /// p2 noise. Recovery can allow the ideal gate to execute; leakage can suppress it.
+    /// Probabilities are affected by global and p2 scale factors.
+    #[must_use]
+    pub fn with_p2_transition_steps_before_gate(mut self, steps: &[P2TransitionStep]) -> Self {
+        self.p2_transition_steps_before_gate =
+            steps.iter().map(P2TransitionWeightedStep::new).collect();
+        self.p2_hook_order_before_gate
+            .retain(|entry| !matches!(entry, HookChannel::Transition(_)));
+        self.p2_hook_order_before_gate
+            .extend((0..self.p2_transition_steps_before_gate.len()).map(HookChannel::Transition));
+        self
+    }
+
+    /// Append one independent-leg or joint transition step before every two-qubit gate.
+    #[must_use]
+    pub fn add_p2_transition_step_before_gate(mut self, step: &P2TransitionStep) -> Self {
+        self.p2_transition_steps_before_gate
+            .push(P2TransitionWeightedStep::new(step));
+        self.p2_hook_order_before_gate.push(HookChannel::Transition(
+            self.p2_transition_steps_before_gate.len() - 1,
+        ));
+        self
+    }
+
+    /// Append a transition channel before every two-qubit gate.
+    ///
+    /// A [`StateTransitionChannel`] is applied independently to both gate legs. A
+    /// [`TwoQubitStateTransitionChannel`](crate::noise::TwoQubitStateTransitionChannel) is applied as one
+    /// joint map on the pair state. Use [`Self::add_p2_transition_step_before_gate`] when the two
+    /// legs need different single-qubit channels.
+    #[must_use]
+    pub fn add_p2_transition_channel_before_gate(
+        self,
+        channel: impl Into<P2TransitionStep>,
+    ) -> Self {
+        self.add_p2_transition_step_before_gate(&channel.into())
+    }
+
+    /// Replace the ordered transition-step stack after every two-qubit noise site.
+    ///
+    /// Each independent-leg or joint step runs after the ideal gate (or suppression) and ordinary
+    /// p2 Pauli/emission noise, but before after-2Q idle noise. A later step observes leakage or
+    /// recovery produced by every earlier step. Prefer [`Self::with_p2_pauli_model`] for ordinary
+    /// correlated two-qubit Pauli noise.
+    #[must_use]
+    pub fn with_p2_transition_steps_after_gate(mut self, steps: &[P2TransitionStep]) -> Self {
+        self.p2_transition_steps_after_gate =
+            steps.iter().map(P2TransitionWeightedStep::new).collect();
+        self.p2_hook_order_after_gate
+            .retain(|entry| !matches!(entry, HookChannel::Transition(_)));
+        self.p2_hook_order_after_gate
+            .extend((0..self.p2_transition_steps_after_gate.len()).map(HookChannel::Transition));
+        self
+    }
+
+    /// Append one independent-leg or joint transition step after every two-qubit noise site.
+    #[must_use]
+    pub fn add_p2_transition_step_after_gate(mut self, step: &P2TransitionStep) -> Self {
+        self.p2_transition_steps_after_gate
+            .push(P2TransitionWeightedStep::new(step));
+        self.p2_hook_order_after_gate.push(HookChannel::Transition(
+            self.p2_transition_steps_after_gate.len() - 1,
+        ));
+        self
+    }
+
+    /// Append a transition channel after every two-qubit noise site.
+    ///
+    /// A [`StateTransitionChannel`] is applied independently to both gate legs. A
+    /// [`TwoQubitStateTransitionChannel`](crate::noise::TwoQubitStateTransitionChannel) is applied as one
+    /// joint map on the pair state. Use [`Self::add_p2_transition_step_after_gate`] when the two
+    /// legs need different single-qubit channels.
+    #[must_use]
+    pub fn add_p2_transition_channel_after_gate(
+        self,
+        channel: impl Into<P2TransitionStep>,
+    ) -> Self {
+        self.add_p2_transition_step_after_gate(&channel.into())
     }
 
     /// Set the duration of the idle-noise site applied to each qubit after a two-qubit gate.
@@ -711,7 +1172,9 @@ impl GeneralNoiseModelBuilder {
     /// `with_p_idle_linear(0.01, model).with_idle_after_2q(1.0)`.
     #[must_use]
     pub fn with_idle_after_2q(mut self, duration: f64) -> Self {
-        self.idle_after_2q = Some(Self::validate_duration(duration));
+        if let Some(value) = self.record_result(Self::validate_duration(duration)) {
+            self.idle_after_2q = Some(value);
+        }
         self
     }
 
@@ -733,36 +1196,46 @@ impl GeneralNoiseModelBuilder {
     /// Set the probability of flipping 0 to 1 during measurement
     #[must_use]
     pub fn with_p_meas_0(mut self, probability: f64) -> Self {
-        self.p_meas_0 = Some(Self::validate_probability(probability));
+        if let Some(value) = self.record_result(Self::validate_probability(probability)) {
+            self.p_meas_0 = Some(value);
+        }
         self
     }
 
     /// Set the probability of flipping 1 to 0 during measurement
     #[must_use]
     pub fn with_p_meas_1(mut self, probability: f64) -> Self {
-        self.p_meas_1 = Some(Self::validate_probability(probability));
+        if let Some(value) = self.record_result(Self::validate_probability(probability)) {
+            self.p_meas_1 = Some(value);
+        }
         self
     }
 
     /// Set the probability of bit flipping the measurement result
     #[must_use]
     pub fn with_p_meas(mut self, probability: f64) -> Self {
-        self.p_meas_0 = Some(Self::validate_probability(probability));
-        self.p_meas_1 = Some(Self::validate_probability(probability));
+        if let Some(value) = self.record_result(Self::validate_probability(probability)) {
+            self.p_meas_0 = Some(value);
+            self.p_meas_1 = Some(value);
+        }
         self
     }
 
     /// Set the probability of global crosstalk during measurement operations
     #[must_use]
     pub fn with_p_meas_crosstalk_global(mut self, prob: f64) -> Self {
-        self.p_meas_crosstalk_global = Some(Self::validate_probability(prob));
+        if let Some(value) = self.record_result(Self::validate_probability(prob)) {
+            self.p_meas_crosstalk_global = Some(value);
+        }
         self
     }
 
     /// Set the probability of local crosstalk during measurement operations
     #[must_use]
     pub fn with_p_meas_crosstalk_local(mut self, prob: f64) -> Self {
-        self.p_meas_crosstalk_local = Some(Self::validate_probability(prob));
+        if let Some(value) = self.record_result(Self::validate_probability(prob)) {
+            self.p_meas_crosstalk_local = Some(value);
+        }
         self
     }
 
@@ -770,15 +1243,19 @@ impl GeneralNoiseModelBuilder {
     /// This is a shorthand that sets both global and local to the given value
     #[must_use]
     pub fn with_p_meas_crosstalk(mut self, prob: f64) -> Self {
-        self.p_meas_crosstalk_global = Some(Self::validate_probability(prob));
-        self.p_meas_crosstalk_local = Some(Self::validate_probability(prob));
+        if let Some(value) = self.record_result(Self::validate_probability(prob)) {
+            self.p_meas_crosstalk_global = Some(value);
+            self.p_meas_crosstalk_local = Some(value);
+        }
         self
     }
 
     /// Set the transition model for measurement crosstalk
     #[must_use]
     pub fn with_p_meas_crosstalk_model(mut self, model: &BTreeMap<String, f64>) -> Self {
-        self.p_meas_crosstalk_model = Some(CrosstalkWeightedSampler::new(model));
+        if let Some(value) = self.record_result(CrosstalkWeightedSampler::try_new(model)) {
+            self.p_meas_crosstalk_model = Some(value);
+        }
         self
     }
 
@@ -797,10 +1274,12 @@ impl GeneralNoiseModelBuilder {
     /// Additional scaling factor specifically for measurement crosstalk probability.
     #[must_use]
     pub fn with_p_meas_crosstalk_scale(mut self, scale: f64) -> Self {
-        self.p_meas_crosstalk_scale = Some(Self::validate_non_negative(
+        if let Some(value) = self.record_result(Self::validate_non_negative(
             scale,
             "Measurement crosstalk rescale factor",
-        ));
+        )) {
+            self.p_meas_crosstalk_scale = Some(value);
+        }
         self
     }
 
@@ -808,70 +1287,97 @@ impl GeneralNoiseModelBuilder {
     // validation
     // ========================================================================================== //
 
+    /// Return the first recorded setter failure, if any.
+    #[must_use]
+    pub fn setter_error(&self) -> Option<&str> {
+        self.setter_error.as_deref()
+    }
+
+    fn record_result<T>(&mut self, result: Result<T, String>) -> Option<T> {
+        match result {
+            Ok(value) => Some(value),
+            Err(message) => {
+                self.setter_error.get_or_insert(message);
+                None
+            }
+        }
+    }
+
     /// Validate that a value is a valid probability (between 0 and 1)
-    fn validate_probability(prob: f64) -> f64 {
-        assert!(
-            (0.0..=1.0).contains(&prob),
-            "Probability must be between 0 and 1, got {prob}"
-        );
-        prob
+    fn validate_probability(prob: f64) -> Result<f64, String> {
+        if !(0.0..=1.0).contains(&prob) {
+            return Err(format!("Probability must be between 0 and 1, got {prob}"));
+        }
+        Ok(prob)
     }
 
     /// Validate that a value is positive
-    fn validate_positive(value: f64, name: &str) -> f64 {
-        assert!(value > 0.0, "{name} must be positive, got {value}");
-        value
+    fn validate_positive(value: f64, name: &str) -> Result<f64, String> {
+        if value.is_nan() || value <= 0.0 {
+            return Err(format!("{name} must be positive, got {value}"));
+        }
+        Ok(value)
     }
 
     /// Validate that a value is non-negative
-    fn validate_non_negative(value: f64, name: &str) -> f64 {
-        assert!(value >= 0.0, "{name} must be non-negative, got {value}");
-        value
+    fn validate_non_negative(value: f64, name: &str) -> Result<f64, String> {
+        if value.is_nan() || value < 0.0 {
+            return Err(format!("{name} must be non-negative, got {value}"));
+        }
+        Ok(value)
     }
 
     /// Validate that a value is finite and non-negative.
-    fn validate_finite_non_negative(value: f64, name: &str) -> f64 {
-        assert!(
-            value.is_finite() && value >= 0.0,
-            "{name} must be finite and non-negative, got {value}"
-        );
-        value
+    fn validate_finite_non_negative(value: f64, name: &str) -> Result<f64, String> {
+        if !(value.is_finite() && value >= 0.0) {
+            return Err(format!(
+                "{name} must be finite and non-negative, got {value}"
+            ));
+        }
+        Ok(value)
     }
 
     /// Validate an unnormalized sine-family multiplier model.
-    fn validate_sine_model(model: &BTreeMap<String, f64>) {
+    fn validate_sine_model(model: &BTreeMap<String, f64>) -> Result<(), String> {
         for (axis, multiplier) in model {
-            assert!(
-                matches!(axis.as_str(), "X" | "Y" | "Z" | "L"),
-                "p_idle_sin_squared model has invalid key '{axis}'; expected X, Y, Z, or L"
-            );
+            if !matches!(axis.as_str(), "X" | "Y" | "Z" | "L") {
+                return Err(format!(
+                    "p_idle_sin_squared model has invalid key '{axis}'; expected X, Y, Z, or L"
+                ));
+            }
             Self::validate_finite_non_negative(
                 *multiplier,
                 &format!("p_idle_sin_squared multiplier for '{axis}'"),
-            );
+            )?;
         }
+        Ok(())
     }
 
     /// Validate an unnormalized coherent-family multiplier model.
-    fn validate_coherent_model(model: &BTreeMap<String, f64>) {
+    fn validate_coherent_model(model: &BTreeMap<String, f64>) -> Result<(), String> {
         for (axis, multiplier) in model {
-            assert!(
-                matches!(axis.as_str(), "RX" | "RY" | "RZ"),
-                "p_idle_coherent model has invalid key '{axis}'; expected RX, RY, or RZ"
-            );
+            if !matches!(axis.as_str(), "RX" | "RY" | "RZ") {
+                return Err(format!(
+                    "p_idle_coherent model has invalid key '{axis}'; expected RX, RY, or RZ"
+                ));
+            }
             Self::validate_finite_non_negative(
                 *multiplier,
                 &format!("p_idle_coherent multiplier for '{axis}'"),
-            );
+            )?;
         }
+        Ok(())
     }
 
     /// Validate cross-field configuration invariants.
     ///
     /// # Errors
     ///
-    /// Returns a description of the first invalid combination.
-    pub fn validate_configuration(&self) -> Result<(), &'static str> {
+    /// Returns the first recorded setter error, then the first invalid combination.
+    pub fn validate_configuration(&self) -> Result<(), String> {
+        if let Some(message) = self.setter_error() {
+            return Err(message.to_owned());
+        }
         let finite_non_negative = |value: f64| value.is_finite() && value >= 0.0;
         let probability = |value: f64| value.is_finite() && (0.0..=1.0).contains(&value);
         let scale = self.scale.unwrap_or(1.0);
@@ -897,30 +1403,55 @@ impl GeneralNoiseModelBuilder {
         .into_iter()
         .all(finite_non_negative)
         {
-            return Err("general-noise scale factors must be finite and non-negative");
+            return Err("general-noise scale factors must be finite and non-negative".to_string());
         }
 
         let (p_prep, p_meas_0, p_meas_1, p1, p2) = self.resolved_base_probabilities();
         if !probability(p_prep * prep_scale * scale) {
-            return Err("scaled preparation probability must be between zero and one");
+            return Err("scaled preparation probability must be between zero and one".to_string());
         }
         if !probability(p_meas_0 * meas_scale * scale)
             || !probability(p_meas_1 * meas_scale * scale)
         {
-            return Err("scaled measurement probabilities must be between zero and one");
+            return Err(
+                "scaled measurement probabilities must be between zero and one".to_string(),
+            );
         }
         if !probability(p1 * p1_scale * scale) {
-            return Err("scaled one-qubit probability must be between zero and one");
+            return Err("scaled one-qubit probability must be between zero and one".to_string());
         }
         let scaled_p2 = p2 * p2_scale * scale;
         if !probability(scaled_p2) {
-            return Err("scaled two-qubit probability must be between zero and one");
+            return Err("scaled two-qubit probability must be between zero and one".to_string());
         }
+
+        validate_hook_probabilities(
+            [
+                &self.p1_transition_channels_before_gate,
+                &self.p1_transition_channels_after_gate,
+            ],
+            [
+                &self.p1_pauli_leakage_channels_before_gate,
+                &self.p1_pauli_leakage_channels_after_gate,
+            ],
+            [
+                &self.p2_transition_steps_before_gate,
+                &self.p2_transition_steps_after_gate,
+            ],
+            [
+                &self.p2_pauli_leakage_steps_before_gate,
+                &self.p2_pauli_leakage_steps_after_gate,
+            ],
+            p1_scale * scale,
+            p2_scale * scale,
+        )?;
 
         let default = GeneralNoiseModel::default();
         let prep_crosstalk = self.p_prep_crosstalk.unwrap_or(default.p_prep_crosstalk);
         if !probability(prep_crosstalk * prep_crosstalk_scale * prep_scale * scale) {
-            return Err("scaled preparation-crosstalk probability must be between zero and one");
+            return Err(
+                "scaled preparation-crosstalk probability must be between zero and one".to_string(),
+            );
         }
         let meas_crosstalk_global = self
             .p_meas_crosstalk_global
@@ -931,7 +1462,10 @@ impl GeneralNoiseModelBuilder {
         if !probability(meas_crosstalk_global * meas_crosstalk_scale * meas_scale * scale)
             || !probability(meas_crosstalk_local * meas_crosstalk_scale * meas_scale * scale)
         {
-            return Err("scaled measurement-crosstalk probabilities must be between zero and one");
+            return Err(
+                "scaled measurement-crosstalk probabilities must be between zero and one"
+                    .to_string(),
+            );
         }
 
         let (a, b, c, d) = self
@@ -942,48 +1476,67 @@ impl GeneralNoiseModelBuilder {
             .map(|multiplier| scaled_p2 * multiplier)
             .all(probability)
         {
-            return Err("angle-dependent two-qubit probabilities must remain between zero and one");
+            return Err(
+                "angle-dependent two-qubit probabilities must remain between zero and one"
+                    .to_string(),
+            );
         }
         let angle_power = self
             .p2_angle_power
             .unwrap_or_else(|| default.p2_angle_power());
         if !angle_power.is_finite() || angle_power <= 0.0 {
-            return Err("two-qubit angle power must be finite and positive");
+            return Err("two-qubit angle power must be finite and positive".to_string());
         }
 
         let linear_rate = self
             .p_idle_linear_rate
             .unwrap_or(default.p_idle_linear_rate)
-            * idle_scale
-            * scale;
+            * (scale * idle_scale);
         let sine_rate = self
             .p_idle_sin_squared
             .as_ref()
             .map_or(default.p_idle_sin_squared_rate, |(rate, _)| *rate)
-            * idle_scale
-            * scale;
+            * (scale * idle_scale);
         let coherent_rate = self
             .p_idle_coherent
             .as_ref()
             .map_or(default.p_idle_coherent_rate, |(rate, _)| *rate)
-            * idle_scale
-            * scale;
+            * (scale * idle_scale);
         if ![linear_rate, sine_rate, coherent_rate]
             .into_iter()
             .all(finite_non_negative)
         {
-            return Err("scaled idle rates must be finite and non-negative");
+            return Err("scaled idle rates must be finite and non-negative".to_string());
         }
+        let duration = self.idle_after_2q.unwrap_or(default.idle_after_2q);
+        let coherent_model = self
+            .p_idle_coherent
+            .as_ref()
+            .map_or(&default.p_idle_coherent_model, |(_, model)| model);
+        let sine_model = self
+            .p_idle_sin_squared
+            .as_ref()
+            .map_or(&default.p_idle_sin_squared_model, |(_, model)| model);
+        GeneralNoiseModel::validate_idle_products(
+            duration,
+            "idle_after_2q",
+            linear_rate,
+            sine_rate,
+            sine_model,
+            coherent_rate,
+            coherent_model,
+        )?;
         Ok(())
     }
 
     /// Validate that a duration is finite and non-negative
-    fn validate_duration(duration: f64) -> f64 {
-        assert!(
-            duration.is_finite() && duration >= 0.0,
-            "Duration must be finite and non-negative, got {duration}"
-        );
-        duration
+    fn validate_duration(duration: f64) -> Result<f64, String> {
+        if !(duration.is_finite() && duration >= 0.0) {
+            return Err(format!(
+                "Duration must be finite and non-negative, got {duration}"
+            ));
+        }
+        Ok(duration)
     }
 
     // ========================================================================================== //
@@ -1004,14 +1557,15 @@ impl GeneralNoiseModelBuilder {
     ///   two-qubit noise must be unset.
     ///
     /// A configured seed is ignored (it selects a random stream, not
-    /// physics). This exists so other simulation stacks can translate the
-    /// common configuration without re-deriving probability conventions.
+    /// physics). Returns `None` if a setter error is recorded. This exists so
+    /// other simulation stacks can translate the common configuration without
+    /// re-deriving probability conventions.
     #[must_use]
     pub fn simple_probabilities(&self) -> Option<(f64, f64, f64, f64, f64)> {
         let zero_or_unset = |v: Option<f64>| v.is_none() || v == Some(0.0);
         let emission_off =
             zero_or_unset(self.p1_emission_ratio) && zero_or_unset(self.p2_emission_ratio);
-        if self.is_plain_pauli_except_angle_and_emission()
+        if self.is_plain_pauli_except_angle_and_emission(false)
             && self.resolved_angle_scaling().is_none()
             && emission_off
         {
@@ -1019,6 +1573,20 @@ impl GeneralNoiseModelBuilder {
         } else {
             None
         }
+    }
+
+    // Frame events execute as unnoised physical commands. Hooks may coexist
+    // with them: a FLIP on a hook-leaked qubit only changes the simulator's
+    // placeholder state, which no readout in this profile can observe (MZ reads
+    // 1, MeasureLeaked reads 2, and every exit from leakage resets the qubit).
+    // Other callers of simple_probabilities must still reject hooks they
+    // cannot translate.
+    // Returns false if a setter error is recorded.
+    pub(crate) fn runtime_frame_supports_physical_events(&self) -> bool {
+        self.is_plain_pauli_except_angle_and_emission(true)
+            && self.resolved_angle_scaling().is_none()
+            && self.p1_emission_ratio.is_none_or(|p| p == 0.0)
+            && self.p2_emission_ratio.is_none_or(|p| p == 0.0)
     }
 
     /// Like [`Self::simple_probabilities`], but ALSO permits angle-dependent
@@ -1043,10 +1611,10 @@ impl GeneralNoiseModelBuilder {
     /// All the OTHER non-angle feature requirements of
     /// [`Self::simple_probabilities`] still apply (leakage, idle, crosstalk,
     /// scales, custom samplers including custom emission distributions, and
-    /// noiseless gates must be off).
+    /// noiseless gates must be off). Returns `None` if a setter error is recorded.
     #[must_use]
     pub fn pauli_with_angle_scaling(&self) -> Option<PauliWithAngleScaling> {
-        if self.is_plain_pauli_except_angle_and_emission() {
+        if self.is_plain_pauli_except_angle_and_emission(false) {
             let (p_prep, p_meas_0, p_meas_1, p1, p2) = self.resolved_base_probabilities();
             let (p1_emission, p2_emission) = self.resolved_emission_ratios();
             Some((
@@ -1071,7 +1639,10 @@ impl GeneralNoiseModelBuilder {
     /// `pauli_with_angle_scaling` (which extracts them). The emission DISTRIBUTION
     /// must still be the default uniform model (`p1/p2_emission_model` unset) --
     /// custom emission samplers are NOT in this subset.
-    fn is_plain_pauli_except_angle_and_emission(&self) -> bool {
+    fn is_plain_pauli_except_angle_and_emission(&self, allow_hooks: bool) -> bool {
+        if self.setter_error().is_some() {
+            return false;
+        }
         let zero_or_unset = |v: Option<f64>| v.is_none() || v == Some(0.0);
         let one_or_unset = |v: Option<f64>| v.is_none() || v == Some(1.0);
 
@@ -1096,6 +1667,15 @@ impl GeneralNoiseModelBuilder {
             && self.p2_pauli_model.is_none()
             && self.p_meas_crosstalk_model.is_none();
 
+        let hooks_off = self.p1_pauli_leakage_channels_before_gate.is_empty()
+            && self.p1_pauli_leakage_channels_after_gate.is_empty()
+            && self.p1_transition_channels_before_gate.is_empty()
+            && self.p1_transition_channels_after_gate.is_empty()
+            && self.p2_pauli_leakage_steps_before_gate.is_empty()
+            && self.p2_pauli_leakage_steps_after_gate.is_empty()
+            && self.p2_transition_steps_before_gate.is_empty()
+            && self.p2_transition_steps_after_gate.is_empty();
+
         let scales_neutral = one_or_unset(self.scale)
             && one_or_unset(self.idle_scale)
             && one_or_unset(self.prep_scale)
@@ -1113,7 +1693,11 @@ impl GeneralNoiseModelBuilder {
 
         let gates_default = self.noiseless_gates.as_ref().is_none_or(BTreeSet::is_empty);
 
-        optional_features_off && custom_models_off && scales_neutral && gates_default
+        optional_features_off
+            && custom_models_off
+            && (allow_hooks || hooks_off)
+            && scales_neutral
+            && gates_default
     }
 
     /// Resolve the base Pauli probabilities `(p_prep, p_meas_0, p_meas_1, p1,
@@ -1176,7 +1760,35 @@ impl GeneralNoiseModelBuilder {
     /// This method should be called exactly once after setting all parameters
     /// and before using the noise model for simulation. Calling it multiple times will
     /// compound the scaling factors incorrectly.
+    ///
+    /// # Panics
+    /// Panics if a setter error is recorded, or if the model's scaled hook probabilities
+    /// are not finite or lie outside `[0, 1]`.
     pub fn scale_parameters(&mut self, model: &mut GeneralNoiseModel) {
+        if let Some(message) = self.setter_error() {
+            panic!("{message}");
+        }
+        validate_hook_probabilities(
+            [
+                &model.p1_transition_channels_before_gate,
+                &model.p1_transition_channels_after_gate,
+            ],
+            [
+                &model.p1_pauli_leakage_channels_before_gate,
+                &model.p1_pauli_leakage_channels_after_gate,
+            ],
+            [
+                &model.p2_transition_steps_before_gate,
+                &model.p2_transition_steps_after_gate,
+            ],
+            [
+                &model.p2_pauli_leakage_steps_before_gate,
+                &model.p2_pauli_leakage_steps_after_gate,
+            ],
+            self.p1_scale.unwrap_or(1.0) * self.scale.unwrap_or(1.0),
+            self.p2_scale.unwrap_or(1.0) * self.scale.unwrap_or(1.0),
+        )
+        .expect("invalid scaled gate-hook probabilities");
         // Note, leakage_scale is not included here as it is used as an active parameter in the
         // noise model
         let scale = self.scale.unwrap_or(1.0);
@@ -1191,9 +1803,33 @@ impl GeneralNoiseModelBuilder {
 
         // Scale single-qubit gate error probability
         model.p1 *= p1_scale * scale;
+        for channel in &mut model.p1_transition_channels_before_gate {
+            channel.scale_probability(p1_scale * scale);
+        }
+        for channel in &mut model.p1_transition_channels_after_gate {
+            channel.scale_probability(p1_scale * scale);
+        }
+        for channel in &mut model.p1_pauli_leakage_channels_before_gate {
+            channel.scale_probability(p1_scale * scale);
+        }
+        for channel in &mut model.p1_pauli_leakage_channels_after_gate {
+            channel.scale_probability(p1_scale * scale);
+        }
 
         // Scale two-qubit gate error probability
         model.p2 *= p2_scale * scale;
+        for step in &mut model.p2_transition_steps_before_gate {
+            step.scale_probability(p2_scale * scale);
+        }
+        for step in &mut model.p2_transition_steps_after_gate {
+            step.scale_probability(p2_scale * scale);
+        }
+        for step in &mut model.p2_pauli_leakage_steps_before_gate {
+            step.scale_probability(p2_scale * scale);
+        }
+        for step in &mut model.p2_pauli_leakage_steps_after_gate {
+            step.scale_probability(p2_scale * scale);
+        }
 
         model.p_meas_0 *= meas_scale * scale;
         model.p_meas_1 *= meas_scale * scale;
@@ -1229,14 +1865,15 @@ impl GeneralNoiseModelBuilder {
 }
 
 impl crate::noise::IntoNoiseModel for GeneralNoiseModelBuilder {
-    fn into_noise_model(self) -> Box<dyn crate::noise::NoiseModel> {
-        Box::new(self.build())
+    fn into_noise_model(self) -> Result<Box<dyn crate::noise::NoiseModel>, PecosError> {
+        Ok(Box::new(self.try_build()?))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::noise::TwoQubitStateTransitionChannel;
 
     fn assert_float_eq(actual: f64, expected: f64) {
         assert!(
@@ -1521,20 +2158,121 @@ mod tests {
     }
 
     #[test]
+    fn simple_subsets_reject_transition_channel() {
+        let channel = StateTransitionChannel::leak_recovery(0.9, 0.5).unwrap();
+        let builder =
+            GeneralNoiseModelBuilder::new().add_p2_transition_channel_after_gate(&channel);
+
+        assert!(builder.simple_probabilities().is_none());
+        assert!(builder.pauli_with_angle_scaling().is_none());
+    }
+
+    #[test]
+    fn p2_transition_channel_methods_accept_joint_channels_directly() {
+        let transitions = BTreeMap::from([(
+            "LL".to_string(),
+            BTreeMap::from([("00".to_string(), 0.9), ("LL".to_string(), 0.1)]),
+        )]);
+        let channel = TwoQubitStateTransitionChannel::new(1.0, &transitions).unwrap();
+        let model = GeneralNoiseModelBuilder::new()
+            .add_p2_transition_channel_before_gate(&channel)
+            .add_p2_transition_channel_after_gate(&channel)
+            .build();
+
+        assert_eq!(model.p2_transition_steps_before_gate.len(), 1);
+        assert_eq!(model.p2_transition_steps_after_gate.len(), 1);
+    }
+
+    #[test]
+    fn transition_application_probability_uses_gate_and_global_scales() {
+        let channel = StateTransitionChannel::leak_recovery(0.2, 0.5).unwrap();
+        let model = GeneralNoiseModelBuilder::new()
+            .add_p1_transition_channel_after_gate(&channel)
+            .add_p2_transition_channel_after_gate(&channel)
+            .with_scale(2.0)
+            .with_p1_scale(2.0)
+            .with_p2_scale(0.5)
+            .build();
+
+        assert!(
+            (model
+                .p1_transition_channels_after_gate
+                .first()
+                .unwrap()
+                .probability()
+                - 0.8)
+                .abs()
+                < f64::EPSILON
+        );
+        match model.p2_transition_steps_after_gate.first().unwrap() {
+            P2TransitionWeightedStep::Independent { first, second } => {
+                assert!((first.probability() - 0.2).abs() < f64::EPSILON);
+                assert!((second.probability() - 0.2).abs() < f64::EPSILON);
+            }
+            P2TransitionWeightedStep::Joint { .. } => panic!("expected independent step"),
+        }
+    }
+
+    #[test]
+    fn pauli_leakage_application_probability_uses_gate_and_global_scales() {
+        let channel =
+            PauliLeakageChannel::new(0.2, &BTreeMap::from([("L".to_string(), 1.0)])).unwrap();
+        let model = GeneralNoiseModelBuilder::new()
+            .add_p1_pauli_leakage_channel_after_gate(&channel)
+            .add_p2_pauli_leakage_channel_after_gate(&channel)
+            .with_scale(2.0)
+            .with_p1_scale(2.0)
+            .with_p2_scale(0.5)
+            .build();
+
+        assert!(
+            (model
+                .p1_pauli_leakage_channels_after_gate
+                .first()
+                .unwrap()
+                .probability()
+                - 0.8)
+                .abs()
+                < f64::EPSILON
+        );
+        match model.p2_pauli_leakage_steps_after_gate.first().unwrap() {
+            P2PauliLeakageWeightedStep::Independent { first, second } => {
+                assert!((first.probability() - 0.2).abs() < f64::EPSILON);
+                assert!((second.probability() - 0.2).abs() < f64::EPSILON);
+            }
+            P2PauliLeakageWeightedStep::Joint(_) => panic!("expected independent step"),
+        }
+    }
+
+    #[test]
+    fn simple_subsets_reject_pauli_leakage_channels() {
+        let channel =
+            PauliLeakageChannel::new(0.2, &BTreeMap::from([("L".to_string(), 1.0)])).unwrap();
+        let builder =
+            GeneralNoiseModelBuilder::new().add_p2_pauli_leakage_channel_after_gate(&channel);
+
+        assert!(builder.simple_probabilities().is_none());
+        assert!(builder.pauli_with_angle_scaling().is_none());
+    }
+
+    #[test]
     fn cross_field_validation_rejects_invalid_effective_probabilities() {
         assert_eq!(
             GeneralNoiseModelBuilder::new()
                 .with_p1(0.8)
                 .with_scale(2.0)
                 .validate_configuration(),
-            Err("scaled one-qubit probability must be between zero and one")
+            Err("scaled one-qubit probability must be between zero and one".to_string())
         );
         assert_eq!(
             GeneralNoiseModelBuilder::new()
                 .with_p2(0.8)
                 .with_p2_angle_params(1.0, 1.0, 0.0, 1.0)
                 .validate_configuration(),
-            Err("angle-dependent two-qubit probabilities must remain between zero and one")
+            Err(
+                "angle-dependent two-qubit probabilities must remain between zero and one"
+                    .to_string()
+            )
         );
         assert!(
             GeneralNoiseModelBuilder::new()
@@ -1560,5 +2298,414 @@ mod tests {
         assert_float_eq(model.p_idle_linear_rate, 0.1);
         assert_float_eq(model.p_idle_sin_squared_rate, 0.15);
         assert_float_eq(model.p_idle_coherent_rate, 0.2);
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid scaled gate-hook probabilities")]
+    fn direct_scaling_checks_the_supplied_models_hooks() {
+        let channel = StateTransitionChannel::leak_recovery(0.8, 1.0).unwrap();
+        let mut model = GeneralNoiseModelBuilder::new()
+            .add_p1_transition_channel_before_gate(&channel)
+            .build();
+        GeneralNoiseModelBuilder::new()
+            .with_scale(2.0)
+            .scale_parameters(&mut model);
+    }
+
+    #[test]
+    #[should_panic(expected = "Probability must be between 0 and 1, got 1.5")]
+    fn scale_parameters_rejects_a_recorded_setter_error() {
+        GeneralNoiseModelBuilder::new()
+            .with_p1(1.5)
+            .scale_parameters(&mut GeneralNoiseModel::default());
+    }
+
+    fn assert_setter_error(builder: GeneralNoiseModelBuilder, expected: &str) {
+        assert_eq!(builder.setter_error(), Some(expected));
+        assert_eq!(builder.validate_configuration(), Err(expected.to_string()));
+        assert!(builder.simple_probabilities().is_none());
+        assert!(builder.pauli_with_angle_scaling().is_none());
+        assert!(!builder.runtime_frame_supports_physical_events());
+        let error = builder.try_build().expect_err("invalid builder must fail");
+        assert!(matches!(error, PecosError::Input(ref message) if message == expected));
+    }
+
+    #[test]
+    fn all_probability_setters_record_errors() {
+        for value in [-0.1, 1.1, f64::NAN, f64::INFINITY] {
+            let expected = format!("Probability must be between 0 and 1, got {value}");
+            for setter in [
+                GeneralNoiseModelBuilder::with_leakage_scale,
+                GeneralNoiseModelBuilder::with_seepage_prob,
+                GeneralNoiseModelBuilder::with_p_prep,
+                GeneralNoiseModelBuilder::with_prep_leak_ratio,
+                GeneralNoiseModelBuilder::with_p_prep_crosstalk,
+                GeneralNoiseModelBuilder::with_p1,
+                GeneralNoiseModelBuilder::with_p1_emission_ratio,
+                GeneralNoiseModelBuilder::with_p1_seepage_prob,
+                GeneralNoiseModelBuilder::with_p2,
+                GeneralNoiseModelBuilder::with_p2_emission_ratio,
+                GeneralNoiseModelBuilder::with_p2_seepage_prob,
+                GeneralNoiseModelBuilder::with_p_meas_0,
+                GeneralNoiseModelBuilder::with_p_meas_1,
+                GeneralNoiseModelBuilder::with_p_meas,
+                GeneralNoiseModelBuilder::with_p_meas_crosstalk_global,
+                GeneralNoiseModelBuilder::with_p_meas_crosstalk_local,
+                GeneralNoiseModelBuilder::with_p_meas_crosstalk,
+            ] {
+                assert_setter_error(setter(GeneralNoiseModelBuilder::new(), value), &expected);
+            }
+        }
+        assert_setter_error(
+            GeneralNoiseModelBuilder::new().with_average_p1(1.0),
+            "Probability must be between 0 and 1, got 1.5",
+        );
+        assert_setter_error(
+            GeneralNoiseModelBuilder::new().with_average_p2(1.0),
+            "Probability must be between 0 and 1, got 1.25",
+        );
+    }
+
+    #[test]
+    fn all_scalar_validation_helpers_record_errors() {
+        for value in [-1.0, f64::NAN] {
+            for (builder, message) in [
+                (
+                    GeneralNoiseModelBuilder::new().with_p_prep_crosstalk_scale(value),
+                    format!(
+                        "Preparation crosstalk rescale factor must be non-negative, got {value}"
+                    ),
+                ),
+                (
+                    GeneralNoiseModelBuilder::new().with_p_meas_crosstalk_scale(value),
+                    format!(
+                        "Measurement crosstalk rescale factor must be non-negative, got {value}"
+                    ),
+                ),
+                (
+                    GeneralNoiseModelBuilder::new().with_p2_angle_power(value),
+                    format!("RZZ power parameter must be positive, got {value}"),
+                ),
+                (
+                    GeneralNoiseModelBuilder::new()
+                        .with_p_idle_linear(value, &BTreeMap::from([("X".to_string(), 1.0)])),
+                    format!("linear idling rate must be non-negative, got {value}"),
+                ),
+            ] {
+                assert_setter_error(builder, &message);
+            }
+        }
+        for value in [-1.0, f64::NAN, f64::INFINITY] {
+            assert_setter_error(
+                GeneralNoiseModelBuilder::new().with_idle_after_2q(value),
+                &format!("Duration must be finite and non-negative, got {value}"),
+            );
+            assert_setter_error(
+                GeneralNoiseModelBuilder::new().with_p_idle_sin_squared(value, &BTreeMap::new()),
+                &format!("sine-squared idling rate must be finite and non-negative, got {value}"),
+            );
+            assert_setter_error(
+                GeneralNoiseModelBuilder::new().with_p_idle_coherent(value, &BTreeMap::new()),
+                &format!("coherent idling rate must be finite and non-negative, got {value}"),
+            );
+        }
+        for value in [-0.1, 0.3, f64::NAN, f64::INFINITY] {
+            assert_setter_error(
+                GeneralNoiseModelBuilder::new()
+                    .with_average_p_prep_crosstalk(value)
+                    .with_prep_scale(0.01),
+                &format!(
+                    "average preparation crosstalk probability must be between 0 and 5/18, got {value}"
+                ),
+            );
+        }
+        for value in [0.0, 5.0 / 18.0] {
+            assert!(
+                GeneralNoiseModelBuilder::new()
+                    .with_average_p_prep_crosstalk(value)
+                    .try_build()
+                    .is_ok()
+            );
+        }
+    }
+
+    #[test]
+    fn sampler_setters_record_errors_without_replacing_fields() {
+        let valid_one = BTreeMap::from([("X".to_string(), 1.0)]);
+        let valid_two = BTreeMap::from([("XI".to_string(), 1.0)]);
+        let valid_cross = BTreeMap::from([("0->1".to_string(), 1.0), ("1->0".to_string(), 1.0)]);
+        let initial = GeneralNoiseModelBuilder::new()
+            .with_p1_pauli_model(&valid_one)
+            .with_p1_emission_model(&valid_one)
+            .with_p2_pauli_model(&valid_two)
+            .with_p2_emission_model(&valid_two)
+            .with_p_meas_crosstalk_model(&valid_cross);
+        for invalid in [
+            BTreeMap::new(),
+            BTreeMap::from([("bad".to_string(), 1.0)]),
+            BTreeMap::from([("X".to_string(), -1.0)]),
+            BTreeMap::from([("X".to_string(), 2.0)]),
+        ] {
+            let builder = initial
+                .clone()
+                .with_p1_pauli_model(&invalid)
+                .with_p1_emission_model(&invalid)
+                .with_p2_pauli_model(&invalid)
+                .with_p2_emission_model(&invalid)
+                .with_p_meas_crosstalk_model(&invalid);
+            assert!(builder.setter_error().is_some());
+            assert_eq!(
+                builder.p1_pauli_model.as_ref().unwrap().get_weighted_map(),
+                &valid_one
+            );
+            assert_eq!(
+                builder
+                    .p1_emission_model
+                    .as_ref()
+                    .unwrap()
+                    .get_weighted_map(),
+                &valid_one
+            );
+            assert_eq!(
+                builder.p2_pauli_model.as_ref().unwrap().get_weighted_map(),
+                &valid_two
+            );
+            assert_eq!(
+                builder
+                    .p2_emission_model
+                    .as_ref()
+                    .unwrap()
+                    .get_weighted_map(),
+                &valid_two
+            );
+            assert_eq!(
+                builder
+                    .p_meas_crosstalk_model
+                    .as_ref()
+                    .unwrap()
+                    .get_weighted_map(0),
+                &BTreeMap::from([("0->1".to_string(), 1.0)])
+            );
+            assert_setter_error(builder.clone(), builder.setter_error().unwrap());
+        }
+    }
+
+    #[test]
+    fn multi_field_setters_are_atomic_and_first_error_survives() {
+        let initial = GeneralNoiseModelBuilder::new()
+            .with_p1_seepage_prob(0.1)
+            .with_p2_seepage_prob(0.2)
+            .with_p_meas_0(0.3)
+            .with_p_meas_1(0.4)
+            .with_p_meas_crosstalk_global(0.5)
+            .with_p_meas_crosstalk_local(0.6);
+        let rejected = initial
+            .with_seepage_prob(2.0)
+            .with_p_meas(-1.0)
+            .with_p_meas_crosstalk(3.0);
+        assert_eq!(
+            (rejected.p1_seepage_prob, rejected.p2_seepage_prob),
+            (Some(0.1), Some(0.2))
+        );
+        assert_eq!(
+            (rejected.p_meas_0, rejected.p_meas_1),
+            (Some(0.3), Some(0.4))
+        );
+        assert_eq!(
+            (
+                rejected.p_meas_crosstalk_global,
+                rejected.p_meas_crosstalk_local
+            ),
+            (Some(0.5), Some(0.6))
+        );
+        assert_setter_error(
+            rejected.with_p1(0.2).auto(),
+            "Probability must be between 0 and 1, got 2",
+        );
+
+        let valid = BTreeMap::from([("X".to_string(), 1.0)]);
+        let invalid = BTreeMap::from([("bad".to_string(), 1.0)]);
+        let initial = GeneralNoiseModelBuilder::new()
+            .with_p_idle_linear(0.1, &valid)
+            .with_p_idle_sin_squared(0.2, &valid)
+            .with_p_idle_coherent(0.3, &BTreeMap::from([("RX".to_string(), 1.0)]));
+        for rejected in [
+            initial.clone().with_p_idle_linear(0.9, &invalid),
+            initial
+                .clone()
+                .with_p_idle_linear(-1.0, &BTreeMap::from([("Z".to_string(), 1.0)])),
+        ] {
+            assert_eq!(rejected.p_idle_linear_rate, initial.p_idle_linear_rate);
+            assert_eq!(
+                rejected
+                    .p_idle_linear_model
+                    .as_ref()
+                    .unwrap()
+                    .get_weighted_map(),
+                &valid
+            );
+            assert!(rejected.setter_error().is_some());
+        }
+        for rejected in [
+            initial.clone().with_p_idle_sin_squared(0.9, &invalid),
+            initial.clone().with_p_idle_sin_squared(-1.0, &valid),
+        ] {
+            assert_eq!(rejected.p_idle_sin_squared, initial.p_idle_sin_squared);
+            assert!(rejected.setter_error().is_some());
+        }
+        for rejected in [
+            initial.clone().with_p_idle_coherent(0.9, &invalid),
+            initial.clone().with_p_idle_coherent(-1.0, &BTreeMap::new()),
+        ] {
+            assert_eq!(rejected.p_idle_coherent, initial.p_idle_coherent);
+            assert!(rejected.setter_error().is_some());
+        }
+        let rejected = GeneralNoiseModelBuilder::new().with_p1(0.2).with_p1(1.5);
+        assert_eq!(rejected.p1, Some(0.2));
+        assert_setter_error(rejected, "Probability must be between 0 and 1, got 1.5");
+    }
+
+    #[test]
+    fn setter_reports_probability_message() {
+        let builder = GeneralNoiseModelBuilder::new().with_p1(1.5);
+        assert_setter_error(builder, "Probability must be between 0 and 1, got 1.5");
+    }
+
+    #[test]
+    #[should_panic(expected = "Probability must be between 0 and 1, got 1.5")]
+    fn build_panics_with_raw_probability_message() {
+        let builder = GeneralNoiseModelBuilder::new().with_p1(1.5);
+        let _ = builder.build();
+    }
+
+    #[test]
+    fn setter_reports_scale_message() {
+        let builder = GeneralNoiseModelBuilder::new().with_p_prep_crosstalk_scale(-1.0);
+        assert_setter_error(
+            builder,
+            "Preparation crosstalk rescale factor must be non-negative, got -1",
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Preparation crosstalk rescale factor must be non-negative, got -1")]
+    fn build_panics_with_raw_scale_message() {
+        let builder = GeneralNoiseModelBuilder::new().with_p_prep_crosstalk_scale(-1.0);
+        let _ = builder.build();
+    }
+
+    #[test]
+    fn setter_reports_sampler_key_message() {
+        let builder = GeneralNoiseModelBuilder::new()
+            .with_p1_pauli_model(&BTreeMap::from([("bad".to_string(), 1.0)]));
+        assert_setter_error(
+            builder,
+            "SingleQubitWeightedSampler: invalid key 'bad' - must be one of X, Y, Z, or L",
+        );
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "SingleQubitWeightedSampler: invalid key 'bad' - must be one of X, Y, Z, or L"
+    )]
+    fn build_panics_with_raw_sampler_key_message() {
+        let builder = GeneralNoiseModelBuilder::new()
+            .with_p1_pauli_model(&BTreeMap::from([("bad".to_string(), 1.0)]));
+        let _ = builder.build();
+    }
+
+    #[test]
+    fn setter_reports_sampler_weights_message() {
+        let builder = GeneralNoiseModelBuilder::new()
+            .with_p2_pauli_model(&BTreeMap::from([("XI".to_string(), 2.0)]));
+        assert_setter_error(
+            builder,
+            "WeightedSampler: total weight 2 deviates from 1.0 by more than tolerance 0.00001",
+        );
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "WeightedSampler: total weight 2 deviates from 1.0 by more than tolerance 0.00001"
+    )]
+    fn build_panics_with_raw_sampler_weights_message() {
+        let builder = GeneralNoiseModelBuilder::new()
+            .with_p2_pauli_model(&BTreeMap::from([("XI".to_string(), 2.0)]));
+        let _ = builder.build();
+    }
+
+    #[test]
+    fn setter_reports_sine_message() {
+        let builder = GeneralNoiseModelBuilder::new()
+            .with_p_idle_sin_squared(0.1, &BTreeMap::from([("bad".to_string(), 1.0)]));
+        assert_setter_error(
+            builder,
+            "p_idle_sin_squared model has invalid key 'bad'; expected X, Y, Z, or L",
+        );
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "p_idle_sin_squared model has invalid key 'bad'; expected X, Y, Z, or L"
+    )]
+    fn build_panics_with_raw_sine_message() {
+        let builder = GeneralNoiseModelBuilder::new()
+            .with_p_idle_sin_squared(0.1, &BTreeMap::from([("bad".to_string(), 1.0)]));
+        let _ = builder.build();
+    }
+
+    #[test]
+    fn setter_reports_coherent_message() {
+        let builder = GeneralNoiseModelBuilder::new()
+            .with_p_idle_coherent(0.1, &BTreeMap::from([("bad".to_string(), 1.0)]));
+        assert_setter_error(
+            builder,
+            "p_idle_coherent model has invalid key 'bad'; expected RX, RY, or RZ",
+        );
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "p_idle_coherent model has invalid key 'bad'; expected RX, RY, or RZ"
+    )]
+    fn build_panics_with_raw_coherent_message() {
+        let builder = GeneralNoiseModelBuilder::new()
+            .with_p_idle_coherent(0.1, &BTreeMap::from([("bad".to_string(), 1.0)]));
+        let _ = builder.build();
+    }
+
+    #[test]
+    fn setter_reports_duration_message() {
+        let builder = GeneralNoiseModelBuilder::new().with_idle_after_2q(-1.0);
+        assert_setter_error(builder, "Duration must be finite and non-negative, got -1");
+    }
+
+    #[test]
+    #[should_panic(expected = "Duration must be finite and non-negative, got -1")]
+    fn build_panics_with_raw_duration_message() {
+        let builder = GeneralNoiseModelBuilder::new().with_idle_after_2q(-1.0);
+        let _ = builder.build();
+    }
+
+    #[test]
+    fn setter_reports_average_crosstalk_message() {
+        let builder = GeneralNoiseModelBuilder::new()
+            .with_average_p_prep_crosstalk(0.3)
+            .with_prep_scale(0.01);
+        assert_setter_error(
+            builder,
+            "average preparation crosstalk probability must be between 0 and 5/18, got 0.3",
+        );
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "average preparation crosstalk probability must be between 0 and 5/18, got 0.3"
+    )]
+    fn build_panics_with_raw_average_crosstalk_message() {
+        let builder = GeneralNoiseModelBuilder::new()
+            .with_average_p_prep_crosstalk(0.3)
+            .with_prep_scale(0.01);
+        let _ = builder.build();
     }
 }

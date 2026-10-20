@@ -148,7 +148,7 @@ sha2 = "0.11"
 tar = "0.4"
 xz2 = "0.1"
 bzip2 = "0.6"
-zip = { version = "8", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 zstd = "0.13"
 
 # --- Logging ---
@@ -231,6 +231,7 @@ pecos-relay-bp = { version = "0.2.0-dev.0", path = "crates/pecos-relay-bp" }
 pecos-results = { version = "0.2.0-dev.0", path = "crates/pecos-results" }
 pecos-rslib = { version = "0.2.0-dev.0", path = "python/pecos-rslib" }
 pecos-rslib-llvm = { version = "0.2.0-dev.0", path = "python/pecos-rslib-llvm" }
+pecos-selene-general-noise-adapter = { version = "0.2.0-dev.0", path = "crates/pecos-selene-general-noise-adapter" }
 pecos-simulators = { version = "0.2.0-dev.0", path = "crates/pecos-simulators" }
 pecos-synth = { version = "0.2.0-dev.0", path = "crates/pecos-synth" }
 pecos-tesseract = { version = "0.2.0-dev.0", path = "crates/pecos-tesseract" }

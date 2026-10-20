@@ -463,7 +463,6 @@ mod tests {
         dag.pz(&[0]);
         dag.mz(&[0]);
         dag.add_annotation(pecos_quantum::PauliAnnotation {
-            pauli: pecos_core::PauliString::zs(&[0usize]),
             kind: pecos_quantum::AnnotationKind::Observable {
                 measurement_ids: vec![pecos_core::MeasId::from_raw(7)],
             },

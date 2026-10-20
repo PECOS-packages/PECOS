@@ -417,29 +417,105 @@ fn build_memory_circuit(
     Ok(circuit)
 }
 
-fn validated_block_size(l: usize, m: usize) -> Result<usize, BivariateBicycleError> {
-    if l == 0 || m == 0 {
-        return Err(BivariateBicycleError::ZeroDimension { l, m });
-    }
-    l.checked_mul(m)
-        .ok_or(BivariateBicycleError::SizeOverflow { l, m })
+/// Shared torus validation failures, independent of polynomial weight or code family.
+pub(crate) enum TorusValidationError {
+    ZeroDimension {
+        l: usize,
+        m: usize,
+    },
+    SizeOverflow {
+        l: usize,
+        m: usize,
+    },
+    WrongTermCount {
+        polynomial: &'static str,
+        actual: usize,
+    },
+    ExponentOutOfRange {
+        polynomial: &'static str,
+        term_index: usize,
+        x_power: usize,
+        y_power: usize,
+        l: usize,
+        m: usize,
+    },
+    DuplicateMonomial {
+        polynomial: &'static str,
+        first: usize,
+        second: usize,
+    },
+    NonPermutationMonomial {
+        polynomial: &'static str,
+        term_index: usize,
+    },
 }
 
-fn validate_terms(
+impl From<TorusValidationError> for BivariateBicycleError {
+    fn from(error: TorusValidationError) -> Self {
+        match error {
+            TorusValidationError::ZeroDimension { l, m } => Self::ZeroDimension { l, m },
+            TorusValidationError::SizeOverflow { l, m } => Self::SizeOverflow { l, m },
+            TorusValidationError::WrongTermCount { polynomial, actual } => {
+                Self::WrongTermCount { polynomial, actual }
+            }
+            TorusValidationError::ExponentOutOfRange {
+                polynomial,
+                term_index,
+                x_power,
+                y_power,
+                l,
+                m,
+            } => Self::ExponentOutOfRange {
+                polynomial,
+                term_index,
+                x_power,
+                y_power,
+                l,
+                m,
+            },
+            TorusValidationError::DuplicateMonomial {
+                polynomial,
+                first,
+                second,
+            } => Self::DuplicateMonomial {
+                polynomial,
+                first,
+                second,
+            },
+            TorusValidationError::NonPermutationMonomial {
+                polynomial,
+                term_index,
+            } => Self::NonPermutationMonomial {
+                polynomial,
+                term_index,
+            },
+        }
+    }
+}
+
+pub(crate) fn validated_block_size(l: usize, m: usize) -> Result<usize, TorusValidationError> {
+    if l == 0 || m == 0 {
+        return Err(TorusValidationError::ZeroDimension { l, m });
+    }
+    l.checked_mul(m)
+        .ok_or(TorusValidationError::SizeOverflow { l, m })
+}
+
+pub(crate) fn validate_terms<const K: usize>(
     polynomial: &'static str,
     l: usize,
     m: usize,
     terms: &[BbMonomial],
-) -> Result<[BbMonomial; 3], BivariateBicycleError> {
-    if terms.len() != 3 {
-        return Err(BivariateBicycleError::WrongTermCount {
+) -> Result<[BbMonomial; K], TorusValidationError> {
+    if terms.len() != K {
+        return Err(TorusValidationError::WrongTermCount {
             polynomial,
             actual: terms.len(),
         });
     }
     for (term_index, &(x_power, y_power)) in terms.iter().enumerate() {
         if x_power >= l || y_power >= m {
-            return Err(BivariateBicycleError::ExponentOutOfRange {
+            return Err(TorusValidationError::ExponentOutOfRange {
                 polynomial,
                 term_index,
                 x_power,
@@ -452,7 +528,7 @@ fn validate_terms(
     for first in 0..terms.len() {
         for second in first + 1..terms.len() {
             if terms[first] == terms[second] {
-                return Err(BivariateBicycleError::DuplicateMonomial {
+                return Err(TorusValidationError::DuplicateMonomial {
                     polynomial,
                     first,
                     second,
@@ -460,19 +536,19 @@ fn validate_terms(
             }
         }
     }
-    Ok([terms[0], terms[1], terms[2]])
+    Ok(std::array::from_fn(|index| terms[index]))
 }
 
-fn monomial_matrices(
+pub(crate) fn monomial_matrices<const K: usize>(
     polynomial: &'static str,
     l: usize,
     m: usize,
-    terms: &[BbMonomial; 3],
-) -> Result<[F2Matrix; 3], BivariateBicycleError> {
+    terms: &[BbMonomial; K],
+) -> Result<[F2Matrix; K], TorusValidationError> {
     let matrices = terms.map(|term| monomial_matrix(l, m, term));
     for (term_index, matrix) in matrices.iter().enumerate() {
         if !is_permutation_matrix(matrix) {
-            return Err(BivariateBicycleError::NonPermutationMonomial {
+            return Err(TorusValidationError::NonPermutationMonomial {
                 polynomial,
                 term_index,
             });
@@ -507,7 +583,7 @@ fn is_permutation_matrix(matrix: &F2Matrix) -> bool {
         })
 }
 
-fn sum_matrices(matrices: &[F2Matrix; 3]) -> F2Matrix {
+pub(crate) fn sum_matrices<const K: usize>(matrices: &[F2Matrix; K]) -> F2Matrix {
     let size = matrices[0].num_rows();
     let mut sum = F2Matrix::zeros(size, size);
     for matrix in matrices {
@@ -520,14 +596,14 @@ fn sum_matrices(matrices: &[F2Matrix; 3]) -> F2Matrix {
     sum
 }
 
-fn forward_shift(index: usize, l: usize, m: usize, term: BbMonomial) -> usize {
+pub(crate) fn forward_shift(index: usize, l: usize, m: usize, term: BbMonomial) -> usize {
     let (x_power, y_power) = term;
     let x = index / m;
     let y = index % m;
     ((x + x_power) % l) * m + (y + y_power) % m
 }
 
-fn transpose_shift(index: usize, l: usize, m: usize, term: BbMonomial) -> usize {
+pub(crate) fn transpose_shift(index: usize, l: usize, m: usize, term: BbMonomial) -> usize {
     let (x_power, y_power) = term;
     let x = index / m;
     let y = index % m;
@@ -579,7 +655,7 @@ mod tests {
                 AnnotationKind::Observable { measurement_ids } => {
                     observables.push(parity(measurement_ids));
                 }
-                AnnotationKind::TrackedPauli => {}
+                AnnotationKind::TrackedPauli { .. } => {}
             }
         }
         (detectors, observables)

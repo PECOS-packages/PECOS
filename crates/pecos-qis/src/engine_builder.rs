@@ -252,28 +252,28 @@ impl QisEngineBuilder {
 
     /// Preserve original native batches in mandatory transport. Requires the
     /// matching scheduled noise capability and a state-vector simulator.
-    /// Enabling preserves v4 if selected; disabling turns all scheduled transport off.
+    /// Enabling preserves v7 if selected; disabling turns all scheduled transport off.
     #[must_use]
     pub fn scheduled_batches(mut self, enabled: bool) -> Self {
         self.scheduled_transport = if !enabled {
             ScheduledTransport::Off
-        } else if self.scheduled_transport == ScheduledTransport::V4 {
-            ScheduledTransport::V4
+        } else if self.scheduled_transport == ScheduledTransport::V7 {
+            ScheduledTransport::V7
         } else {
-            ScheduledTransport::V3
+            ScheduledTransport::V6
         };
         self
     }
 
-    /// Preserve opaque events in mandatory v4 batches. Requires an explicitly
-    /// configured `ScheduledEventIdleZ` consumer; existing v3 consumers reject it.
-    /// Disabling events downgrades v4 to v3; an already-disabled transport stays off.
+    /// Preserve opaque events in mandatory v7 batches. Requires an explicitly
+    /// configured `ScheduledEventIdleZ` consumer; existing v6 consumers reject it.
+    /// Disabling events downgrades v7 to v6; an already-disabled transport stays off.
     #[must_use]
     pub fn scheduled_event_batches(mut self, enabled: bool) -> Self {
         self.scheduled_transport = if enabled {
-            ScheduledTransport::V4
+            ScheduledTransport::V7
         } else if self.scheduled_transport.enabled() {
-            ScheduledTransport::V3
+            ScheduledTransport::V6
         } else {
             ScheduledTransport::Off
         };
@@ -428,37 +428,37 @@ mod tests {
 
     #[test]
     fn scheduled_modes_do_not_silently_disable_each_other() {
-        use ScheduledTransport::{Off, V3, V4};
+        use ScheduledTransport::{Off, V6, V7};
         let cases = [
             (
                 qis_engine()
                     .scheduled_event_batches(true)
                     .scheduled_batches(true),
-                V4,
+                V7,
             ),
             (
                 qis_engine()
                     .scheduled_batches(true)
                     .scheduled_event_batches(true),
-                V4,
+                V7,
             ),
             (
                 qis_engine()
                     .scheduled_batches(true)
                     .scheduled_event_batches(false),
-                V3,
+                V6,
             ),
             (
                 qis_engine()
                     .scheduled_event_batches(false)
                     .scheduled_batches(true),
-                V3,
+                V6,
             ),
             (
                 qis_engine()
                     .scheduled_event_batches(true)
                     .scheduled_event_batches(false),
-                V3,
+                V6,
             ),
             (
                 qis_engine()

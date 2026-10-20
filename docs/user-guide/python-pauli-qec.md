@@ -99,7 +99,7 @@ matrix = p.to_matrix()  # Returns complex matrix as list of lists
 
 ## Stabilizer Groups
 
-`PauliStabilizerGroup` represents a group of mutually commuting Pauli strings with real phases (+1 or -1). This is the standard stabilizer group used in QEC.
+`PauliStabilizerGroup` represents a group of mutually commuting Pauli strings with real phases (+1 or -1) whose generated group excludes -I. A group containing -I stabilizes no state (empty code space). Construction, adding a generator, and merging reject such groups with `ValueError`.
 
 ```python
 from pecos_rslib import PauliStabilizerGroup, Z
@@ -132,6 +132,12 @@ from pecos_rslib import PauliStabilizerGroup
 
 # Dense notation (one string per line)
 group = PauliStabilizerGroup.from_str("ZZI\nIZZ")
+
+# Dense output preserves each generator's sign.
+signed = PauliStabilizerGroup.from_str("-XX\n+ZZ")
+assert signed.to_dense_str() == "-XX\n+ZZ"
+assert str(signed) == signed.to_dense_str()
+assert PauliStabilizerGroup.from_str(str(signed)).stabilizers() == signed.stabilizers()
 
 # Sparse notation also supported
 group = PauliStabilizerGroup.from_str("Z0 Z1\nZ1 Z2")

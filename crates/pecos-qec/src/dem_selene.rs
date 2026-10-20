@@ -227,8 +227,9 @@ fn replay(shot: &[OperationTraceChunk], qubits: usize) -> Result<TickCircuit, De
             trace
                 .angles
                 .iter()
-                .map(|&a| Angle64::from_radians(a))
-                .collect::<Vec<_>>(),
+                .map(|&a| Angle64::try_from_radians(a))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(preparation)?,
             params,
             trace
                 .qubits

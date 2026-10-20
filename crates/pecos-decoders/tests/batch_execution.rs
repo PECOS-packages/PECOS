@@ -11,9 +11,10 @@
 // the License.
 
 //! Backend-independent contracts for the public batch executor.
+use pecos_decoder_core::graphlike_projection::IrreduciblePolicy;
 use pecos_decoders::ObsMask;
 use pecos_decoders::batch::{
-    BatchDecodeError, DecodeOptions, DecoderFactory, ExecutionPath, SampleBatch,
+    BatchDecodeError, DecodeOptions, DecoderFactory, ExecutionPath, PreparedModel, SampleBatch,
 };
 use pecos_decoders::{DecodeModel, DecoderError, ExecutionTraits, ObservableDecoder};
 use std::rc::Rc;
@@ -37,6 +38,7 @@ enum Behavior {
 #[derive(Default)]
 struct Factory {
     native: bool,
+    preparation_failure: bool,
     behaviors: Vec<Behavior>,
     builds: AtomicUsize,
     calls: Arc<AtomicUsize>,
@@ -66,6 +68,17 @@ impl DecoderFactory for Factory {
     }
     fn native_batch_capable(&self) -> bool {
         self.native
+    }
+    fn decode_model(&self, dem: &str) -> Result<PreparedModel, Self::BuildError> {
+        if self.preparation_failure {
+            return Err(DecoderError::InvalidConfiguration(
+                "preparation failed".into(),
+            ));
+        }
+        Ok(PreparedModel {
+            model: DecodeModel::SingleDem(dem.into()),
+            projection: None,
+        })
     }
     fn build(&self, model: &DecodeModel) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
         assert_eq!(model, &DecodeModel::SingleDem("test DEM".into()));
@@ -506,21 +519,26 @@ fn diagnostic_decoder_is_also_preflighted() {
 
 #[test]
 fn builtin_factory_selects_embedded_hybrid_model() {
+    // compatibility: model selection preserves Hybrid full/decomposed roles.
     use pecos_decoders::DecoderSpec;
     use pecos_decoders::spec::{BeliefMatchingConfig, BeliefMatchingMode};
     assert_eq!(
-        DecoderSpec::AStar.decode_model("single"),
-        DecodeModel::SingleDem("single".into())
+        DecoderSpec::AStar(pecos_decoders::spec::AStarConfig::default())
+            .decode_model("error(0.1) D0 L0")
+            .unwrap()
+            .model,
+        DecodeModel::SingleDem("error(0.1) D0 L0".into())
     );
     let spec = DecoderSpec::BeliefMatching(BeliefMatchingConfig {
+        irreducible: IrreduciblePolicy::default(),
         mode: BeliefMatchingMode::Hybrid,
-        embedded_full_dem: Some("full".into()),
+        embedded_full_dem: Some("error(0.1) D0 D1 D2 L0".into()),
     });
     assert_eq!(
-        spec.decode_model("decomposed"),
+        spec.decode_model("error(0.1) D0 D1 ^ D2 L0").unwrap().model,
         DecodeModel::HybridDem {
-            full: "full".into(),
-            decomposed: "decomposed".into()
+            full: "error(0.1) D0 D1 D2 L0".into(),
+            decomposed: "error(0.1) D0 D1 ^ D2 L0".into()
         }
     );
 }
@@ -704,4 +722,60 @@ fn batch_errors_preserve_source_chains() {
     ] {
         assert!(error.source().is_none());
     }
+}
+
+// contract: preparation errors surface as construction errors before any workers build.
+#[test]
+fn preparation_failure_precedes_all_worker_construction() {
+    for workers in [1, 3] {
+        let factory = Factory {
+            preparation_failure: true,
+            ..Factory::default()
+        };
+        let error = batch(16)
+            .decode_with(
+                "test DEM",
+                &factory,
+                &DecodeOptions::default().workers(workers),
+            )
+            .unwrap_err();
+        assert!(
+            matches!(error, BatchDecodeError::Build(DecoderError::InvalidConfiguration(ref message)) if message == "preparation failed")
+        );
+        assert_eq!(factory.builds.load(Ordering::SeqCst), 0);
+        assert_eq!(factory.calls.load(Ordering::SeqCst), 0);
+    }
+}
+
+// contract: structured entry uses the factory, retaining sectors and one preparation report.
+#[test]
+fn structured_batch_preserves_sectors_and_execution() {
+    use pecos_decoder_core::window::StructuredDem;
+    use pecos_decoders::DecoderSpec;
+    let mut dem = StructuredDem::from_dem_str(
+        "error(0.01) D0 D1\nerror(0.01) D0 D2\nerror(0.01) D1 D3\nerror(0.01) D2 D3\nerror(0.01) D0 D1 D2 D3",
+    ).unwrap();
+    dem.detector_fault_sectors = ["X", "Z", "X", "Z"].map(|s| Some(s.into())).to_vec();
+    let default_prepared = Factory::default().decode_structured_model(&dem).unwrap();
+    assert_eq!(
+        default_prepared.model,
+        DecodeModel::StructuredDem(dem.clone())
+    );
+    assert_eq!(default_prepared.projection, None);
+    let batch = SampleBatch::from_row_major(
+        &[vec![0u8; 4], vec![0u8; 4]],
+        &[ObsMask::new(), ObsMask::new()],
+        0,
+    )
+    .unwrap();
+    let spec = DecoderSpec::parse("astar").unwrap();
+    let options = DecodeOptions::default().workers(1).predictions(true);
+    let result = batch.decode_structured_with(&dem, &spec, &options).unwrap();
+    let report = result.projection.unwrap();
+    assert_eq!(report.projected, 1);
+    assert_eq!(report.unlabelled_detectors, 0);
+    assert_eq!(report.distinct_sectors, 2);
+    assert_eq!(report.cross_sector_components, 2);
+    assert_eq!(result.num_errors, 0);
+    assert_eq!(result.execution_path, ExecutionPath::Sequential);
 }

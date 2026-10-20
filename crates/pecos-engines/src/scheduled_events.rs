@@ -2,7 +2,8 @@
 //!
 //! Adapters normalize complete inputs before quantum execution. They cannot observe
 //! measurement outcomes or access simulator/RNG state. This is not an arbitrary
-//! execution-time physical-event interface. The admitted noise is restricted to checked local profiles.
+//! execution-time physical-event interface. Checked profiles may opt into typed
+//! crosstalk exposures resolved by the existing noise/quantum exchange.
 use crate::noise::{IntoNoiseModel, NoiseModel};
 use crate::runtime_frame::{ShotContext, error, processing_error};
 use crate::scheduled_frame::{
@@ -18,6 +19,62 @@ use std::{any::Any, collections::BTreeSet, sync::Arc};
 pub const MAX_BATCH_OPERATIONS: usize = 4096;
 /// Maximum total opaque payload bytes per original batch.
 pub const MAX_BATCH_PAYLOAD: usize = 256 * 1024;
+
+/// Maximum aggregate candidate spectator targets per normalized native batch.
+/// Global exposures charge the whole configured capacity, even with exclusions.
+pub const MAX_BATCH_SPECTATOR_TARGETS: usize = 16_384;
+
+/// One ordered exposure. Logical IDs must be unique and within profile capacity.
+/// Repeated exposures are separate records; local list order is preserved.
+#[derive(Clone, Debug)]
+pub enum ScheduledCrosstalk {
+    /// Potential victims in sampling order; unprepared/leaked qubits are skipped.
+    Local(Vec<usize>),
+    /// Prepared logical qubits outside this exclusion list, in general-model order.
+    GlobalExcluding(Vec<usize>),
+}
+impl ScheduledCrosstalk {
+    fn into_gate(self) -> Gate {
+        let (kind, ids) = match self {
+            Self::Local(ids) => (GateType::MeasCrosstalkLocalPayload, ids),
+            Self::GlobalExcluding(ids) => (GateType::MeasCrosstalkGlobalPayload, ids),
+        };
+        Gate::new(
+            kind,
+            vec![],
+            vec![],
+            ids.into_iter().map(pecos_core::QubitId).collect::<Vec<_>>(),
+        )
+    }
+}
+pub(crate) fn validate_spectator(
+    gate: &Gate,
+    capacity: Option<usize>,
+) -> Result<usize, PecosError> {
+    let qubits = capacity.ok_or_else(|| error("scheduled crosstalk profile required"))?;
+    if !gate.gate_type.is_crosstalk_payload()
+        || gate.qubits.len() > qubits
+        || !gate.angles.is_empty()
+        || !gate.params.is_empty()
+        || !gate.meas_ids.is_empty()
+        || gate.channel.is_some()
+    {
+        return Err(error("invalid scheduled spectator fields"));
+    }
+    let mut seen = BTreeSet::new();
+    for q in &gate.qubits {
+        if q.0 >= qubits || !seen.insert(q.0) {
+            return Err(error(
+                "scheduled spectator IDs must be distinct and within capacity",
+            ));
+        }
+    }
+    Ok(if gate.gate_type == GateType::MeasCrosstalkGlobalPayload {
+        qubits
+    } else {
+        gate.qubits.len()
+    })
+}
 
 /// Native order, including events which must never silently disappear.
 #[derive(Clone, Debug)]
@@ -291,8 +348,8 @@ pub fn decode_event_batches(input: &ByteMessage) -> Result<Vec<ScheduledEventBat
     Ok(result)
 }
 
-/// Bounded gate output for one original batch; no nested events or measurements
-/// beyond those in the source are permitted by the execution owner.
+/// Bounded output for one original batch. Typed exposures are allowed on opted-in
+/// profiles; nested events and additional program measurements are not.
 /// This writer borrows owner-held state; adapters cannot construct replacements.
 ///
 /// ```compile_fail
@@ -309,8 +366,50 @@ pub struct ScheduledGateBuffer<'a> {
 struct GateOutput {
     gates: Vec<Gate>,
     failure: Option<String>,
+    spectator_capacity: Option<usize>,
+    spectator_targets: usize,
 }
 impl ScheduledGateBuffer<'_> {
+    /// Append an explicit ordered exposure, without physical occupancy or user results.
+    /// Requires a profile opted into measurement crosstalk. Empty lists are valid:
+    /// local selects no victims; global excludes none. Errors remain latched.
+    /// # Errors
+    /// Rejects unsupported profiles, invalid IDs and per-batch record/fanout limits.
+    pub fn push_crosstalk(&mut self, effect: ScheduledCrosstalk) -> Result<(), PecosError> {
+        if let Some(message) = &self.state.failure {
+            return Err(error(message));
+        }
+        // Check the owned list before converting/allocating its internal gate.
+        let ids = match &effect {
+            ScheduledCrosstalk::Local(ids) | ScheduledCrosstalk::GlobalExcluding(ids) => ids,
+        };
+        if ids.len() > 16 {
+            let message = "scheduled spectator list limit";
+            self.state.failure = Some(message.into());
+            return Err(error(message));
+        }
+        let gate = effect.into_gate();
+        let admitted = validate_spectator(&gate, self.state.spectator_capacity).and_then(|count| {
+            if self.state.gates.len() >= MAX_BATCH_OPERATIONS
+                || count > MAX_BATCH_SPECTATOR_TARGETS - self.state.spectator_targets
+            {
+                Err(error("scheduled spectator expansion limit"))
+            } else {
+                Ok(count)
+            }
+        });
+        match admitted {
+            Ok(count) => {
+                self.state.spectator_targets += count;
+                self.state.gates.push(gate);
+                Ok(())
+            }
+            Err(failure) => {
+                self.state.failure = Some(failure.to_string());
+                Err(failure)
+            }
+        }
+    }
     /// Append an admitted ordinary gate.
     /// # Errors
     /// Rejects unsupported fields/gates and expansion above the per-batch bound.
@@ -338,7 +437,8 @@ impl ScheduledGateBuffer<'_> {
 /// Validation must inspect every event schema without mutating state. Translation
 /// may update shot-local classical state; it runs before any quantum execution of
 /// this input. Neither method receives outcomes, RNG or simulator access. Arbitrary
-/// execution-time effects, leakage and crosstalk are not supported by this profile.
+/// execution-time callbacks are not supported. Checked profiles may admit typed
+/// crosstalk exposures; the noise controller resolves their internal measurements.
 /// Implementations are responsible for bounding their own retained state.
 pub trait ScheduledBatchAdapter: Send + Sync {
     /// Validate a complete batch without side effects.
@@ -362,7 +462,8 @@ type Factory =
 pub type ScheduledEventIdleZ = ScheduledEventNoise;
 /// Compatibility name for [`ScheduledEventNoise`], retaining the supplied profile.
 pub type ScheduledEventIdleNoise = ScheduledEventNoise;
-/// Explicit opt-in to mandatory v7 with the same checked local physics as v6.
+/// Explicit opt-in to mandatory v7 with checked local noise and optional typed
+/// measurement-crosstalk exposures.
 #[derive(Clone)]
 pub struct ScheduledEventNoise {
     profile: ScheduledNoise,
@@ -462,7 +563,10 @@ impl ScheduledEventModel {
         let mut translated = Vec::new();
         let mut size = 16usize;
         for batch in batches {
-            let mut output = GateOutput::default();
+            let mut output = GateOutput {
+                spectator_capacity: self.inner.config.spectator_capacity(),
+                ..GateOutput::default()
+            };
             adapter.translate(batch, &mut ScheduledGateBuffer { state: &mut output })?;
             if let Some(message) = output.failure {
                 return Err(error(&message));
@@ -483,6 +587,16 @@ impl ScheduledEventModel {
             {
                 return Err(error("adapter changed measurement order, kind or targets"));
             }
+            // Charge metadata targets as well as fixed-size ordinary records.
+            let target_bytes = output
+                .gates
+                .iter()
+                .filter(|g| g.gate_type.is_crosstalk_payload())
+                .map(|g| g.qubits.len() * 8)
+                .sum::<usize>();
+            size = size
+                .checked_add(target_bytes)
+                .ok_or_else(|| error("spectator size overflow"))?;
             size = expanded_size(size, output.gates.len(), size_limit)?;
             translated.push(TimedBatch {
                 runtime_shot_id: batch.runtime_shot_id,

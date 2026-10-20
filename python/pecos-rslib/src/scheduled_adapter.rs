@@ -2,14 +2,72 @@
 use crate::dag_circuit_bindings::PyGate;
 use pecos_core::errors::PecosError;
 use pecos_engines::scheduled_events::{
-    MAX_BATCH_OPERATIONS, ScheduledBatchAdapter, ScheduledEventBatch, ScheduledEventNoise,
-    ScheduledEventOp, ScheduledGateBuffer,
+    MAX_BATCH_OPERATIONS, ScheduledBatchAdapter, ScheduledCrosstalk, ScheduledEventBatch,
+    ScheduledEventNoise, ScheduledEventOp, ScheduledGateBuffer,
 };
 use pecos_engines::scheduled_frame::{ScheduledIdleZ, ScheduledNoise};
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyList};
 use std::cell::Cell;
+
+/// An ordered spectator exposure returned alongside gates by a batch adapter.
+/// It creates no physical busy time and has no program-visible measurement.
+#[pyclass(name = "ScheduledCrosstalk", frozen, from_py_object)]
+#[derive(Clone)]
+pub struct PyScheduledCrosstalk {
+    inner: ScheduledCrosstalk,
+}
+fn check_spectator_ids(ids: &[usize]) -> PyResult<()> {
+    let mut seen = std::collections::BTreeSet::new();
+    if ids.len() > 16 || ids.iter().any(|q| *q >= 16 || !seen.insert(*q)) {
+        return Err(PyValueError::new_err(
+            "spectator IDs must be distinct and within 0..16; the profile capacity is checked at admission",
+        ));
+    }
+    Ok(())
+}
+#[pymethods]
+impl PyScheduledCrosstalk {
+    /// Explicit potential victims in sampling order; unprepared/leaked are skipped.
+    #[staticmethod]
+    fn local(victims: Vec<usize>) -> PyResult<Self> {
+        check_spectator_ids(&victims)?;
+        Ok(Self {
+            inner: ScheduledCrosstalk::Local(victims),
+        })
+    }
+    /// Prepared logical qubits except these IDs, in the general model's order.
+    #[staticmethod]
+    fn global_excluding(exclusions: Vec<usize>) -> PyResult<Self> {
+        check_spectator_ids(&exclusions)?;
+        Ok(Self {
+            inner: ScheduledCrosstalk::GlobalExcluding(exclusions),
+        })
+    }
+}
+/// Opt into explicit measurement exposures while retaining all local/idle settings.
+/// No automatic exposure insertion. Wrap the returned profile with
+/// scheduled_event_idle_noise(profile, adapter_factory) for live v7 execution.
+#[pyfunction]
+#[pyo3(signature = (profile, model, *, local_probability = 0.0, global_probability = 0.0))]
+pub fn scheduled_measurement_crosstalk(
+    profile: Py<PyAny>,
+    model: std::collections::BTreeMap<String, f64>,
+    local_probability: f64,
+    global_probability: f64,
+    py: Python<'_>,
+) -> PyResult<crate::engine_builders::PyScheduledIdleNoise> {
+    let profile =
+        crate::engine_builders::extract_scheduled_idle(&profile, py).ok_or_else(|| {
+            PyTypeError::new_err("expected a checked scheduled idle or local noise profile")
+        })?;
+    Ok(crate::engine_builders::PyScheduledIdleNoise {
+        inner: profile
+            .with_measurement_crosstalk(local_probability, global_probability, model)
+            .map_err(|e| PyValueError::new_err(e.to_string()))?,
+    })
+}
 
 thread_local! {
     static IN_CALLBACK: Cell<bool> = const { Cell::new(false) };
@@ -141,6 +199,12 @@ impl ScheduledBatchAdapter for PythonAdapter {
                 ));
             }
             for gate in gates.iter() {
+                if let Ok(effect) = gate.extract::<PyScheduledCrosstalk>() {
+                    output.push_crosstalk(effect.inner).map_err(|e| {
+                        PecosError::Input(format!("scheduled adapter spectator: {e}"))
+                    })?;
+                    continue;
+                }
                 let gate = gate
                     .extract::<PyGate>()
                     .map_err(|e| callback_error("output gate", e.into()))?;
@@ -252,6 +316,8 @@ pub(crate) fn extract_event_noise(
     }
 }
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<PyScheduledCrosstalk>()?;
+    m.add_function(wrap_pyfunction!(scheduled_measurement_crosstalk, m)?)?;
     m.add_class::<PyScheduledEventBatch>()?;
     m.add_class::<PyScheduledEventIdleZ>()?;
     m.add_class::<PyScheduledEventIdleNoise>()?;

@@ -8,7 +8,9 @@ use std::{any::Any, collections::BTreeMap};
 
 /// Maximum complete transport size. Extraction itself remains uncapped.
 pub const MAX_SCHEDULE_BYTES: usize = 64 * 1024 * 1024;
-/// Original native timing and gates. Opaque events cannot be represented.
+/// Native timing and ordered operations. The v6 encoder admits ordinary gates
+/// only. Internally normalized v7 batches may also carry checked exposure metadata;
+/// opaque runtime events cannot be represented here.
 #[derive(Clone, Debug)]
 pub struct TimedBatch {
     /// Runtime-local identity, separate from host run/worker/shot context.
@@ -60,6 +62,7 @@ pub type ScheduledIdleNoise = ScheduledNoise;
 pub struct ScheduledNoise {
     qubits: usize,
     local: Option<LocalFaults>,
+    crosstalk: Option<MeasurementCrosstalk>,
     linear: f64,
     sine: f64,
     coherent: f64,
@@ -74,7 +77,8 @@ pub struct ScheduledNoise {
 /// Emitted RZ gates receive single-qubit faults too; virtual frame updates must
 /// be resolved by the runtime/adapter rather than represented as physical RZ.
 /// Preparation faults can leak or flip the qubit. Gate faults optionally select
-/// emission models and seepage using the general model. Crosstalk is disabled.
+/// emission models and seepage using the general model. Explicit measurement
+/// crosstalk can be enabled on the underlying `ScheduledNoise` profile.
 /// Capacity remains 1..=16 with a state-vector engine. Measurements capture
 /// leakage before subsequent operations, allowing same-batch reset and reuse.
 #[derive(Clone, Debug)]
@@ -341,6 +345,21 @@ impl IntoNoiseModel for ScheduledLocalNoise {
     }
 }
 
+#[derive(Clone, Debug)]
+struct MeasurementCrosstalk {
+    local: f64,
+    global: f64,
+    model: BTreeMap<String, f64>,
+}
+impl MeasurementCrosstalk {
+    fn configure(&self, builder: GeneralNoiseModelBuilder) -> GeneralNoiseModelBuilder {
+        builder
+            .with_p_meas_crosstalk_local(self.local)
+            .with_p_meas_crosstalk_global(self.global)
+            .with_p_meas_crosstalk_model(&self.model)
+    }
+}
+
 impl ScheduledNoise {
     /// Construct a profile with all idle families disabled.
     /// # Errors
@@ -352,6 +371,7 @@ impl ScheduledNoise {
         Ok(Self {
             qubits,
             local: None,
+            crosstalk: None,
             linear: 0.0,
             sine: 0.0,
             coherent: 0.0,
@@ -360,6 +380,36 @@ impl ScheduledNoise {
             coherent_model: BTreeMap::from([("RZ".to_owned(), 1.0)]),
         })
     }
+    /// Opt into explicit measurement-crosstalk exposures from a v7 adapter.
+    /// No exposures are inserted automatically. Local victims retain their order;
+    /// global exposures select prepared qubits outside the adapter's exclusions.
+    /// Uses `GeneralNoiseModel`'s 0/1/L transition distribution and leakage semantics.
+    /// Existing local/idle settings are retained. Preparation crosstalk and hooks
+    /// remain disabled; ordinary v6 input cannot encode spectator effects.
+    /// # Errors
+    /// Rejects invalid probabilities and transition maps, including at zero rates.
+    pub fn with_measurement_crosstalk(
+        mut self,
+        local: f64,
+        global: f64,
+        model: BTreeMap<String, f64>,
+    ) -> Result<Self, PecosError> {
+        let config = MeasurementCrosstalk {
+            local,
+            global,
+            model,
+        };
+        config
+            .configure(GeneralNoiseModelBuilder::new())
+            .validate_configuration()
+            .map_err(PecosError::Input)?;
+        self.crosstalk = Some(config);
+        Ok(self)
+    }
+    pub(crate) fn spectator_capacity(&self) -> Option<usize> {
+        self.crosstalk.as_ref().map(|_| self.qubits)
+    }
+
     fn validate_model(model: &BTreeMap<String, f64>, axes: &[&str]) -> Result<(), PecosError> {
         for (axis, value) in model {
             if !axes.contains(&axis.as_str()) {
@@ -457,6 +507,9 @@ impl ScheduledNoise {
             .with_p_idle_coherent(self.coherent, &self.coherent_model);
         if let Some(local) = &self.local {
             builder = local.configure(builder);
+        }
+        if let Some(crosstalk) = &self.crosstalk {
+            builder = crosstalk.configure(builder);
         }
         let inner = builder.build();
         ScheduledIdleModel {
@@ -751,6 +804,16 @@ impl ScheduleTimeline {
             let mut touched = vec![false; config.qubits];
             let mut builder = ByteMessage::quantum_operations_builder();
             for gate in batch.gates {
+                if gate.gate_type.is_crosstalk_payload() {
+                    // An exposure is ordered noise metadata, not a physical use.
+                    // It neither closes an idle gap nor advances a busy endpoint.
+                    super::scheduled_events::validate_spectator(
+                        &gate,
+                        config.spectator_capacity(),
+                    )?;
+                    builder.add_gate_command(&gate);
+                    continue;
+                }
                 for q in &gate.qubits {
                     let q = q.0;
                     if q >= touched.len() || batch.start_nanos < prepared.timeline.ends[q] {

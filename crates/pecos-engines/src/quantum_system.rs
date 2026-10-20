@@ -47,6 +47,49 @@ struct ScheduledExecutionLimits {
 }
 
 impl ScheduledExecutionLimits {
+    fn for_batch(gates: &[crate::Gate], qubits: usize) -> Result<Self, PecosError> {
+        // Admission already bounds records, aggregate fanout and capacity.
+        let mut exposures = 0usize;
+        let mut targets = 0usize;
+        for gate in gates {
+            if gate.gate_type.is_crosstalk_payload() {
+                exposures += 1;
+                targets += if gate.gate_type == crate::GateType::MeasCrosstalkGlobalPayload {
+                    qubits
+                } else {
+                    gate.qubits.len()
+                };
+            }
+        }
+        let ordinary = gates.len() - exposures;
+        let overflow = || runtime_frame::error("scheduled expansion overflow");
+        let operations = ordinary
+            .checked_mul(16)
+            .and_then(|n| targets.checked_mul(2).and_then(|t| n.checked_add(t)))
+            .and_then(|n| n.checked_add(exposures))
+            .ok_or_else(overflow)?;
+        if exposures == 0 {
+            return Self::single_pass(operations);
+        }
+        // Each exposure yields at most once, followed by the last transition/
+        // source suffix. Per victim: one internal MZ and at most one transition.
+        // Extra exposure commands cover empty grouped MZ records. Target charges
+        // also bound grouped measurement bytes, not just their command count.
+        let simulator_calls = exposures.checked_add(1).ok_or_else(overflow)?;
+        let bytes = operations
+            .checked_mul(128)
+            .and_then(|n| {
+                simulator_calls
+                    .checked_mul(16)
+                    .and_then(|h| n.checked_add(h))
+            })
+            .ok_or_else(overflow)?;
+        Ok(Self {
+            operations,
+            bytes,
+            simulator_calls,
+        })
+    }
     // Existing closed profiles still admit exactly one simulator call. Their
     // emitted commands have at most two targets, fitting within 128 bytes each.
     fn single_pass(operations: usize) -> Result<Self, PecosError> {
@@ -268,14 +311,10 @@ impl QuantumSystem {
                 })
                 .map(|g| g.qubits.len())
                 .sum::<usize>();
-            // At most eight idle commands per target, or an ideal operation plus
-            // two Pauli faults. Sixteen per admitted command is conservative.
-            // Scheduled profiles have no crosstalk and need at most one simulator call.
-            let budget = gates
-                .len()
-                .checked_mul(16)
-                .ok_or_else(|| runtime_frame::error("scheduled expansion overflow"))?;
-            let limits = ScheduledExecutionLimits::single_pass(budget)?;
+            let limits = ScheduledExecutionLimits::for_batch(
+                &gates,
+                self.scheduled_model().expect("checked model").qubits(),
+            )?;
             let stage = self.scheduled_model_mut().start_admitted(&message)?;
             let reply = self.drive_scheduled(stage, limits)?;
             let values = reply.outcomes()?;

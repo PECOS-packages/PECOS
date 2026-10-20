@@ -564,7 +564,8 @@ impl GeneralNoiseModel {
         Ok(EngineStage::NeedsProcessing(noisy_gates))
     }
 
-    /// Only for the closed scheduled profile: no crosstalk or transition hooks.
+    /// Only for checked scheduled profiles, including explicit measurement exposures.
+    /// Transition hooks remain excluded. Internal replies use the ordinary controller.
     /// Keeps one batch lifecycle and the existing gate-fault/readout RNG order.
     pub(crate) fn start_scheduled(
         &mut self,

@@ -1,8 +1,9 @@
 # Scheduled event adapters
 
 Mandatory v7 transport preserves opaque native events for a shot-local adapter.
-The adapter normalizes complete batches into checked gates **before quantum
-execution**. It supports checked local noise profiles and the 1–16-qubit StateVec limit;
+The adapter normalizes complete batches into checked gates and optional typed
+crosstalk exposures **before quantum execution**. The noise controller resolves
+those exposures during execution. Profiles retain the 1–16-qubit StateVec limit;
 Python supports an opt-in adapter factory on the QIS/HUGR engines route. This is
 not a general execution-time event API.
 
@@ -10,7 +11,7 @@ The first intended downstream use is a deterministic adapter that tracks runtime
 bookkeeping and virtual phase conventions across batches, adjusting ordinary gates
 for a reduced idle-only comparison. That adapter is not implemented or validated
 here. Public synthetic fixtures establish transport contracts, not device fidelity.
-Outcome-dependent adapters and broader physical noise require separate work.
+Outcome-dependent adapter callbacks and broader physical noise require separate work.
 
 ## Configure and implement
 
@@ -33,7 +34,8 @@ v6 and ordinary consumers reject v7; v6 still rejects opaque events.
 - `validate` checks every event schema without side effects. Unknown or unsupported
   semantics must reject. All batches are validated before translation starts.
 - `translate` receives a complete original batch and a borrowed `ScheduledGateBuffer`.
-  Emit gates with `push`, preserving measurement order, kind and targets. Rejected
+  Emit gates with `push`, preserving measurement order, kind and targets. Opted-in
+  profiles also accept `push_crosstalk` with typed spectator exposures. Rejected
   appends remain latched; the adapter cannot replace the writer or clear failure.
 - Callbacks cannot access outcomes, simulator state or RNG. Their deterministic
   semantics, validation purity, factory isolation and internal memory bounds remain
@@ -44,7 +46,8 @@ v6 and ordinary consumers reject v7; v6 still rejects opaque events.
 The owner validates the whole wire input and source schedule before callbacks,
 latches failure before invoking user code, then validates the entire expanded
 schedule before execution. It runs one noise lifecycle per nonempty normalized
-batch. Custom-only batches retain timing and identity without creating idle sites.
+batch, including any internal noise/quantum exchanges. Custom-only batches retain
+timing and identity without creating idle sites.
 Adapters cannot split or retime batch boundaries.
 
 Source and normalized timing histories persist independently across inputs and
@@ -71,7 +74,10 @@ current encoder. Each batch contains:
 
 Unknown records, versions, reserved bits and malformed lengths reject. Each source
 or expanded batch allows 4096 operations; opaque payloads total at most 256 KiB per
-batch. Wire and expanded v6-equivalent sizes are each capped at 64 MiB. These bounds
+batch. Normalized exposures also have a 16,384-candidate-target limit per batch;
+global exposures charge the full configured capacity, even with exclusions. Wire
+and expanded sizes are each capped at 64 MiB, including eight bytes per exposure
+ID in addition to the fixed normalized record charge. These bounds
 are not a process-RSS limit. Native extraction still has no aggregate output cap,
 and adapters must bound their own retained state. The host retains only bounded
 per-qubit timing and shot/ordinal state after processing.
@@ -104,8 +110,9 @@ must create a fresh object with two methods:
 - `validate(batch)` returns `None`, or raises for an unsupported schema/semantics.
   It must not mutate adapter state. A boolean return is rejected.
 - `translate(batch)` updates deterministic shot-local state and returns a **list**
-  of `pecos_rslib.quantum.Gate` objects, at most 4096. Iterators are not consumed.
-  Gates pass through the existing checked Rust writer and measurement validation.
+  of `pecos_rslib.quantum.Gate` or `pecos_rslib.ScheduledCrosstalk` objects, at most
+  4096 in total. Iterators are not consumed. All items pass through the checked
+  Rust writer; program measurement order, kind and targets must remain unchanged.
 
 `batch` is an owned, read-only snapshot with `runtime_shot_id`, `batch_index`,
 `start_nanos`, and `duration_nanos`. Its `operations` property returns a copy of the
@@ -131,7 +138,63 @@ Python callbacks incur GIL and data-copy overhead. This API establishes a usable
 integration path, not a throughput claim. The idle/timing policy is shared; each checked profile determines the admitted
 noise channels. A batch adapter itself does not enable arbitrary noise models.
 
-### Native scheduling across release
+## Measurement-crosstalk exposures
+
+Opt in explicitly while retaining an existing idle or local profile:
+
+```python
+import pecos_rslib as pr
+
+base = pr.scheduled_idle_noise(2, linear=0.02)
+profile = pr.scheduled_measurement_crosstalk(
+    base,
+    {"0->1": 1.0, "1->0": 1.0},
+    local_probability=0.03,
+    global_probability=0.01,
+)
+# Pass this wrapper to sim(...).noise(...), with scheduled_event_batches enabled.
+noise = pr.scheduled_event_idle_noise(profile, adapter_factory)
+```
+
+The values are invented examples. The transition map and probabilities use
+`GeneralNoiseModel` validation, sampling and leakage semantics. Invalid settings
+reject even when their associated probability is zero. Rust exposes
+`ScheduledNoise::with_measurement_crosstalk(local, global, model)`.
+
+At an appropriate position in `translate`'s returned list, emit:
+
+- `pr.ScheduledCrosstalk.local([1, 0])` for potential victims in that sampling order.
+- `pr.ScheduledCrosstalk.global_excluding([0])` for prepared logical qubits outside
+  the exclusion list, in the general model's order.
+
+IDs must be unique within a record and within the profile's capacity. Empty local
+lists select no victims; empty global lists exclude none. Unprepared and already
+leaked victims are skipped according to the general model. Separate exposures to
+the same victim remain separate, ordered effects. Explicit zero-probability
+exposures retain the general model's probability draws; they are not equivalent
+to ignored metadata for seeded RNG comparisons.
+
+No exposures are inserted automatically. The runtime adapter is responsible for
+interpreting its event schema and selecting victims or exclusions. Ordinary gate
+output cannot smuggle in exposure payloads; use the typed writer. The v7 source
+wire remains unchanged, and v6 cannot encode these effects. Preparation crosstalk,
+transition hooks and arbitrary execution-time callbacks remain unsupported.
+
+An exposure is ordered noise metadata: it creates no physical occupancy, closes
+no idle gap and does not advance a qubit's busy endpoint. Thus a later physical
+operation still receives the complete native idle interval, including nonlinear
+idle noise. The adapter must choose an ordering consistent with its runtime's
+semantics; these synthetic contracts do not establish device fidelity.
+
+The normal path is `sim() → MonteCarloEngine → HybridEngine`: Selene and its runtime
+provide classical control, while `QuantumSystem` exchanges work and internal
+measurement results between `GeneralNoiseModel` and the quantum engine. Each
+native batch retains one controller lifecycle. Internal spectator measurements
+never become program results; ordinary measurements return to the live runtime
+for feedback. Shots and workers retain the existing Monte Carlo lifecycle, RNG
+and identity handling. This path does not compile a static simulation trace.
+
+## Native scheduling across release
 
 Scheduled extraction submits qubit release to the runtime in source order without
 adding a host barrier or draining the queue at that release. Later operations in

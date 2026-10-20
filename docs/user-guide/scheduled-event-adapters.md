@@ -145,6 +145,24 @@ Opt in explicitly while retaining an existing idle or local profile:
 ```python
 import pecos_rslib as pr
 
+
+class CrosstalkAdapter:
+    """Invented schema: event (7, b"") exposes qubit 1 to a nearby readout."""
+
+    def validate(self, batch):
+        for op in batch.operations:
+            if isinstance(op, tuple) and op != (7, b""):
+                message = "unknown synthetic event"
+                raise ValueError(message)
+
+    def translate(self, batch):
+        return [pr.ScheduledCrosstalk.local([1]) if isinstance(op, tuple) else op for op in batch.operations]
+
+
+def adapter_factory(_context):
+    return CrosstalkAdapter()
+
+
 base = pr.scheduled_idle_noise(2, linear=0.02)
 profile = pr.scheduled_measurement_crosstalk(
     base,
@@ -183,7 +201,13 @@ transition hooks and arbitrary execution-time callbacks remain unsupported.
 An exposure is ordered noise metadata: it creates no physical occupancy, closes
 no idle gap and does not advance a qubit's busy endpoint. Thus a later physical
 operation still receives the complete native idle interval, including nonlinear
-idle noise. The adapter must choose an ordering consistent with its runtime's
+idle noise. The same rule means an exposure samples its victim as of the victim's
+previous physical operation: idle noise accrued since then is applied only at
+the victim's next physical operation, after the exposure and its transition. For
+Z/RZ idle noise this order is unobservable. With X/Y/leakage or RX/RY idle noise
+and an asymmetric transition map (for example only `0->1`), results can differ
+from applying the idle interval before the exposure, and no adapter ordering
+changes that. The adapter must choose an ordering consistent with its runtime's
 semantics; these synthetic contracts do not establish device fidelity.
 
 The normal path is `sim() → MonteCarloEngine → HybridEngine`: Selene and its runtime

@@ -7,8 +7,8 @@
 use crate::noise::{IntoNoiseModel, NoiseModel};
 use crate::runtime_frame::{ShotContext, error, processing_error};
 use crate::scheduled_frame::{
-    self, MAX_SCHEDULE_BYTES, PreparedSchedule, ScheduleTimeline, ScheduledIdleModel,
-    ScheduledNoise, TimedBatch,
+    self, MAX_SCHEDULE_BYTES, MAX_SCHEDULED_QUBITS, PreparedSchedule, ScheduleTimeline,
+    ScheduledIdleModel, ScheduledNoise, TimedBatch,
 };
 use crate::{ByteMessage, ControlEngine, EngineStage, Gate, GateType};
 use pecos_core::{RngManageable, errors::PecosError};
@@ -47,10 +47,7 @@ impl ScheduledCrosstalk {
         )
     }
 }
-pub(crate) fn validate_spectator(
-    gate: &Gate,
-    capacity: Option<usize>,
-) -> Result<usize, PecosError> {
+fn validate_spectator(gate: &Gate, capacity: Option<usize>) -> Result<usize, PecosError> {
     let qubits = capacity.ok_or_else(|| error("scheduled crosstalk profile required"))?;
     if !gate.gate_type.is_crosstalk_payload()
         || gate.qubits.len() > qubits
@@ -383,7 +380,7 @@ impl ScheduledGateBuffer<'_> {
         let ids = match &effect {
             ScheduledCrosstalk::Local(ids) | ScheduledCrosstalk::GlobalExcluding(ids) => ids,
         };
-        if ids.len() > 16 {
+        if ids.len() > MAX_SCHEDULED_QUBITS {
             let message = "scheduled spectator list limit";
             self.state.failure = Some(message.into());
             return Err(error(message));

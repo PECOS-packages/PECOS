@@ -66,15 +66,14 @@ impl ScheduledExecutionLimits {
         let operations = ordinary
             .checked_mul(16)
             .and_then(|n| targets.checked_mul(2).and_then(|t| n.checked_add(t)))
-            .and_then(|n| n.checked_add(exposures))
             .ok_or_else(overflow)?;
         if exposures == 0 {
             return Self::single_pass(operations);
         }
         // Each exposure yields at most once, followed by the last transition/
-        // source suffix. Per victim: one internal MZ and at most one transition.
-        // Extra exposure commands cover empty grouped MZ records. Target charges
-        // also bound grouped measurement bytes, not just their command count.
+        // source suffix. Per candidate target the general model emits at most one
+        // single-qubit internal MZ and one transition gate; the exposure itself
+        // emits nothing. Every such command fits the 128-byte operation charge.
         let simulator_calls = exposures.checked_add(1).ok_or_else(overflow)?;
         let bytes = operations
             .checked_mul(128)

@@ -98,10 +98,13 @@ fn profile(rate: f64) -> ScheduledNoise {
         .unwrap()
 }
 fn host(profile: ScheduledNoise) -> QuantumSystem {
+    host_with(profile, 2)
+}
+fn host_with(profile: ScheduledNoise, qubits: usize) -> QuantumSystem {
     let model = ScheduledEventNoise::new(profile, |_| Ok(Box::new(Adapter)))
         .into_noise_model()
         .unwrap();
-    let mut host = QuantumSystem::new(model, Box::new(StateVecEngine::new(2)));
+    let mut host = QuantumSystem::new(model, Box::new(StateVecEngine::new(qubits)));
     host.begin_shot(ShotContext {
         run: 1,
         worker: 0,
@@ -469,4 +472,89 @@ fn maximum_spectator_fanout_and_latched_output_rejection() {
             system.process(encode_event_batches(&[batch(0, 0, 0, vec![e(1, &[])])]).unwrap());
         assert_eq!(result.is_ok(), count == 1024);
     }
+}
+
+#[test]
+fn firing_exposures_at_maximum_fanout_fit_the_execution_budget() {
+    // Every candidate fires and flips, so each target costs an internal MZ and a
+    // transition. Global exposures charge the whole capacity, not their list.
+    let profile = || {
+        ScheduledNoise::new(16)
+            .unwrap()
+            .with_measurement_crosstalk(1.0, 1.0, flips())
+            .unwrap()
+    };
+    let around = |exposures: Vec<ScheduledEventOp>| {
+        let mut operations: Vec<_> = (0..16).map(|q| g(Gate::pz(&[q]))).collect();
+        operations.extend(exposures);
+        operations.extend((0..16).map(|q| g(Gate::mz(&[q]))));
+        batch(0, 0, 0, operations)
+    };
+    let all: Vec<u8> = (0..16).collect();
+    // An odd number of global flips leaves every qubit in |1>.
+    let global = around((0..1023).map(|_| e(1, &[])).collect());
+    assert_eq!(run(&mut host_with(profile(), 16), &[global]), vec![1; 16]);
+    // Exactly the aggregate target limit; an even number of flips.
+    let mut exposures: Vec<_> = (0..1024).map(|_| e(0, &all)).collect();
+    let local = around(exposures.clone());
+    assert_eq!(run(&mut host_with(profile(), 16), &[local]), vec![0; 16]);
+    exposures.push(e(0, &[0]));
+    let error = host_with(profile(), 16)
+        .process(encode_event_batches(&[around(exposures)]).unwrap())
+        .err()
+        .expect("expected rejection");
+    assert!(
+        error.to_string().contains("spectator expansion limit"),
+        "{error}"
+    );
+}
+
+#[test]
+fn writer_rejects_oversized_lists_and_full_batches_at_push() {
+    struct Full;
+    impl ScheduledBatchAdapter for Full {
+        fn validate(&self, _: &ScheduledEventBatch) -> Result<(), PecosError> {
+            Ok(())
+        }
+        fn translate(
+            &mut self,
+            _: &ScheduledEventBatch,
+            out: &mut ScheduledGateBuffer<'_>,
+        ) -> Result<(), PecosError> {
+            for _ in 0..MAX_BATCH_OPERATIONS {
+                out.push(Gate::pz(&[0]))?;
+            }
+            out.push_crosstalk(ScheduledCrosstalk::Local(vec![]))
+        }
+    }
+    let mut system = host(profile(1.0));
+    let ids: Vec<u8> = (0..17).collect();
+    let error = system
+        .process(encode_event_batches(&[batch(0, 0, 0, vec![e(0, &ids)])]).unwrap())
+        .err()
+        .expect("expected rejection");
+    assert!(
+        error.to_string().contains("spectator list limit"),
+        "{error}"
+    );
+
+    let model = ScheduledEventNoise::new(profile(1.0), |_| Ok(Box::new(Full)))
+        .into_noise_model()
+        .unwrap();
+    let mut system = QuantumSystem::new(model, Box::new(StateVecEngine::new(2)));
+    system
+        .begin_shot(ShotContext {
+            run: 0,
+            worker: 0,
+            shot: 0,
+        })
+        .unwrap();
+    let error = system
+        .process(encode_event_batches(&[batch(0, 0, 0, vec![e(0, &[])])]).unwrap())
+        .err()
+        .expect("expected rejection");
+    assert!(
+        error.to_string().contains("spectator expansion limit"),
+        "{error}"
+    );
 }

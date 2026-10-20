@@ -8,6 +8,8 @@ use std::{any::Any, collections::BTreeMap};
 
 /// Maximum complete transport size. Extraction itself remains uncapped.
 pub const MAX_SCHEDULE_BYTES: usize = 64 * 1024 * 1024;
+/// Maximum profile capacity: the state-vector limit for scheduled execution.
+pub const MAX_SCHEDULED_QUBITS: usize = 16;
 /// Native timing and ordered operations. The v6 encoder admits ordinary gates
 /// only. Internally normalized v7 batches may also carry checked exposure metadata;
 /// opaque runtime events cannot be represented here.
@@ -365,8 +367,10 @@ impl ScheduledNoise {
     /// # Errors
     /// Rejects capacity outside 1..=16.
     pub fn new(qubits: usize) -> Result<Self, PecosError> {
-        if !(1..=16).contains(&qubits) {
-            return Err(error("scheduled capacity must be 1..=16"));
+        if !(1..=MAX_SCHEDULED_QUBITS).contains(&qubits) {
+            return Err(error(&format!(
+                "scheduled capacity must be 1..={MAX_SCHEDULED_QUBITS}"
+            )));
         }
         Ok(Self {
             qubits,
@@ -807,10 +811,8 @@ impl ScheduleTimeline {
                 if gate.gate_type.is_crosstalk_payload() {
                     // An exposure is ordered noise metadata, not a physical use.
                     // It neither closes an idle gap nor advances a busy endpoint.
-                    super::scheduled_events::validate_spectator(
-                        &gate,
-                        config.spectator_capacity(),
-                    )?;
+                    // Only `push_crosstalk` creates one, after validating it
+                    // against this profile.
                     builder.add_gate_command(&gate);
                     continue;
                 }

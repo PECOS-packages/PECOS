@@ -283,11 +283,12 @@ gate, including seepage of both two-qubit operands). Output bytes and command
 counts are checked before simulator execution.
 
 Batches without exposures authorize one simulator call. With E explicit exposures
-and F candidate targets, the execution budget adds at most 2F + E commands to
-the ordinary expansion budget and authorizes at most E + 1 simulator calls. Each
-exposure yields at most once for internal measurements, with a final continuation
-for transitions and the remaining operations. Byte budgets include grouped
-measurement targets and each message header. Exceeding any cumulative budget
+and F candidate targets, the execution budget adds at most 2F commands to the
+ordinary expansion budget (one internal measurement and one transition per
+target) and authorizes at most E + 1 simulator calls. Each exposure yields at
+most once for internal measurements, with a final continuation for transitions
+and the remaining operations. Byte budgets cover every command and each message
+header. Exceeding any cumulative budget
 fails and poisons the shot. These limits bound dispatched noise expansion, not
 native extraction, allocations inside a model/adapter, or callback execution
 time. Existing shot context, clone and whole-host reset requirements still apply.

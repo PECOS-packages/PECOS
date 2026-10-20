@@ -24,6 +24,7 @@ fn internal_measurements_resume_once_and_do_not_escape() {
         .mz(&[0])
         .meas_crosstalk_local_payload(&[0])
         .mz(&[0])
+        .x(&[0])
         .build();
     let stage = system
         .noise_model
@@ -43,7 +44,8 @@ fn internal_measurements_resume_once_and_do_not_escape() {
         )
         .unwrap();
     assert_eq!(output.outcomes().unwrap(), vec![1, 0]);
-    // Completion consumes all internal results; a subsequent batch is fresh.
+    // Completion consumes internal results while preserving the quantum state.
+    // The trailing X leaves |1>, so clearing the simulator at completion fails.
     let stage = system
         .noise_model
         .as_any_mut()
@@ -57,7 +59,7 @@ fn internal_measurements_resume_once_and_do_not_escape() {
             .unwrap()
             .outcomes()
             .unwrap(),
-        vec![0]
+        vec![1]
     );
 }
 
@@ -324,11 +326,14 @@ fn bounded_driver_matches_unsplit_controller_rng_and_results() {
         );
         bounded.set_seed(seed);
         reference.set_seed(seed);
-        // Three successive batches retain quantum/noise state and consume RNG in
-        // the same order. Internal measurements must never become user results.
-        for _ in 0..3 {
-            let input = ByteMessage::quantum_operations_builder()
-                .pz(&[0, 1])
+        // The middle batch retains leakage and quantum state; only the first
+        // and third batches prepare/reset. Internal results never reach the user.
+        for batch in 0..3 {
+            let mut builder = ByteMessage::quantum_operations_builder();
+            if batch != 1 {
+                builder.pz(&[0, 1]);
+            }
+            let input = builder
                 .h(&[0])
                 .meas_crosstalk_local_payload(&[0])
                 .mz(&[0])
@@ -384,4 +389,57 @@ fn bounded_driver_matches_unsplit_controller_rng_and_results() {
             );
         }
     }
+}
+
+#[test]
+fn malformed_continuation_stops_before_dispatch_or_further_reply() {
+    // This is a deliberately invalid header, not an admitted scheduled record.
+    let malformed = ByteMessage::new(&[0xff; 16]);
+    assert!(malformed.quantum_ops().is_err());
+    let mut system = scripted(vec![malformed], false);
+    let stage = system
+        .noise_model
+        .start(ByteMessage::quantum_operations_builder().x(&[0]).build())
+        .unwrap();
+    assert!(
+        system
+            .drive_scheduled(
+                stage,
+                ScheduledExecutionLimits {
+                    operations: 16,
+                    bytes: 4096,
+                    simulator_calls: 8,
+                }
+            )
+            .is_err()
+    );
+    assert_eq!(script(&system).starts, 1);
+    assert_eq!(script(&system).replies, 1);
+    assert_eq!(measure(&mut system), vec![1]);
+}
+
+#[test]
+fn byte_limit_precedes_malformed_continuation_parsing() {
+    let malformed = ByteMessage::new(&[0xff; 16]);
+    let x = ByteMessage::quantum_operations_builder().x(&[0]).build();
+    let bytes = x.as_bytes().len() + malformed.as_bytes().len() - 1;
+    let mut system = scripted(vec![malformed], false);
+    let stage = system.noise_model.start(x).unwrap();
+    let error = system
+        .drive_scheduled(
+            stage,
+            ScheduledExecutionLimits {
+                operations: 16,
+                bytes,
+                simulator_calls: 8,
+            },
+        )
+        .err()
+        .expect("expected rejection");
+    assert!(
+        error.to_string().contains("expansion limit (bytes)"),
+        "{error}"
+    );
+    assert_eq!(script(&system).replies, 1);
+    assert_eq!(measure(&mut system), vec![1]);
 }

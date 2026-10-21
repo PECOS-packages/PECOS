@@ -39,9 +39,12 @@ pecos-qis = { workspace = true, optional = true }
 pecos-qis-ffi-types = { workspace = true, optional = true }
 selene-hugr-qis-compiler = { git = "https://github.com/Quantinuum/tket2", rev = "6a4708c6289fa5f6c68cfed64b5bdd9dbdef1ded", default-features = false, optional = true }
 
+# Select the workspace LLVM link mode for the compiler's inkwell.
+inkwell = { workspace = true, optional = true }
+
 [features]
 selene = ["dep:pecos-engines", "dep:pecos-programs", "dep:pecos-qis", "dep:pecos-qis-ffi-types"]
-hugr = ["selene", "dep:selene-hugr-qis-compiler"]
+hugr = ["selene", "dep:selene-hugr-qis-compiler", "dep:inkwell"]
 # Convert PerGateTypeNoise to the pecos-neo noise channel for
 # circuit-level Monte Carlo with the same noise that drives DEM export.
 neo = ["dep:pecos-neo"]

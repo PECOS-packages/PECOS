@@ -238,3 +238,138 @@ def test_direct_binding_reuses_fit_shots_for_schedule_validation(monkeypatch: py
     assert inferred.audit["provenance_shots"] == 0
     assert inferred.audit["schedule_validation_shots"] == 40
     assert inferred.detector_supports == ((0, 1),)
+
+
+@guppy
+def _integer_outputs() -> None:
+    m0 = measure(qubit()).read()
+    m1 = measure(qubit()).read()
+    m2 = measure(qubit()).read()
+    output("raw measurements", m0)
+    output("raw measurements", m1)
+    output("raw measurements", m2)
+    output("checks", array(int(m0)))
+    output("checks", int(m1))
+    output("bits", array(int(m1), int(m2)))
+    output("counts", 2)
+    output("counts", int(m2))
+
+
+@pytest.mark.parametrize(
+    ("tag", "element", "support"),
+    [("checks", 0, (0,)), ("checks", 1, (1,)), ("bits", 0, (1,)), ("bits", 1, (2,)), ("counts", 1, (2,))],
+)
+def test_integer_output_positions_follow_complete_stream(tag: str, element: int, support: tuple[int, ...]) -> None:
+    inferred = infer_guppy_dem_annotations(
+        _integer_outputs,
+        num_qubits=3,
+        detector_outputs=[(tag, element)],
+        observable_outputs=[],
+    )
+    assert inferred.detector_supports == (support,)
+    assert inferred.raw_measurement_ids == (0, 1, 2)
+
+
+def test_integer_default_selection_and_nonbit_error() -> None:
+    inferred = infer_guppy_dem_annotations(_integer_outputs, num_qubits=3, detector_tag="checks", observable_outputs=[])
+    assert inferred.detector_supports == ((0,), (1,))
+    with pytest.raises(ValueError, match=r"counts.*element 0.*2"):
+        infer_guppy_dem_annotations(
+            _integer_outputs,
+            num_qubits=3,
+            detector_outputs=[("counts", 0)],
+            observable_outputs=[],
+        )
+
+
+@pytest.mark.parametrize("value", [0.0, 1.0, 2.5])
+def test_selected_float_rejected_but_unselected_float_ignored(monkeypatch: pytest.MonkeyPatch, value: float) -> None:
+    import struct
+
+    from pecos import tracing
+    from pecos.tracing import _capture_qis_operation_traces
+
+    original = _capture_qis_operation_traces
+
+    def with_float(*args: object, **kwargs: object) -> list[dict]:
+        chunks = original(*args, **kwargs)
+        for chunk in chunks:
+            if chunk["stage"] == "named_results":
+                chunk["named_results"]["float output"] = {
+                    "type": "f64",
+                    "values": [struct.unpack("!Q", struct.pack("!d", value))[0]],
+                }
+        return chunks
+
+    monkeypatch.setattr(tracing, "_capture_qis_operation_traces", with_float)
+    good = infer_guppy_dem_annotations(
+        _integer_outputs,
+        num_qubits=3,
+        detector_outputs=[("checks", 0)],
+        observable_outputs=[],
+    )
+    assert good.detector_supports == ((0,),)
+    with pytest.raises(ValueError, match=rf"float output.*element 0.*{value!r}"):
+        infer_guppy_dem_annotations(
+            _integer_outputs,
+            num_qubits=3,
+            detector_outputs=[("float output", 0)],
+            observable_outputs=[],
+        )
+
+
+@pytest.mark.parametrize("probe_only", [False, True])
+def test_raw_tag_must_be_fully_traced_in_every_shot(monkeypatch: pytest.MonkeyPatch, *, probe_only: bool) -> None:
+    from pecos import tracing
+    from pecos.tracing import _capture_qis_operation_traces
+
+    original = _capture_qis_operation_traces
+
+    def incomplete(*args: object, **kwargs: object) -> list[dict]:
+        chunks = original(*args, **kwargs)
+        if not probe_only or kwargs["shots"] > 1:
+            for chunk in chunks:
+                if chunk["stage"] == "named_results":
+                    chunk["named_results"]["raw measurements"]["values"].append(False)
+                    break
+        return chunks
+
+    monkeypatch.setattr(tracing, "_capture_qis_operation_traces", incomplete)
+    with pytest.raises(ValueError, match=r"raw measurements.*must be emitted as bool results"):
+        infer_guppy_dem_annotations(_integer_outputs, num_qubits=3, detector_tag="checks", observable_outputs=[])
+
+
+def test_complete_named_results_reset_between_captured_shots() -> None:
+    from pecos.tracing import _capture_qis_operation_traces
+
+    chunks = _capture_qis_operation_traces(_integer_outputs, 3, shots=4, seed=42, runtime=None)
+    outputs = [chunk for chunk in chunks if chunk["stage"] == "named_results"]
+    assert len(outputs) == 4
+    for chunk in outputs:
+        assert len(chunk["named_results"]["checks"]["values"]) == 2
+        assert len(chunk["named_results"]["bits"]["values"]) == 2
+        assert len(chunk["named_results"]["raw measurements"]["values"]) == 3
+        assert len(chunk["named_results"]["counts"]["values"]) == 2
+        assert chunk["named_results"]["counts"]["values"][0] == 2
+    assert all(not chunk["named_results"] for chunk in chunks if chunk["stage"] != "named_results")
+
+
+def test_integer_outputs_bind_raw_ids_by_probe_correlation() -> None:
+    # The program reads every future before emitting raw outputs, so the
+    # runtime cannot attach direct IDs; correlation recovers them.
+    inferred = infer_guppy_dem_annotations(
+        _integer_outputs,
+        num_qubits=3,
+        detector_outputs=[("checks", 0)],
+        observable_outputs=[],
+    )
+    assert inferred.raw_binding == "probe_correlated_result_ids"
+
+
+def test_complete_named_results_must_come_from_one_chunk() -> None:
+    from pecos.qec.guppy_output_dem import _trace_output_row
+
+    chunk = {"named_results": {"checks": {"type": "i64", "values": [1]}}}
+    assert _trace_output_row([chunk], "checks") == [1]
+    with pytest.raises(ValueError, match="more than one chunk"):
+        _trace_output_row([chunk, chunk], "checks")

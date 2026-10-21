@@ -53,6 +53,23 @@ def direct_outputs() -> None:
     output("logical_x", array(m1, m2))
 
 
+@guppy
+def integer_outputs() -> None:
+    m0 = measure(qubit()).read()
+    m1 = measure(qubit()).read()
+    m2 = measure(qubit()).read()
+    output("raw measurements", m0)
+    output("raw measurements", m1)
+    output("raw measurements", m2)
+    # Integer arrays carry no per-call trace; scalar 0/1 integers do. Element
+    # positions must still follow the complete output stream.
+    output("checks", array(int(m0)))
+    output("checks", int(m1))
+    output("bits", array(int(m1), int(m2)))
+    output("counts", 2)
+    output("counts", int(m2))
+
+
 def main() -> None:
     root = Path(__file__).resolve().parents[1]
     directory = root / "crates/pecos-qec/tests/fixtures/dem_programs"
@@ -62,6 +79,7 @@ def main() -> None:
         ("changing_schedule", changing_schedule),
         ("explicit_only", explicit_only),
         ("direct_outputs", direct_outputs),
+        ("integer_outputs", integer_outputs),
     ]:
         hugr = program.compile().to_bytes()
         (directory / f"{name}.hugr").write_text(program.compile().to_str() + "\n")

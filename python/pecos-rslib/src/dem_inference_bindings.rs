@@ -104,7 +104,7 @@ impl PyDemInferenceSettings {
             .resolved_probe_shots(raw_width)
             .map_err(|error| PyValueError::new_err(error.to_string()))
     }
-    fn _infer(
+    fn infer(
         &self,
         raw_measurement_ids: Vec<usize>,
         raw_rows: Vec<Vec<u8>>,

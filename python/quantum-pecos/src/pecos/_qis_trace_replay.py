@@ -665,7 +665,7 @@ def _validate_audited_trace_stream(chunks: list[dict[str, Any]]) -> None:
         )
         raise ValueError(msg)
     terminal = chunks[-1]
-    if terminal.get("operations") or terminal.get("lowered_quantum_ops") or terminal.get("named_result_traces"):
+    if any(terminal.get(key) for key in ("operations", "lowered_quantum_ops", "named_result_traces", "named_results")):
         msg = (
             "audited runtime trace terminal chunk must be empty; operations or "
             "results after the terminal marker cannot be certified"

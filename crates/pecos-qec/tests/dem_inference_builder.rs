@@ -539,3 +539,94 @@ fn every_partition_of_explicit_and_inferred_definitions_matches_the_parity_oracl
         }
     }
 }
+
+#[test]
+fn sparse_detector_ids_rejected_from_json_and_circuit_metadata() {
+    let json = r#"[{"id":4,"meas_ids":[0]}]"#;
+    for from_circuit in [false, true] {
+        let mut input = circuit();
+        if from_circuit {
+            input.set_meta("detectors", pecos_quantum::Attribute::String(json.into()));
+        }
+        let builder = DetectorErrorModel::builder().with_circuit(input);
+        let builder = if from_circuit {
+            builder
+        } else {
+            builder.with_detectors_json(json)
+        };
+        let error = builder.build().err().unwrap().to_string();
+        assert!(
+            error.contains('4') && error.contains("dense from zero"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn existing_definitions_reject_any_builder_role_or_inference() {
+    for kind in 0..4 {
+        let mut input = circuit();
+        let carried = match kind {
+            0 => {
+                input.set_meta(
+                    "detectors",
+                    pecos_quantum::Attribute::String(r#"[{"id":0,"meas_ids":[0]}]"#.into()),
+                );
+                "detectors metadata"
+            }
+            1 => {
+                input.set_meta(
+                    "observables",
+                    pecos_quantum::Attribute::String(r#"[{"id":0,"meas_ids":[0]}]"#.into()),
+                );
+                "observables metadata"
+            }
+            2 => {
+                let reference = input.meas_ref(2, 0, pecos_core::QubitId(0)).unwrap();
+                input.detector(&[reference]).unwrap();
+                "Detector annotation"
+            }
+            _ => {
+                let reference = input.meas_ref(2, 0, pecos_core::QubitId(0)).unwrap();
+                input.observable(&[reference]).unwrap();
+                "Observable annotation"
+            }
+        };
+        for role in 0..3 {
+            let builder = DetectorErrorModel::builder().with_circuit(input.clone());
+            let builder = match role {
+                0 => builder.with_detectors(vec![vec![0]]),
+                1 => builder.with_observables(vec![vec![0]]),
+                _ => builder
+                    .with_inference(DemInferenceSettings::default().with_validation_rows(2))
+                    .with_inference_data(probes()),
+            };
+            let error = builder.build().err().unwrap().to_string();
+            assert!(error.contains(carried), "{error}");
+        }
+        assert!(
+            DetectorErrorModel::builder()
+                .with_circuit(input)
+                .build()
+                .is_ok()
+        );
+    }
+}
+
+#[test]
+fn tracked_pauli_is_legal_with_explicit_and_inferred_definitions() {
+    for inferred in [false, true] {
+        let mut input = circuit();
+        input.tracked_pauli("Z".parse::<pecos_core::PauliString>().unwrap());
+        let builder = DetectorErrorModel::builder().with_circuit(input);
+        let builder = if inferred {
+            builder
+                .with_inference(DemInferenceSettings::default().with_validation_rows(2))
+                .with_inference_data(probes())
+        } else {
+            builder.with_detectors(vec![vec![0]])
+        };
+        let build = builder.build().unwrap();
+        assert_eq!(build.circuit.annotations().len(), 1);
+    }
+}

@@ -66,6 +66,7 @@ from pecos.qec._qis_result_tags import _CertificationError
 from pecos.qec.dem_spec import (
     GuppyDemBuild,
     ResultRef,
+    _metadata_entry,
     _resolve_dem_specs,
     _resolved_schema_from_validated_json,
 )
@@ -998,6 +999,55 @@ def _generator_certified_result_traces(
     ]
 
 
+def _check_certified_raw_binding(
+    certified: Sequence[Mapping[str, Any]],
+    bound: Sequence[Mapping[str, Any]],
+    raw_tag: str,
+    *,
+    generator_slots: bool = False,
+) -> None:
+    """Check certified raw-tag measurement IDs against the inference binding.
+
+    Both are compared at flattened raw-tag element positions. A compiler
+    record names a runtime call occurrence, which starts after the bound calls
+    before it. A generator record names a flattened slot, either
+    ``(raw_tag, index)`` or ``(f"{raw_tag}:meas:{index}", 0)``. Certificate
+    values are placeholders and are never compared.
+    """
+    calls = [list(item["result_ids"]) for item in bound if item["name"] == raw_tag]
+    bound_ids = [identity for ids in calls for identity in ids]
+    starts = [sum(len(ids) for ids in calls[:index]) for index in range(len(calls))]
+    for item in certified:
+        ids = item.get("result_ids") or []
+        if not ids:
+            continue
+        name, occurrence = item["name"], item["occurrence"]
+        base, separator, element_text = name.rpartition(":meas:")
+        if not generator_slots and name == raw_tag:
+            if occurrence < len(calls) and len(calls[occurrence]) != len(ids):
+                msg = (
+                    f"raw tag {raw_tag!r} call {occurrence} emits {len(calls[occurrence])} value(s), "
+                    f"but its certificate names {len(ids)} measurement(s)"
+                )
+                raise ValueError(msg)
+            position = starts[occurrence] if occurrence < len(calls) else len(bound_ids)
+        elif generator_slots and name == raw_tag:
+            position = occurrence
+        elif generator_slots and separator and base == raw_tag and element_text.isdecimal() and occurrence == 0:
+            position = int(element_text)
+        else:
+            continue
+        for element, identity in enumerate(ids):
+            index = position + element
+            inferred = bound_ids[index] if index < len(bound_ids) else None
+            if inferred != identity:
+                msg = (
+                    f"raw tag {raw_tag!r} element {index}: certified measurement ID {identity} "
+                    f"disagrees with inference binding ID {inferred}"
+                )
+                raise ValueError(msg)
+
+
 _UNSET = object()
 _LEGACY_NOISE = object()
 
@@ -1334,6 +1384,7 @@ class GuppyDemBuilder:
                 if not isinstance(spec, expected_type):
                     msg = f"with_{role}() requires {expected_type.__name__} definitions"
                     raise TypeError(msg)
+                _metadata_entry(spec.metadata)
                 identity = index if spec.id is None else spec.id
                 if isinstance(identity, bool) or not isinstance(identity, int) or identity < 0:
                     msg = f"{role} ids must be non-negative integers"
@@ -1411,6 +1462,12 @@ class GuppyDemBuilder:
                     circuit,
                     inference.source_result_traces,
                     required_tags=referenced_tags,
+                )
+                _check_certified_raw_binding(
+                    certified,
+                    result_traces,
+                    settings.raw_tag,
+                    generator_slots=generator_layout is not None,
                 )
                 # Raw-array bindings have their own provenance evidence.
                 result_traces.extend(item for item in certified if item["name"] != settings.raw_tag)
@@ -1543,7 +1600,7 @@ class GuppyDemBuilder:
             observables_json,
             circuit=circuit,
             result_traces=result_traces,
-            allow_array_bindings=inference is not None,
+            raw_array_tag=inference.raw_tag if inference is not None else None,
         )
         definition_origins = []
         for role, specs, ids, selectors in (

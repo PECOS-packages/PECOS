@@ -17,6 +17,7 @@ covers every physical measurement with a unique result-ID binding.
 from __future__ import annotations
 
 import json
+import struct
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -73,17 +74,42 @@ def _lowered_schedule(shot: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
     return tuple(gates)
 
 
-def _trace_output_row(shot: Sequence[Mapping[str, Any]], tag: str) -> list[int]:
+def _trace_output_row(shot: Sequence[Mapping[str, Any]], tag: str) -> list[bool | int | float]:
     row = []
-    for item in _named_trace_items(shot):
-        if item.get("name") == tag:
-            values = item.get("values")
-            if not isinstance(values, list):
-                raise TypeError(f"result tag {tag!r} has an invalid runtime trace value list")
-            row.extend(_bit(value, context=f"result tag {tag!r}") for value in values)
+    if sum(1 for chunk in shot if chunk.get("named_results")) > 1:
+        raise ValueError("QIS trace shot carries complete named results in more than one chunk")
+    for chunk in shot:
+        result = (chunk.get("named_results") or {}).get(tag)
+        if result is None:
+            continue
+        values = result["values"]
+        kind = result["type"]
+        if kind == "f64":
+            row.extend(struct.unpack("!d", struct.pack("!Q", bits))[0] for bits in values)
+        elif kind in {"bool", "i64", "u64"}:
+            row.extend(values)
+        else:
+            raise ValueError(f"result tag {tag!r} has unknown NamedResult type {kind!r}")
     if not row:
         raise ValueError(f"missing or empty required result tag {tag!r}")
     return row
+
+
+def _raw_row(shot: Sequence[Mapping[str, Any]], tag: str) -> list[int]:
+    message = f"raw tag {tag!r}: raw measurements must be emitted as bool results"
+    values = _trace_output_row(shot, tag)
+    try:
+        row = [_bit(value, context=f"raw tag {tag!r}") for value in values]
+    except ValueError as error:
+        raise ValueError(message) from error
+    traced = [value for item in _named_trace_items(shot) if item.get("name") == tag for value in item["values"]]
+    if row != traced:
+        raise ValueError(message)
+    return row
+
+
+def _selected_row(rows: Mapping[str, Sequence[Any]], labels: Sequence[tuple[str, int]]) -> list[int]:
+    return [_bit(rows[tag][element], context=f"result tag {tag!r} element {element}") for tag, element in labels]
 
 
 def _physical_row(shot: Sequence[Mapping[str, Any]], ids: Sequence[int]) -> list[int]:
@@ -225,6 +251,7 @@ def infer_guppy_dem_annotations(
     )
     normalize_traced_tick_circuit(circuit, context="infer_guppy_dem_annotations")
 
+    _raw_row(trace, raw_tag)
     raw_ids: list[int] = []
     raw_value_count = 0
     provenance_complete = True
@@ -273,12 +300,14 @@ def infer_guppy_dem_annotations(
             else tuple((tag, element) for tag in default_tags for element in range(len(baseline_rows[tag])))
         )
         for tag, element in labels:
-            if element >= len(baseline_rows[tag]):
+            if element < 0 or element >= len(baseline_rows[tag]):
                 raise ValueError(f"inferred output {tag!r} element {element} is out of range")
         return labels
 
     detector_labels = select_labels(detector_outputs, [detector_tag])
     observable_labels = select_labels(observable_outputs, observable_tags)
+    _selected_row(baseline_rows, detector_labels)
+    _selected_row(baseline_rows, observable_labels)
     probe_shots = settings.resolved_probe_shots(raw_value_count)
     correlation_shots = provenance_shots if not provenance_complete and require_raw_provenance else 0
     total_shots = probe_shots + correlation_shots
@@ -302,12 +331,13 @@ def infer_guppy_dem_annotations(
                 "quantum operation schedule changed during inference/provenance probing; "
                 "a single static DEM cannot represent this program",
             )
+    raw_probe_rows = [_raw_row(shot, raw_tag) for shot in shots]
     if provenance_complete:
         raw_binding = "runtime_result_ids"
     elif require_raw_provenance:
         provenance = shots[:correlation_shots]
         raw_ids = _correlate_measurement_ids(
-            [_trace_output_row(shot, raw_tag) for shot in provenance],
+            raw_probe_rows[:correlation_shots],
             [_physical_row(shot, source_ids) for shot in provenance],
             source_ids,
         )
@@ -321,19 +351,19 @@ def infer_guppy_dem_annotations(
     observable_rows = []
     # Fit and validate the exact shots whose schedules and physical bindings
     # were checked. Correlation rows are separate from the fitted rows.
-    for shot in shots[correlation_shots:]:
+    for shot, raw_row in zip(shots[correlation_shots:], raw_probe_rows[correlation_shots:], strict=True):
         rows = {tag: _trace_output_row(shot, tag) for tag in selected_tags}
         for tag, row in rows.items():
             if len(row) != len(baseline_rows[tag]):
                 raise ValueError(f"result {tag!r} has inconsistent shot widths")
-        if require_raw_provenance and rows[raw_tag] != _physical_row(shot, raw_ids):
+        if require_raw_provenance and raw_row != _physical_row(shot, raw_ids):
             raise ValueError("raw measurement binding changed across inference probes")
-        raw_rows.append(rows[raw_tag])
-        detector_rows.append([rows[tag][element] for tag, element in detector_labels])
-        observable_rows.append([rows[tag][element] for tag, element in observable_labels])
+        raw_rows.append(raw_row)
+        detector_rows.append(_selected_row(rows, detector_labels))
+        observable_rows.append(_selected_row(rows, observable_labels))
 
     # Shared Rust inference validates both output families with one elimination.
-    detector_supports, observable_supports = settings._infer(  # noqa: SLF001
+    detector_supports, observable_supports = settings.infer(
         raw_ids,
         raw_rows,
         detector_rows,

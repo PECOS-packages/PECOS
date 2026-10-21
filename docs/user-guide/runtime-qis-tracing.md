@@ -96,6 +96,10 @@ Important fields include:
   gate stream completely represents the lowerable source operations in that
   chunk.
 - `named_result_traces`: provenance emitted for named `result(...)` records.
+- `named_results`: the shot's complete typed named outputs, in call order per
+  tag, on the `named_results` chunk only. Unlike `named_result_traces`, it
+  includes integer arrays and non-bit values; `f64` values are serialized as
+  IEEE-754 bit patterns.
 - `engine_trace_id`, `shot_index`, and `chunk_index`: framing identities used
   to reject mixed, missing, or reordered chunks.
 - `stage`: the producer stage; exactly one final `trace_complete` marker is

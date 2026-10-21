@@ -4669,6 +4669,7 @@ name = "pecos-qec"
 version = "0.2.0-dev.0"
 dependencies = [
  "batsat",
+ "inkwell",
  "ndarray 0.17.2",
  "pecos-core",
  "pecos-decoder-core",

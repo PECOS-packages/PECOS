@@ -167,6 +167,16 @@ class DemInferenceSettings:
     def with_require_raw_provenance(self, required: bool) -> DemInferenceSettings: ...
     def validate(self) -> None: ...
     def resolved_probe_shots(self, raw_width: int) -> int: ...
+    def infer(
+        self,
+        raw_measurement_ids: Sequence[int],
+        raw_rows: Sequence[Sequence[int]],
+        detector_rows: Sequence[Sequence[int]],
+        observable_rows: Sequence[Sequence[int]],
+    ) -> tuple[list[list[int]], list[list[int]]]:
+        """Infer detector and observable supports from bound bit-valued probe rows."""
+        ...
+
     @property
     def raw_tag(self) -> str: ...
     @property

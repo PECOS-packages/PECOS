@@ -19,7 +19,7 @@ use pecos_qis::{
     OperationTraceChunk, OperationTraceStore, QisEngineBuilder, SeleneRuntime,
     helios_interface_builder, qis_engine, selene_simple_runtime,
 };
-use pecos_qis_ffi_types::{Operation, QuantumOp};
+use pecos_qis_ffi_types::{NamedResult, Operation, QuantumOp};
 use pecos_quantum::{Attribute, TickCircuit, pass};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -156,9 +156,20 @@ fn validate_shot(shot: &[OperationTraceChunk]) -> Result<(), DemBuildError> {
     if !terminal.operations.is_empty()
         || !terminal.lowered_quantum_ops.is_empty()
         || !terminal.named_result_traces.is_empty()
+        || !terminal.named_results.is_empty()
     {
         return Err(preparation(
             "terminal trace chunk must contain no operations or named outputs",
+        ));
+    }
+    if shot
+        .iter()
+        .filter(|chunk| !chunk.named_results.is_empty())
+        .count()
+        > 1
+    {
+        return Err(preparation(
+            "runtime trace carries complete named results in more than one chunk",
         ));
     }
     Ok(())
@@ -183,15 +194,51 @@ fn source_ids(shot: &[OperationTraceChunk]) -> Result<Vec<usize>, DemBuildError>
 
 /// Replay only runtime-lowered operations; never reconstruct measurement IDs
 /// from gate positions or silently fall back to the source operation stream.
-fn replay(shot: &[OperationTraceChunk], qubits: usize) -> Result<TickCircuit, DemBuildError> {
+fn replay(
+    shot: &[OperationTraceChunk],
+    qubits: usize,
+    source: &[usize],
+) -> Result<TickCircuit, DemBuildError> {
     validate_shot(shot)?;
-    let source = source_ids(shot)?;
     let mut circuit = TickCircuit::new();
     let mut runtime_ids = BTreeSet::new();
     for trace in shot.iter().flat_map(|chunk| &chunk.lowered_quantum_ops) {
+        // Same gate set as the Python replay chain in pecos/_qis_trace_replay.py.
         let kind: GateType = match trace.gate_type.as_str() {
             "MeasureLeaked" => GateType::MZ,
-            name => name.parse().map_err(preparation)?,
+            name @ ("H"
+            | "X"
+            | "Y"
+            | "Z"
+            | "SZ"
+            | "SZdg"
+            | "T"
+            | "Tdg"
+            | "PZ"
+            | "Idle"
+            | "MZ"
+            | "MeasCrosstalkGlobalPayload"
+            | "MeasCrosstalkLocalPayload"
+            | "RX"
+            | "RY"
+            | "RZ"
+            | "RXY1Q"
+            | "R1XY"
+            | "CX"
+            | "CY"
+            | "CZ"
+            | "CH"
+            | "CRZ"
+            | "SZZ"
+            | "SZZdg"
+            | "RZZ"
+            | "RXYXY2Q"
+            | "CCX") => name.parse().map_err(preparation)?,
+            name => {
+                return Err(preparation(format!(
+                    "unsupported lowered traced gate {name:?}"
+                )));
+            }
         };
         if trace
             .angles
@@ -288,6 +335,7 @@ fn replay(shot: &[OperationTraceChunk], qubits: usize) -> Result<TickCircuit, De
 
 fn check_schedule(
     baseline: &[OperationTraceChunk],
+    baseline_source: &[usize],
     shot: &[OperationTraceChunk],
 ) -> Result<(), DemBuildError> {
     let a: Vec<_> = baseline
@@ -304,7 +352,7 @@ fn check_schedule(
                 || a.measurement_result_ids != b.measurement_result_ids
                 || a.metadata != b.metadata
         })
-        || source_ids(baseline)? != source_ids(shot)?
+        || baseline_source != source_ids(shot)?
     {
         return Err(preparation(
             "quantum operation schedule changed; a single static DEM cannot represent this program",
@@ -313,19 +361,74 @@ fn check_schedule(
     Ok(())
 }
 
-fn named_row(shot: &[OperationTraceChunk], tag: &str) -> Result<Vec<u8>, DemBuildError> {
-    let row: Vec<_> = shot
-        .iter()
-        .flat_map(|c| &c.named_result_traces)
-        .filter(|output| output.name == tag)
-        .flat_map(|output| output.values.iter().copied().map(u8::from))
-        .collect();
-    if row.is_empty() {
+type NamedRows<'a> = BTreeMap<&'a str, &'a NamedResult>;
+
+fn named_rows(shot: &[OperationTraceChunk]) -> NamedRows<'_> {
+    shot.iter()
+        .flat_map(|chunk| &chunk.named_results)
+        .map(|(tag, values)| (tag.as_str(), values))
+        .collect()
+}
+
+fn named_row<'a>(rows: &NamedRows<'a>, tag: &str) -> Result<&'a NamedResult, DemBuildError> {
+    rows.get(tag)
+        .copied()
+        .filter(|row| !row.is_empty())
+        .ok_or_else(|| preparation(format!("missing or empty required output tag {tag:?}")))
+}
+
+fn selected_bit(row: &NamedResult, tag: &str, element: usize) -> Result<u8, DemBuildError> {
+    if element >= row.len() {
         return Err(preparation(format!(
-            "missing or empty required output tag {tag:?}"
+            "output {tag:?} element {element} is out of range"
         )));
     }
-    Ok(row)
+    let value = match row {
+        NamedResult::Bool(values) => return Ok(u8::from(values[element])),
+        NamedResult::I64(values) => {
+            if let Ok(bit @ (0 | 1)) = u8::try_from(values[element]) {
+                return Ok(bit);
+            }
+            values[element].to_string()
+        }
+        NamedResult::U64(values) => {
+            if let Ok(bit @ (0 | 1)) = u8::try_from(values[element]) {
+                return Ok(bit);
+            }
+            values[element].to_string()
+        }
+        NamedResult::F64(values) => format!("{:?}", values[element]),
+    };
+    Err(preparation(format!(
+        "output {tag:?} element {element} has value {value}; emit bool or integer 0/1"
+    )))
+}
+
+fn raw_row(
+    shot: &[OperationTraceChunk],
+    rows: &NamedRows<'_>,
+    tag: &str,
+) -> Result<Vec<u8>, DemBuildError> {
+    let error = || {
+        preparation(format!(
+            "raw tag {tag:?}: raw measurements must be emitted as bool results"
+        ))
+    };
+    let values = named_row(rows, tag)?;
+    let complete = (0..values.len())
+        .map(|i| selected_bit(values, tag, i))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| error())?;
+    let traced: Vec<_> = shot
+        .iter()
+        .flat_map(|chunk| &chunk.named_result_traces)
+        .filter(|item| item.name == tag)
+        .flat_map(|item| item.values.iter().copied().map(u8::from))
+        .collect();
+    if complete != traced {
+        return Err(error());
+    }
+    Ok(complete)
 }
 
 fn physical_row(shot: &[OperationTraceChunk], ids: &[usize]) -> Result<Vec<u8>, DemBuildError> {
@@ -349,7 +452,7 @@ fn physical_row(shot: &[OperationTraceChunk], ids: &[usize]) -> Result<Vec<u8>, 
 }
 
 fn selectors(
-    shot: &[OperationTraceChunk],
+    rows: &NamedRows<'_>,
     requested: Option<&[DemOutputSelector]>,
     defaults: &[String],
 ) -> Result<Vec<DemOutputSelector>, DemBuildError> {
@@ -359,7 +462,7 @@ fn selectors(
     let mut result = Vec::new();
     for tag in defaults {
         result.extend(
-            (0..named_row(shot, tag)?.len()).map(|element| DemOutputSelector {
+            (0..named_row(rows, tag)?.len()).map(|element| DemOutputSelector {
                 tag: tag.clone(),
                 element,
             }),
@@ -369,28 +472,12 @@ fn selectors(
 }
 
 fn selected_row(
-    shot: &[OperationTraceChunk],
+    rows: &NamedRows<'_>,
     outputs: &[DemOutputSelector],
 ) -> Result<Vec<u8>, DemBuildError> {
-    let mut columns = BTreeMap::new();
-    for output in outputs {
-        if !columns.contains_key(&output.tag) {
-            columns.insert(output.tag.clone(), named_row(shot, &output.tag)?);
-        }
-    }
     outputs
         .iter()
-        .map(|output| {
-            columns[&output.tag]
-                .get(output.element)
-                .copied()
-                .ok_or_else(|| {
-                    preparation(format!(
-                        "output {:?} element {} is out of range",
-                        output.tag, output.element
-                    ))
-                })
-        })
+        .map(|output| selected_bit(named_row(rows, &output.tag)?, &output.tag, output.element))
         .collect()
 }
 
@@ -418,7 +505,8 @@ impl DemProgram for SeleneDemProgram {
             .interface(helios_interface_builder())
             .program_ir(source_ir);
         let baseline = capture(&engine, request.num_qubits, 1, request.seed)?.remove(0);
-        let mut circuit = replay(&baseline, request.num_qubits)?;
+        let source = source_ids(&baseline)?;
+        let mut circuit = replay(&baseline, request.num_qubits, &source)?;
         let Some(settings) = request.inference else {
             let checks = capture(
                 &engine,
@@ -427,7 +515,7 @@ impl DemProgram for SeleneDemProgram {
                 request.seed.wrapping_add(1),
             )?;
             for shot in &checks {
-                check_schedule(&baseline, shot)?;
+                check_schedule(&baseline, &source, shot)?;
             }
             circuit.set_meta(
                 "dem_schedule_validation",
@@ -442,8 +530,8 @@ impl DemProgram for SeleneDemProgram {
                 probes: None,
             });
         };
-        let source = source_ids(&baseline)?;
-        let raw = named_row(&baseline, &settings.raw_tag)?;
+        let baseline_rows = named_rows(&baseline);
+        let raw = raw_row(&baseline, &baseline_rows, &settings.raw_tag)?;
         if raw.len() != source.len() {
             return Err(preparation(
                 "raw output must expose every physical measurement exactly once",
@@ -467,21 +555,24 @@ impl DemProgram for SeleneDemProgram {
             ));
         }
         let detector_outputs = selectors(
-            &baseline,
+            &baseline_rows,
             request.detector_outputs,
             std::slice::from_ref(&settings.detector_tag),
         )?;
         let observable_outputs = selectors(
-            &baseline,
+            &baseline_rows,
             request.observable_outputs,
             &settings.observable_tags,
         )?;
         // Validate selectors before spending shots on provenance or fitting.
-        selected_row(&baseline, &detector_outputs)?;
-        selected_row(&baseline, &observable_outputs)?;
+        selected_row(&baseline_rows, &detector_outputs)?;
+        selected_row(&baseline_rows, &observable_outputs)?;
         let mut widths = BTreeMap::new();
         for output in detector_outputs.iter().chain(&observable_outputs) {
-            widths.insert(output.tag.clone(), named_row(&baseline, &output.tag)?.len());
+            widths.insert(
+                output.tag.clone(),
+                named_row(&baseline_rows, &output.tag)?.len(),
+            );
         }
         let correlation_shots = if !direct && settings.require_raw_provenance {
             settings.provenance_shots
@@ -499,20 +590,22 @@ impl DemProgram for SeleneDemProgram {
             request.seed.wrapping_add(1),
         )?;
         for shot in &traces {
-            check_schedule(&baseline, shot)?;
+            check_schedule(&baseline, &source, shot)?;
         }
+        let rows: Vec<_> = traces.iter().map(|shot| named_rows(shot)).collect();
+        let raw_rows = traces
+            .iter()
+            .zip(&rows)
+            .map(|(shot, rows)| raw_row(shot, rows, &settings.raw_tag))
+            .collect::<Result<Vec<_>, _>>()?;
         let binding = if direct {
             "runtime_result_ids"
         } else if settings.require_raw_provenance {
-            let raw_rows = traces[..correlation_shots]
-                .iter()
-                .map(|s| named_row(s, &settings.raw_tag))
-                .collect::<Result<Vec<_>, _>>()?;
             let physical = traces[..correlation_shots]
                 .iter()
                 .map(|s| physical_row(s, &source))
                 .collect::<Result<Vec<_>, _>>()?;
-            ids = correlate_measurement_ids(&raw_rows, &physical, &source)?;
+            ids = correlate_measurement_ids(&raw_rows[..correlation_shots], &physical, &source)?;
             "probe_correlated_result_ids"
         } else {
             ids.clone_from(&source);
@@ -524,15 +617,19 @@ impl DemProgram for SeleneDemProgram {
             detector_rows: Vec::new(),
             observable_rows: Vec::new(),
         };
-        for shot in &traces[correlation_shots..] {
+        for ((shot, rows), row) in traces
+            .iter()
+            .zip(&rows)
+            .zip(raw_rows)
+            .skip(correlation_shots)
+        {
             for (tag, width) in &widths {
-                if named_row(shot, tag)?.len() != *width {
+                if named_row(rows, tag)?.len() != *width {
                     return Err(preparation(format!(
                         "output {tag:?} width changed across probes"
                     )));
                 }
             }
-            let row = named_row(shot, &settings.raw_tag)?;
             if row.len() != raw.len() {
                 return Err(preparation("raw output width changed across probes"));
             }
@@ -545,9 +642,9 @@ impl DemProgram for SeleneDemProgram {
             }
             data.raw_rows.push(row);
             data.detector_rows
-                .push(selected_row(shot, &detector_outputs)?);
+                .push(selected_row(rows, &detector_outputs)?);
             data.observable_rows
-                .push(selected_row(shot, &observable_outputs)?);
+                .push(selected_row(rows, &observable_outputs)?);
         }
         circuit.set_meta(
             "dem_schedule_validation",
@@ -588,6 +685,7 @@ mod tests {
             lowered_quantum_ops: vec![],
             lowered_quantum_ops_complete: true,
             named_result_traces: vec![],
+            named_results: BTreeMap::new(),
             measurement_results: BTreeMap::new(),
         }
     }
@@ -610,8 +708,95 @@ mod tests {
     }
 
     #[test]
+    fn complete_named_results_appear_in_at_most_one_chunk() {
+        let mut shot = trace();
+        let mut named = chunk(1, "named_results");
+        named
+            .named_results
+            .insert("raw".into(), NamedResult::Bool(vec![true]));
+        shot.insert(1, named.clone());
+        shot[2].chunk_index = 2;
+        assert!(validate_shot(&shot).is_ok());
+        named.chunk_index = 2;
+        shot.insert(2, named);
+        shot[3].chunk_index = 3;
+        let error = validate_shot(&shot).unwrap_err().to_string();
+        assert!(error.contains("more than one chunk"), "{error}");
+    }
+
+    #[test]
+    fn selected_values_use_complete_typed_rows() {
+        let mut shot = trace();
+        shot[0].named_results = BTreeMap::from([
+            ("checks".into(), NamedResult::I64(vec![0, 1])),
+            ("counts".into(), NamedResult::U64(vec![2, 1])),
+            ("float".into(), NamedResult::F64(vec![0.0, 1.0, 2.5])),
+        ]);
+        let rows = named_rows(&shot);
+        let outputs = selectors(&rows, None, &["checks".into()]).unwrap();
+        assert_eq!(selected_row(&rows, &outputs).unwrap(), [0, 1]);
+        assert_eq!(selected_bit(rows["counts"], "counts", 1).unwrap(), 1);
+        let error = selected_bit(rows["counts"], "counts", 0)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("counts") && error.contains("element 0") && error.contains("value 2"),
+            "{error}"
+        );
+        for (index, value) in ["0.0", "1.0", "2.5"].iter().enumerate() {
+            let error = selected_bit(rows["float"], "float", index)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                error.contains("float")
+                    && error.contains(&format!("element {index}"))
+                    && error.contains(value),
+                "{error}"
+            );
+        }
+        assert!(selected_bit(rows["checks"], "checks", 2).is_err());
+    }
+
+    #[test]
+    fn raw_outputs_require_complete_trace_values() {
+        let mut shot = trace();
+        shot[0]
+            .named_results
+            .insert("raw".into(), NamedResult::Bool(vec![false, true]));
+        shot[0]
+            .named_result_traces
+            .push(pecos_qis_ffi_types::NamedResultTrace {
+                name: "raw".into(),
+                values: vec![true],
+                result_ids: vec![7],
+            });
+        let error = raw_row(&shot, &named_rows(&shot), "raw")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("raw") && error.contains("must be emitted as bool results"),
+            "{error}"
+        );
+        shot[0].named_result_traces[0].values = vec![false, true];
+        assert_eq!(raw_row(&shot, &named_rows(&shot), "raw").unwrap(), [0, 1]);
+    }
+
+    #[test]
+    fn replay_rejects_gates_outside_python_gate_set() {
+        for name in ["MX", "QAlloc", "Channel"] {
+            let mut shot = trace();
+            shot[0].lowered_quantum_ops[0].gate_type = name.into();
+            let error = replay(&shot, 1, &[7]).unwrap_err().to_string();
+            assert!(
+                error.contains(name) && error.contains("unsupported lowered traced gate"),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
     fn replay_preserves_stable_measurement_identity() {
-        let circuit = replay(&trace(), 1).unwrap();
+        let circuit = replay(&trace(), 1, &[7]).unwrap();
         let ids: Vec<_> = circuit
             .iter_gate_batches()
             .flat_map(|gate| gate.as_gate().meas_ids.clone())
@@ -624,21 +809,21 @@ mod tests {
     fn replay_rejects_partial_traces_and_missing_identity() {
         let mut shot = trace();
         shot.pop();
-        assert!(replay(&shot, 1).is_err());
+        assert!(replay(&shot, 1, &[7]).is_err());
         let mut shot = trace();
         shot[0].lowered_quantum_ops_complete = false;
-        assert!(replay(&shot, 1).is_err());
+        assert!(replay(&shot, 1, &[7]).is_err());
         let mut shot = trace();
         shot[0].lowered_quantum_ops[0]
             .measurement_result_ids
             .clear();
-        assert!(replay(&shot, 1).is_err());
+        assert!(replay(&shot, 1, &[7]).is_err());
         let mut shot = trace();
         shot[0].lowered_quantum_ops[0].measurement_result_ids = vec![8];
-        assert!(replay(&shot, 1).is_err());
+        assert!(replay(&shot, 1, &[7]).is_err());
         let mut shot = trace();
         shot[1].chunk_index = 2;
-        assert!(replay(&shot, 1).is_err());
+        assert!(replay(&shot, 1, &[7]).is_err());
     }
 
     #[test]
@@ -646,12 +831,12 @@ mod tests {
         let baseline = trace();
         let mut changed = trace();
         changed[0].lowered_quantum_ops[0].measurement_result_ids = vec![8];
-        assert!(check_schedule(&baseline, &changed).is_err());
+        assert!(check_schedule(&baseline, &source_ids(&baseline).unwrap(), &changed).is_err());
         let mut changed = trace();
         changed[0].lowered_quantum_ops[0]
             .metadata
             .insert("role".into(), "changed".into());
-        assert!(check_schedule(&baseline, &changed).is_err());
+        assert!(check_schedule(&baseline, &source_ids(&baseline).unwrap(), &changed).is_err());
     }
 
     #[test]
@@ -668,7 +853,7 @@ mod tests {
                 metadata: BTreeMap::from([("role".into(), "waiting".into())]),
             },
         );
-        let circuit = replay(&shot, 1).unwrap();
+        let circuit = replay(&shot, 1, &[7]).unwrap();
         let idle = circuit
             .iter_gate_batches()
             .find(|g| g.as_gate().gate_type == GateType::Idle)
@@ -686,7 +871,7 @@ mod tests {
             let mut shot = trace();
             shot[0].lowered_quantum_ops[0].qubits = vec![qubit];
             shot[0].lowered_quantum_ops[0].angles = vec![angle];
-            assert!(replay(&shot, 1).is_err());
+            assert!(replay(&shot, 1, &[7]).is_err());
         }
     }
 }

@@ -196,3 +196,115 @@ fn direct_result_ids_skip_correlation_and_preserve_multiple_output_tags() {
         Some(&Attribute::String("40".into()))
     );
 }
+
+#[test]
+fn integer_output_positions_follow_complete_stream() {
+    const INTEGER_OUTPUTS: &str = include_str!("fixtures/dem_programs/integer_outputs.ll");
+    for (tag, element, expected) in [
+        ("checks", 0, 0),
+        ("checks", 1, 1),
+        ("bits", 0, 1),
+        ("bits", 1, 2),
+        ("counts", 1, 2),
+    ] {
+        let build = DetectorErrorModel::builder()
+            .with_program(program(INTEGER_OUTPUTS))
+            .with_qubits(3)
+            .with_detector_definitions(vec![DemDefinition::inferred(0, tag, element)])
+            .build()
+            .unwrap();
+        let report = build.inference.unwrap();
+        assert_eq!(report.raw_measurement_ids, [0, 1, 2]);
+        assert_eq!(
+            report.detector_supports,
+            [vec![expected]],
+            "{tag}[{element}]"
+        );
+    }
+    let error = DetectorErrorModel::builder()
+        .with_program(program(INTEGER_OUTPUTS))
+        .with_qubits(3)
+        .with_detector_definitions(vec![DemDefinition::inferred(0, "counts", 0)])
+        .build()
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(
+        error.contains("counts") && error.contains("element 0") && error.contains("value 2"),
+        "{error}"
+    );
+    let build = DetectorErrorModel::builder()
+        .with_program(program(INTEGER_OUTPUTS))
+        .with_qubits(3)
+        .with_inference(DemInferenceSettings::default().with_detector_tag("checks"))
+        .with_observables(vec![])
+        .build()
+        .unwrap();
+    assert_eq!(
+        build.inference.unwrap().detector_supports,
+        [vec![0], vec![1]]
+    );
+}
+
+#[test]
+fn complete_named_results_are_isolated_per_shot() {
+    use pecos_engines::{coin_toss, sim_builder};
+    use pecos_qis::{OperationTraceStore, helios_interface_builder, qis_engine};
+    use pecos_qis_ffi_types::NamedResult;
+    use std::sync::Arc;
+    let store = OperationTraceStore::default();
+    sim_builder()
+        .classical(
+            qis_engine()
+                .runtime(runtime())
+                .interface(helios_interface_builder())
+                .program_ir(include_str!("fixtures/dem_programs/integer_outputs.ll").to_string())
+                .trace_operations_in_memory_to(Arc::clone(&store)),
+        )
+        .quantum(coin_toss())
+        .qubits(3)
+        .workers(1)
+        .seed(42)
+        .run(4)
+        .unwrap();
+    let chunks = store.lock().unwrap();
+    let named: Vec<_> = chunks
+        .iter()
+        .filter(|chunk| chunk.stage == "named_results")
+        .collect();
+    assert_eq!(named.len(), 4);
+    for chunk in named {
+        assert_eq!(chunk.named_results["checks"].len(), 2);
+        assert_eq!(chunk.named_results["bits"].len(), 2);
+        assert_eq!(chunk.named_results["raw measurements"].len(), 3);
+        let NamedResult::I64(counts) = &chunk.named_results["counts"] else {
+            panic!("integer counts");
+        };
+        assert_eq!(counts.len(), 2);
+        assert_eq!(counts[0], 2);
+    }
+    assert!(
+        chunks
+            .iter()
+            .filter(|chunk| chunk.stage != "named_results")
+            .all(|chunk| chunk.named_results.is_empty())
+    );
+}
+
+#[test]
+fn integer_outputs_bind_raw_ids_by_probe_correlation() {
+    // The program reads every future before emitting raw outputs, so the
+    // runtime cannot attach direct IDs; correlation recovers them.
+    let build = DetectorErrorModel::builder()
+        .with_program(program(include_str!(
+            "fixtures/dem_programs/integer_outputs.ll"
+        )))
+        .with_qubits(3)
+        .with_detector_definitions(vec![DemDefinition::inferred(0, "checks", 0)])
+        .build()
+        .unwrap();
+    assert_eq!(
+        build.circuit.get_meta("dem_raw_measurement_binding"),
+        Some(&Attribute::String("probe_correlated_result_ids".into()))
+    );
+}

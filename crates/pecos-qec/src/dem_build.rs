@@ -459,6 +459,36 @@ impl DemBuildBuilder {
             }
         };
         let mut circuit = input.circuit;
+        let sets_definitions = needs_inference
+            || self.detectors.is_some()
+            || self.observables.is_some()
+            || self.detector_definitions.is_some()
+            || self.observable_definitions.is_some();
+        if sets_definitions {
+            let mut existing = Vec::new();
+            for key in ["detectors", "observables"] {
+                if circuit.get_meta(key).is_some() {
+                    existing.push(format!("{key} metadata"));
+                }
+            }
+            for annotation in circuit.annotations() {
+                match annotation.kind {
+                    pecos_quantum::AnnotationKind::Detector { .. } => {
+                        existing.push("Detector annotation".into());
+                    }
+                    pecos_quantum::AnnotationKind::Observable { .. } => {
+                        existing.push("Observable annotation".into());
+                    }
+                    pecos_quantum::AnnotationKind::TrackedPauli { .. } => {}
+                }
+            }
+            if !existing.is_empty() {
+                return Err(DemBuildError::Configuration(format!(
+                    "circuit already carries {}; supply definitions on either the circuit or builder",
+                    existing.join(", ")
+                )));
+            }
+        }
         // Inference IDs must already exist before any IDs can be assigned.
         let original_ids = tick_circuit_emission(&circuit);
         if needs_inference && original_ids.iter().any(Option::is_none) {
@@ -478,14 +508,6 @@ impl DemBuildBuilder {
             ));
         }
         let report = if let Some(settings) = &settings {
-            if circuit.get_meta("detectors").is_some()
-                || circuit.get_meta("observables").is_some()
-                || !circuit.annotations().is_empty()
-            {
-                return Err(DemBuildError::Configuration(
-                    "inference requires a circuit without existing detector/observable annotations; supply explicit definitions on the builder".into(),
-                ));
-            }
             let mut data = input.probes.ok_or_else(|| {
                 DemBuildError::Configuration("inference requires bound probe data".into())
             })?;
@@ -585,6 +607,17 @@ impl DemBuildBuilder {
             ));
         }
         let definitions = definitions_from_tick_circuit(&circuit)?;
+        let detector_ids: Vec<_> = definitions
+            .detectors
+            .iter()
+            .map(|d| d.id as usize)
+            .collect();
+        let unique: BTreeSet<_> = detector_ids.iter().copied().collect();
+        if unique.len() != detector_ids.len() || unique.into_iter().ne(0..detector_ids.len()) {
+            return Err(DemBuildError::Configuration(format!(
+                "detector IDs {detector_ids:?} must be unique and dense from zero; renumber the definitions"
+            )));
+        }
         for (role, ids) in [
             (
                 "detector",
@@ -655,10 +688,12 @@ fn requested_outputs(
         });
     };
     let ids: BTreeSet<_> = definitions.iter().map(|d| d.id).collect();
+    // Fail before runtime preparation; the build rechecks every source.
     if ids.len() != definitions.len() || (detectors && ids.iter().copied().ne(0..ids.len())) {
-        return Err(DemBuildError::Configuration(
-            "definition IDs must be unique; detector IDs must also be dense from zero".into(),
-        ));
+        return Err(DemBuildError::Configuration(format!(
+            "definition IDs must be unique, and detector IDs dense from zero; got {:?}",
+            definitions.iter().map(|d| d.id).collect::<Vec<_>>()
+        )));
     }
     let mut outputs = Vec::new();
     for definition in definitions {

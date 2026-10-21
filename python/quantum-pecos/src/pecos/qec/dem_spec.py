@@ -531,7 +531,15 @@ def _xor_normalize(meas_ids: Sequence[int], *, context: str) -> tuple[int, ...]:
 
 def _metadata_entry(metadata: Mapping[str, Any] | None) -> dict[str, Any]:
     entry = dict(metadata or {})
-    reserved = {"id", "records", "meas_ids", "result_tags"}.intersection(entry)
+    reserved = {
+        "id",
+        "records",
+        "meas_ids",
+        "result_tags",
+        "coords",
+        "inferred_from_result_tag",
+        "result_element",
+    }.intersection(entry)
     if reserved:
         raise ValueError(f"detector/observable metadata uses reserved keys: {sorted(reserved)}")
     try:
@@ -669,7 +677,7 @@ def _resolved_schema_from_validated_json(
     *,
     circuit: Any,
     result_traces: Sequence[Mapping[str, Any]],
-    allow_array_bindings: bool = False,
+    raw_array_tag: str | None = None,
 ) -> _ResolvedSchema:
     """Build audit data from metadata already validated by the Rust DEM builder."""
     runtime_order = _measurement_ids_in_runtime_order(circuit)
@@ -695,7 +703,7 @@ def _resolved_schema_from_validated_json(
         if calls
         and sorted(calls) == list(range(len(calls)))
         and (
-            allow_array_bindings
+            tag == raw_array_tag
             or all(len(call) == 1 or all(result_id is None for result_id in call) for call in calls.values())
         )
         and all(result_id is None or isinstance(result_id, int) for call in calls.values() for result_id in call)

@@ -288,6 +288,37 @@ def test_mixed_named_explicit_binding_keeps_compiler_provenance(monkeypatch: pyt
         )
 
 
+@pytest.mark.parametrize(("certified_ids", "agrees"), [([2, 0, 1], True), ([0, 1, 2], False)])
+def test_mixed_build_checks_certified_raw_ids_against_inference(
+    monkeypatch: pytest.MonkeyPatch,
+    certified_ids: list[int],
+    *,
+    agrees: bool,
+) -> None:
+    from pecos.qec import dem as dem_module
+
+    original = dem_module._compiler_certified_result_traces  # noqa: SLF001
+
+    def certify_raw(*args: object, **kwargs: object) -> list[dict]:
+        records = [item for item in original(*args, **kwargs) if item["name"] != "raw measurements"]
+        raw = {"name": "raw measurements", "occurrence": 0, "values": [False] * 3, "result_ids": certified_ids}
+        return [*records, raw]
+
+    monkeypatch.setattr(dem_module, "_compiler_certified_result_traces", certify_raw)
+    builder = (
+        DetectorErrorModel.builder()
+        .with_program(_selected_program)
+        .with_qubits(3)
+        .with_detectors([Detector.inferred("parities", element=0)])
+        .with_observables([Observable("m1")])
+    )
+    if agrees:
+        assert builder.build().inference is not None
+    else:
+        with pytest.raises(ValueError, match=r"raw measurements.*element 0.*ID 0.*ID 2"):
+            builder.build()
+
+
 def test_invalid_selectors_and_duplicate_ids_fail_before_execution(monkeypatch: pytest.MonkeyPatch) -> None:
     from pecos.qec import guppy_output_dem
 
@@ -378,12 +409,147 @@ def test_every_fitted_shot_has_schedule_and_binding_checks(
             result = next(
                 result for chunk in last_shot for result in chunk["named_result_traces"] if result["name"] == tag
             )
+            complete = next(
+                chunk["named_results"][tag]["values"] for chunk in last_shot if tag in chunk["named_results"]
+            )
             if corruption == "raw_binding":
                 result["values"][0] = not result["values"][0]
+                complete[0] = not complete[0]
             else:
                 result["values"].append(False)
+                complete.append(False)
         return trace
 
     monkeypatch.setattr(tracing, "_capture_qis_operation_traces", corrupt_fitting_shot)
     with pytest.raises(ValueError, match=message):
         infer_guppy_dem_annotations(_inferred_program, num_qubits=3, probe_shots=64, provenance_shots=32)
+
+
+@pytest.mark.parametrize("key", ["coords", "inferred_from_result_tag", "result_element"])
+@pytest.mark.parametrize("role", ["detector", "observable", "inferred_detector"])
+def test_reserved_metadata_rejected_before_runtime(key: str, role: str) -> None:
+    factory = {
+        "detector": lambda: Detector(rec[-1], metadata={key: 1}),
+        "observable": lambda: Observable(rec[-1], metadata={key: 1}),
+        "inferred_detector": lambda: Detector.inferred("checks", metadata={key: 1}),
+    }[role]
+    spec = factory()
+    builder = DetectorErrorModel.builder().with_program(object()).with_qubits(1)
+    if role == "observable":
+        builder.with_observables([spec]).with_detectors([])
+    else:
+        builder.with_detectors([spec])
+    with pytest.raises(ValueError, match=key):
+        builder.build()
+
+
+def test_public_inference_method() -> None:
+    rows = [[i & 1, (i >> 1) & 1] for i in range(8)]
+    settings = DemInferenceSettings().with_validation_rows(2)
+    assert settings.infer([3, 9], rows, [[a ^ b] for a, b in rows], [[b] for _, b in rows]) == ([[3, 9]], [[9]])
+
+
+def test_only_raw_tag_accepts_array_bindings() -> None:
+    from pecos.qec.dem_spec import _resolved_schema_from_validated_json
+    from pecos_rslib import TickCircuit
+
+    circuit = TickCircuit()
+    circuit.tick().mz_with_ids([0, 1], [0, 1])
+    schema = _resolved_schema_from_validated_json(
+        "[]",
+        "[]",
+        circuit=circuit,
+        raw_array_tag="raw",
+        result_traces=[
+            {"name": tag, "occurrence": 0, "values": [False, True], "result_ids": [0, 1]} for tag in ["raw", "other"]
+        ],
+    )
+    assert dict(schema.result_ids_by_tag) == {"raw": (0, 1)}
+
+
+@pytest.mark.parametrize("generator_slots", [False, True])
+def test_compiler_raw_ids_agree_at_flattened_positions(*, generator_slots: bool) -> None:
+    from pecos.qec.dem import _check_certified_raw_binding
+
+    bound = [{"name": "raw", "values": [True, True], "result_ids": [3, 9]}]
+    certified = (
+        [
+            {"name": "raw", "occurrence": 1, "values": [False], "result_ids": [9]},
+            {"name": "raw", "occurrence": 0, "values": [False], "result_ids": [3]},
+        ]
+        if generator_slots
+        else [{"name": "raw", "occurrence": 0, "values": [False, False], "result_ids": [3, 9]}]
+    )
+    check = _check_certified_raw_binding
+    check(certified, bound, "raw", generator_slots=generator_slots)
+    wrong = [{"name": "raw", "values": [True, True], "result_ids": [3, 7]}]
+    with pytest.raises(ValueError, match=r"raw.*element 1.*9.*7"):
+        check(certified, wrong, "raw", generator_slots=generator_slots)
+    check([{**item, "result_ids": []} for item in certified], bound, "raw", generator_slots=generator_slots)
+
+
+def test_certified_raw_ids_use_runtime_call_widths_and_generator_element_slots() -> None:
+    from pecos.qec.dem import _check_certified_raw_binding
+
+    check = _check_certified_raw_binding
+    # An empty raw call has width 0 at runtime, although its uncertified
+    # compiler placeholder has one value.
+    bound = [
+        {"name": "raw", "values": [], "result_ids": []},
+        {"name": "raw", "values": [True], "result_ids": [3]},
+        {"name": "raw", "values": [True], "result_ids": [9]},
+    ]
+    compiler = [
+        {"name": "raw", "occurrence": 0, "values": [False], "result_ids": []},
+        {"name": "raw", "occurrence": 1, "values": [False], "result_ids": [3]},
+        {"name": "raw", "occurrence": 2, "values": [False], "result_ids": [9]},
+    ]
+    check(compiler, bound, "raw")
+    array_call = [{"name": "raw", "values": [True, True], "result_ids": [3, 9]}]
+    with pytest.raises(ValueError, match=r"raw.*call 0 emits 2 value"):
+        check([{"name": "raw", "occurrence": 0, "values": [False], "result_ids": [3]}], array_call, "raw")
+    generator = [
+        {"name": "raw:meas:1", "occurrence": 0, "values": [False], "result_ids": [9]},
+        {"name": "raw:meas:0", "occurrence": 0, "values": [False], "result_ids": [3]},
+    ]
+    check(generator, array_call, "raw", generator_slots=True)
+    wrong = [{"name": "raw", "values": [True, True], "result_ids": [3, 7]}]
+    with pytest.raises(ValueError, match=r"raw.*element 1.*9.*7"):
+        check(generator, wrong, "raw", generator_slots=True)
+
+
+def test_mixed_build_does_not_bind_nonraw_arrays(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pecos.qec import guppy_output_dem
+    from pecos_rslib import TickCircuit
+
+    circuit = TickCircuit()
+    circuit.tick().mz_with_ids([0, 1], [0, 1])
+    circuit.set_meta("qis_source_measurement_ids", "[0,1]")
+    inferred = guppy_output_dem.InferredGuppyDemAnnotations(
+        circuit=circuit,
+        detectors_json='[{"id":0,"meas_ids":[0]}]',
+        observables_json="[]",
+        raw_measurement_ids=(0, 1),
+        detector_supports=((0,),),
+        observable_supports=(),
+        observable_labels=(),
+        detector_labels=(("checks", 0),),
+        probe_shots=64,
+        raw_binding="runtime_result_ids",
+        result_traces=tuple(
+            {"name": tag, "values": [False, False], "result_ids": [0, 1]} for tag in ["raw measurements", "other"]
+        ),
+    )
+    monkeypatch.setattr(guppy_output_dem, "infer_guppy_dem_annotations", lambda *_args, **_kwargs: inferred)
+    build = (
+        DetectorErrorModel.builder()
+        .with_program(object())
+        .with_qubits(2)
+        .with_detectors([Detector(rec[-1]), Detector.inferred("checks")])
+        .with_observables([])
+        .build()
+    )
+    assert build.inference is not None
+    assert build.evaluate_results({"raw measurements": [1, 0]}) == ([0, 1], 0)
+    with pytest.raises(ValueError, match="missing referenced"):
+        build.evaluate_results({"other": [1, 0]})

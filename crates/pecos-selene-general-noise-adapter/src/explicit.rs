@@ -8,7 +8,7 @@ use selene_core::error_model::interface::ErrorModelInterface;
 use selene_core::runtime::BatchOperation;
 use selene_core::simulator::SimulatorInterface;
 
-use crate::GeneralNoiseErrorModel;
+use crate::{GeneralNoiseErrorModel, MAX_PAYLOAD_QUBITS};
 
 /// One measurement-induced exposure. This describes noise, not physical occupancy.
 /// Lists must contain distinct in-capacity qubits. Repeated *records* are meaningful.
@@ -75,11 +75,19 @@ impl ExplicitCrosstalkErrorModel {
     /// # Errors
     /// Rejects invalid noise parameters.
     pub fn new(n_qubits: usize, config: &GeneralNoiseConfig) -> Result<Self> {
-        Ok(Self {
-            inner: GeneralNoiseErrorModel::new(n_qubits, config, &[])?,
+        Ok(Self::from_inner(GeneralNoiseErrorModel::new(
+            n_qubits,
+            config,
+            &[],
+        )?))
+    }
+
+    pub(crate) fn from_inner(inner: GeneralNoiseErrorModel) -> Self {
+        Self {
+            inner,
             active: false,
             poisoned: false,
-        })
+        }
     }
 
     /// Begin a shot after the host has reset its simulator.
@@ -141,8 +149,14 @@ impl ExplicitCrosstalkErrorModel {
                 "crosstalk placement {index} is at position {position} after a placement at position {previous}; sort placements by position"
             );
             previous = position;
+            let qubits = placement.exposure.qubits();
+            ensure!(
+                qubits.len() <= MAX_PAYLOAD_QUBITS,
+                "crosstalk placement {index} lists {} qubits, but one crosstalk payload holds at most {MAX_PAYLOAD_QUBITS}",
+                qubits.len()
+            );
             let mut seen = BTreeSet::new();
-            for &qubit in placement.exposure.qubits() {
+            for &qubit in qubits {
                 if qubit >= capacity {
                     bail!(
                         "crosstalk placement {index} lists qubit {qubit}, but the simulation has {capacity} qubits"

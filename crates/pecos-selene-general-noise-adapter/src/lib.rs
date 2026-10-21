@@ -178,8 +178,12 @@ impl GeneralNoiseErrorModel {
     }
 }
 
+/// `ByteMessage` gate headers store a payload's target count in a `u8`.
+const MAX_PAYLOAD_QUBITS: usize = 255;
+
 struct PreparedBatch {
     message: ByteMessage,
+    is_empty: bool,
     expected: Vec<MeasurementResult>,
     touched: BTreeSet<usize>,
     end: u64,
@@ -228,9 +232,21 @@ impl GeneralNoiseErrorModel {
                     Operation::Measure { .. } | Operation::MeasureLeaked { .. }
                 )
             {
+                if measured.len() > MAX_PAYLOAD_QUBITS {
+                    bail!(
+                        "batch measures {} qubits, but one measurement-crosstalk payload holds at most {MAX_PAYLOAD_QUBITS}",
+                        measured.len()
+                    );
+                }
+                let local = self.local_victims(&measured);
+                if local.len() > MAX_PAYLOAD_QUBITS {
+                    bail!(
+                        "batch has {} local crosstalk victims, but one measurement-crosstalk payload holds at most {MAX_PAYLOAD_QUBITS}",
+                        local.len()
+                    );
+                }
                 builder
                     .meas_crosstalk_global_payload(&measured.iter().copied().collect::<Vec<_>>());
-                let local = self.local_victims(&measured);
                 if !local.is_empty() {
                     builder.meas_crosstalk_local_payload(&local);
                 }
@@ -336,6 +352,7 @@ impl GeneralNoiseErrorModel {
             placement.exposure.append(&mut builder);
         }
         Ok(PreparedBatch {
+            is_empty: builder.message_count() == 0,
             message: builder.build(),
             expected,
             touched,
@@ -350,6 +367,7 @@ impl GeneralNoiseErrorModel {
     ) -> Result<BatchResult> {
         let PreparedBatch {
             message,
+            is_empty,
             expected,
             touched,
             end,
@@ -358,7 +376,7 @@ impl GeneralNoiseErrorModel {
             self.last_operation_end[qubit] = Some(end);
         }
 
-        if message.quantum_ops()?.is_empty() {
+        if is_empty {
             return Ok(BatchResult::default());
         }
         let output = self.process_message(message, simulator)?;

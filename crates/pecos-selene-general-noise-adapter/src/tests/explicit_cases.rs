@@ -2,7 +2,9 @@ use super::*;
 use crate::{
     CrosstalkExposure as Exposure, CrosstalkPlacement as Placement, ExplicitCrosstalkErrorModel,
 };
+use pecos_core::errors::PecosError;
 use pecos_engines::GeneralNoiseConfig;
+use pecos_engines::prelude::{ControlEngine, PassThroughNoiseModel};
 
 fn config(model: &str) -> GeneralNoiseConfig {
     GeneralNoiseConfig::from_json(model).unwrap()
@@ -158,14 +160,12 @@ fn leakage_exposure_survives_batches_and_does_not_leak_internal_ids() {
     simulator = ClassicalSimulator::with_qubits(2);
     let out = model
         .handle_operations(
+            // No reset first: shot_end alone must clear the leaked state.
             runtime_batch(
-                vec![
-                    Operation::Reset { qubit_id: 1 },
-                    Operation::MeasureLeaked {
-                        qubit_id: 1,
-                        result_id: 303,
-                    },
-                ],
+                vec![Operation::MeasureLeaked {
+                    qubit_id: 1,
+                    result_id: 303,
+                }],
                 1000,
                 1,
             ),
@@ -451,6 +451,7 @@ fn seeded_explicit_batches_match_unsplit_direct_controller_with_hooks() {
         b.pz(&[0]);
         b.pz(&[1]);
         b.meas_crosstalk_local_payload(&[1]);
+        b.meas_crosstalk_local_payload(&[0]);
         b.rz(Angle64::try_from_radians(0.5).unwrap(), &[0]);
         b.mz(&[1]);
         b.meas_crosstalk_global_payload(&[1]);
@@ -480,6 +481,7 @@ fn seeded_explicit_batches_match_unsplit_direct_controller_with_hooks() {
                 ),
                 &[
                     local(2, vec![1]),
+                    local(2, vec![0]),
                     Placement {
                         before_operation: 4,
                         exposure: Exposure::GlobalExcluding(vec![1]),
@@ -499,4 +501,216 @@ fn seeded_explicit_batches_match_unsplit_direct_controller_with_hooks() {
         );
         assert_eq!(simulator.received, direct_simulator.received, "seed {seed}");
     }
+}
+
+#[test]
+fn exposure_precedes_the_deferred_idle_of_its_operation() {
+    // A full second of idle is a certain X; the exposure flips only |0> to |1>.
+    let cfg = config(
+        r#"{"idle":{"sin_squared_rate":1.5707963267948966,"sin_squared_model":{"X":1.0}},"measurement":{"local_crosstalk_probability":1.0,"crosstalk_model":{"0->1":1.0,"1->1":1.0}}}"#,
+    );
+    let (mut model, mut simulator) = setup(&cfg);
+    let out = model
+        .handle_operations(
+            runtime_batch(vec![measure(1, 50)], 1_000_000_001, 1),
+            &[local(0, vec![1])],
+            &mut simulator,
+        )
+        .unwrap();
+    // Exposure then idle: |0> -> |1> -> |0>. Idle then exposure would leave |1>.
+    assert!(!out.bool_results[0].value);
+}
+
+#[test]
+fn rejected_admission_preserves_the_noise_stream() {
+    let cfg = config(
+        r#"{"measurement":{"local_crosstalk_probability":0.41,"global_crosstalk_probability":0.63,"crosstalk_model":{"0->1":0.8,"0->L":0.2,"1->0":0.7,"1->L":0.3}}}"#,
+    );
+    let run = |reject_midway: bool| {
+        let mut model = ExplicitCrosstalkErrorModel::new(2, &cfg).unwrap();
+        model.shot_start(0, 5).unwrap();
+        let mut simulator = ClassicalSimulator::with_qubits(2);
+        let mut values = Vec::new();
+        for batch in 0..8_u64 {
+            if reject_midway && batch == 4 {
+                assert!(
+                    model
+                        .handle_operations(
+                            runtime_batch(vec![measure(0, 99)], batch * 10, 1),
+                            &[local(0, vec![1, 1])],
+                            &mut simulator,
+                        )
+                        .is_err()
+                );
+            }
+            let out = model
+                .handle_operations(
+                    runtime_batch(
+                        vec![
+                            Operation::Reset { qubit_id: 0 },
+                            Operation::Reset { qubit_id: 1 },
+                            measure(0, 2 * batch),
+                            measure(1, 2 * batch + 1),
+                        ],
+                        batch * 10,
+                        1,
+                    ),
+                    &[
+                        local(2, vec![1]),
+                        Placement {
+                            before_operation: 3,
+                            exposure: Exposure::GlobalExcluding(vec![1]),
+                        },
+                    ],
+                    &mut simulator,
+                )
+                .unwrap();
+            values.extend(out.bool_results.iter().map(|r| (r.result_id, r.value)));
+        }
+        model.shot_end().unwrap();
+        (values, simulator.received)
+    };
+    assert_eq!(run(true), run(false));
+}
+
+#[test]
+fn crosstalk_payload_lists_fit_one_record_on_both_paths() {
+    let n_qubits = 300;
+    for (exposure, admitted) in [
+        (Exposure::Local((0..255).collect()), true),
+        (Exposure::GlobalExcluding((0..255).collect()), true),
+        (Exposure::Local((0..256).collect()), false),
+        (Exposure::GlobalExcluding((0..256).collect()), false),
+    ] {
+        let mut model = ExplicitCrosstalkErrorModel::new(n_qubits, &flip()).unwrap();
+        model.shot_start(0, 1).unwrap();
+        let result = model.handle_operations(
+            runtime_batch(vec![], 0, 0),
+            &[Placement {
+                before_operation: 0,
+                exposure,
+            }],
+            &mut ZeroSimulator,
+        );
+        if admitted {
+            assert!(result.is_ok());
+        } else {
+            let error = result.err().expect("oversized payload must be rejected");
+            assert!(
+                error
+                    .to_string()
+                    .contains("lists 256 qubits, but one crosstalk payload holds at most 255"),
+                "{error}"
+            );
+            model.shot_end().unwrap();
+        }
+    }
+
+    // The automatic path encodes measured qubits and local victims the same way.
+    let measurements =
+        |count: u64| -> Vec<Operation> { (0..count).map(|q| measure(q, q)).collect() };
+    let groups = format!(
+        r#"{{"model":{{}},"local_groups":[{:?}]}}"#,
+        (0..n_qubits).collect::<Vec<_>>()
+    );
+    for (config_json, count, message) in [
+        (r#"{"model":{}}"#, 255, None),
+        (
+            r#"{"model":{}}"#,
+            256,
+            Some(
+                "batch measures 256 qubits, but one measurement-crosstalk payload holds at most 255",
+            ),
+        ),
+        (
+            groups.as_str(),
+            1,
+            Some(
+                "batch has 299 local crosstalk victims, but one measurement-crosstalk payload holds at most 255",
+            ),
+        ),
+    ] {
+        let mut model = build_error_model(config_json, n_qubits);
+        model.shot_start(0, 1).unwrap();
+        let result =
+            model.handle_operations(runtime_batch(measurements(count), 0, 1), &mut ZeroSimulator);
+        match message {
+            None => assert!(result.is_ok()),
+            Some(message) => {
+                let error = result.err().expect("oversized payload must be rejected");
+                assert!(error.to_string().contains(message), "{error}");
+            }
+        }
+    }
+}
+
+#[derive(Clone, Default)]
+struct ResetFailsModel(PassThroughNoiseModel);
+
+impl NoiseModel for ResetFailsModel {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+}
+
+impl pecos_core::RngManageable for ResetFailsModel {
+    type Rng = <PassThroughNoiseModel as pecos_core::RngManageable>::Rng;
+
+    fn set_rng(&mut self, rng: Self::Rng) {
+        self.0.set_rng(rng);
+    }
+
+    fn rng(&self) -> &Self::Rng {
+        self.0.rng()
+    }
+
+    fn rng_mut(&mut self) -> &mut Self::Rng {
+        self.0.rng_mut()
+    }
+}
+
+impl ControlEngine for ResetFailsModel {
+    type Input = ByteMessage;
+    type Output = ByteMessage;
+    type EngineInput = ByteMessage;
+    type EngineOutput = ByteMessage;
+
+    fn start(
+        &mut self,
+        input: ByteMessage,
+    ) -> Result<EngineStage<ByteMessage, ByteMessage>, PecosError> {
+        self.0.start(input)
+    }
+
+    fn continue_processing(
+        &mut self,
+        result: ByteMessage,
+    ) -> Result<EngineStage<ByteMessage, ByteMessage>, PecosError> {
+        self.0.continue_processing(result)
+    }
+
+    fn reset(&mut self) -> Result<(), PecosError> {
+        Err(PecosError::Generic("synthetic reset failure".into()))
+    }
+}
+
+#[test]
+fn failed_shot_end_poisons_the_explicit_owner() {
+    let mut model = ExplicitCrosstalkErrorModel::from_inner(GeneralNoiseErrorModel {
+        model: Box::new(ResetFailsModel::default()),
+        last_operation_end: vec![None; 1],
+        local_groups: Vec::new(),
+    });
+    model.shot_start(0, 1).unwrap();
+    assert!(model.shot_end().is_err());
+    assert!(
+        model
+            .handle_operations(runtime_batch(vec![], 0, 0), &[], &mut ZeroSimulator)
+            .is_err()
+    );
+    assert!(model.shot_start(1, 1).is_err());
 }

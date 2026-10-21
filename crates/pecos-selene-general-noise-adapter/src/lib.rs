@@ -157,31 +157,16 @@ impl GeneralNoiseErrorModel {
         &mut self,
         message: ByteMessage,
         simulator: &mut dyn SimulatorInterface,
-        bounded: bool,
     ) -> Result<ByteMessage> {
         let mut stage = self
             .model
             .start(message)
             .map_err(|error| anyhow!(error.to_string()))?;
-        let mut exchanges = 0usize;
-        let mut remaining_operations = explicit::MAX_SIMULATOR_OPERATIONS;
         loop {
             match stage {
                 EngineStage::NeedsProcessing(operations) => {
-                    exchanges += 1;
-                    if bounded && exchanges > explicit::MAX_EXCHANGES {
-                        bail!("explicit crosstalk exceeded the controller exchange limit");
-                    }
-                    let output = if bounded {
-                        SeleneSimulator::process_bounded(
-                            simulator,
-                            &operations,
-                            &mut remaining_operations,
-                        )
-                    } else {
-                        SeleneSimulator::process(simulator, &operations)
-                    }
-                    .map_err(|error| anyhow!(error.to_string()))?;
+                    let output = SeleneSimulator::process(simulator, &operations)
+                        .map_err(|error| anyhow!(error.to_string()))?;
                     stage = self
                         .model
                         .continue_processing(output)
@@ -231,11 +216,10 @@ impl GeneralNoiseErrorModel {
         let mut crosstalk_added = false;
         let mut touched = BTreeSet::new();
         for (index, operation) in operations.into_iter().enumerate() {
-            while placements
-                .peek()
-                .is_some_and(|placement| placement.before_operation == index)
+            while let Some(placement) =
+                placements.next_if(|placement| placement.before_operation == index)
             {
-                placements.next().unwrap().exposure.append(&mut builder);
+                placement.exposure.append(&mut builder);
             }
             if exposures.is_none()
                 && !crosstalk_added
@@ -363,7 +347,6 @@ impl GeneralNoiseErrorModel {
         &mut self,
         prepared: PreparedBatch,
         simulator: &mut dyn SimulatorInterface,
-        bounded: bool,
     ) -> Result<BatchResult> {
         let PreparedBatch {
             message,
@@ -378,7 +361,7 @@ impl GeneralNoiseErrorModel {
         if message.quantum_ops()?.is_empty() {
             return Ok(BatchResult::default());
         }
-        let output = self.process_message(message, simulator, bounded)?;
+        let output = self.process_message(message, simulator)?;
         let outcomes = output
             .outcomes()
             .map_err(|error| anyhow!(error.to_string()))?;
@@ -431,7 +414,7 @@ impl ErrorModelInterface for GeneralNoiseErrorModel {
         simulator: &mut dyn SimulatorInterface,
     ) -> Result<BatchResult> {
         let prepared = self.prepare_operations(operations, None)?;
-        self.execute_batch(prepared, simulator, false)
+        self.execute_batch(prepared, simulator)
     }
 
     fn get_metric(&mut self, _nth_metric: u8) -> Result<Option<(String, MetricValue)>> {

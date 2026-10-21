@@ -1,4 +1,6 @@
 //! Explicit exposure placement for downstream runtime normalization.
+use std::collections::BTreeSet;
+
 use anyhow::{Result, bail, ensure};
 use pecos_engines::prelude::*;
 use selene_core::error_model::BatchResult;
@@ -7,11 +9,6 @@ use selene_core::runtime::BatchOperation;
 use selene_core::simulator::SimulatorInterface;
 
 use crate::GeneralNoiseErrorModel;
-
-const MAX_RECORDS: usize = 4096;
-const MAX_TARGETS: usize = 16_384;
-pub(crate) const MAX_EXCHANGES: usize = 65_536;
-pub(crate) const MAX_SIMULATOR_OPERATIONS: usize = 262_144;
 
 /// One measurement-induced exposure. This describes noise, not physical occupancy.
 /// Lists must contain distinct in-capacity qubits. Repeated *records* are meaningful.
@@ -31,6 +28,12 @@ impl CrosstalkExposure {
             Self::GlobalExcluding(qubits) => {
                 builder.meas_crosstalk_global_payload(qubits);
             }
+        }
+    }
+
+    fn qubits(&self) -> &[usize] {
+        match self {
+            Self::Local(qubits) | Self::GlobalExcluding(qubits) => qubits,
         }
     }
 }
@@ -60,15 +63,9 @@ pub struct CrosstalkPlacement {
 /// permanently poisons the instance. Replace it **and reset the simulator** to
 /// recover; starting a new shot cannot clear partial execution. Successful shots
 /// follow `shot_start`, zero or more `handle_operations`, then `shot_end`.
-///
-/// Per batch: at most 4096 ordinary operations plus exposures, 16384 supplied
-/// targets plus global candidate targets, 65536 controller exchanges, and 262144
-/// emitted simulator operations. These are guardrails, not a promise that every
-/// valid noise configuration fits them or an allocation bound inside the model.
-/// The simulation capacity must be in `1..=16384`.
 pub struct ExplicitCrosstalkErrorModel {
     inner: GeneralNoiseErrorModel,
-    active_shot: Option<u64>,
+    active: bool,
     poisoned: bool,
 }
 
@@ -76,15 +73,11 @@ impl ExplicitCrosstalkErrorModel {
     /// Construct without starting a shot.
     ///
     /// # Errors
-    /// Rejects invalid noise parameters or capacity outside `1..=16384`.
+    /// Rejects invalid noise parameters.
     pub fn new(n_qubits: usize, config: &GeneralNoiseConfig) -> Result<Self> {
-        ensure!(
-            (1..=MAX_TARGETS).contains(&n_qubits),
-            "explicit crosstalk capacity must be in 1..=16384"
-        );
         Ok(Self {
             inner: GeneralNoiseErrorModel::new(n_qubits, config, &[])?,
-            active_shot: None,
+            active: false,
             poisoned: false,
         })
     }
@@ -92,16 +85,18 @@ impl ExplicitCrosstalkErrorModel {
     /// Begin a shot after the host has reset its simulator.
     ///
     /// # Errors
-    /// Rejects an active or poisoned instance; model failures poison the owner.
+    /// Rejects an active or poisoned instance.
     pub fn shot_start(&mut self, shot_id: u64, error_seed: u64) -> Result<()> {
         ensure!(
-            !self.poisoned && self.active_shot.is_none(),
-            "explicit crosstalk instance is active or poisoned"
+            !self.poisoned,
+            "explicit crosstalk instance is poisoned by a failed execution; create a new instance and reset the simulator"
         );
-        self.poisoned = true;
+        ensure!(
+            !self.active,
+            "explicit crosstalk shot is already active; call shot_end before starting another"
+        );
         self.inner.shot_start(shot_id, error_seed)?;
-        self.active_shot = Some(shot_id);
-        self.poisoned = false;
+        self.active = true;
         Ok(())
     }
 
@@ -113,52 +108,48 @@ impl ExplicitCrosstalkErrorModel {
         self.require_active()?;
         self.poisoned = true;
         self.inner.shot_end()?;
-        self.active_shot = None;
+        self.active = false;
         self.poisoned = false;
         Ok(())
     }
 
     fn require_active(&self) -> Result<()> {
         ensure!(
-            !self.poisoned && self.active_shot.is_some(),
-            "explicit crosstalk instance is inactive or poisoned"
+            !self.poisoned,
+            "explicit crosstalk instance is poisoned by a failed execution; create a new instance and reset the simulator"
+        );
+        ensure!(
+            self.active,
+            "explicit crosstalk shot is not active; call shot_start first"
         );
         Ok(())
     }
 
     fn admit(&self, operations: &BatchOperation, placements: &[CrosstalkPlacement]) -> Result<()> {
-        ensure!(
-            operations.len() <= MAX_RECORDS && placements.len() <= MAX_RECORDS - operations.len(),
-            "explicit crosstalk record limit exceeded"
-        );
         let capacity = self.inner.last_operation_end.len();
-        let mut targets = 0usize;
         let mut previous = 0;
-        for placement in placements {
+        for (index, placement) in placements.iter().enumerate() {
+            let position = placement.before_operation;
             ensure!(
-                placement.before_operation >= previous
-                    && placement.before_operation <= operations.len(),
-                "explicit crosstalk positions must be ordered and within the batch"
+                position <= operations.len(),
+                "crosstalk placement {index} is at position {position}, but the batch has {} operations (use {} to place it after the last operation)",
+                operations.len(),
+                operations.len()
             );
-            previous = placement.before_operation;
-            let (qubits, candidates) = match &placement.exposure {
-                CrosstalkExposure::Local(qubits) => (qubits, 0),
-                CrosstalkExposure::GlobalExcluding(qubits) => (qubits, capacity),
-            };
             ensure!(
-                qubits.len() <= MAX_TARGETS - targets,
-                "explicit crosstalk target limit exceeded"
+                position >= previous,
+                "crosstalk placement {index} is at position {position} after a placement at position {previous}; sort placements by position"
             );
-            targets += qubits.len();
-            ensure!(
-                candidates <= MAX_TARGETS - targets,
-                "explicit crosstalk target limit exceeded"
-            );
-            targets += candidates;
-            let mut seen = std::collections::BTreeSet::new();
-            for &qubit in qubits {
-                if qubit >= capacity || !seen.insert(qubit) {
-                    bail!("explicit crosstalk targets must be distinct and within capacity");
+            previous = position;
+            let mut seen = BTreeSet::new();
+            for &qubit in placement.exposure.qubits() {
+                if qubit >= capacity {
+                    bail!(
+                        "crosstalk placement {index} lists qubit {qubit}, but the simulation has {capacity} qubits"
+                    );
+                }
+                if !seen.insert(qubit) {
+                    bail!("crosstalk placement {index} lists qubit {qubit} more than once");
                 }
             }
         }
@@ -168,8 +159,8 @@ impl ExplicitCrosstalkErrorModel {
     /// Execute a complete, normalized runtime batch with explicit placements.
     ///
     /// # Errors
-    /// Rejects inactive/poisoned instances, invalid batches, placements or bounds
-    /// before execution. Model/simulator/output failures poison the instance.
+    /// Rejects inactive/poisoned instances, invalid batches or placements before
+    /// execution. Model/simulator/output failures poison the instance.
     pub fn handle_operations(
         &mut self,
         operations: BatchOperation,
@@ -184,7 +175,7 @@ impl ExplicitCrosstalkErrorModel {
         // Set before crossing either execution boundary, so caught panics cannot
         // leave a reusable owner with partial controller or simulator state.
         self.poisoned = true;
-        let result = self.inner.execute_batch(prepared, simulator, true)?;
+        let result = self.inner.execute_batch(prepared, simulator)?;
         self.poisoned = false;
         Ok(result)
     }

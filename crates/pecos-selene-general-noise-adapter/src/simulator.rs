@@ -17,15 +17,6 @@ impl SeleneSimulator {
         simulator: &mut dyn SimulatorInterface,
         message: &ByteMessage,
     ) -> Result<ByteMessage, PecosError> {
-        let mut remaining = usize::MAX;
-        Self::process_bounded(simulator, message, &mut remaining)
-    }
-
-    pub fn process_bounded(
-        simulator: &mut dyn SimulatorInterface,
-        message: &ByteMessage,
-        remaining: &mut usize,
-    ) -> Result<ByteMessage, PecosError> {
         let mut operations = Vec::new();
         let mut measurement_count = 0_usize;
 
@@ -186,10 +177,6 @@ impl SeleneSimulator {
                 }
             }
         }
-
-        *remaining = remaining.checked_sub(operations.len()).ok_or_else(|| {
-            PecosError::Generic("explicit crosstalk exceeded the simulator operation limit".into())
-        })?;
 
         let mut outcomes = vec![None; measurement_count];
         if !operations.is_empty() {

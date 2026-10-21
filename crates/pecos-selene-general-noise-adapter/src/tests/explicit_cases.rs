@@ -256,53 +256,92 @@ fn whole_batch_rejection_does_not_mutate_clock_rng_or_buffer() {
 }
 
 #[test]
-fn malformed_placement_and_resource_limits_reject_without_dispatch() {
-    for placements in [
-        vec![local(2, vec![0])],
-        vec![local(1, vec![0]), local(0, vec![1])],
-        vec![local(0, vec![0, 0])],
-        vec![local(0, vec![2])],
-        vec![local(0, vec![]); 4096],
-        vec![local(0, vec![0; 16_385])],
+fn malformed_placements_reject_without_dispatch_and_name_the_bad_value() {
+    for (placements, message) in [
+        (
+            vec![local(2, vec![0])],
+            "crosstalk placement 0 is at position 2, but the batch has 1 operations",
+        ),
+        (
+            vec![local(1, vec![0]), local(0, vec![1])],
+            "crosstalk placement 1 is at position 0 after a placement at position 1",
+        ),
+        (
+            vec![local(0, vec![0, 0])],
+            "crosstalk placement 0 lists qubit 0 more than once",
+        ),
+        (
+            vec![local(0, vec![]), local(0, vec![2])],
+            "crosstalk placement 1 lists qubit 2, but the simulation has 2 qubits",
+        ),
+        (
+            vec![Placement {
+                before_operation: 0,
+                exposure: Exposure::GlobalExcluding(vec![1, 1]),
+            }],
+            "crosstalk placement 0 lists qubit 1 more than once",
+        ),
     ] {
         let (mut model, mut simulator) = setup(&flip());
         let before = simulator.received.clone();
-        assert!(
-            model
-                .handle_operations(
-                    runtime_batch(vec![measure(0, 7)], 1, 1),
-                    &placements,
-                    &mut simulator
-                )
-                .is_err()
-        );
+        let error = model
+            .handle_operations(
+                runtime_batch(vec![measure(0, 7)], 1, 1),
+                &placements,
+                &mut simulator,
+            )
+            .err()
+            .expect("malformed placement must be rejected");
+        assert!(error.to_string().contains(message), "{error}");
         assert_eq!(simulator.received, before);
         model.shot_end().unwrap();
     }
-    // Global candidate cost counts capacity even with an empty exclusion list.
-    let mut model = ExplicitCrosstalkErrorModel::new(16_384, &flip()).unwrap();
+}
+
+#[test]
+fn large_batches_and_per_measurement_global_exposures_are_admitted() {
+    fn resets(n_qubits: usize) -> Vec<Operation> {
+        (0..u64::try_from(n_qubits).unwrap())
+            .map(|qubit_id| Operation::Reset { qubit_id })
+            .collect()
+    }
+    // One reset layer across every qubit is a single ordinary batch.
+    let mut model = ExplicitCrosstalkErrorModel::new(5000, &flip()).unwrap();
     model.shot_start(0, 3).unwrap();
-    assert!(
-        model
-            .handle_operations(
-                runtime_batch(vec![], 0, 0),
-                &[Placement {
-                    before_operation: 0,
-                    exposure: Exposure::GlobalExcluding(vec![0])
-                }],
-                &mut ZeroSimulator
-            )
-            .is_err()
-    );
-    assert!(
-        model
-            .handle_operations(
-                runtime_batch(vec![measure(0, 0); 4097], 0, 0),
-                &[],
-                &mut ZeroSimulator
-            )
-            .is_err()
-    );
+    model
+        .handle_operations(runtime_batch(resets(5000), 0, 1), &[], &mut ZeroSimulator)
+        .unwrap();
+    model.shot_end().unwrap();
+
+    // Each measurement exposes every other prepared qubit globally.
+    let n_qubits = 200;
+    let mut model = ExplicitCrosstalkErrorModel::new(n_qubits, &flip()).unwrap();
+    model.shot_start(0, 3).unwrap();
+    model
+        .handle_operations(
+            runtime_batch(resets(n_qubits), 0, 1),
+            &[],
+            &mut ZeroSimulator,
+        )
+        .unwrap();
+    let measurements = (0..u64::try_from(n_qubits).unwrap())
+        .map(|q| measure(q, q))
+        .collect();
+    let placements = (0..n_qubits)
+        .map(|index| Placement {
+            before_operation: index,
+            exposure: Exposure::GlobalExcluding(vec![index]),
+        })
+        .collect::<Vec<_>>();
+    let out = model
+        .handle_operations(
+            runtime_batch(measurements, 1, 1),
+            &placements,
+            &mut ZeroSimulator,
+        )
+        .unwrap();
+    assert_eq!(out.bool_results.len(), n_qubits);
+    model.shot_end().unwrap();
 }
 
 #[test]
@@ -460,17 +499,4 @@ fn seeded_explicit_batches_match_unsplit_direct_controller_with_hooks() {
         );
         assert_eq!(simulator.received, direct_simulator.received, "seed {seed}");
     }
-}
-
-#[test]
-fn simulator_dispatch_limit_is_cumulative_and_rejects_before_call() {
-    let mut simulator = ClassicalSimulator::with_qubits(2);
-    let mut b = ByteMessage::quantum_operations_builder();
-    b.h(&[0]);
-    let mut remaining = 3;
-    SeleneSimulator::process_bounded(&mut simulator, &b.build(), &mut remaining).unwrap();
-    assert_eq!(remaining, 1);
-    let before = simulator.received.clone();
-    assert!(SeleneSimulator::process_bounded(&mut simulator, &b.build(), &mut remaining).is_err());
-    assert_eq!(simulator.received, before);
 }

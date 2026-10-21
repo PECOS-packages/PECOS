@@ -64,10 +64,3 @@ can be corrected without losing the shot. Once execution starts, any error or
 caught panic permanently poisons the instance. Recovery requires a new adapter
 and a reset simulator; `shot_start` cannot clear a partial execution. Successful
 shots use `shot_start` / `handle_operations` / `shot_end` in order.
-
-Capacity is 1–16384 qubits. A batch admits at most 4096 ordinary operations plus
-exposures and 16384 listed targets plus global candidate targets (capacity is
-charged for every global record). Execution stops after 65536 controller
-exchanges or before dispatching more than 262144 cumulative simulator operations.
-These are failure limits, not a guarantee that all accepted noise configurations
-fit, nor a bound on allocations made internally by the general noise model.

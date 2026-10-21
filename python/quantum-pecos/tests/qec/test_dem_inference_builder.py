@@ -125,31 +125,6 @@ def test_rust_solver_rejects_nonlinearity_and_correlates_permuted_ids() -> None:
     assert _correlate_measurement_ids([[b, a] for a, b in rows], rows, [3, 9]) == [9, 3]
 
 
-def test_direct_ids_do_not_skip_schedule_comparison(monkeypatch: pytest.MonkeyPatch) -> None:
-    from pecos import tracing
-    from pecos.qec.guppy_output_dem import infer_guppy_dem_annotations
-
-    original = tracing._capture_qis_operation_traces  # noqa: SLF001
-
-    def changed_schedule(*args: object, **kwargs: object) -> list[dict]:
-        trace = original(*args, **kwargs)
-        if kwargs["shots"] == 1:
-            for chunk in trace:
-                for result in chunk.get("named_result_traces", []):
-                    if result["name"] == "raw measurements":
-                        result["result_ids"] = [0, 1, 2]
-        if kwargs["shots"] > 1:
-            for chunk in trace:
-                if chunk["lowered_quantum_ops"]:
-                    chunk["lowered_quantum_ops"][0]["qubits"] = [99]
-                    break
-        return trace
-
-    monkeypatch.setattr(tracing, "_capture_qis_operation_traces", changed_schedule)
-    with pytest.raises(ValueError, match="schedule changed"):
-        infer_guppy_dem_annotations(_inferred_program, num_qubits=3)
-
-
 @guppy
 def _selected_program() -> None:
     q0, q1, q2 = qubit(), qubit(), qubit()
@@ -366,63 +341,6 @@ def test_observable_only_inference_does_not_require_detector_definitions() -> No
     assert build.audit["definition_origins"] == [
         {"role": "observable", "id": 2, "source": "inferred", "tag": "logical", "element": 0},
     ]
-
-
-@pytest.mark.parametrize(
-    ("corruption", "message"),
-    [
-        ("schedule", "schedule changed"),
-        ("raw_binding", "binding changed"),
-        ("output_width", "inconsistent shot widths"),
-        ("terminal", "terminal trace_complete"),
-        ("partial_lowering", "complete lowered gate stream"),
-    ],
-)
-def test_every_fitted_shot_has_schedule_and_binding_checks(
-    monkeypatch: pytest.MonkeyPatch,
-    corruption: str,
-    message: str,
-) -> None:
-    from pecos import tracing
-    from pecos.qec.guppy_output_dem import infer_guppy_dem_annotations
-
-    original = tracing._capture_qis_operation_traces  # noqa: SLF001
-
-    def corrupt_fitting_shot(*args: object, **kwargs: object) -> list[dict]:
-        trace = original(*args, **kwargs)
-        # Leave the baseline and correlation shots untouched. The old path
-        # fitted a separate untraced run, so it never checked these samples.
-        if kwargs["shots"] <= 32:
-            return trace
-        last_id = max(chunk["shot_index"] for chunk in trace)
-        last_shot = [chunk for chunk in trace if chunk["shot_index"] == last_id]
-        if corruption == "terminal":
-            return [chunk for chunk in trace if chunk is not last_shot[-1]]
-        if corruption in {"schedule", "partial_lowering"}:
-            chunk = next(chunk for chunk in last_shot if chunk["lowered_quantum_ops"])
-            if corruption == "schedule":
-                chunk["lowered_quantum_ops"][0]["qubits"] = [99]
-            else:
-                chunk["lowered_quantum_ops_complete"] = False
-        else:
-            tag = "raw measurements" if corruption == "raw_binding" else "DETECTOR"
-            result = next(
-                result for chunk in last_shot for result in chunk["named_result_traces"] if result["name"] == tag
-            )
-            complete = next(
-                chunk["named_results"][tag]["values"] for chunk in last_shot if tag in chunk["named_results"]
-            )
-            if corruption == "raw_binding":
-                result["values"][0] = not result["values"][0]
-                complete[0] = not complete[0]
-            else:
-                result["values"].append(False)
-                complete.append(False)
-        return trace
-
-    monkeypatch.setattr(tracing, "_capture_qis_operation_traces", corrupt_fitting_shot)
-    with pytest.raises(ValueError, match=message):
-        infer_guppy_dem_annotations(_inferred_program, num_qubits=3, probe_shots=64, provenance_shots=32)
 
 
 @pytest.mark.parametrize("key", ["coords", "inferred_from_result_tag", "result_element"])

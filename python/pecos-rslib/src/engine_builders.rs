@@ -185,20 +185,7 @@ impl PyQisEngineBuilder {
         custom_event_policy: &str,
         native_gates: Option<Vec<String>>,
     ) -> PyResult<Self> {
-        let policy = runtime_custom_event_policy(custom_event_policy)?;
-        let mut runtime = match runtime_name {
-            None | Some("selene_simple_runtime") => pecos_qis::selene_simple_runtime(),
-            Some(name) => pecos_qis::selene_runtime_auto(name),
-        }
-        .map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "Failed to load Selene runtime: {e}"
-            ))
-        })?;
-        if let Some(names) = native_gates {
-            runtime = runtime.with_native_gate_set(runtime_native_gate_set(names)?);
-        }
-        runtime.set_custom_event_policy(policy);
+        let runtime = configured_selene_runtime(runtime_name, custom_event_policy, native_gates)?;
         self.inner = self.inner.clone().runtime(runtime);
         self.runtime_configured = true;
         Ok(self.clone())
@@ -214,20 +201,13 @@ impl PyQisEngineBuilder {
         custom_event_policy: &str,
         native_gates: Option<Vec<String>>,
     ) -> PyResult<Self> {
-        let policy = runtime_custom_event_policy(custom_event_policy)?;
-        let mut runtime = pecos_qis::SeleneRuntime::with_plugin_config(
+        let runtime = configured_selene_runtime_plugin(
             library_file,
-            init_args.unwrap_or_default(),
-            library_search_dirs
-                .unwrap_or_default()
-                .into_iter()
-                .map(PathBuf::from)
-                .collect(),
-        );
-        if let Some(names) = native_gates {
-            runtime = runtime.with_native_gate_set(runtime_native_gate_set(names)?);
-        }
-        runtime.set_custom_event_policy(policy);
+            init_args,
+            library_search_dirs,
+            custom_event_policy,
+            native_gates,
+        )?;
         self.inner = self.inner.clone().runtime(runtime);
         self.runtime_configured = true;
         Ok(self.clone())
@@ -2558,6 +2538,52 @@ pub fn register_engine_builders(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(self::coin_toss, m)?)?;
 
     Ok(())
+}
+
+pub(crate) fn configured_selene_runtime(
+    runtime_name: Option<&str>,
+    custom_event_policy: &str,
+    native_gates: Option<Vec<String>>,
+) -> PyResult<pecos_qis::SeleneRuntime> {
+    let policy = runtime_custom_event_policy(custom_event_policy)?;
+    let mut runtime = match runtime_name {
+        None | Some("selene_simple_runtime") => pecos_qis::selene_simple_runtime(),
+        Some(name) => pecos_qis::selene_runtime_auto(name),
+    }
+    .map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+            "Failed to load Selene runtime: {e}"
+        ))
+    })?;
+    if let Some(names) = native_gates {
+        runtime = runtime.with_native_gate_set(runtime_native_gate_set(names)?);
+    }
+    runtime.set_custom_event_policy(policy);
+    Ok(runtime)
+}
+
+pub(crate) fn configured_selene_runtime_plugin(
+    library_file: &str,
+    init_args: Option<Vec<String>>,
+    library_search_dirs: Option<Vec<String>>,
+    custom_event_policy: &str,
+    native_gates: Option<Vec<String>>,
+) -> PyResult<pecos_qis::SeleneRuntime> {
+    let policy = runtime_custom_event_policy(custom_event_policy)?;
+    let mut runtime = pecos_qis::SeleneRuntime::with_plugin_config(
+        library_file,
+        init_args.unwrap_or_default(),
+        library_search_dirs
+            .unwrap_or_default()
+            .into_iter()
+            .map(PathBuf::from)
+            .collect(),
+    );
+    if let Some(names) = native_gates {
+        runtime = runtime.with_native_gate_set(runtime_native_gate_set(names)?);
+    }
+    runtime.set_custom_event_policy(policy);
+    Ok(runtime)
 }
 
 #[cfg(test)]

@@ -166,6 +166,6 @@ pub use surface::{SurfaceCode, SurfaceCodeBuilder};
 #[cfg(feature = "selene")]
 mod dem_selene;
 #[cfg(feature = "selene")]
-pub use dem_selene::SeleneDemProgram;
+pub use dem_selene::{SeleneDemEvidence, SeleneDemProgram};
 #[cfg(feature = "hugr")]
 mod dem_hugr;

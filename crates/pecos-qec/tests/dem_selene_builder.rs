@@ -5,8 +5,8 @@
 
 use pecos_programs::Qis;
 use pecos_qec::{
-    DemBuildError, DemDefinition, DemInferenceError, DemInferenceSettings, DetectorErrorModel,
-    NoiseConfig, SeleneDemProgram,
+    DemAnnotationOrigin, DemBuildError, DemDefinition, DemInferenceError, DemInferenceSettings,
+    DemOutputSelector, DetectorErrorModel, NoiseConfig, SeleneDemProgram,
 };
 use pecos_qis::{SeleneRuntime, selene_simple_runtime};
 use pecos_quantum::Attribute;
@@ -187,6 +187,48 @@ fn direct_result_ids_skip_correlation_and_preserve_multiple_output_tags() {
     assert_eq!(report.raw_measurement_ids, [0, 1, 2]);
     assert_eq!(report.detector_supports, [vec![0, 1]]);
     assert_eq!(report.observable_supports, [vec![0], vec![1], vec![2]]);
+    let expected = [
+        ("detector", "checks", 0),
+        ("observable", "logical_z", 0),
+        ("observable", "logical_x", 0),
+        ("observable", "logical_x", 1),
+    ];
+    assert_eq!(build.definition_origins.len(), expected.len());
+    for (origin, (role, tag, element)) in build.definition_origins.iter().zip(expected) {
+        assert_eq!(origin.role, role);
+        assert_eq!(
+            origin.source,
+            DemAnnotationOrigin::Inferred(DemOutputSelector {
+                tag: tag.into(),
+                element
+            }),
+        );
+    }
+    for (key, expected) in [
+        (
+            "detectors",
+            serde_json::json!([
+                {"id": 0, "meas_ids": [0, 1], "inferred_from_result_tag": "checks"},
+            ]),
+        ),
+        (
+            "observables",
+            serde_json::json!([
+                {"id": 0, "meas_ids": [0], "inferred_from_result_tag": "logical_z", "result_element": 0},
+                {"id": 1, "meas_ids": [1], "inferred_from_result_tag": "logical_x", "result_element": 0},
+                {"id": 2, "meas_ids": [2], "inferred_from_result_tag": "logical_x", "result_element": 1},
+            ]),
+        ),
+    ] {
+        let Some(Attribute::String(json)) = build.circuit.get_meta(key) else {
+            panic!("missing {key} metadata");
+        };
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(json).unwrap(),
+            expected
+        );
+    }
+
     assert_eq!(
         build.circuit.get_meta("dem_raw_measurement_binding"),
         Some(&Attribute::String("runtime_result_ids".into()))

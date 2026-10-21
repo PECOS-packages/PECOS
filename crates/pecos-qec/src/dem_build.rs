@@ -93,8 +93,8 @@ impl DemDefinition {
 pub enum DemAnnotationOrigin {
     Explicit,
     Inferred(DemOutputSelector),
-    /// Column in the concatenation of these default tags. The adapter owns
-    /// their individual widths, so no per-tag element mapping is invented.
+    /// Column in the concatenation of these default tags. Caller-supplied
+    /// probe data has no per-tag widths, so its exact selector is unknown.
     InferredDefaults {
         tags: Vec<String>,
         column: usize,
@@ -114,6 +114,10 @@ pub struct DemDefinitionOrigin {
 pub struct DemBuildInput {
     pub circuit: TickCircuit,
     pub probes: Option<DemInferenceData>,
+    /// Resolved detector columns, when the adapter knows the per-tag widths.
+    pub resolved_detector_outputs: Option<Vec<DemOutputSelector>>,
+    /// Resolved observable columns, when the adapter knows the per-tag widths.
+    pub resolved_observable_outputs: Option<Vec<DemOutputSelector>>,
 }
 
 /// Execution options passed to a runtime adapter before building a DEM.
@@ -440,6 +444,8 @@ impl DemBuildBuilder {
             (Some(circuit), None) => DemBuildInput {
                 circuit,
                 probes: self.probes,
+                resolved_detector_outputs: None,
+                resolved_observable_outputs: None,
             },
             (None, Some(program)) => program.prepare(&DemProgramRequest {
                 num_qubits: self.qubits.filter(|&n| n > 0).ok_or_else(|| {
@@ -538,7 +544,7 @@ impl DemBuildBuilder {
             None
         };
         let mut definition_origins = Vec::new();
-        for (role, specs, json, outputs, supports, default_tags) in [
+        for (role, specs, json, outputs, supports, default_tags, resolved_outputs) in [
             (
                 "detector",
                 &self.detector_definitions,
@@ -552,6 +558,7 @@ impl DemBuildBuilder {
                     .as_ref()
                     .map(|s| vec![s.detector_tag.clone()])
                     .unwrap_or_default(),
+                input.resolved_detector_outputs.as_deref(),
             ),
             (
                 "observable",
@@ -566,6 +573,7 @@ impl DemBuildBuilder {
                     .as_ref()
                     .map(|s| s.observable_tags.clone())
                     .unwrap_or_default(),
+                input.resolved_observable_outputs.as_deref(),
             ),
         ] {
             let resolved = resolve_definitions(
@@ -574,7 +582,10 @@ impl DemBuildBuilder {
                 json.as_deref(),
                 outputs.as_deref(),
                 supports,
-                &default_tags,
+                DefaultOutputs {
+                    tags: &default_tags,
+                    resolved: resolved_outputs,
+                },
                 &mut definition_origins,
             )?;
             if let Some(json) = resolved {
@@ -748,13 +759,20 @@ fn select_probe_columns(
     Ok(())
 }
 
+/// A role's default-tag expansion, with the adapter's resolved columns when it knows them.
+#[derive(Clone, Copy)]
+struct DefaultOutputs<'a> {
+    tags: &'a [String],
+    resolved: Option<&'a [DemOutputSelector]>,
+}
+
 fn resolve_definitions(
     role: &'static str,
     definitions: Option<&[DemDefinition]>,
     json: Option<&str>,
     outputs: Option<&[DemOutputSelector]>,
     supports: &[Vec<usize>],
-    default_tags: &[String],
+    defaults: DefaultOutputs<'_>,
     origins: &mut Vec<DemDefinitionOrigin>,
 ) -> Result<Option<String>, DemBuildError> {
     if let Some(definitions) = definitions {
@@ -793,14 +811,40 @@ fn resolve_definitions(
         return Ok(Some(serde_json::Value::Array(entries).to_string()));
     }
     if outputs.is_none() {
-        // Multiple default observable tags are flattened by the adapter. Their
-        // individual widths are unknown here; record the aggregate selection.
+        if let Some(selectors) = defaults.resolved {
+            if selectors.len() != supports.len() {
+                return Err(DemBuildError::Configuration(format!(
+                    "resolved {role} selector count {} differs from inferred support count {}",
+                    selectors.len(),
+                    supports.len(),
+                )));
+            }
+            let mut entries = Vec::new();
+            for (id, (support, selector)) in supports.iter().zip(selectors).enumerate() {
+                origins.push(DemDefinitionOrigin {
+                    role,
+                    id,
+                    source: DemAnnotationOrigin::Inferred(selector.clone()),
+                });
+                let mut entry = serde_json::json!({
+                    "id": id,
+                    "meas_ids": support,
+                    "inferred_from_result_tag": selector.tag,
+                });
+                if role == "observable" {
+                    entry["result_element"] = serde_json::json!(selector.element);
+                }
+                entries.push(entry);
+            }
+            return Ok(Some(serde_json::Value::Array(entries).to_string()));
+        }
+        // Caller-supplied probes do not carry per-tag widths.
         for id in 0..supports.len() {
             origins.push(DemDefinitionOrigin {
                 role,
                 id,
                 source: DemAnnotationOrigin::InferredDefaults {
-                    tags: default_tags.to_vec(),
+                    tags: defaults.tags.to_vec(),
                     column: id,
                 },
             });

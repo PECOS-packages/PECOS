@@ -82,6 +82,8 @@ impl DemProgram for PreparedProgram {
         Ok(DemBuildInput {
             circuit: circuit(),
             probes: Some(probes()),
+            resolved_detector_outputs: None,
+            resolved_observable_outputs: None,
         })
     }
 }
@@ -156,6 +158,8 @@ impl DemProgram for ExplicitProgram {
         Ok(DemBuildInput {
             circuit: circuit(),
             probes: None,
+            resolved_detector_outputs: None,
+            resolved_observable_outputs: None,
         })
     }
 }
@@ -196,6 +200,8 @@ impl DemProgram for SelectiveProgram {
         Ok(DemBuildInput {
             circuit: circuit(),
             probes: Some(data),
+            resolved_detector_outputs: None,
+            resolved_observable_outputs: None,
         })
     }
 }
@@ -628,5 +634,66 @@ fn tracked_pauli_is_legal_with_explicit_and_inferred_definitions() {
         };
         let build = builder.build().unwrap();
         assert_eq!(build.circuit.annotations().len(), 1);
+    }
+}
+
+struct MismatchedSelectors {
+    role: &'static str,
+    count: usize,
+}
+
+impl DemProgram for MismatchedSelectors {
+    fn prepare(&mut self, _: &DemProgramRequest<'_>) -> Result<DemBuildInput, DemBuildError> {
+        let selectors = vec![
+            pecos_qec::DemOutputSelector {
+                tag: "test".into(),
+                element: 0
+            };
+            self.count
+        ];
+        Ok(DemBuildInput {
+            circuit: circuit(),
+            probes: Some(probes()),
+            resolved_detector_outputs: (self.role == "detector").then_some(selectors.clone()),
+            resolved_observable_outputs: (self.role == "observable").then_some(selectors),
+        })
+    }
+}
+
+#[test]
+fn resolved_selector_counts_must_match_supports() {
+    for role in ["detector", "observable"] {
+        for count in [0, 2] {
+            let error = DetectorErrorModel::builder()
+                .with_program(MismatchedSelectors { role, count })
+                .with_qubits(2)
+                .with_inference(DemInferenceSettings::default().with_validation_rows(2))
+                .build()
+                .err()
+                .unwrap()
+                .to_string();
+            assert!(
+                error.contains(&format!(
+                    "resolved {role} selector count {count} differs from inferred support count 1"
+                )),
+                "{error}"
+            );
+        }
+    }
+}
+
+#[test]
+fn supplied_probes_retain_default_column_origins() {
+    let build = DetectorErrorModel::builder()
+        .with_circuit(circuit())
+        .with_inference(DemInferenceSettings::default().with_validation_rows(2))
+        .with_inference_data(probes())
+        .build()
+        .unwrap();
+    for origin in build.definition_origins {
+        assert!(matches!(
+            origin.source,
+            pecos_qec::DemAnnotationOrigin::InferredDefaults { column: 0, .. }
+        ));
     }
 }

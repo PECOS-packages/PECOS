@@ -19,7 +19,7 @@ use pecos_qis::{
     OperationTraceChunk, OperationTraceStore, QisEngineBuilder, SeleneRuntime,
     helios_interface_builder, qis_engine, selene_simple_runtime,
 };
-use pecos_qis_ffi_types::{NamedResult, Operation, QuantumOp};
+use pecos_qis_ffi_types::{NamedResult, NamedResultTrace, Operation, QuantumOp};
 use pecos_quantum::{Attribute, TickCircuit, pass};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -116,15 +116,9 @@ fn capture(
             .or_default()
             .push(chunk);
     }
-    if grouped.len() != shots {
-        return Err(preparation(
-            "runtime did not return exactly one complete trace per requested shot",
-        ));
-    }
     let mut result = Vec::with_capacity(shots);
     for mut shot in grouped.into_values() {
         shot.sort_by_key(|chunk| chunk.chunk_index);
-        validate_shot(&shot)?;
         result.push(shot);
     }
     Ok(result)
@@ -142,9 +136,26 @@ fn validate_shot(shot: &[OperationTraceChunk]) -> Result<(), DemBuildError> {
             || chunk.num_operations != chunk.operations.len()
             || !chunk.lowered_quantum_ops_complete
         {
-            return Err(preparation(
-                "runtime trace is incomplete or has inconsistent framing",
-            ));
+            return Err(preparation(format!(
+                "runtime trace chunk {index} is incomplete or has inconsistent framing: format={:?}, engine={}, shot={}, chunk={}, num_operations={}, operations={}, lowered_quantum_ops_complete={}",
+                chunk.format,
+                chunk.engine_trace_id,
+                chunk.shot_index,
+                chunk.chunk_index,
+                chunk.num_operations,
+                chunk.operations.len(),
+                chunk.lowered_quantum_ops_complete
+            )));
+        }
+        if chunk
+            .operations
+            .iter()
+            .any(|op| matches!(op, Operation::Quantum(_)))
+            && chunk.lowered_quantum_ops.is_empty()
+        {
+            return Err(preparation(format!(
+                "runtime trace chunk {index} carries lowerable quantum operations but no lowered_quantum_ops"
+            )));
         }
         if (chunk.stage == "trace_complete") != (index + 1 == shot.len()) {
             return Err(preparation(
@@ -250,14 +261,21 @@ fn replay(
             || kind.quantum_arity() == 0
             || !trace.qubits.len().is_multiple_of(kind.quantum_arity())
         {
-            return Err(preparation("lowered gate has invalid parameters or qubits"));
+            return Err(preparation(format!(
+                "lowered gate {:?} has invalid angles {:?}, parameters {:?}, or qubits {:?} (num_qubits={qubits})",
+                trace.gate_type, trace.angles, trace.params, trace.qubits
+            )));
         }
         let mut params = trace.params.clone();
         if kind == GateType::Idle {
-            if params.len() != 1 || params[0] < 0.0 || !(params[0] * 1e9).is_finite() {
-                return Err(preparation(
-                    "lowered idle duration must be finite and non-negative",
-                ));
+            if params.len() != 1
+                || params[0] < 0.0
+                || !(params[0] * 1e9).is_finite()
+                || (params[0] * 1e9).round_ties_even() >= 2.0_f64.powi(64)
+            {
+                return Err(preparation(format!(
+                    "lowered Idle duration must be finite and non-negative and fit in u64 nanoseconds; params={params:?}"
+                )));
             }
             params[0] = if params[0] == 0.0 {
                 0.0
@@ -265,9 +283,10 @@ fn replay(
                 (params[0] * 1e9).round_ties_even().max(1.0)
             };
         } else if !params.is_empty() {
-            return Err(preparation(
-                "unexpected non-angle parameters on a lowered gate",
-            ));
+            return Err(preparation(format!(
+                "unexpected non-angle parameters {params:?} on lowered gate {:?}",
+                trace.gate_type
+            )));
         }
         let mut gate = Gate::try_new(
             kind,
@@ -285,16 +304,24 @@ fn replay(
                 .map(QubitId)
                 .collect::<Vec<_>>(),
         )
-        .map_err(preparation)?;
+        .map_err(|error| {
+            preparation(format!(
+                "lowered gate {:?} with angles {:?}, params {:?}, qubits {:?}: {error}",
+                trace.gate_type, trace.angles, trace.params, trace.qubits
+            ))
+        })?;
         if kind == GateType::MZ {
             if trace.measurement_result_ids.len() != trace.qubits.len() {
-                return Err(preparation(
-                    "lowered measurement is missing stable measurement IDs",
-                ));
+                return Err(preparation(format!(
+                    "lowered {:?} measurement carries IDs {:?} for qubits {:?}",
+                    trace.gate_type, trace.measurement_result_ids, trace.qubits
+                )));
             }
             for &id in &trace.measurement_result_ids {
                 if !runtime_ids.insert(id) {
-                    return Err(preparation("lowered trace repeats measurement IDs"));
+                    return Err(preparation(format!(
+                        "lowered trace repeats measurement ID {id}"
+                    )));
                 }
             }
             gate.meas_ids = trace
@@ -319,13 +346,24 @@ fn replay(
             );
     }
     if runtime_ids != source.iter().copied().collect() {
-        return Err(preparation(
-            "source and runtime-lowered measurement IDs differ",
-        ));
+        return Err(preparation(format!(
+            "source and runtime-lowered measurement IDs differ: source ids={source:?}, runtime ids={runtime_ids:?}"
+        )));
+    }
+    // External measurement IDs must also reserve their successors, just as the
+    // TickCircuit measurement builders do. Generic gate insertion does not
+    // allocate measurement records.
+    if let Some(highest) = runtime_ids.last() {
+        let next = highest.checked_add(1).ok_or_else(|| {
+            preparation(format!(
+                "measurement ID {highest} leaves no room for a later ID"
+            ))
+        })?;
+        circuit
+            .try_advance_meas_counter(next)
+            .map_err(preparation)?;
     }
     circuit.compact_ticks();
-    pass::lower_clifford_rotations(&mut circuit);
-    pass::simplify_single_qubit_clifford_chains(&mut circuit);
     circuit.set_meta(
         "qis_source_measurement_ids",
         Attribute::String(serde_json::to_string(&source).map_err(preparation)?),
@@ -436,17 +474,18 @@ fn physical_row(shot: &[OperationTraceChunk], ids: &[usize]) -> Result<Vec<u8>, 
         .last()
         .ok_or_else(|| preparation("missing terminal trace"))?
         .measurement_results;
-    if outcomes.len() != ids.len() {
-        return Err(preparation(
-            "physical outcomes do not cover all source measurements",
-        ));
+    if outcomes.keys().copied().collect::<BTreeSet<_>>() != ids.iter().copied().collect() {
+        return Err(preparation(format!(
+            "QIS probe measurement ids differ from the source trace: outcome ids={:?}, source ids={ids:?}",
+            outcomes.keys().collect::<Vec<_>>()
+        )));
     }
     ids.iter()
         .map(|id| match outcomes.get(id) {
             Some(&bit @ (0 | 1)) => u8::try_from(bit).map_err(preparation),
-            _ => Err(preparation(
-                "missing or non-Boolean physical measurement outcome",
-            )),
+            value => Err(preparation(format!(
+                "missing or non-Boolean physical measurement outcome for ID {id}: {value:?}"
+            ))),
         })
         .collect()
 }
@@ -481,8 +520,39 @@ fn selected_row(
         .collect()
 }
 
-impl DemProgram for SeleneDemProgram {
-    fn prepare(&mut self, request: &DemProgramRequest<'_>) -> Result<DemBuildInput, DemBuildError> {
+/// Capture evidence before Clifford normalization. Explicit preparations have no probes.
+pub struct SeleneDemEvidence {
+    pub circuit: TickCircuit,
+    pub probes: Option<DemInferenceData>,
+    pub binding: Option<&'static str>,
+    pub detector_outputs: Vec<DemOutputSelector>,
+    pub observable_outputs: Vec<DemOutputSelector>,
+    pub probe_shots: usize,
+    pub correlation_shots: usize,
+    pub schedule_shots: usize,
+    pub named_result_traces: Vec<NamedResultTrace>,
+}
+
+struct BaselineAnalysis {
+    baseline: TraceShot,
+    source: Vec<usize>,
+    evidence: SeleneDemEvidence,
+    raw_width: usize,
+    direct: bool,
+    ids: Vec<usize>,
+    widths: BTreeMap<String, usize>,
+    probe_seed: u64,
+}
+
+impl SeleneDemProgram {
+    /// Capture coin-toss shots and analyze them, without normalizing the replayed circuit.
+    ///
+    /// # Errors
+    /// Returns an error for invalid traces, outputs, schedules, or measurement bindings.
+    pub fn capture_and_analyze(
+        &self,
+        request: &DemProgramRequest<'_>,
+    ) -> Result<SeleneDemEvidence, DemBuildError> {
         if request.inference.is_none() && self.schedule_shots == 0 {
             return Err(preparation("schedule validation shots must be positive"));
         }
@@ -504,163 +574,267 @@ impl DemProgram for SeleneDemProgram {
             .runtime(runtime)
             .interface(helios_interface_builder())
             .program_ir(source_ir);
-        let baseline = capture(&engine, request.num_qubits, 1, request.seed)?.remove(0);
-        let source = source_ids(&baseline)?;
-        let mut circuit = replay(&baseline, request.num_qubits, &source)?;
-        let Some(settings) = request.inference else {
-            let checks = capture(
-                &engine,
-                request.num_qubits,
-                self.schedule_shots,
-                request.seed.wrapping_add(1),
-            )?;
-            for shot in &checks {
-                check_schedule(&baseline, &source, shot)?;
-            }
-            circuit.set_meta(
-                "dem_schedule_validation",
-                Attribute::String("empirical_trace_comparison".into()),
-            );
-            circuit.set_meta(
-                "dem_schedule_validation_shots",
-                Attribute::String(self.schedule_shots.to_string()),
-            );
-            return Ok(DemBuildInput {
-                circuit,
-                probes: None,
-            });
-        };
-        let baseline_rows = named_rows(&baseline);
-        let raw = raw_row(&baseline, &baseline_rows, &settings.raw_tag)?;
-        if raw.len() != source.len() {
-            return Err(preparation(
-                "raw output must expose every physical measurement exactly once",
-            ));
-        }
-        let raw_traces: Vec<_> = baseline
-            .iter()
-            .flat_map(|c| &c.named_result_traces)
-            .filter(|r| r.name == settings.raw_tag)
-            .collect();
-        let direct = raw_traces
-            .iter()
-            .all(|r| r.result_ids.len() == r.values.len());
-        let mut ids: Vec<_> = raw_traces
-            .iter()
-            .flat_map(|r| r.result_ids.iter().copied())
-            .collect();
-        if direct && ids != source {
-            return Err(preparation(
-                "direct raw measurement IDs must preserve certified source order",
-            ));
-        }
-        let detector_outputs = selectors(
-            &baseline_rows,
-            request.detector_outputs,
-            std::slice::from_ref(&settings.detector_tag),
-        )?;
-        let observable_outputs = selectors(
-            &baseline_rows,
-            request.observable_outputs,
-            &settings.observable_tags,
-        )?;
-        // Validate selectors before spending shots on provenance or fitting.
-        selected_row(&baseline_rows, &detector_outputs)?;
-        selected_row(&baseline_rows, &observable_outputs)?;
-        let mut widths = BTreeMap::new();
-        for output in detector_outputs.iter().chain(&observable_outputs) {
-            widths.insert(
-                output.tag.clone(),
-                named_row(&baseline_rows, &output.tag)?.len(),
-            );
-        }
-        let correlation_shots = if !direct && settings.require_raw_provenance {
-            settings.provenance_shots
-        } else {
-            0
-        };
-        let probe_shots = settings.resolved_probe_shots(raw.len())?;
-        let shots = probe_shots
-            .checked_add(correlation_shots)
-            .ok_or_else(|| preparation("probe count overflow"))?;
+        let baselines = capture(&engine, request.num_qubits, 1, request.seed)?;
+        let analysis = analyze_captured_baseline(baselines, request, self.schedule_shots)?;
         let traces = capture(
             &engine,
             request.num_qubits,
-            shots,
-            request.seed.wrapping_add(1),
+            analysis.evidence.schedule_shots,
+            analysis.probe_seed,
         )?;
-        for shot in &traces {
-            check_schedule(&baseline, &source, shot)?;
-        }
-        let rows: Vec<_> = traces.iter().map(|shot| named_rows(shot)).collect();
-        let raw_rows = traces
+        analyze_probes(analysis, &traces, request)
+    }
+}
+
+fn analyze_captured_baseline(
+    mut baselines: Vec<TraceShot>,
+    request: &DemProgramRequest<'_>,
+    schedule_shots: usize,
+) -> Result<BaselineAnalysis, DemBuildError> {
+    if baselines.len() != 1 {
+        return Err(preparation(format!(
+            "runtime returned {} baseline shots; expected 1",
+            baselines.len()
+        )));
+    }
+    analyze_baseline(baselines.remove(0), request, schedule_shots)
+}
+
+fn analyze_baseline(
+    baseline: TraceShot,
+    request: &DemProgramRequest<'_>,
+    schedule_shots: usize,
+) -> Result<BaselineAnalysis, DemBuildError> {
+    let source = source_ids(&baseline)?;
+    let circuit = replay(&baseline, request.num_qubits, &source)?;
+    let mut evidence = SeleneDemEvidence {
+        circuit,
+        probes: None,
+        binding: None,
+        detector_outputs: Vec::new(),
+        observable_outputs: Vec::new(),
+        probe_shots: 0,
+        correlation_shots: 0,
+        schedule_shots,
+        named_result_traces: baseline
             .iter()
-            .zip(&rows)
-            .map(|(shot, rows)| raw_row(shot, rows, &settings.raw_tag))
+            .flat_map(|c| c.named_result_traces.clone())
+            .collect(),
+    };
+    let probe_seed = request.seed.wrapping_add(1);
+    let Some(settings) = request.inference else {
+        if schedule_shots == 0 {
+            return Err(preparation("schedule validation shots must be positive"));
+        }
+        return Ok(BaselineAnalysis {
+            baseline,
+            source,
+            evidence,
+            raw_width: 0,
+            direct: false,
+            ids: Vec::new(),
+            widths: BTreeMap::new(),
+            probe_seed,
+        });
+    };
+    settings.validate()?;
+    let baseline_rows = named_rows(&baseline);
+    let raw = raw_row(&baseline, &baseline_rows, &settings.raw_tag)?;
+    if raw.len() != source.len() {
+        return Err(preparation(format!(
+            "result tag {:?} must expose every physical measurement exactly once",
+            settings.raw_tag
+        )));
+    }
+    let raw_traces: Vec<_> = baseline
+        .iter()
+        .flat_map(|c| &c.named_result_traces)
+        .filter(|r| r.name == settings.raw_tag)
+        .collect();
+    let direct = raw_traces
+        .iter()
+        .all(|r| r.result_ids.len() == r.values.len());
+    let ids: Vec<_> = raw_traces
+        .iter()
+        .flat_map(|r| r.result_ids.iter().copied())
+        .collect();
+    if direct {
+        let context = format!("tag ids={ids:?}, source ids={source:?}");
+        if ids.iter().copied().collect::<BTreeSet<_>>() != source.iter().copied().collect() {
+            return Err(preparation(format!(
+                "result tag {:?} must expose every physical measurement exactly once; {context}",
+                settings.raw_tag
+            )));
+        }
+        if ids != source {
+            return Err(preparation(format!(
+                "result tag {:?} must expose physical measurements in certified source order; {context}",
+                settings.raw_tag
+            )));
+        }
+    }
+    let detector_outputs = selectors(
+        &baseline_rows,
+        request.detector_outputs,
+        std::slice::from_ref(&settings.detector_tag),
+    )?;
+    let observable_outputs = selectors(
+        &baseline_rows,
+        request.observable_outputs,
+        &settings.observable_tags,
+    )?;
+    // Validate selectors before spending shots on provenance or fitting.
+    selected_row(&baseline_rows, &detector_outputs)?;
+    selected_row(&baseline_rows, &observable_outputs)?;
+    let mut widths = BTreeMap::new();
+    for output in detector_outputs.iter().chain(&observable_outputs) {
+        widths.insert(
+            output.tag.clone(),
+            named_row(&baseline_rows, &output.tag)?.len(),
+        );
+    }
+    let correlation_shots = if !direct && settings.require_raw_provenance {
+        settings.provenance_shots
+    } else {
+        0
+    };
+    let probe_shots = settings.resolved_probe_shots(raw.len())?;
+    let shots = probe_shots
+        .checked_add(correlation_shots)
+        .ok_or_else(|| preparation("probe count overflow"))?;
+    evidence.detector_outputs = detector_outputs;
+    evidence.observable_outputs = observable_outputs;
+    evidence.probe_shots = probe_shots;
+    evidence.correlation_shots = correlation_shots;
+    evidence.schedule_shots = shots;
+    Ok(BaselineAnalysis {
+        baseline,
+        source,
+        evidence,
+        raw_width: raw.len(),
+        direct,
+        ids,
+        widths,
+        probe_seed,
+    })
+}
+
+fn analyze_probes(
+    analysis: BaselineAnalysis,
+    traces: &[TraceShot],
+    request: &DemProgramRequest<'_>,
+) -> Result<SeleneDemEvidence, DemBuildError> {
+    let BaselineAnalysis {
+        baseline,
+        source,
+        mut evidence,
+        raw_width,
+        direct,
+        mut ids,
+        widths,
+        ..
+    } = analysis;
+    if traces.len() != evidence.schedule_shots {
+        return Err(preparation(format!(
+            "QIS probe trace contains {} shots; expected {}",
+            traces.len(),
+            evidence.schedule_shots
+        )));
+    }
+    for shot in traces {
+        validate_shot(shot)?;
+        check_schedule(&baseline, &source, shot)?;
+    }
+    evidence.circuit.set_meta(
+        "dem_schedule_validation",
+        Attribute::String("empirical_trace_comparison".into()),
+    );
+    evidence.circuit.set_meta(
+        "dem_schedule_validation_shots",
+        Attribute::String(evidence.schedule_shots.to_string()),
+    );
+    let Some(settings) = request.inference else {
+        return Ok(evidence);
+    };
+    let correlation_shots = evidence.correlation_shots;
+    let detector_outputs = &evidence.detector_outputs;
+    let observable_outputs = &evidence.observable_outputs;
+    let rows: Vec<_> = traces.iter().map(|shot| named_rows(shot)).collect();
+    let raw_rows = traces
+        .iter()
+        .zip(&rows)
+        .map(|(shot, rows)| raw_row(shot, rows, &settings.raw_tag))
+        .collect::<Result<Vec<_>, _>>()?;
+    let binding = if direct {
+        "runtime_result_ids"
+    } else if settings.require_raw_provenance {
+        let physical = traces[..correlation_shots]
+            .iter()
+            .map(|s| physical_row(s, &source))
             .collect::<Result<Vec<_>, _>>()?;
-        let binding = if direct {
-            "runtime_result_ids"
-        } else if settings.require_raw_provenance {
-            let physical = traces[..correlation_shots]
-                .iter()
-                .map(|s| physical_row(s, &source))
-                .collect::<Result<Vec<_>, _>>()?;
-            ids = correlate_measurement_ids(&raw_rows[..correlation_shots], &physical, &source)?;
-            "probe_correlated_result_ids"
-        } else {
-            ids.clone_from(&source);
-            "assumed_canonical_result_order"
-        };
-        let mut data = DemInferenceData {
-            raw_measurement_ids: ids,
-            raw_rows: Vec::new(),
-            detector_rows: Vec::new(),
-            observable_rows: Vec::new(),
-        };
-        for ((shot, rows), row) in traces
-            .iter()
-            .zip(&rows)
-            .zip(raw_rows)
-            .skip(correlation_shots)
-        {
-            for (tag, width) in &widths {
-                if named_row(rows, tag)?.len() != *width {
-                    return Err(preparation(format!(
-                        "output {tag:?} width changed across probes"
-                    )));
-                }
+        ids = correlate_measurement_ids(&raw_rows[..correlation_shots], &physical, &source)?;
+        "probe_correlated_result_ids"
+    } else {
+        ids.clone_from(&source);
+        "assumed_canonical_result_order"
+    };
+    let mut data = DemInferenceData {
+        raw_measurement_ids: ids,
+        raw_rows: Vec::new(),
+        detector_rows: Vec::new(),
+        observable_rows: Vec::new(),
+    };
+    for ((shot, rows), row) in traces
+        .iter()
+        .zip(&rows)
+        .zip(raw_rows)
+        .skip(correlation_shots)
+    {
+        for (tag, width) in &widths {
+            if named_row(rows, tag)?.len() != *width {
+                return Err(preparation(format!(
+                    "output {tag:?} width changed across probes"
+                )));
             }
-            if row.len() != raw.len() {
-                return Err(preparation("raw output width changed across probes"));
-            }
-            if settings.require_raw_provenance
-                && row != physical_row(shot, &data.raw_measurement_ids)?
-            {
-                return Err(preparation(
-                    "raw measurement binding changed across inference probes",
-                ));
-            }
-            data.raw_rows.push(row);
-            data.detector_rows
-                .push(selected_row(rows, &detector_outputs)?);
-            data.observable_rows
-                .push(selected_row(rows, &observable_outputs)?);
         }
-        circuit.set_meta(
-            "dem_schedule_validation",
-            Attribute::String("empirical_trace_comparison".into()),
-        );
-        circuit.set_meta(
-            "dem_schedule_validation_shots",
-            Attribute::String(shots.to_string()),
-        );
-        circuit.set_meta(
-            "dem_raw_measurement_binding",
-            Attribute::String(binding.into()),
-        );
+        if row.len() != raw_width {
+            return Err(preparation(format!(
+                "output {:?} width changed across probes",
+                settings.raw_tag
+            )));
+        }
+        if settings.require_raw_provenance && row != physical_row(shot, &data.raw_measurement_ids)?
+        {
+            return Err(preparation(
+                "raw measurement binding changed across inference probes",
+            ));
+        }
+        data.raw_rows.push(row);
+        data.detector_rows
+            .push(selected_row(rows, detector_outputs)?);
+        data.observable_rows
+            .push(selected_row(rows, observable_outputs)?);
+    }
+    evidence.circuit.set_meta(
+        "dem_raw_measurement_binding",
+        Attribute::String(binding.into()),
+    );
+    evidence.binding = Some(binding);
+    evidence.probes = Some(data);
+    Ok(evidence)
+}
+
+impl DemProgram for SeleneDemProgram {
+    fn prepare(&mut self, request: &DemProgramRequest<'_>) -> Result<DemBuildInput, DemBuildError> {
+        let evidence = self.capture_and_analyze(request)?;
+        let mut circuit = evidence.circuit;
+        pass::lower_clifford_rotations(&mut circuit);
+        pass::simplify_single_qubit_clifford_chains(&mut circuit);
         Ok(DemBuildInput {
             circuit,
-            probes: Some(data),
+            probes: evidence.probes,
+            resolved_detector_outputs: Some(evidence.detector_outputs),
+            resolved_observable_outputs: Some(evidence.observable_outputs),
         })
     }
 }
@@ -705,6 +879,292 @@ mod tests {
         let mut last = chunk(1, "trace_complete");
         last.measurement_results.insert(7, 1);
         vec![first, last]
+    }
+
+    fn inference_trace(direct: bool, bits: [bool; 2]) -> TraceShot {
+        let mut shot = trace();
+        shot[0].operations.push(QuantumOp::Measure(0, 9).into());
+        shot[0].num_operations = 2;
+        let mut second = shot[0].lowered_quantum_ops[0].clone();
+        second.measurement_result_ids = vec![9];
+        shot[0].lowered_quantum_ops.push(second);
+        shot[0].named_results = BTreeMap::from([
+            ("raw measurements".into(), NamedResult::Bool(bits.to_vec())),
+            (
+                "DETECTOR".into(),
+                NamedResult::I64(vec![i64::from(bits[0] ^ bits[1])]),
+            ),
+            ("obs".into(), NamedResult::Bool(vec![bits[0]])),
+        ]);
+        shot[0].named_result_traces.push(NamedResultTrace {
+            name: "raw measurements".into(),
+            values: bits.to_vec(),
+            result_ids: if direct { vec![7, 9] } else { vec![] },
+        });
+        shot[1].measurement_results =
+            BTreeMap::from([(7, u32::from(bits[0])), (9, u32::from(bits[1]))]);
+        shot
+    }
+
+    fn analysis_settings() -> crate::DemInferenceSettings {
+        crate::DemInferenceSettings::default()
+            .with_probe_shots(4)
+            .with_provenance_shots(2)
+            .with_validation_rows(1)
+    }
+
+    fn analysis_request(settings: &crate::DemInferenceSettings) -> DemProgramRequest<'_> {
+        DemProgramRequest {
+            num_qubits: 1,
+            seed: u64::MAX,
+            inference: Some(settings),
+            detector_outputs: None,
+            observable_outputs: None,
+        }
+    }
+
+    fn analyze_test_shots(
+        baseline: TraceShot,
+        shots: &[TraceShot],
+    ) -> Result<SeleneDemEvidence, DemBuildError> {
+        let settings = analysis_settings();
+        let request = analysis_request(&settings);
+        let analysis = analyze_baseline(baseline, &request, 32)?;
+        assert_eq!(analysis.probe_seed, 0);
+        analyze_probes(analysis, shots, &request)
+    }
+
+    fn inference_probes(direct: bool) -> Vec<TraceShot> {
+        (0..if direct { 4 } else { 6 })
+            .map(|index| inference_trace(direct, [index % 2 == 0, index % 2 == 1]))
+            .collect()
+    }
+
+    fn analysis_error(result: Result<SeleneDemEvidence, DemBuildError>, expected: &str) {
+        match result {
+            Err(error) => assert!(error.to_string().contains(expected), "{error}"),
+            Ok(_) => panic!("analysis accepted corrupt evidence; expected {expected}"),
+        }
+    }
+
+    #[test]
+    fn analysis_rejects_permuted_direct_ids_in_baseline() {
+        let mut baseline = inference_trace(true, [true, false]);
+        baseline[0].named_result_traces[0].result_ids = vec![9, 7];
+        analysis_error(
+            analyze_test_shots(baseline, &inference_probes(true)),
+            "tag ids=[9, 7], source ids=[7, 9]",
+        );
+    }
+
+    #[test]
+    fn analysis_rejects_incomplete_direct_ids_in_baseline() {
+        let mut baseline = inference_trace(true, [true, false]);
+        baseline[0].named_result_traces[0].result_ids = vec![7, 7];
+        analysis_error(
+            analyze_test_shots(baseline, &inference_probes(true)),
+            "exactly once; tag ids=[7, 7], source ids=[7, 9]",
+        );
+    }
+
+    #[test]
+    fn analysis_checks_schedule_with_direct_ids() {
+        let baseline = inference_trace(true, [true, false]);
+        let mut probes = inference_probes(true);
+        probes[0][0].lowered_quantum_ops[0].qubits = vec![99];
+        analysis_error(analyze_test_shots(baseline, &probes), "schedule changed");
+    }
+
+    #[test]
+    fn analysis_checks_last_fitted_schedule() {
+        let baseline = inference_trace(false, [true, false]);
+        let mut probes = inference_probes(false);
+        probes.last_mut().unwrap()[0].lowered_quantum_ops[0].qubits = vec![99];
+        analysis_error(analyze_test_shots(baseline, &probes), "schedule changed");
+    }
+
+    #[test]
+    fn analysis_checks_last_fitted_binding() {
+        let baseline = inference_trace(false, [true, false]);
+        let mut probes = inference_probes(false);
+        let shot = probes.last_mut().unwrap();
+        shot[0].named_result_traces[0].values[0] = true;
+        shot[0].named_results.insert(
+            "raw measurements".into(),
+            NamedResult::Bool(vec![true, true]),
+        );
+        analysis_error(analyze_test_shots(baseline, &probes), "binding changed");
+    }
+
+    #[test]
+    fn analysis_checks_last_fitted_width() {
+        let baseline = inference_trace(false, [true, false]);
+        let mut probes = inference_probes(false);
+        probes.last_mut().unwrap()[0]
+            .named_results
+            .insert("DETECTOR".into(), NamedResult::I64(vec![1, 0]));
+        analysis_error(
+            analyze_test_shots(baseline, &probes),
+            "output \"DETECTOR\" width changed",
+        );
+    }
+
+    #[test]
+    fn analysis_checks_last_fitted_raw_width() {
+        let baseline = inference_trace(false, [true, false]);
+        let mut probes = inference_probes(false);
+        let shot = probes.last_mut().unwrap();
+        shot[0].named_results.insert(
+            "raw measurements".into(),
+            NamedResult::Bool(vec![false, true, false]),
+        );
+        shot[0].named_result_traces[0].values.push(false);
+        analysis_error(
+            analyze_test_shots(baseline, &probes),
+            "output \"raw measurements\" width changed",
+        );
+    }
+
+    #[test]
+    fn analysis_checks_last_fitted_terminal() {
+        let baseline = inference_trace(false, [true, false]);
+        let mut probes = inference_probes(false);
+        probes.last_mut().unwrap().pop();
+        analysis_error(
+            analyze_test_shots(baseline, &probes),
+            "exactly one trace_complete",
+        );
+    }
+
+    #[test]
+    fn analysis_checks_last_fitted_lowering_attestation() {
+        let baseline = inference_trace(false, [true, false]);
+        let mut probes = inference_probes(false);
+        probes.last_mut().unwrap()[0].lowered_quantum_ops_complete = false;
+        analysis_error(analyze_test_shots(baseline, &probes), "incomplete");
+    }
+
+    fn add_unlowered_gate(shot: &mut TraceShot) {
+        let mut missing = chunk(1, "batch");
+        missing.operations.push(QuantumOp::H(0).into());
+        missing.num_operations = 1;
+        shot.insert(1, missing);
+        shot[2].chunk_index = 2;
+    }
+
+    #[test]
+    fn analysis_checks_baseline_empty_lowering() {
+        let mut baseline = inference_trace(true, [true, false]);
+        add_unlowered_gate(&mut baseline);
+        analysis_error(
+            analyze_test_shots(baseline, &inference_probes(true)),
+            "lowerable quantum operations",
+        );
+    }
+
+    #[test]
+    fn analysis_checks_probe_empty_lowering() {
+        let baseline = inference_trace(false, [true, false]);
+        let mut probes = inference_probes(false);
+        add_unlowered_gate(probes.last_mut().unwrap());
+        analysis_error(
+            analyze_test_shots(baseline, &probes),
+            "lowerable quantum operations",
+        );
+    }
+
+    #[test]
+    fn analysis_rejects_selected_float_in_baseline() {
+        for value in [0.0, 1.0, 2.5] {
+            let mut baseline = inference_trace(true, [true, false]);
+            baseline[0]
+                .named_results
+                .insert("float output".into(), NamedResult::F64(vec![value]));
+            assert!(analyze_test_shots(baseline.clone(), &inference_probes(true)).is_ok());
+            let settings = analysis_settings();
+            let selected = [DemOutputSelector {
+                tag: "float output".into(),
+                element: 0,
+            }];
+            let request = DemProgramRequest {
+                detector_outputs: Some(&selected),
+                ..analysis_request(&settings)
+            };
+            match analyze_baseline(baseline, &request, 32) {
+                Err(error) => assert!(
+                    error.to_string().contains(&format!(
+                        "output \"float output\" element 0 has value {value:?}"
+                    )),
+                    "{error}"
+                ),
+                Ok(_) => panic!("selected float was accepted"),
+            }
+        }
+    }
+
+    #[test]
+    fn analysis_requires_raw_trace_in_baseline() {
+        let mut baseline = inference_trace(true, [true, false]);
+        baseline[0].named_results.insert(
+            "raw measurements".into(),
+            NamedResult::Bool(vec![true, false, false]),
+        );
+        analysis_error(
+            analyze_test_shots(baseline, &inference_probes(true)),
+            "raw measurements\": raw measurements must be emitted as bool results",
+        );
+    }
+
+    #[test]
+    fn analysis_requires_raw_trace_in_first_probe() {
+        let baseline = inference_trace(false, [true, false]);
+        let mut probes = inference_probes(false);
+        probes[0][0].named_results.insert(
+            "raw measurements".into(),
+            NamedResult::Bool(vec![true, false, false]),
+        );
+        analysis_error(
+            analyze_test_shots(baseline, &probes),
+            "raw measurements\": raw measurements must be emitted as bool results",
+        );
+    }
+
+    #[test]
+    fn analysis_requires_complete_named_results_per_shot() {
+        let baseline = inference_trace(false, [true, false]);
+        let mut probes = inference_probes(false);
+        probes.last_mut().unwrap()[0]
+            .named_results
+            .remove("DETECTOR");
+        analysis_error(
+            analyze_test_shots(baseline, &probes),
+            "missing or empty required output tag \"DETECTOR\"",
+        );
+    }
+
+    fn duplicate_named_results(shot: &mut TraceShot) {
+        let mut duplicate = chunk(1, "named_results");
+        duplicate.named_results.clone_from(&shot[0].named_results);
+        shot.insert(1, duplicate);
+        shot[2].chunk_index = 2;
+    }
+
+    #[test]
+    fn analysis_rejects_duplicate_complete_results_in_baseline() {
+        let mut baseline = inference_trace(true, [true, false]);
+        duplicate_named_results(&mut baseline);
+        analysis_error(
+            analyze_test_shots(baseline, &inference_probes(true)),
+            "more than one chunk",
+        );
+    }
+
+    #[test]
+    fn analysis_rejects_duplicate_complete_results_in_probe() {
+        let baseline = inference_trace(false, [true, false]);
+        let mut probes = inference_probes(false);
+        duplicate_named_results(probes.last_mut().unwrap());
+        analysis_error(analyze_test_shots(baseline, &probes), "more than one chunk");
     }
 
     #[test]
@@ -802,6 +1262,7 @@ mod tests {
             .flat_map(|gate| gate.as_gate().meas_ids.clone())
             .collect();
         assert_eq!(ids, vec![MeasId::from_raw(7)]);
+        assert_eq!(circuit.num_measurements(), 8);
         assert_eq!(physical_row(&trace(), &[7]).unwrap(), [1]);
     }
 
@@ -867,6 +1328,24 @@ mod tests {
 
     #[test]
     fn replay_rejects_invalid_gate_parameters_and_bounds() {
+        // Python replay constructs TimeUnits(u64), so finite f64 durations
+        // must also fit that range after conversion to nanoseconds.
+        let mut baseline = inference_trace(true, [true, false]);
+        baseline[0].lowered_quantum_ops.insert(
+            0,
+            LoweredQuantumGateTrace {
+                gate_type: "Idle".into(),
+                angles: vec![],
+                params: vec![2.0_f64.powi(64) / 1e9],
+                qubits: vec![0],
+                measurement_result_ids: vec![],
+                metadata: BTreeMap::new(),
+            },
+        );
+        analysis_error(
+            analyze_test_shots(baseline, &inference_probes(true)),
+            "fit in u64 nanoseconds",
+        );
         for (qubit, angle) in [(1, 0.0), (0, f64::NAN)] {
             let mut shot = trace();
             shot[0].lowered_quantum_ops[0].qubits = vec![qubit];

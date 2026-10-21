@@ -1,0 +1,476 @@
+use super::*;
+use crate::{
+    CrosstalkExposure as Exposure, CrosstalkPlacement as Placement, ExplicitCrosstalkErrorModel,
+};
+use pecos_engines::GeneralNoiseConfig;
+
+fn config(model: &str) -> GeneralNoiseConfig {
+    GeneralNoiseConfig::from_json(model).unwrap()
+}
+fn flip() -> GeneralNoiseConfig {
+    config(
+        r#"{"measurement":{"local_crosstalk_probability":1.0,"global_crosstalk_probability":1.0,"crosstalk_model":{"0->1":1.0,"1->0":1.0}}}"#,
+    )
+}
+fn setup(config: &GeneralNoiseConfig) -> (ExplicitCrosstalkErrorModel, ClassicalSimulator) {
+    let mut model = ExplicitCrosstalkErrorModel::new(2, config).unwrap();
+    model.shot_start(0, 17).unwrap();
+    let mut simulator = ClassicalSimulator::with_qubits(2);
+    model
+        .handle_operations(
+            runtime_batch(
+                vec![
+                    Operation::Reset { qubit_id: 0 },
+                    Operation::Reset { qubit_id: 1 },
+                ],
+                0,
+                1,
+            ),
+            &[],
+            &mut simulator,
+        )
+        .unwrap();
+    (model, simulator)
+}
+fn measure(q: u64, result_id: u64) -> Operation {
+    Operation::Measure {
+        qubit_id: q,
+        result_id,
+    }
+}
+fn local(index: usize, qubits: Vec<usize>) -> Placement {
+    Placement {
+        before_operation: index,
+        exposure: Exposure::Local(qubits),
+    }
+}
+
+#[test]
+fn explicit_order_repetition_and_end_placement_preserve_user_results() {
+    let (mut model, mut simulator) = setup(&flip());
+    let result = model
+        .handle_operations(
+            runtime_batch(vec![measure(0, 71), measure(1, 93)], 1, 1),
+            &[
+                local(0, vec![0]),
+                local(1, vec![1]),
+                local(1, vec![1]),
+                Placement {
+                    before_operation: 2,
+                    exposure: Exposure::GlobalExcluding(vec![0]),
+                },
+            ],
+            &mut simulator,
+        )
+        .unwrap();
+    assert_eq!(
+        result
+            .bool_results
+            .iter()
+            .map(|r| (r.result_id, r.value))
+            .collect::<Vec<_>>(),
+        vec![(71, true), (93, false)]
+    );
+    assert!(result.u64_results.is_empty());
+    // The trailing global effect is retained and executes after user measurement.
+    let next = model
+        .handle_operations(
+            runtime_batch(vec![measure(1, u64::MAX)], 2, 1),
+            &[],
+            &mut simulator,
+        )
+        .unwrap();
+    assert_eq!(next.bool_results[0].result_id, u64::MAX);
+    assert!(next.bool_results[0].value);
+    model.shot_end().unwrap();
+}
+
+#[test]
+fn empty_explicit_list_disables_automatic_exposures() {
+    let (mut model, mut simulator) = setup(&flip());
+    model
+        .handle_operations(
+            runtime_batch(vec![measure(0, 0)], 1, 1),
+            &[],
+            &mut simulator,
+        )
+        .unwrap();
+    let out = model
+        .handle_operations(
+            runtime_batch(vec![measure(1, 1)], 2, 1),
+            &[],
+            &mut simulator,
+        )
+        .unwrap();
+    assert!(!out.bool_results[0].value);
+    assert!(
+        !simulator
+            .received
+            .iter()
+            .flatten()
+            .any(|op| matches!(op, Operation::RXYGate { .. }))
+    );
+}
+
+#[test]
+fn leakage_exposure_survives_batches_and_does_not_leak_internal_ids() {
+    let cfg = config(
+        r#"{"measurement":{"local_crosstalk_probability":1.0,"crosstalk_model":{"0->L":1.0,"1->L":1.0}}}"#,
+    );
+    let (mut model, mut simulator) = setup(&cfg);
+    let out = model
+        .handle_operations(
+            runtime_batch(vec![], 1, 100),
+            &[local(0, vec![1])],
+            &mut simulator,
+        )
+        .unwrap();
+    assert!(out.bool_results.is_empty() && out.u64_results.is_empty());
+    let out = model
+        .handle_operations(
+            runtime_batch(
+                vec![
+                    Operation::MeasureLeaked {
+                        qubit_id: 1,
+                        result_id: 301,
+                    },
+                    measure(1, 302),
+                ],
+                101,
+                1,
+            ),
+            &[],
+            &mut simulator,
+        )
+        .unwrap();
+    assert_eq!(out.u64_results.len(), 1);
+    assert_eq!(
+        (out.u64_results[0].result_id, out.u64_results[0].value),
+        (301, 2)
+    );
+    assert_eq!(out.bool_results.len(), 1);
+    assert_eq!(
+        (out.bool_results[0].result_id, out.bool_results[0].value),
+        (302, true)
+    );
+    model.shot_end().unwrap();
+    model.shot_start(1, 17).unwrap();
+    simulator = ClassicalSimulator::with_qubits(2);
+    let out = model
+        .handle_operations(
+            runtime_batch(
+                vec![
+                    Operation::Reset { qubit_id: 1 },
+                    Operation::MeasureLeaked {
+                        qubit_id: 1,
+                        result_id: 303,
+                    },
+                ],
+                1000,
+                1,
+            ),
+            &[],
+            &mut simulator,
+        )
+        .unwrap();
+    assert_eq!(out.u64_results[0].value, 0);
+}
+
+#[test]
+fn exposure_batches_do_not_split_nonlinear_idle_or_advance_occupancy() {
+    let cfg =
+        config(r#"{"idle":{"sin_squared_rate":1.5707963267948966,"sin_squared_model":{"X":1.0}}}"#);
+    let (mut model, mut simulator) = setup(&cfg);
+    model
+        .handle_operations(
+            runtime_batch(vec![], 250_000_001, 500_000_000),
+            &[local(0, vec![1])],
+            &mut simulator,
+        )
+        .unwrap();
+    let out = model
+        .handle_operations(
+            runtime_batch(vec![measure(1, 40)], 1_000_000_001, 1),
+            &[],
+            &mut simulator,
+        )
+        .unwrap();
+    // One complete second produces a certain X; splitting/advancing at the
+    // exposure would change this deterministic result.
+    assert!(out.bool_results[0].value);
+}
+
+#[test]
+fn whole_batch_rejection_does_not_mutate_clock_rng_or_buffer() {
+    let invalid_ops = vec![
+        vec![
+            measure(0, 3),
+            Operation::RZGate {
+                qubit_id: 1,
+                theta: f64::NAN,
+            },
+        ],
+        vec![measure(0, 3), measure(1, 3)],
+        vec![
+            measure(0, 3),
+            Operation::RZZGate {
+                qubit_id_1: 1,
+                qubit_id_2: 1,
+                theta: 0.5,
+            },
+        ],
+        vec![measure(0, 3), measure(2, 4)],
+        vec![
+            measure(0, 3),
+            Operation::Custom {
+                custom_tag: 77,
+                data: vec![1].into(),
+            },
+        ],
+    ];
+    for ops in invalid_ops {
+        let (mut model, mut simulator) = setup(&flip());
+        let before = simulator.received.clone();
+        assert!(
+            model
+                .handle_operations(
+                    runtime_batch(ops, 9, 1),
+                    &[local(0, vec![1])],
+                    &mut simulator
+                )
+                .is_err()
+        );
+        assert_eq!(simulator.received, before);
+        // Valid earlier time proves failed admission did not update occupancy;
+        // no pending measurement or exposure from the rejected batch survives.
+        let out = model
+            .handle_operations(
+                runtime_batch(vec![measure(1, 8)], 1, 1),
+                &[],
+                &mut simulator,
+            )
+            .unwrap();
+        assert!(!out.bool_results[0].value);
+        model.shot_end().unwrap();
+    }
+}
+
+#[test]
+fn malformed_placement_and_resource_limits_reject_without_dispatch() {
+    for placements in [
+        vec![local(2, vec![0])],
+        vec![local(1, vec![0]), local(0, vec![1])],
+        vec![local(0, vec![0, 0])],
+        vec![local(0, vec![2])],
+        vec![local(0, vec![]); 4096],
+        vec![local(0, vec![0; 16_385])],
+    ] {
+        let (mut model, mut simulator) = setup(&flip());
+        let before = simulator.received.clone();
+        assert!(
+            model
+                .handle_operations(
+                    runtime_batch(vec![measure(0, 7)], 1, 1),
+                    &placements,
+                    &mut simulator
+                )
+                .is_err()
+        );
+        assert_eq!(simulator.received, before);
+        model.shot_end().unwrap();
+    }
+    // Global candidate cost counts capacity even with an empty exclusion list.
+    let mut model = ExplicitCrosstalkErrorModel::new(16_384, &flip()).unwrap();
+    model.shot_start(0, 3).unwrap();
+    assert!(
+        model
+            .handle_operations(
+                runtime_batch(vec![], 0, 0),
+                &[Placement {
+                    before_operation: 0,
+                    exposure: Exposure::GlobalExcluding(vec![0])
+                }],
+                &mut ZeroSimulator
+            )
+            .is_err()
+    );
+    assert!(
+        model
+            .handle_operations(
+                runtime_batch(vec![measure(0, 0); 4097], 0, 0),
+                &[],
+                &mut ZeroSimulator
+            )
+            .is_err()
+    );
+}
+
+#[test]
+fn invalid_timing_rejected_before_dispatch() {
+    let (mut model, mut simulator) = setup(&flip());
+    let before = simulator.received.clone();
+    for batch in [
+        runtime_batch(vec![measure(0, 4)], 0, 1),
+        runtime_batch(vec![measure(0, 4)], u64::MAX, 1),
+        BatchOperation::error_model(vec![measure(0, 4)]),
+    ] {
+        assert!(model.handle_operations(batch, &[], &mut simulator).is_err());
+        assert_eq!(simulator.received, before);
+    }
+}
+
+struct FailingSimulator {
+    panic: bool,
+    calls: usize,
+}
+impl SimulatorInterface for FailingSimulator {
+    fn exit(&mut self) -> Result<()> {
+        Ok(())
+    }
+    fn shot_start(&mut self, _: u64, _: u64) -> Result<()> {
+        Ok(())
+    }
+    fn shot_end(&mut self) -> Result<()> {
+        Ok(())
+    }
+    fn handle_operations(&mut self, _: BatchOperation) -> Result<BatchResult> {
+        self.calls += 1;
+        assert!(!self.panic, "synthetic simulator panic");
+        anyhow::bail!("synthetic simulator failure")
+    }
+    fn get_metric(&mut self, _: u8) -> Result<Option<(String, MetricValue)>> {
+        Ok(None)
+    }
+}
+#[test]
+fn execution_error_or_caught_panic_requires_fresh_model_and_simulator() {
+    for panic in [false, true] {
+        let (mut model, _) = setup(&flip());
+        let mut simulator = FailingSimulator { panic, calls: 0 };
+        let attempted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            model.handle_operations(
+                runtime_batch(vec![measure(0, 4)], 1, 1),
+                &[local(0, vec![0])],
+                &mut simulator,
+            )
+        }));
+        assert!(attempted.is_err() || attempted.unwrap().is_err());
+        assert_eq!(simulator.calls, 1);
+        assert!(model.shot_end().is_err());
+        assert!(model.shot_start(1, 7).is_err());
+        assert!(
+            model
+                .handle_operations(
+                    runtime_batch(vec![measure(0, 4)], 2, 1),
+                    &[],
+                    &mut simulator
+                )
+                .is_err()
+        );
+        assert_eq!(simulator.calls, 1);
+        let (mut fresh, mut reset_simulator) = setup(&flip());
+        let out = fresh
+            .handle_operations(
+                runtime_batch(vec![measure(0, 4)], 1, 1),
+                &[],
+                &mut reset_simulator,
+            )
+            .unwrap();
+        assert!(!out.bool_results[0].value);
+    }
+}
+
+#[test]
+fn explicit_lifecycle_cannot_restart_an_active_shot() {
+    let mut model = ExplicitCrosstalkErrorModel::new(2, &flip()).unwrap();
+    assert!(model.shot_end().is_err());
+    assert!(
+        model
+            .handle_operations(runtime_batch(vec![], 0, 0), &[], &mut ZeroSimulator)
+            .is_err()
+    );
+    model.shot_start(0, 1).unwrap();
+    assert!(model.shot_start(1, 2).is_err());
+    model.shot_end().unwrap();
+    model.shot_start(1, 2).unwrap();
+    model.shot_end().unwrap();
+}
+
+#[test]
+fn seeded_explicit_batches_match_unsplit_direct_controller_with_hooks() {
+    let cfg = config(
+        r#"{"measurement":{"local_crosstalk_probability":0.41,"global_crosstalk_probability":0.63,"crosstalk_model":{"0->1":0.8,"0->L":0.2,"1->0":0.7,"1->L":0.3}},"single_qubit":{"hooks_before":[{"kind":"transition","probability":0.7,"transitions":{"0->1":0.4,"0->0":0.6,"1->0":0.3,"1->1":0.7}}]}}"#,
+    );
+    for seed in 0..32 {
+        let mut model = ExplicitCrosstalkErrorModel::new(2, &cfg).unwrap();
+        model.shot_start(0, seed).unwrap();
+        let mut direct: Box<dyn NoiseModel> = Box::new(cfg.build().unwrap());
+        direct.set_seed(seed);
+        let mut simulator = ClassicalSimulator::with_qubits(2);
+        let mut direct_simulator = ClassicalSimulator::with_qubits(2);
+        let mut b = ByteMessage::quantum_operations_builder();
+        b.pz(&[0]);
+        b.pz(&[1]);
+        b.meas_crosstalk_local_payload(&[1]);
+        b.rz(Angle64::try_from_radians(0.5).unwrap(), &[0]);
+        b.mz(&[1]);
+        b.meas_crosstalk_global_payload(&[1]);
+        b.measure_leakages(&[0]);
+        b.meas_crosstalk_local_payload(&[1]);
+        let expected = process_direct_model(direct.as_mut(), b.build(), &mut direct_simulator)
+            .outcomes()
+            .unwrap();
+        let out = model
+            .handle_operations(
+                runtime_batch(
+                    vec![
+                        Operation::Reset { qubit_id: 0 },
+                        Operation::Reset { qubit_id: 1 },
+                        Operation::RZGate {
+                            qubit_id: 0,
+                            theta: 0.5,
+                        },
+                        measure(1, 8),
+                        Operation::MeasureLeaked {
+                            qubit_id: 0,
+                            result_id: 19,
+                        },
+                    ],
+                    0,
+                    9,
+                ),
+                &[
+                    local(2, vec![1]),
+                    Placement {
+                        before_operation: 4,
+                        exposure: Exposure::GlobalExcluding(vec![1]),
+                    },
+                    local(5, vec![1]),
+                ],
+                &mut simulator,
+            )
+            .unwrap();
+        assert_eq!(
+            vec![
+                u32::from(out.bool_results[0].value),
+                u32::try_from(out.u64_results[0].value).unwrap()
+            ],
+            expected,
+            "seed {seed}"
+        );
+        assert_eq!(simulator.received, direct_simulator.received, "seed {seed}");
+    }
+}
+
+#[test]
+fn simulator_dispatch_limit_is_cumulative_and_rejects_before_call() {
+    let mut simulator = ClassicalSimulator::with_qubits(2);
+    let mut b = ByteMessage::quantum_operations_builder();
+    b.h(&[0]);
+    let mut remaining = 3;
+    SeleneSimulator::process_bounded(&mut simulator, &b.build(), &mut remaining).unwrap();
+    assert_eq!(remaining, 1);
+    let before = simulator.received.clone();
+    assert!(SeleneSimulator::process_bounded(&mut simulator, &b.build(), &mut remaining).is_err());
+    assert_eq!(simulator.received, before);
+}

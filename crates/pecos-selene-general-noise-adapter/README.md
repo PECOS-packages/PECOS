@@ -31,3 +31,43 @@ in the batch, measured from its previous batch's end; all touched qubits advance
 to the current batch's end after translation. Overlapping batches on a qubit are
 rejected. A qubit's first operation in a shot accrues no idle; resets retain the
 same idle timing rule as other operations.
+
+## Explicit measurement exposures
+
+Runtime adapters that determine exposure placement can use
+`ExplicitCrosstalkErrorModel::new(n_qubits, &config)` instead of the automatic
+adapter. Supply a complete normalized `BatchOperation` and an ordered slice of
+`CrosstalkPlacement` to `handle_operations`. Each placement inserts a
+`CrosstalkExposure::Local(victims)` or `GlobalExcluding(exclusions)` before an
+ordinary operation index; `operations.len()` means after the final operation.
+Equal indices preserve slice order, including repeated exposures. Lists contain
+distinct, in-capacity qubits; local victim order is preserved. Global effects
+use the noise model's tracked prepared qubits and exclusion semantics.
+
+The wrapper must explicitly supply an empty slice when a batch has no exposures.
+No automatic measurement crosstalk is added in this mode. The type deliberately
+does not implement `ErrorModelInterface`, so downstream plugins must implement
+that interface and explicitly provide placements. The standard plugin and its
+JSON envelope retain automatic crosstalk behavior; no Python mode switch is added.
+
+Each complete batch uses one noise-controller lifecycle, including every
+noise-to-simulator exchange needed for internal measurements. Only original user
+measurement results return to Selene. Exposures do not advance qubit occupancy or
+split deferred idle periods. An exposure before an ordinary operation also
+precedes that operation's deferred idle noise; this is a placement contract, not
+a continuous-time integration of noise through the gap. Resets keep the ordinary
+adapter's pre-reset idle rule.
+
+The whole batch is checked before execution, including timing overflow/overlap,
+angles, capacity, duplicate result IDs and exposure placement. Invalid admission
+can be corrected without losing the shot. Once execution starts, any error or
+caught panic permanently poisons the instance. Recovery requires a new adapter
+and a reset simulator; `shot_start` cannot clear a partial execution. Successful
+shots use `shot_start` / `handle_operations` / `shot_end` in order.
+
+Capacity is 1–16384 qubits. A batch admits at most 4096 ordinary operations plus
+exposures and 16384 listed targets plus global candidate targets (capacity is
+charged for every global record). Execution stops after 65536 controller
+exchanges or before dispatching more than 262144 cumulative simulator operations.
+These are failure limits, not a guarantee that all accepted noise configurations
+fit, nor a bound on allocations made internally by the general noise model.

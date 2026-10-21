@@ -495,6 +495,11 @@ mod tests {
             correlate_measurement_ids(&raw, &physical, &[0, 1, 2]).unwrap(),
             vec![2, 0, 1]
         );
+        // Results are the caller's measurement IDs, not column indices.
+        assert_eq!(
+            correlate_measurement_ids(&raw, &physical, &[4, 7, 9]).unwrap(),
+            vec![9, 4, 7]
+        );
         assert!(correlate_measurement_ids(&vec![vec![0; 3]; 8], &physical, &[0, 1, 2]).is_err());
         assert!(correlate_measurement_ids(&raw, &vec![vec![0; 3]; 8], &[0, 1, 2]).is_err());
     }

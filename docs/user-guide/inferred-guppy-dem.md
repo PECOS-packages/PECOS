@@ -197,8 +197,8 @@ programs known to have a fixed quantum schedule. The circuit records this as
 of additional checked shots in `dem_schedule_validation_shots`.
 
 Explicit program builds perform 32 additional schedule-check shots by default,
-configurable with `SeleneDemProgram::with_schedule_validation_shots(n)`.
-They require no raw-output tags and perform no binding or parity inference.
+configurable with `SeleneDemProgram::with_schedule_validation_shots(n)`; `n` must
+be positive. They require no raw-output tags and perform no binding or parity inference.
 Inferred builds reuse their inference and provenance shots for schedule
 validation. Additional provenance shots run only when raw outputs lack direct
 runtime IDs and provenance checking is enabled. Inferred builds record
@@ -252,9 +252,11 @@ mixing with inference, so they cannot silently collide with inferred definitions
 inferred origins. The Selene adapter resolves default tags into exact
 `Inferred(selector)` origins, including each tag and element. Its definition JSON
 matches Python: default-expanded detectors carry `inferred_from_result_tag`, and
-observables also carry `result_element`. Only caller-supplied probe data through
-`with_inference_data` lacks per-tag widths and records `InferredDefaults` columns
-in the concatenation of the default tags.
+observables also carry `result_element`. Probe data without resolved selectors
+(supplied through `with_inference_data`, or from an adapter that leaves
+`DemBuildInput::resolved_detector_outputs`/`resolved_observable_outputs` as
+`None`) has no per-tag widths, so it records `InferredDefaults` columns in the
+concatenation of the default tags.
 
 ## Program contract
 

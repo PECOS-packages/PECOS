@@ -93,8 +93,8 @@ impl DemDefinition {
 pub enum DemAnnotationOrigin {
     Explicit,
     Inferred(DemOutputSelector),
-    /// Column in the concatenation of these default tags. Caller-supplied
-    /// probe data has no per-tag widths, so its exact selector is unknown.
+    /// Column in the concatenation of these default tags. Probe data without
+    /// resolved selectors has no per-tag widths, so its exact selector is unknown.
     InferredDefaults {
         tags: Vec<String>,
         column: usize,
@@ -838,7 +838,7 @@ fn resolve_definitions(
             }
             return Ok(Some(serde_json::Value::Array(entries).to_string()));
         }
-        // Caller-supplied probes do not carry per-tag widths.
+        // Probes without resolved selectors do not carry per-tag widths.
         for id in 0..supports.len() {
             origins.push(DemDefinitionOrigin {
                 role,

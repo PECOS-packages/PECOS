@@ -125,6 +125,26 @@ fn explicit_program_does_not_require_inference_outputs() {
 }
 
 #[test]
+fn explicit_program_requires_positive_schedule_validation_shots() {
+    let error = DetectorErrorModel::builder()
+        .with_program(
+            program(include_str!("fixtures/dem_programs/explicit_only.ll"))
+                .with_schedule_validation_shots(0),
+        )
+        .with_qubits(1)
+        .with_detectors(vec![vec![0]])
+        .with_observables(vec![])
+        .build()
+        .err()
+        .expect("zero schedule-validation shots must be rejected")
+        .to_string();
+    assert!(
+        error.contains("schedule validation shots must be positive"),
+        "{error}"
+    );
+}
+
+#[test]
 fn measurement_dependent_schedule_is_rejected() {
     for inferred in [false, true] {
         let builder = DetectorErrorModel::builder()

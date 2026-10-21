@@ -22,9 +22,10 @@ from pecos._engine_builders import _configure_selene_runtime
 from pecos._qis_trace_replay import _validate_trace_hosted_operations_if_requested
 from pecos._traced_circuit import normalize_traced_tick_circuit
 from pecos.programs import Guppy
+from pecos.qec.dem_spec import InferredOutput
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Iterable, Mapping, Sequence
 
     from pecos_rslib.qec import DetectorErrorModel
 
@@ -88,8 +89,8 @@ def infer_guppy_dem_annotations(
     require_raw_provenance: bool = True,
     require_hosted_operation_order: bool = False,
     max_hosted_tick_separation: int | None = None,
-    detector_outputs: Sequence[tuple[str, int]] | None = None,
-    observable_outputs: Sequence[tuple[str, int]] | None = None,
+    detector_outputs: Iterable[tuple[str, int]] | None = None,
+    observable_outputs: Iterable[tuple[str, int]] | None = None,
 ) -> InferredGuppyDemAnnotations:
     """Infer parity annotations from an untouched Guppy program.
 
@@ -130,8 +131,6 @@ def infer_guppy_dem_annotations(
         if selectors is None:
             selections.append(None)
             continue
-        from pecos.qec.dem_spec import InferredOutput  # noqa: PLC0415
-
         pairs = [(tag, element) for tag, element in selectors]
         for tag, element in pairs:
             InferredOutput(tag, element)

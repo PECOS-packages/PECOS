@@ -284,4 +284,5 @@ def test_list_shaped_and_one_shot_output_selectors(shape: Callable[[list[list[ob
     assert inferred.observable_supports == ((2,),)
     assert inferred.detector_labels == (("checks", 0),)
     assert inferred.observable_labels == (("bits", 1),)
-    assert inferred.schedule_validation == inferred.circuit.get_meta("dem_schedule_validation")
+    assert inferred.schedule_validation == "empirical_trace_comparison"
+    assert inferred.circuit.get_meta("dem_schedule_validation") == "empirical_trace_comparison"

@@ -553,7 +553,9 @@ impl SeleneDemProgram {
     /// Capture coin-toss shots and analyze them, without normalizing the replayed circuit.
     ///
     /// # Errors
-    /// Returns an error for invalid traces, outputs, schedules, or measurement bindings.
+    /// Returns an error, before any capture, for invalid inference settings or zero
+    /// schedule-validation shots on an explicit request; otherwise for invalid
+    /// traces, outputs, schedules, or measurement bindings.
     pub fn capture_and_analyze(
         &self,
         request: &DemProgramRequest<'_>,
@@ -905,14 +907,14 @@ mod tests {
         shot
     }
 
-    fn analysis_settings() -> crate::DemInferenceSettings {
-        crate::DemInferenceSettings::default()
+    fn analysis_settings() -> DemInferenceSettings {
+        DemInferenceSettings::default()
             .with_probe_shots(4)
             .with_provenance_shots(2)
             .with_validation_rows(1)
     }
 
-    fn analysis_request(settings: &crate::DemInferenceSettings) -> DemProgramRequest<'_> {
+    fn analysis_request(settings: &DemInferenceSettings) -> DemProgramRequest<'_> {
         DemProgramRequest {
             num_qubits: 1,
             seed: u64::MAX,

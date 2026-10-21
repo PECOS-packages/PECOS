@@ -203,12 +203,26 @@ no idle gap and does not advance a qubit's busy endpoint. Thus a later physical
 operation still receives the complete native idle interval, including nonlinear
 idle noise. The same rule means an exposure samples its victim as of the victim's
 previous physical operation: idle noise accrued since then is applied only at
-the victim's next physical operation, after the exposure and its transition. For
-Z/RZ idle noise this order is unobservable. With X/Y/leakage or RX/RY idle noise
-and an asymmetric transition map (for example only `0->1`), results can differ
-from applying the idle interval before the exposure, and no adapter ordering
-changes that. The adapter must choose an ordering consistent with its runtime's
-semantics; these synthetic contracts do not establish device fidelity.
+the victim's next physical operation, after the exposure and its transition.
+
+Deferring X/Y/leakage or RX/RY idle noise can change the output distribution.
+An asymmetric transition map is not required: the internal Z measurement does
+not commute with coherent RX/RY evolution, even with symmetric `0->1` / `1->0`
+transitions. For example, prepare `|0>`, accrue an RX(pi/2) idle rotation, expose
+the qubit with a certain symmetric flip, then apply RX(-pi/2). Deferred idle
+execution leaves `|1>` with certainty; applying the idle rotation before the
+exposure gives equal probabilities of 0 and 1 at the final Z readout.
+
+Z/RZ idle channels preserve the physical outcome distribution under this
+reordering, but identical seeds do not guarantee identical trajectories or later
+readouts. In particular, if an exposure leaks a qubit, deferred idle noise skips
+that qubit and its stochastic draws. Applying that idle noise before the exposure
+would consume those draws, changing subsequent noise RNG state.
+
+Reordering exposure records alone cannot move accrued idle noise ahead of them;
+idle is delivered at the victim's next physical operation. Adapters must use
+this profile only when its deferred-idle semantics suit the intended model.
+These synthetic contracts do not establish device fidelity.
 
 The normal path is `sim() → MonteCarloEngine → HybridEngine`: Selene and its runtime
 provide classical control, while `QuantumSystem` exchanges work and internal

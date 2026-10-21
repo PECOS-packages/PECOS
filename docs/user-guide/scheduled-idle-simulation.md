@@ -276,6 +276,13 @@ profiles support explicit measurement-crosstalk exposures through the existing
 noise/quantum exchange; transition hooks remain excluded. Measurement results still
 return to the live runtime to resume program feedback.
 
+Exposures do not split idle intervals: accrued idle noise is delivered at the
+victim's next physical operation, after the exposure. This can change output
+distributions for non-Z idle channels even with symmetric crosstalk transitions;
+Z/RZ channels also need not preserve seeded trajectories. See the
+[exposure timing contract](scheduled-event-adapters.md#measurement-crosstalk-exposures)
+before combining crosstalk with idle noise.
+
 Each prepared batch retains one noise-controller lifecycle. Inserted idle commands
 are included in an expansion budget of sixteen output commands per prepared
 command (the admitted channels emit at most eight per idle target and four per

@@ -390,6 +390,11 @@ impl ScheduledNoise {
     /// Uses `GeneralNoiseModel`'s 0/1/L transition distribution and leakage semantics.
     /// Existing local/idle settings are retained. Preparation crosstalk and hooks
     /// remain disabled; ordinary v6 input cannot encode spectator effects.
+    /// Exposures do not close idle gaps: accrued idle noise runs at the next
+    /// physical operation, after the exposure. Non-Z idle channels can change
+    /// outcome distributions under this ordering even with symmetric transitions.
+    /// Z/RZ channels preserve distributions but need not preserve seeded paths:
+    /// leakage from an exposure can suppress subsequent idle-noise RNG draws.
     /// # Errors
     /// Rejects invalid probabilities and transition maps, including at zero rates.
     pub fn with_measurement_crosstalk(

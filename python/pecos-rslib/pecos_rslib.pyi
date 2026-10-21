@@ -4433,6 +4433,11 @@ def scheduled_measurement_crosstalk(
     model maps 0/1 transitions (for example "0->1" or "1->L") to weights, using
     GeneralNoiseModel validation. No exposures are inserted automatically; wrap
     the result with scheduled_event_idle_noise(profile, adapter_factory).
+
+    Accrued idle noise runs at the next physical operation, after the exposure.
+    Non-Z idle channels can change output distributions under this ordering even
+    with symmetric transitions. Z/RZ channels need not preserve seeded paths:
+    exposure leakage can suppress later idle-noise RNG draws.
     """
     ...
 

@@ -54,6 +54,10 @@ impl PyScheduledCrosstalk {
 /// Opt into explicit measurement exposures while retaining all local/idle settings.
 /// No automatic exposure insertion. Wrap the returned profile with
 /// scheduled_event_idle_noise(profile, adapter_factory) for live v7 execution.
+/// Accrued idle noise runs at the next physical operation, after the exposure.
+/// Non-Z idle channels can change output distributions under this ordering even
+/// with symmetric transitions. Z/RZ channels need not preserve seeded paths:
+/// exposure leakage can suppress later idle-noise RNG draws.
 #[pyfunction]
 #[pyo3(signature = (profile, model, *, local_probability = 0.0, global_probability = 0.0))]
 pub fn scheduled_measurement_crosstalk(

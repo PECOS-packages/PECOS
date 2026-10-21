@@ -558,3 +558,208 @@ fn writer_rejects_oversized_lists_and_full_batches_at_push() {
         "{error}"
     );
 }
+
+fn basis_probability(system: &mut QuantumSystem, basis: usize) -> f64 {
+    system
+        .quantum_engine_mut()
+        .as_any_mut()
+        .downcast_mut::<StateVecEngine>()
+        .unwrap()
+        .simulator_mut()
+        .probability(basis)
+}
+
+#[test]
+fn deferred_coherent_idle_changes_statistics_even_with_symmetric_transitions() {
+    // The exposure's internal Z measurement does not commute with RX/RY idle
+    // evolution. Check exact final probabilities, not Monte Carlo frequencies.
+    // RZ is the commuting control, and both symmetric flip and identity maps
+    // exercise the measurement independently of its conditional transition.
+    let angle = pecos_core::radians!(std::f64::consts::FRAC_PI_2);
+    for (axis, inverse) in [
+        ("RX", Gate::rxy1q(-angle, Angle64::ZERO, &[0])),
+        ("RY", Gate::rxy1q(-angle, angle, &[0])),
+        ("RZ", Gate::rz(-angle, &[0])),
+    ] {
+        let idle_map = BTreeMap::from([(axis.into(), 1.0)]);
+        for (transitions, deferred_probability) in [
+            (flips(), 1.0),
+            (
+                BTreeMap::from([("0->0".into(), 1.0), ("1->1".into(), 1.0)]),
+                0.0,
+            ),
+        ] {
+            let config = ScheduledNoise::new(2)
+                .unwrap()
+                .with_coherent(std::f64::consts::FRAC_PI_2, idle_map.clone())
+                .unwrap()
+                .with_measurement_crosstalk(1.0, 0.0, transitions.clone())
+                .unwrap();
+            let model = GeneralNoiseModel::builder()
+                .with_p_idle_coherent(std::f64::consts::FRAC_PI_2, &idle_map)
+                .with_p_meas_crosstalk_local(1.0)
+                .with_p_meas_crosstalk_model(&transitions)
+                .build();
+            for seed in 0..16 {
+                let mut actual = host(config.clone());
+                let mut chronological =
+                    QuantumSystem::new(Box::new(model.clone()), Box::new(StateVecEngine::new(2)));
+                actual.set_seed(seed);
+                chronological.set_seed(seed);
+                assert_eq!(
+                    run(
+                        &mut actual,
+                        &[
+                            batch(0, 0, 0, vec![g(Gate::pz(&[0]))]),
+                            batch(1, 1_000_000_000, 0, vec![e(0, &[0])]),
+                            batch(2, 1_000_000_000, 0, vec![g(inverse.clone())]),
+                        ]
+                    ),
+                    Vec::<u32>::new()
+                );
+                let mut reference = ByteMessage::quantum_operations_builder();
+                reference
+                    .pz(&[0])
+                    .idle(1.0, &[0])
+                    .meas_crosstalk_local_payload(&[0])
+                    .add_gate_command(&inverse);
+                assert_eq!(
+                    chronological
+                        .process(reference.build())
+                        .unwrap()
+                        .outcomes()
+                        .unwrap(),
+                    Vec::<u32>::new()
+                );
+                let chronological_probability = if axis == "RZ" {
+                    deferred_probability
+                } else {
+                    0.5
+                };
+                assert!(
+                    (basis_probability(&mut actual, 1) - deferred_probability).abs() < 1e-12,
+                    "deferred {axis}, seed {seed}"
+                );
+                assert!(
+                    (basis_probability(&mut chronological, 1) - chronological_probability).abs()
+                        < 1e-12,
+                    "chronological {axis}, seed {seed}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn deferred_idle_and_asymmetric_crosstalk_can_reverse_a_certain_readout() {
+    let transitions = BTreeMap::from([("0->1".into(), 1.0), ("1->1".into(), 1.0)]);
+    for axis in ["RX", "RY", "RZ"] {
+        let idle_map = BTreeMap::from([(axis.into(), 1.0)]);
+        let config = ScheduledNoise::new(2)
+            .unwrap()
+            .with_coherent(std::f64::consts::PI, idle_map.clone())
+            .unwrap()
+            .with_measurement_crosstalk(1.0, 0.0, transitions.clone())
+            .unwrap();
+        let mut actual = host(config);
+        actual.set_seed(7);
+        let observed = run(
+            &mut actual,
+            &[
+                batch(0, 0, 0, vec![g(Gate::pz(&[0]))]),
+                batch(1, 1_000_000_000, 0, vec![e(0, &[0])]),
+                batch(2, 1_000_000_000, 0, vec![g(Gate::mz(&[0]))]),
+            ],
+        );
+        let model = GeneralNoiseModel::builder()
+            .with_p_idle_coherent(std::f64::consts::PI, &idle_map)
+            .with_p_meas_crosstalk_local(1.0)
+            .with_p_meas_crosstalk_model(&transitions)
+            .build();
+        let mut chronological =
+            QuantumSystem::new(Box::new(model), Box::new(StateVecEngine::new(2)));
+        chronological.set_seed(7);
+        let before_exposure = chronological
+            .process(
+                ByteMessage::quantum_operations_builder()
+                    .pz(&[0])
+                    .idle(1.0, &[0])
+                    .meas_crosstalk_local_payload(&[0])
+                    .mz(&[0])
+                    .build(),
+            )
+            .unwrap()
+            .outcomes()
+            .unwrap();
+        // Deferred RX/RY flips the exposure's |1> back to |0>. Chronological
+        // RX/RY first creates |1>, which this transition map leaves unchanged.
+        assert_eq!(observed, vec![u32::from(axis == "RZ")], "{axis}");
+        assert_eq!(before_exposure, vec![1], "{axis}");
+    }
+}
+
+#[test]
+fn exposure_leakage_suppresses_deferred_z_idle_rng_draws() {
+    let z = BTreeMap::from([("Z".into(), 1.0)]);
+    let transitions = BTreeMap::from([("0->L".into(), 1.0), ("1->L".into(), 1.0)]);
+    let config = ScheduledNoise::new(2)
+        .unwrap()
+        .with_linear(1.0, z.clone())
+        .unwrap()
+        .with_measurement_crosstalk(1.0, 0.0, transitions.clone())
+        .unwrap();
+    let model = GeneralNoiseModel::builder()
+        .with_p_idle_linear(1.0, &z)
+        .with_p_meas_crosstalk_local(1.0)
+        .with_p_meas_crosstalk_model(&transitions)
+        .build();
+    for seed in 0..16 {
+        let mut actual = host(config.clone());
+        actual.set_seed(seed);
+        let observed = run(
+            &mut actual,
+            &[
+                batch(0, 0, 0, vec![g(Gate::pz(&[0]))]),
+                batch(1, 1_000_000_000, 0, vec![e(0, &[0])]),
+                batch(2, 1_000_000_000, 0, vec![g(Gate::measure_leaked(&[0]))]),
+            ],
+        );
+        assert_eq!(observed, vec![2]);
+        let actual_rng = actual.noise_model().rng().clone().next_u64();
+        for idle_before_exposure in [false, true] {
+            let mut reference =
+                QuantumSystem::new(Box::new(model.clone()), Box::new(StateVecEngine::new(2)));
+            reference.set_seed(seed);
+            let mut commands = ByteMessage::quantum_operations_builder();
+            commands.pz(&[0]);
+            reference.process(commands.build()).unwrap();
+            let mut commands = ByteMessage::quantum_operations_builder();
+            if idle_before_exposure {
+                commands.idle(1.0, &[0]);
+            }
+            commands.meas_crosstalk_local_payload(&[0]);
+            reference.process(commands.build()).unwrap();
+            let mut commands = ByteMessage::quantum_operations_builder();
+            if !idle_before_exposure {
+                commands.idle(1.0, &[0]);
+            }
+            commands.measure_leakages(&[0]);
+            assert_eq!(
+                reference
+                    .process(commands.build())
+                    .unwrap()
+                    .outcomes()
+                    .unwrap(),
+                observed
+            );
+            let reference_rng = reference.noise_model().rng().clone().next_u64();
+            // Both orders produce a leaked readout, but only chronological
+            // idle consumes the Z fault's probability and sampler draws.
+            if idle_before_exposure {
+                assert_ne!(actual_rng, reference_rng, "seed {seed}");
+            } else {
+                assert_eq!(actual_rng, reference_rng, "seed {seed}");
+            }
+        }
+    }
+}

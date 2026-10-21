@@ -9,8 +9,8 @@
 
 use crate::dem_inference::correlate_measurement_ids;
 use crate::{
-    DemBuildError, DemBuildInput, DemInferenceData, DemOutputSelector, DemProgram,
-    DemProgramRequest,
+    DemBuildError, DemBuildInput, DemInferenceData, DemInferenceSettings, DemOutputSelector,
+    DemProgram, DemProgramRequest,
 };
 use pecos_core::{Angle64, Gate, MeasId, QubitId, gate_type::GateType};
 use pecos_engines::{coin_toss, sim_builder};
@@ -533,15 +533,20 @@ pub struct SeleneDemEvidence {
     pub named_result_traces: Vec<NamedResultTrace>,
 }
 
-struct BaselineAnalysis {
+struct BaselineAnalysis<'a> {
     baseline: TraceShot,
     source: Vec<usize>,
     evidence: SeleneDemEvidence,
+    inference: Option<BaselineInference<'a>>,
+    probe_seed: u64,
+}
+
+struct BaselineInference<'a> {
+    settings: &'a DemInferenceSettings,
     raw_width: usize,
     direct: bool,
     ids: Vec<usize>,
     widths: BTreeMap<String, usize>,
-    probe_seed: u64,
 }
 
 impl SeleneDemProgram {
@@ -555,6 +560,9 @@ impl SeleneDemProgram {
     ) -> Result<SeleneDemEvidence, DemBuildError> {
         if request.inference.is_none() && self.schedule_shots == 0 {
             return Err(preparation("schedule validation shots must be positive"));
+        }
+        if let Some(settings) = request.inference {
+            settings.validate()?;
         }
         let program = match &self.source {
             ProgramSource::Qis(program) => program.clone(),
@@ -574,37 +582,29 @@ impl SeleneDemProgram {
             .runtime(runtime)
             .interface(helios_interface_builder())
             .program_ir(source_ir);
-        let baselines = capture(&engine, request.num_qubits, 1, request.seed)?;
-        let analysis = analyze_captured_baseline(baselines, request, self.schedule_shots)?;
+        let mut baselines = capture(&engine, request.num_qubits, 1, request.seed)?;
+        if baselines.len() != 1 {
+            return Err(preparation(format!(
+                "runtime returned {} baseline shots; expected 1",
+                baselines.len()
+            )));
+        }
+        let analysis = analyze_baseline(baselines.remove(0), request, self.schedule_shots)?;
         let traces = capture(
             &engine,
             request.num_qubits,
             analysis.evidence.schedule_shots,
             analysis.probe_seed,
         )?;
-        analyze_probes(analysis, &traces, request)
+        analyze_probes(analysis, &traces)
     }
 }
 
-fn analyze_captured_baseline(
-    mut baselines: Vec<TraceShot>,
-    request: &DemProgramRequest<'_>,
-    schedule_shots: usize,
-) -> Result<BaselineAnalysis, DemBuildError> {
-    if baselines.len() != 1 {
-        return Err(preparation(format!(
-            "runtime returned {} baseline shots; expected 1",
-            baselines.len()
-        )));
-    }
-    analyze_baseline(baselines.remove(0), request, schedule_shots)
-}
-
-fn analyze_baseline(
+fn analyze_baseline<'a>(
     baseline: TraceShot,
-    request: &DemProgramRequest<'_>,
+    request: &DemProgramRequest<'a>,
     schedule_shots: usize,
-) -> Result<BaselineAnalysis, DemBuildError> {
+) -> Result<BaselineAnalysis<'a>, DemBuildError> {
     let source = source_ids(&baseline)?;
     let circuit = replay(&baseline, request.num_qubits, &source)?;
     let mut evidence = SeleneDemEvidence {
@@ -623,21 +623,14 @@ fn analyze_baseline(
     };
     let probe_seed = request.seed.wrapping_add(1);
     let Some(settings) = request.inference else {
-        if schedule_shots == 0 {
-            return Err(preparation("schedule validation shots must be positive"));
-        }
         return Ok(BaselineAnalysis {
             baseline,
             source,
             evidence,
-            raw_width: 0,
-            direct: false,
-            ids: Vec::new(),
-            widths: BTreeMap::new(),
+            inference: None,
             probe_seed,
         });
     };
-    settings.validate()?;
     let baseline_rows = named_rows(&baseline);
     let raw = raw_row(&baseline, &baseline_rows, &settings.raw_tag)?;
     if raw.len() != source.len() {
@@ -711,27 +704,26 @@ fn analyze_baseline(
         baseline,
         source,
         evidence,
-        raw_width: raw.len(),
-        direct,
-        ids,
-        widths,
+        inference: Some(BaselineInference {
+            settings,
+            raw_width: raw.len(),
+            direct,
+            ids,
+            widths,
+        }),
         probe_seed,
     })
 }
 
 fn analyze_probes(
-    analysis: BaselineAnalysis,
+    analysis: BaselineAnalysis<'_>,
     traces: &[TraceShot],
-    request: &DemProgramRequest<'_>,
 ) -> Result<SeleneDemEvidence, DemBuildError> {
     let BaselineAnalysis {
         baseline,
         source,
         mut evidence,
-        raw_width,
-        direct,
-        mut ids,
-        widths,
+        inference,
         ..
     } = analysis;
     if traces.len() != evidence.schedule_shots {
@@ -753,7 +745,14 @@ fn analyze_probes(
         "dem_schedule_validation_shots",
         Attribute::String(evidence.schedule_shots.to_string()),
     );
-    let Some(settings) = request.inference else {
+    let Some(BaselineInference {
+        settings,
+        raw_width,
+        direct,
+        mut ids,
+        widths,
+    }) = inference
+    else {
         return Ok(evidence);
     };
     let correlation_shots = evidence.correlation_shots;
@@ -931,7 +930,7 @@ mod tests {
         let request = analysis_request(&settings);
         let analysis = analyze_baseline(baseline, &request, 32)?;
         assert_eq!(analysis.probe_seed, 0);
-        analyze_probes(analysis, shots, &request)
+        analyze_probes(analysis, shots)
     }
 
     fn inference_probes(direct: bool) -> Vec<TraceShot> {
@@ -953,7 +952,7 @@ mod tests {
         baseline[0].named_result_traces[0].result_ids = vec![9, 7];
         analysis_error(
             analyze_test_shots(baseline, &inference_probes(true)),
-            "tag ids=[9, 7], source ids=[7, 9]",
+            "certified source order; tag ids=[9, 7], source ids=[7, 9]",
         );
     }
 

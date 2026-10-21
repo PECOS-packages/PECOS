@@ -6,12 +6,16 @@
 from __future__ import annotations
 
 import json
+from typing import TYPE_CHECKING
 
 import pytest
 from guppylang import guppy
 from guppylang.std.builtins import array, output
 from guppylang.std.quantum import collect_measurements, measure, measure_array, qubit
 from pecos.qec import infer_guppy_dem_annotations
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable
 
 
 @guppy
@@ -266,3 +270,18 @@ def test_integer_outputs_bind_raw_ids_by_probe_correlation() -> None:
         observable_outputs=[],
     )
     assert inferred.raw_binding == "probe_correlated_result_ids"
+
+
+@pytest.mark.parametrize("shape", [list, iter])
+def test_list_shaped_and_one_shot_output_selectors(shape: Callable[[list[list[object]]], Iterable[object]]) -> None:
+    inferred = infer_guppy_dem_annotations(
+        _integer_outputs,
+        num_qubits=3,
+        detector_outputs=shape([["checks", 0]]),
+        observable_outputs=shape([["bits", 1]]),
+    )
+    assert inferred.detector_supports == ((0,),)
+    assert inferred.observable_supports == ((2,),)
+    assert inferred.detector_labels == (("checks", 0),)
+    assert inferred.observable_labels == (("bits", 1),)
+    assert inferred.schedule_validation == inferred.circuit.get_meta("dem_schedule_validation")

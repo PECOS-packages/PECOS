@@ -249,8 +249,12 @@ role. Existing circuit annotations must be supplied as builder definitions when
 mixing with inference, so they cannot silently collide with inferred definitions.
 
 `build.definition_origins` records explicit, selected inferred, or default-tag
-inferred origins. For multiple default tags the Rust core records a column in
-their concatenation; the runtime adapter owns the per-tag widths.
+inferred origins. The Selene adapter resolves default tags into exact
+`Inferred(selector)` origins, including each tag and element. Its definition JSON
+matches Python: default-expanded detectors carry `inferred_from_result_tag`, and
+observables also carry `result_element`. Only caller-supplied probe data through
+`with_inference_data` lacks per-tag widths and records `InferredDefaults` columns
+in the concatenation of the default tags.
 
 ## Program contract
 
@@ -371,8 +375,10 @@ inferred = infer_guppy_dem_annotations(
 dem = inferred.build_dem(p1=0.001, p2=0.005, p_meas=0.005, p_prep=0.001)
 ```
 
-No separate trace-capture call is required. The function runs the coin-toss
-probes and captures the QIS trace internally.
+No separate trace-capture call is required. Python delegates coin-toss capture,
+trace validation, measurement binding, and circuit replay to the shared Rust
+Selene analysis. Python then validates hosted-operation order when requested,
+normalizes the circuit, and fits the parities with the Rust solver.
 
 ## Example: rounds and aggregate arrays
 
@@ -549,6 +555,9 @@ shots for schedule validation and skip correlation shots. With strict provenance
 enabled, the raw-to-physical binding is also checked on every fitted row. Python's
 `inference.audit` records the actual `provenance_shots` used (zero for direct
 bindings) and the total `schedule_validation_shots`, excluding the baseline.
+Its `schedule_validation` uses the circuit's `dem_schedule_validation` value,
+`empirical_trace_comparison`; the circuit records the binding as
+`dem_raw_measurement_binding`.
 Correlation fails loudly if the quantum schedule changes, a raw element is a
 computed value instead of a direct measurement, a measurement is omitted or
 duplicated, or two physical signatures collide. Increasing

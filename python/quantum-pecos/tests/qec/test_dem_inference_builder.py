@@ -12,7 +12,6 @@ from guppylang.std.builtins import array, output
 from guppylang.std.quantum import cx, measure, qubit
 from pecos import NoiseParameters
 from pecos.qec import DemInferenceSettings, Detector, DetectorErrorModel, Observable, rec
-from pecos_rslib.qec import _correlate_measurement_ids, _infer_affine_columns
 
 
 @guppy
@@ -97,7 +96,7 @@ def test_inferred_build_shares_noise_idle_and_evaluator() -> None:
     assert build.circuit.gate_counts_by_type()["Idle"] == 2
     assert build.inference is not None
     assert build.inference.raw_measurement_ids == (2, 0, 1)
-    assert build.audit["inference"]["schedule_validation"] == "probe_compared"
+    assert build.audit["inference"]["schedule_validation"] == "empirical_trace_comparison"
     assert build.audit["soundness_scope"] == "empirical_static_schedule"
     columns = {"raw measurements": [[0, 1, 1], [1, 1, 0], [1, 0, 1]]}
     assert build.evaluate_result_columns(columns) == [([1], 1), ([0], 0), ([1], 1)]
@@ -115,14 +114,6 @@ def test_inferred_build_shares_noise_idle_and_evaluator() -> None:
     )
     actual_columns = results.to_shot_map().to_dict()
     assert build.evaluate_result_columns(actual_columns) == [([0], 0)] * 8
-
-
-def test_rust_solver_rejects_nonlinearity_and_correlates_permuted_ids() -> None:
-    rows = [[i & 1, (i >> 1) & 1] for i in range(8)]
-    assert _infer_affine_columns(rows, [[a ^ b] for a, b in rows], 2) == [(0, [0, 1])]
-    with pytest.raises(ValueError, match="not affine"):
-        _infer_affine_columns(rows, [[a & b] for a, b in rows], 2)
-    assert _correlate_measurement_ids([[b, a] for a, b in rows], rows, [3, 9]) == [9, 3]
 
 
 @guppy

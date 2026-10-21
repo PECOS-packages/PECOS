@@ -108,6 +108,8 @@ def infer_guppy_dem_annotations(
     direct runtime result IDs are unavailable, the default mode correlates raw
     output columns with result-ID keyed physical outcomes across independent
     trace probes and requires a unique complete bijection.
+    Hosted-order validation runs after all probes, so failures incur the probe
+    run cost and raw-tag errors take precedence.
     """
     settings = (
         DemInferenceSettings()
@@ -122,12 +124,19 @@ def infer_guppy_dem_annotations(
         settings = settings.with_probe_shots(probe_shots)
     settings.validate()
 
+    # The binding takes (tag, element) tuples; read each selector once.
+    selections = []
     for selectors in (detector_outputs, observable_outputs):
-        if selectors is not None:
-            from pecos.qec.dem_spec import InferredOutput  # noqa: PLC0415
+        if selectors is None:
+            selections.append(None)
+            continue
+        from pecos.qec.dem_spec import InferredOutput  # noqa: PLC0415
 
-            for tag, element in selectors:
-                InferredOutput(tag, element)
+        pairs = [(tag, element) for tag, element in selectors]
+        for tag, element in pairs:
+            InferredOutput(tag, element)
+        selections.append(pairs)
+    detector_outputs, observable_outputs = selections
     if (
         detector_outputs is not None
         and observable_outputs is not None
@@ -205,7 +214,6 @@ def infer_guppy_dem_annotations(
     circuit.set_meta("observables", observables_json)
     circuit.set_meta("num_measurements", str(len(raw_ids)))
     circuit.set_meta("guppy_dem_annotation_method", "coin_toss_affine_inference_v2")
-    circuit.set_meta("guppy_raw_measurement_binding", raw_binding)
 
     bound_traces = []
     offset = 0
@@ -231,7 +239,7 @@ def infer_guppy_dem_annotations(
         result_traces=tuple(bound_traces),
         source_result_traces=source_result_traces,
         detector_labels=detector_labels,
-        schedule_validation="probe_compared",
+        schedule_validation=circuit.get_meta("dem_schedule_validation"),
         schedule_validation_shots=total_shots,
     )
 

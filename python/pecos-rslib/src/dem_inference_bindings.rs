@@ -4,9 +4,7 @@
 //! Shared Rust DEM inference settings and algorithms.
 use crate::dag_circuit_bindings::PyTickCircuit;
 use crate::engine_builders::{PyQis, configured_selene_runtime, configured_selene_runtime_plugin};
-use pecos_qec::dem_inference::{
-    DemInferenceData, DemInferenceSettings, correlate_measurement_ids, infer_affine_columns,
-};
+use pecos_qec::dem_inference::{DemInferenceData, DemInferenceSettings};
 use pecos_qec::{DemOutputSelector, DemProgramRequest, SeleneDemProgram};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -129,26 +127,6 @@ impl PyDemInferenceSettings {
     fn __repr__(&self) -> String {
         format!("{:?}", self.inner)
     }
-}
-
-#[pyfunction(name = "_infer_affine_columns")]
-fn infer_affine_columns_py(
-    inputs: Vec<Vec<u8>>,
-    outputs: Vec<Vec<u8>>,
-    validation_rows: usize,
-) -> PyResult<Vec<(u8, Vec<usize>)>> {
-    infer_affine_columns(&inputs, &outputs, validation_rows)
-        .map_err(|error| PyValueError::new_err(error.to_string()))
-}
-
-#[pyfunction(name = "_correlate_measurement_ids")]
-fn correlate_measurement_ids_py(
-    raw_rows: Vec<Vec<u8>>,
-    physical_rows: Vec<Vec<u8>>,
-    source_ids: Vec<usize>,
-) -> PyResult<Vec<usize>> {
-    correlate_measurement_ids(&raw_rows, &physical_rows, &source_ids)
-        .map_err(|error| PyValueError::new_err(error.to_string()))
 }
 
 /// Runtime leaf configuration, resolved by Python's shared runtime dispatch.
@@ -280,7 +258,5 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyDemInferenceSettings>()?;
     m.add_class::<PySeleneRuntimeSpec>()?;
     m.add_function(wrap_pyfunction!(capture_dem_evidence, m)?)?;
-    m.add_function(wrap_pyfunction!(infer_affine_columns_py, m)?)?;
-    m.add_function(wrap_pyfunction!(correlate_measurement_ids_py, m)?)?;
     Ok(())
 }

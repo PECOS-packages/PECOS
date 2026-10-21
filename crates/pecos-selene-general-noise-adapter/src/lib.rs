@@ -1,6 +1,9 @@
 //! Device-neutral Selene adapter for PECOS's general noise model.
 
+mod explicit;
 mod simulator;
+
+pub use explicit::{CrosstalkExposure, CrosstalkPlacement, ExplicitCrosstalkErrorModel};
 
 use std::collections::BTreeSet;
 
@@ -46,7 +49,6 @@ struct MeasurementResult {
 /// error, discard the instance rather than reuse partial state.
 pub struct GeneralNoiseErrorModel {
     model: Box<dyn NoiseModel>,
-    builder: ByteMessageBuilder,
     last_operation_end: Vec<Option<u64>>,
     local_groups: Vec<BTreeSet<usize>>,
 }
@@ -90,7 +92,6 @@ impl GeneralNoiseErrorModel {
         }
         Ok(Self {
             model,
-            builder: ByteMessage::quantum_operations_builder(),
             last_operation_end: vec![None; n_qubits],
             local_groups: local_groups
                 .iter()
@@ -111,7 +112,8 @@ impl GeneralNoiseErrorModel {
     }
 
     fn add_idle_before(
-        &mut self,
+        &self,
+        builder: &mut ByteMessageBuilder,
         qubit: usize,
         start: u64,
         touched: &mut BTreeSet<usize>,
@@ -134,7 +136,7 @@ impl GeneralNoiseErrorModel {
         }
         if start > previous {
             let seconds = std::time::Duration::from_nanos(start - previous).as_secs_f64();
-            self.builder.idle(seconds, &[qubit]);
+            builder.idle(seconds, &[qubit]);
         }
         Ok(())
     }
@@ -176,35 +178,31 @@ impl GeneralNoiseErrorModel {
     }
 }
 
-impl ErrorModelInterface for GeneralNoiseErrorModel {
-    fn exit(&mut self) -> Result<()> {
-        Ok(())
-    }
+/// `ByteMessage` gate headers store a payload's target count in a `u8`.
+const MAX_PAYLOAD_QUBITS: usize = 255;
 
-    fn shot_start(&mut self, _shot_id: u64, error_seed: u64) -> Result<()> {
-        self.model.set_seed(error_seed);
-        self.last_operation_end.fill(None);
-        self.builder.reset();
-        let _ = self.builder.for_quantum_operations();
-        Ok(())
-    }
+struct PreparedBatch {
+    message: ByteMessage,
+    is_empty: bool,
+    expected: Vec<MeasurementResult>,
+    touched: BTreeSet<usize>,
+    end: u64,
+}
 
-    fn shot_end(&mut self) -> Result<()> {
-        self.model
-            .reset()
-            .map_err(|error| anyhow!(error.to_string()))
-    }
-
-    fn handle_operations(
-        &mut self,
+impl GeneralNoiseErrorModel {
+    fn prepare_operations(
+        &self,
         operations: BatchOperation,
-        simulator: &mut dyn SimulatorInterface,
-    ) -> Result<BatchResult> {
+        exposures: Option<&[CrosstalkPlacement]>,
+    ) -> Result<PreparedBatch> {
         let timing = operations
             .runtime_source()
             .ok_or_else(|| anyhow!("PECOS general noise expects a runtime operation batch"))?;
         let start: u64 = timing.start().into();
-        let end: u64 = timing.end().into();
+        let duration: u64 = timing.duration().into();
+        let end = start
+            .checked_add(duration)
+            .ok_or_else(|| anyhow!("runtime timing overflows nanoseconds"))?;
         let measured = operations
             .iter_ops()
             .filter_map(|operation| match operation {
@@ -215,21 +213,42 @@ impl ErrorModelInterface for GeneralNoiseErrorModel {
             })
             .collect::<BTreeSet<_>>();
 
+        let mut builder = ByteMessage::quantum_operations_builder();
         let mut expected = Vec::new();
+        let mut result_ids = BTreeSet::new();
+        let mut placements = exposures.unwrap_or_default().iter().peekable();
         let mut crosstalk_added = false;
         let mut touched = BTreeSet::new();
-        for operation in operations {
-            if !crosstalk_added
+        for (index, operation) in operations.into_iter().enumerate() {
+            while let Some(placement) =
+                placements.next_if(|placement| placement.before_operation == index)
+            {
+                placement.exposure.append(&mut builder);
+            }
+            if exposures.is_none()
+                && !crosstalk_added
                 && matches!(
                     &operation,
                     Operation::Measure { .. } | Operation::MeasureLeaked { .. }
                 )
             {
-                self.builder
-                    .meas_crosstalk_global_payload(&measured.iter().copied().collect::<Vec<_>>());
+                if measured.len() > MAX_PAYLOAD_QUBITS {
+                    bail!(
+                        "batch measures {} qubits, but one measurement-crosstalk payload holds at most {MAX_PAYLOAD_QUBITS}",
+                        measured.len()
+                    );
+                }
                 let local = self.local_victims(&measured);
+                if local.len() > MAX_PAYLOAD_QUBITS {
+                    bail!(
+                        "batch has {} local crosstalk victims, but one measurement-crosstalk payload holds at most {MAX_PAYLOAD_QUBITS}",
+                        local.len()
+                    );
+                }
+                builder
+                    .meas_crosstalk_global_payload(&measured.iter().copied().collect::<Vec<_>>());
                 if !local.is_empty() {
-                    self.builder.meas_crosstalk_local_payload(&local);
+                    builder.meas_crosstalk_local_payload(&local);
                 }
                 crosstalk_added = true;
             }
@@ -240,8 +259,8 @@ impl ErrorModelInterface for GeneralNoiseErrorModel {
                     phi,
                 } => {
                     let qubit = self.qubit(qubit_id)?;
-                    self.add_idle_before(qubit, start, &mut touched)?;
-                    self.builder.rxy1q(
+                    self.add_idle_before(&mut builder, qubit, start, &mut touched)?;
+                    builder.rxy1q(
                         Angle64::try_from_radians(theta)?,
                         Angle64::try_from_radians(phi)?,
                         &[qubit],
@@ -249,8 +268,8 @@ impl ErrorModelInterface for GeneralNoiseErrorModel {
                 }
                 Operation::RZGate { qubit_id, theta } => {
                     let qubit = self.qubit(qubit_id)?;
-                    self.add_idle_before(qubit, start, &mut touched)?;
-                    self.builder.rz(Angle64::try_from_radians(theta)?, &[qubit]);
+                    self.add_idle_before(&mut builder, qubit, start, &mut touched)?;
+                    builder.rz(Angle64::try_from_radians(theta)?, &[qubit]);
                 }
                 Operation::RZZGate {
                     qubit_id_1,
@@ -259,18 +278,23 @@ impl ErrorModelInterface for GeneralNoiseErrorModel {
                 } => {
                     let first = self.qubit(qubit_id_1)?;
                     let second = self.qubit(qubit_id_2)?;
-                    self.add_idle_before(first, start, &mut touched)?;
-                    self.add_idle_before(second, start, &mut touched)?;
-                    self.builder
-                        .rzz(Angle64::try_from_radians(theta)?, &[(first, second)]);
+                    if first == second {
+                        bail!("two-qubit operation requires distinct qubits");
+                    }
+                    self.add_idle_before(&mut builder, first, start, &mut touched)?;
+                    self.add_idle_before(&mut builder, second, start, &mut touched)?;
+                    builder.rzz(Angle64::try_from_radians(theta)?, &[(first, second)]);
                 }
                 Operation::Measure {
                     qubit_id,
                     result_id,
                 } => {
                     let qubit = self.qubit(qubit_id)?;
-                    self.add_idle_before(qubit, start, &mut touched)?;
-                    self.builder.mz(&[qubit]);
+                    self.add_idle_before(&mut builder, qubit, start, &mut touched)?;
+                    builder.mz(&[qubit]);
+                    if !result_ids.insert(result_id) {
+                        bail!("duplicate user measurement result ID {result_id}");
+                    }
                     expected.push(MeasurementResult {
                         id: result_id,
                         kind: MeasurementKind::Bool,
@@ -281,8 +305,11 @@ impl ErrorModelInterface for GeneralNoiseErrorModel {
                     result_id,
                 } => {
                     let qubit = self.qubit(qubit_id)?;
-                    self.add_idle_before(qubit, start, &mut touched)?;
-                    self.builder.measure_leakages(&[qubit]);
+                    self.add_idle_before(&mut builder, qubit, start, &mut touched)?;
+                    builder.measure_leakages(&[qubit]);
+                    if !result_ids.insert(result_id) {
+                        bail!("duplicate user measurement result ID {result_id}");
+                    }
                     expected.push(MeasurementResult {
                         id: result_id,
                         kind: MeasurementKind::Leakage,
@@ -290,8 +317,8 @@ impl ErrorModelInterface for GeneralNoiseErrorModel {
                 }
                 Operation::Reset { qubit_id } => {
                     let qubit = self.qubit(qubit_id)?;
-                    self.add_idle_before(qubit, start, &mut touched)?;
-                    self.builder.pz(&[qubit]);
+                    self.add_idle_before(&mut builder, qubit, start, &mut touched)?;
+                    builder.pz(&[qubit]);
                 }
                 Operation::RPPGate {
                     qubit_id_1,
@@ -304,9 +331,9 @@ impl ErrorModelInterface for GeneralNoiseErrorModel {
                     if first == second {
                         bail!("RXYXY2Q requires two distinct qubits");
                     }
-                    self.add_idle_before(first, start, &mut touched)?;
-                    self.add_idle_before(second, start, &mut touched)?;
-                    self.builder.rxyxy2q(
+                    self.add_idle_before(&mut builder, first, start, &mut touched)?;
+                    self.add_idle_before(&mut builder, second, start, &mut touched)?;
+                    builder.rxyxy2q(
                         Angle64::try_from_radians(theta)?,
                         Angle64::try_from_radians(phi)?,
                         &[(first, second)],
@@ -321,16 +348,37 @@ impl ErrorModelInterface for GeneralNoiseErrorModel {
             }
         }
 
+        for placement in placements {
+            placement.exposure.append(&mut builder);
+        }
+        Ok(PreparedBatch {
+            is_empty: builder.message_count() == 0,
+            message: builder.build(),
+            expected,
+            touched,
+            end,
+        })
+    }
+
+    fn execute_batch(
+        &mut self,
+        prepared: PreparedBatch,
+        simulator: &mut dyn SimulatorInterface,
+    ) -> Result<BatchResult> {
+        let PreparedBatch {
+            message,
+            is_empty,
+            expected,
+            touched,
+            end,
+        } = prepared;
         for qubit in touched {
             self.last_operation_end[qubit] = Some(end);
         }
 
-        if self.builder.message_count() == 0 {
+        if is_empty {
             return Ok(BatchResult::default());
         }
-        let message = self.builder.build();
-        self.builder.reset();
-        let _ = self.builder.for_quantum_operations();
         let output = self.process_message(message, simulator)?;
         let outcomes = output
             .outcomes()
@@ -359,6 +407,33 @@ impl ErrorModelInterface for GeneralNoiseErrorModel {
         }
         Ok(result)
     }
+}
+
+impl ErrorModelInterface for GeneralNoiseErrorModel {
+    fn exit(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    fn shot_start(&mut self, _shot_id: u64, error_seed: u64) -> Result<()> {
+        self.model.set_seed(error_seed);
+        self.last_operation_end.fill(None);
+        Ok(())
+    }
+
+    fn shot_end(&mut self) -> Result<()> {
+        self.model
+            .reset()
+            .map_err(|error| anyhow!(error.to_string()))
+    }
+
+    fn handle_operations(
+        &mut self,
+        operations: BatchOperation,
+        simulator: &mut dyn SimulatorInterface,
+    ) -> Result<BatchResult> {
+        let prepared = self.prepare_operations(operations, None)?;
+        self.execute_batch(prepared, simulator)
+    }
 
     fn get_metric(&mut self, _nth_metric: u8) -> Result<Option<(String, MetricValue)>> {
         Ok(None)
@@ -367,6 +442,7 @@ impl ErrorModelInterface for GeneralNoiseErrorModel {
 
 #[cfg(test)]
 mod tests {
+    mod explicit_cases;
     use std::collections::BTreeSet;
     use std::f64::consts::PI;
 

@@ -128,8 +128,10 @@ reset clear it. These are the existing `GeneralNoiseModel` leakage semantics,
 not a new physical leakage model. Native-to-program result handling must support
 the selected measurement kind.
 
-Gate faults, readout faults, crosstalk and repumping are not configurable in this
-profile. Each nonempty batch goes through one existing general-noise controller
+This idle factory does not configure gate faults, readout faults, crosstalk or
+repumping. The local profile below adds gate/readout faults; the v7
+[measurement-crosstalk wrapper](scheduled-event-adapters.md#measurement-crosstalk-exposures)
+adds explicit exposures. Each nonempty batch goes through one existing general-noise controller
 lifecycle; empty batches do not trigger a lifecycle or split an idle interval.
 In particular, this adapter is not permission to split arbitrary noise controllers.
 The v7 [event adapter](scheduled-event-adapters.md) can use the same profile via
@@ -209,9 +211,10 @@ must expose that operation to model its fault. No hidden preparation is inserted
 
 All probabilities and ratios must be finite and in [0, 1], even when their
 associated fault probability is zero. These are event probabilities, not average gate infidelities.
-Other custom fault maps, transition hooks, crosstalk, repumping and automatic
-post-two-qubit idle injection are not
-configurable. Unsupported Python keywords raise rather than being silently ignored.
+Other custom fault maps, transition hooks, preparation crosstalk, repumping and
+automatic post-two-qubit idle injection are not configurable. Measurement
+crosstalk requires the explicit v7
+[profile wrapper and typed exposures](scheduled-event-adapters.md#measurement-crosstalk-exposures). Unsupported Python keywords raise rather than being silently ignored.
 Existing idle leakage remains supported: leakage-aware readout returns 2 without
 readout flips, whereas ordinary leaked readout starts at 1 and is subject to `meas1`.
 
@@ -263,21 +266,39 @@ at its own position, so a later reset cannot change an earlier readout. This
 applies to both original v6 and normalized v7 gates, including idle-only profiles.
 Adapters cannot split or retime native batches.
 
-Readout faults retain the general model's batch-level sampling order: gate and
-idle faults are sampled first, then readout faults in measurement order. Capturing
+Readout faults retain the general model's sampling order: within each dispatched
+segment, gate and idle faults are sampled first, then readout faults in measurement
+order. An explicit crosstalk exposure can pause a batch for internal measurements;
+its transitions resolve before later source operations are sampled. Capturing
 leakage consumes no randomness. The general controller also records leakage per
-measurement on legacy inputs. Scheduled profiles remain bounded and exclude
-measurement-conditioned crosstalk and transition hooks. Measurement results still
+measurement on legacy inputs. Scheduled profiles remain bounded. Opted-in v7
+profiles support explicit measurement-crosstalk exposures through the existing
+noise/quantum exchange; transition hooks remain excluded. Measurement results still
 return to the live runtime to resume program feedback.
+
+Exposures do not split idle intervals: accrued idle noise is delivered at the
+victim's next physical operation, after the exposure. This can change output
+distributions for non-Z idle channels even with symmetric crosstalk transitions;
+Z/RZ channels also need not preserve seeded trajectories. See the
+[exposure timing contract](scheduled-event-adapters.md#measurement-crosstalk-exposures)
+before combining crosstalk with idle noise.
 
 Each prepared batch retains one noise-controller lifecycle. Inserted idle commands
 are included in an expansion budget of sixteen output commands per prepared
 command (the admitted channels emit at most eight per idle target and four per
-gate, including seepage of both two-qubit operands). Output bytes and command counts are checked before simulator execution.
-No second simulator call is allowed for a scheduled batch; an unexpected
-continuation fails and poisons the shot. These limits bound admitted noise
-expansion, not native extraction or arbitrary adapter allocations. Existing
-shot context, clone and whole-host reset requirements still apply.
+gate, including seepage of both two-qubit operands). Output bytes and command
+counts are checked before simulator execution.
+
+Batches without exposures authorize one simulator call. With E explicit exposures
+and F candidate targets, the execution budget adds at most 2F commands to the
+ordinary expansion budget (one internal measurement and one transition per
+target) and authorizes at most E + 1 simulator calls. Each exposure yields at
+most once for internal measurements, with a final continuation for transitions
+and the remaining operations. Byte budgets cover every command and each message
+header. Exceeding any cumulative budget
+fails and poisons the shot. These limits bound dispatched noise expansion, not
+native extraction, allocations inside a model/adapter, or callback execution
+time. Existing shot context, clone and whole-host reset requirements still apply.
 
 ## Admission, identity and recovery
 

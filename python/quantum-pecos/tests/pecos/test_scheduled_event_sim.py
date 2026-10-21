@@ -458,3 +458,139 @@ def test_repeated_program_result_ids_reach_python_adapter(tmp_path, scheduled_su
     result = simulation((library, program), lambda _: RepeatedSlotAdapter()).run(2).to_dict()
     assert result["latest"] == [1, 1]
     assert any(ids == [7, 7] for ids in seen)
+
+
+@pytest.mark.parametrize("global_exposure", [False, True])
+@pytest.mark.parametrize("probability", [0.0, 1.0])
+def test_spectator_exchange_through_monte_carlo(event_runtime, global_exposure, probability):
+    """Live runtime -> HybridEngine -> QuantumSystem, including worker reuse."""
+    import pecos_rslib as pr
+
+    contexts = []
+
+    class ExposureAdapter(PhaseAdapter):
+        def translate(self, batch):
+            return [
+                (
+                    (
+                        pr.ScheduledCrosstalk.global_excluding([])
+                        if global_exposure
+                        else pr.ScheduledCrosstalk.local([0])
+                    )
+                    if isinstance(op, tuple)
+                    else op
+                )
+                for op in batch.operations
+            ]
+
+    def factory(context):
+        contexts.append(context)
+        return ExposureAdapter()
+
+    # An exposure after the first Ramsey rotation leaks with certainty when
+    # enabled. Its internal measurement result must not become a program result.
+    profile = pr.scheduled_measurement_crosstalk(
+        pr.scheduled_idle_noise(1),
+        {"0->L": 1.0, "1->L": 1.0},
+        local_probability=probability,
+        global_probability=probability,
+    )
+    built = simulation(event_runtime, factory).noise(pr.scheduled_event_idle_noise(profile, factory)).build()
+    for _ in range(2):
+        result = built.run(8).to_dict()
+        assert result["measurement_0"] == [int(probability)] * 8
+        assert "measurement_1" not in result
+    assert len(contexts) == len(set(contexts)) == 16
+    assert {context[1] for context in contexts} == {0, 1}
+
+
+def test_spectator_requires_profile_opt_in_and_capacity(event_runtime):
+    import pecos_rslib as pr
+
+    class ExposureAdapter(PhaseAdapter):
+        def translate(self, batch):
+            return [pr.ScheduledCrosstalk.local([0]) if isinstance(op, tuple) else op for op in batch.operations]
+
+    with pytest.raises(Exception, match="crosstalk profile required"):
+        simulation(event_runtime, lambda _: ExposureAdapter()).run(1)
+
+    class BadVictim(PhaseAdapter):
+        def translate(self, batch):
+            return [pr.ScheduledCrosstalk.local([1]) if isinstance(op, tuple) else op for op in batch.operations]
+
+    profile = pr.scheduled_measurement_crosstalk(pr.scheduled_idle_noise(1), {"0->1": 1.0, "1->0": 1.0})
+    with pytest.raises(Exception, match="within capacity"):
+        simulation(event_runtime, lambda _: BadVictim()).noise(
+            pr.scheduled_event_idle_noise(profile, lambda _: BadVictim()),
+        ).run(1)
+
+
+@pytest.mark.parametrize("ids", [[0, 0], [16], list(range(17))])
+def test_spectator_ids_are_checked(ids):
+    import pecos_rslib as pr
+
+    for constructor in [pr.ScheduledCrosstalk.local, pr.ScheduledCrosstalk.global_excluding]:
+        with pytest.raises(ValueError, match="distinct"):
+            constructor(ids)
+
+
+def test_spectator_parameters_validate_and_preserve_profile_type():
+    import pecos_rslib as pr
+
+    base = pr.scheduled_local_noise(pr.scheduled_idle_noise(2), prep=0.2)
+    for value in [-0.1, 1.1, math.nan, math.inf]:
+        with pytest.raises(ValueError, match="Probability must be between"):
+            pr.scheduled_measurement_crosstalk(base, {"0->1": 1.0, "1->0": 1.0}, local_probability=value)
+        with pytest.raises(ValueError, match="Probability must be between"):
+            pr.scheduled_measurement_crosstalk(base, {"0->1": 1.0, "1->0": 1.0}, global_probability=value)
+    with pytest.raises(ValueError, match="weighted_map cannot be empty"):
+        pr.scheduled_measurement_crosstalk(base, {})
+    assert isinstance(pr.scheduled_measurement_crosstalk(base, {"0->1": 1.0, "1->0": 1.0}), pr.ScheduledIdleNoise)
+
+
+@pytest.mark.parametrize("probability", [0.0, 1.0])
+def test_guppy_feedback_after_spectator_measurement(event_runtime, probability):
+    import pecos_rslib as pr
+    from guppylang import guppy
+    from guppylang.std.angles import angle
+    from guppylang.std.builtins import owned, result
+    from guppylang.std.quantum import measure, qubit, ry, x
+
+    @guppy.declare
+    def pecos_qis_runtime_barrier_qubit_hugr(q: qubit @ owned) -> qubit: ...
+
+    @guppy
+    def feedback() -> None:
+        q = qubit()
+        ry(q, angle(0.5))
+        q = pecos_qis_runtime_barrier_qubit_hugr(q)
+        ry(q, angle(-0.5))
+        first = measure(q).read()
+        result("first", first)
+        # This branch must resume with the user readout, not an internal result.
+        q2 = qubit()
+        if first:
+            x(q2)
+        result("feedback", measure(q2).read())
+
+    class ExposureAdapter(PhaseAdapter):
+        def translate(self, batch):
+            return [pr.ScheduledCrosstalk.local([0]) if isinstance(op, tuple) else op for op in batch.operations]
+
+    profile = pr.scheduled_measurement_crosstalk(
+        pr.scheduled_idle_noise(1),
+        {"0->L": 1.0, "1->L": 1.0},
+        local_probability=probability,
+    )
+
+    def factory(_context):
+        return ExposureAdapter()
+
+    values = (
+        simulation(event_runtime, factory, feedback)
+        .noise(pr.scheduled_event_idle_noise(profile, factory))
+        .run(4)
+        .to_dict()
+    )
+    assert values["first"] == [int(probability)] * 4
+    assert values["feedback"] == [int(probability)] * 4

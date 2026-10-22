@@ -258,12 +258,15 @@ def _convert_gate_set(gate_symbol, locations, q, c, measurement_offset):
                     ops.append(qubit.Measure(q[loc[0]]) > c[idx])
                     idx += 1
     elif gate_upper == "MX":
+        # Rotate into Z, measure, rotate back so the qubit is left in the
+        # measured X eigenstate (MY below does the same for Y).
         if c is not None:
             idx = measurement_offset
             for loc in locations:
                 if isinstance(loc, int) and idx < len(c):
                     ops.append(qubit.H(q[loc]))
                     ops.append(qubit.Measure(q[loc]) > c[idx])
+                    ops.append(qubit.H(q[loc]))
                     idx += 1
     elif gate_upper == "MY":
         if c is not None:
@@ -273,6 +276,8 @@ def _convert_gate_set(gate_symbol, locations, q, c, measurement_offset):
                     ops.append(qubit.SZdg(q[loc]))
                     ops.append(qubit.H(q[loc]))
                     ops.append(qubit.Measure(q[loc]) > c[idx])
+                    ops.append(qubit.H(q[loc]))
+                    ops.append(qubit.SZ(q[loc]))
                     idx += 1
     elif gate_upper in ["R", "RZ", "RESET"]:
         for loc in locations:

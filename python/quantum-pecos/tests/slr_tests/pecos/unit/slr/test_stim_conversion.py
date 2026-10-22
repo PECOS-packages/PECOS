@@ -390,5 +390,14 @@ def test_face_clifford_gates_decompose() -> None:
     assert f4_f4dg(stim.PauliString("X")) == stim.PauliString("+X"), f4_f4dg
 
 
+def test_repeated_mx_and_my_agree() -> None:
+    """MX and MY leave the qubit in the measured eigenstate, as Stim does."""
+    circuit = stim.Circuit("H 0\nMX 0\nMX 0\nMY 1\nMY 1")
+    prog = _return_declared_cregs(SlrConverter.from_stim(circuit))
+    samples = SlrConverter(prog).stim().compile_sampler(seed=7).sample(200)
+    assert (samples[:, 0] == samples[:, 1]).all()
+    assert (samples[:, 2] == samples[:, 3]).all()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

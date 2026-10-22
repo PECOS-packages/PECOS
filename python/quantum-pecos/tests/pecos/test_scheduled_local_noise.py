@@ -561,18 +561,19 @@ attributes #0 = { "EntryPoint" }
 
 
 @pytest.mark.parametrize("events", [False, True])
-def test_stabilizer_high_qubit_idle_and_repeated_workers(tmp_path, scheduled_support, events):
+@pytest.mark.parametrize(("backend", "spares"), [("stabilizer", 64), ("state_vector", 16)])
+def test_high_qubit_idle_and_repeated_workers(tmp_path, scheduled_support, events, backend, spares):
     import pecos_rslib as pr
 
     library, _ = scheduled_support.build_runtime(tmp_path, 1_000_000_000)
-    allocations = "\n".join(f"  %spare{i} = call i64 @___qalloc()" for i in range(64))
-    frees = "\n".join(f"  call void @___qfree(i64 %spare{i})" for i in range(64))
+    allocations = "\n".join(f"  %spare{i} = call i64 @___qalloc()" for i in range(spares))
+    frees = "\n".join(f"  call void @___qfree(i64 %spare{i})" for i in range(spares))
     program = scheduled_support.ramsey.replace(
         "  %q = call i64 @___qalloc()",
         allocations + "\n  %q = call i64 @___qalloc()",
     ).replace("  %end = call i64 @teardown()", frees + "\n  %end = call i64 @teardown()")
-    profile = pr.scheduled_idle_noise(65, sine=math.pi / 2)
-    built = simulation(library, program, profile, events, idle_only=True, qubits=65, backend="stabilizer").build()
+    profile = pr.scheduled_idle_noise(spares + 1, sine=math.pi / 2)
+    built = simulation(library, program, profile, events, idle_only=True, qubits=spares + 1, backend=backend).build()
     for shots in (4, 6):
         assert built.run(shots).to_dict()["measurement_0"] == [1] * shots
 
@@ -589,14 +590,3 @@ def test_stabilizer_rejects_unsupported_noise_and_rotations(tmp_path, scheduled_
         program = program.replace("0x3FF921FB54442D18", "0x3FE921FB54442D18", 1)
     with pytest.raises(Exception, match="coherent idle rate zero" if invalid == "coherent" else "Clifford"):
         simulation(library, program, profile, events, idle_only=True, backend="stabilizer").run(1)
-
-
-@pytest.mark.parametrize("events", [False, True])
-@pytest.mark.parametrize("profile_qubits", [1, 512])
-def test_large_scheduled_state_vector_rejects_before_allocation(tmp_path, scheduled_support, events, profile_qubits):
-    import pecos_rslib as pr
-
-    library, _ = scheduled_support.build_runtime(tmp_path, 0)
-    profile = pr.scheduled_idle_noise(profile_qubits)
-    with pytest.raises(Exception, match="at most 16"):
-        simulation(library, scheduled_support.ramsey, profile, events, idle_only=True, qubits=512).build()

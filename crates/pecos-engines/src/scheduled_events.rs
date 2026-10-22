@@ -7,8 +7,8 @@
 use crate::noise::{IntoNoiseModel, NoiseModel};
 use crate::runtime_frame::{ShotContext, error, processing_error};
 use crate::scheduled_frame::{
-    self, MAX_SCHEDULE_BYTES, MAX_SCHEDULED_QUBITS, PreparedSchedule, ScheduleTimeline,
-    ScheduledIdleModel, ScheduledNoise, TimedBatch,
+    self, MAX_SCHEDULE_BYTES, PreparedSchedule, ScheduleTimeline, ScheduledIdleModel,
+    ScheduledNoise, TimedBatch,
 };
 use crate::{ByteMessage, ControlEngine, EngineStage, Gate, GateType};
 use pecos_core::{RngManageable, errors::PecosError};
@@ -376,11 +376,16 @@ impl ScheduledGateBuffer<'_> {
         if let Some(message) = &self.state.failure {
             return Err(error(message));
         }
-        // Check the owned list before converting/allocating its internal gate.
+        // Check the owned list against capacity before converting/allocating its
+        // internal gate. A missing crosstalk profile is rejected by validation below.
         let ids = match &effect {
             ScheduledCrosstalk::Local(ids) | ScheduledCrosstalk::GlobalExcluding(ids) => ids,
         };
-        if ids.len() > MAX_SCHEDULED_QUBITS {
+        if self
+            .state
+            .spectator_capacity
+            .is_some_and(|capacity| ids.len() > capacity)
+        {
             let message = "scheduled spectator list limit";
             self.state.failure = Some(message.into());
             return Err(error(message));

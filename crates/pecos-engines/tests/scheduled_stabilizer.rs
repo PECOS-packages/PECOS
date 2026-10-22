@@ -288,20 +288,44 @@ fn coherent_profile_rejects_before_any_callback_even_with_empty_input() {
     );
 }
 #[test]
-fn state_vector_resource_limit_and_unsupported_engines_remain_closed() {
-    let mut s = host(
-        ScheduledIdleNoise::new(17).unwrap(),
-        false,
-        Box::new(StateVecEngine::new(17)),
-        0,
-    );
-    assert!(
-        s.process(ByteMessage::builder().build())
-            .err()
-            .unwrap()
-            .to_string()
-            .contains("at most 16")
-    );
+fn state_vector_capacity_is_not_capped() {
+    for events in [false, true] {
+        let mut s = host(
+            ScheduledIdleNoise::new(17).unwrap(),
+            events,
+            Box::new(StateVecEngine::new(17)),
+            0,
+        );
+        let gates = vec![
+            Gate::pz(&[16]),
+            Gate::rxy1q(Angle64::HALF_TURN, Angle64::ZERO, &[16]),
+            Gate::mz(&[16]),
+        ];
+        assert_eq!(run(&mut s, &[batch(0, 0, 0, gates)], events), vec![1]);
+    }
+}
+#[test]
+fn stabilizer_profile_capacity_is_not_capped() {
+    const QUBITS: usize = 4096;
+    for events in [false, true] {
+        let mut s = host(
+            ScheduledIdleNoise::new(QUBITS).unwrap(),
+            events,
+            Box::new(StabilizerEngine::new(QUBITS)),
+            0,
+        );
+        let gates = vec![
+            Gate::pz(&[0]),
+            Gate::pz(&[QUBITS - 1]),
+            Gate::rxy1q(Angle64::HALF_TURN, Angle64::ZERO, &[QUBITS - 1]),
+            Gate::mz(&[0]),
+            Gate::mz(&[QUBITS - 1]),
+        ];
+        assert_eq!(run(&mut s, &[batch(0, 0, 0, gates)], events), vec![0, 1]);
+    }
+}
+#[test]
+fn undersized_and_unsupported_engines_remain_closed() {
     let mut s = host(
         ScheduledIdleNoise::new(2).unwrap(),
         false,
@@ -414,19 +438,8 @@ impl pecos_engines::ClassicalControlEngineBuilder for EmptyClassical {
 }
 
 #[test]
-fn sim_builder_checks_backend_before_allocating_a_large_state_vector() {
+fn sim_builder_checks_backend_before_allocation() {
     use pecos_engines::{sim, stabilizer, state_vector};
-    for profile_qubits in [1, 512] {
-        let profile = ScheduledIdleNoise::new(profile_qubits).unwrap();
-        let error = sim(EmptyClassical)
-            .qubits(512)
-            .quantum(state_vector())
-            .noise(profile)
-            .build()
-            .err()
-            .expect("state-vector allocation must not be attempted");
-        assert!(error.to_string().contains("at most 16"));
-    }
     let profile = ScheduledIdleNoise::new(512).unwrap();
     assert!(
         sim(EmptyClassical)

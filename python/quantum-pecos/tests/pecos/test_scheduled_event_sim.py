@@ -165,7 +165,7 @@ def test_factory_configuration():
     with pytest.raises(TypeError, match="must be callable"):
         pr.scheduled_event_idle_z(1, None)
     with pytest.raises(ValueError, match="capacity"):
-        pr.scheduled_event_idle_z(513, lambda _: PhaseAdapter())
+        pr.scheduled_event_idle_z(0, lambda _: PhaseAdapter())
 
 
 def run_isolated(runtime, body):
@@ -530,7 +530,7 @@ def test_spectator_requires_profile_opt_in_and_capacity(event_runtime):
         ).run(1)
 
 
-@pytest.mark.parametrize("ids", [[0, 0], [512], list(range(513))])
+@pytest.mark.parametrize("ids", [[0, 0], [1, 4096, 1]])
 def test_spectator_ids_are_checked(ids):
     import pecos_rslib as pr
 

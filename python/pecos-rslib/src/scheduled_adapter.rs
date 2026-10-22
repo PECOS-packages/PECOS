@@ -5,7 +5,7 @@ use pecos_engines::scheduled_events::{
     MAX_BATCH_OPERATIONS, ScheduledBatchAdapter, ScheduledCrosstalk, ScheduledEventBatch,
     ScheduledEventNoise, ScheduledEventOp, ScheduledGateBuffer,
 };
-use pecos_engines::scheduled_frame::{MAX_SCHEDULED_QUBITS, ScheduledIdleZ, ScheduledNoise};
+use pecos_engines::scheduled_frame::{ScheduledIdleZ, ScheduledNoise};
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyList};
@@ -20,15 +20,10 @@ pub struct PyScheduledCrosstalk {
 }
 fn check_spectator_ids(ids: &[usize]) -> PyResult<()> {
     let mut seen = std::collections::BTreeSet::new();
-    if ids.len() > MAX_SCHEDULED_QUBITS
-        || ids
-            .iter()
-            .any(|q| *q >= MAX_SCHEDULED_QUBITS || !seen.insert(*q))
-    {
-        return Err(PyValueError::new_err(format!(
-            "spectator IDs must be distinct and within 0..{MAX_SCHEDULED_QUBITS}; \
-             the profile capacity is checked at admission"
-        )));
+    if ids.iter().any(|q| !seen.insert(*q)) {
+        return Err(PyValueError::new_err(
+            "spectator IDs must be distinct; the profile capacity is checked at admission",
+        ));
     }
     Ok(())
 }

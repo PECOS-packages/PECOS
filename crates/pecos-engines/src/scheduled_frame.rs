@@ -8,10 +8,6 @@ use std::{any::Any, collections::BTreeMap};
 
 /// Maximum complete transport size. Extraction itself remains uncapped.
 pub const MAX_SCHEDULE_BYTES: usize = 64 * 1024 * 1024;
-/// Maximum admitted profile capacity: a bounded resource policy for stabilizer execution.
-pub const MAX_SCHEDULED_QUBITS: usize = 512;
-/// Resource policy for the admitted state-vector backend.
-pub const MAX_SCHEDULED_STATE_VECTOR_QUBITS: usize = 16;
 /// Native timing and ordered operations. The v6 encoder admits ordinary gates
 /// only. Internally normalized v7 batches may also carry checked exposure metadata;
 /// opaque runtime events cannot be represented here.
@@ -34,7 +30,7 @@ pub struct ScheduledIdleZ(ScheduledNoise);
 impl ScheduledIdleZ {
     /// Rates are inverse seconds (linear) or radians/second (sine and coherent).
     /// # Errors
-    /// Rejects capacity outside 1..=512 or nonfinite/negative rates.
+    /// Rejects zero capacity or nonfinite/negative rates.
     pub fn new(qubits: usize, linear: f64, sine: f64, coherent: f64) -> Result<Self, PecosError> {
         Ok(Self(
             ScheduledNoise::new(qubits)?
@@ -60,8 +56,8 @@ pub type ScheduledIdleNoise = ScheduledNoise;
 /// Checked scheduled noise configuration. `new` leaves all channels disabled;
 /// idle setters configure local memory noise, and [`ScheduledLocalNoise`] adds
 /// gate, preparation and readout faults by lossless conversion.
-/// Uses the existing general-noise sampling and leakage semantics. Capacity is
-/// bounded at 512 for stabilizer execution and 16 for state-vector execution.
+/// Uses the existing general-noise sampling and leakage semantics. Capacity must
+/// be at least 1 and is bounded only by the simulator.
 #[derive(Clone, Debug)]
 pub struct ScheduledNoise {
     qubits: usize,
@@ -388,12 +384,10 @@ impl MeasurementCrosstalk {
 impl ScheduledNoise {
     /// Construct a profile with all idle families disabled.
     /// # Errors
-    /// Rejects capacity outside 1..=512.
+    /// Rejects zero capacity.
     pub fn new(qubits: usize) -> Result<Self, PecosError> {
-        if !(1..=MAX_SCHEDULED_QUBITS).contains(&qubits) {
-            return Err(error(&format!(
-                "scheduled capacity must be 1..={MAX_SCHEDULED_QUBITS}"
-            )));
+        if qubits == 0 {
+            return Err(error("scheduled capacity must be at least 1"));
         }
         Ok(Self {
             qubits,
@@ -778,9 +772,6 @@ impl ScheduledIdleModel {
     ) -> Result<(), PecosError> {
         if backend.capacity < self.qubits() {
             return Err(error("simulator capacity below scheduled profile"));
-        }
-        if !backend.clifford && backend.capacity > MAX_SCHEDULED_STATE_VECTOR_QUBITS {
-            return Err(error("scheduled state-vector capacity must be at most 16"));
         }
         if backend.clifford && self.config.coherent != 0.0 {
             return Err(error(

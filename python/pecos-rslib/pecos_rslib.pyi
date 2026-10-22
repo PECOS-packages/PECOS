@@ -4370,7 +4370,7 @@ class ScheduledCrosstalk:
     """Ordered spectator exposure returned alongside gates by a batch adapter.
 
     Creates no physical busy time and no program-visible measurement. IDs must be
-    distinct and below 512; the profile capacity is checked at admission.
+    distinct; the profile capacity is checked at admission.
     """
 
     @staticmethod

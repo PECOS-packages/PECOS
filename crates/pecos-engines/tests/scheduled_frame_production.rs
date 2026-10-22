@@ -191,7 +191,7 @@ fn capacity_and_profile_admission_are_explicit() {
     for bad in [f64::NAN, f64::INFINITY, -1.0] {
         assert!(ScheduledIdleZ::new(2, bad, 0.0, 0.0).is_err());
     }
-    assert!(ScheduledIdleZ::new(513, 0.0, 0.0, 0.0).is_err());
+    assert!(ScheduledIdleZ::new(0, 0.0, 0.0, 0.0).is_err());
     let mut undersized = QuantumSystem::new(
         ScheduledIdleZ::new(2, 0.0, 0.0, 0.0)
             .unwrap()

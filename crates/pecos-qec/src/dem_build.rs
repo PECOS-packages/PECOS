@@ -166,6 +166,8 @@ pub struct DemBuildInput {
     /// owns certification of these bindings. Selene supplies compiler analysis
     /// when static evidence is required and never trusts read timing.
     pub result_traces: Vec<bindings::ResultTrace>,
+    /// Baseline result values in the same encounter order, when supplied by an adapter.
+    pub result_trace_values: Vec<Vec<bool>>,
     /// Source measurement order before replay compaction, required for certification.
     pub source_measurement_ids: Vec<usize>,
     /// Compiler result-tag analysis of the exact executed QIS, including certification failures.
@@ -272,6 +274,12 @@ impl DemBuild {
 #[derive(Clone)]
 pub struct PreparedDem {
     inference: Option<DemInferenceReport>,
+    inference_settings: Option<DemInferenceSettings>,
+    detector_outputs: Option<Vec<DemOutputSelector>>,
+    observable_outputs: Option<Vec<DemOutputSelector>>,
+    result_traces: Vec<bindings::ResultTrace>,
+    source_result_traces: Vec<bindings::ResultTrace>,
+    result_trace_values: Vec<Vec<bool>>,
     evidence: DemExecutionEvidence,
     generator_layout: bool,
     requires_static_schedule: bool,
@@ -348,6 +356,36 @@ impl PreparedDem {
     }
 
     #[must_use]
+    pub fn inference_settings(&self) -> Option<&DemInferenceSettings> {
+        self.inference_settings.as_ref()
+    }
+
+    #[must_use]
+    pub fn detector_outputs(&self) -> Option<&[DemOutputSelector]> {
+        self.detector_outputs.as_deref()
+    }
+
+    #[must_use]
+    pub fn observable_outputs(&self) -> Option<&[DemOutputSelector]> {
+        self.observable_outputs.as_deref()
+    }
+
+    #[must_use]
+    pub fn result_traces(&self) -> &[bindings::ResultTrace] {
+        &self.result_traces
+    }
+
+    #[must_use]
+    pub fn result_trace_values(&self) -> &[Vec<bool>] {
+        &self.result_trace_values
+    }
+
+    #[must_use]
+    pub fn source_result_traces(&self) -> &[bindings::ResultTrace] {
+        &self.source_result_traces
+    }
+
+    #[must_use]
     pub fn definition_origins(&self) -> &[DemDefinitionOrigin] {
         &self.definition_origins
     }
@@ -417,6 +455,7 @@ pub struct DemBuildBuilder {
     circuit: Option<TickCircuit>,
     program: Option<Box<dyn DemProgram>>,
     qubits: Option<usize>,
+    num_measurements: Option<usize>,
     seed: u64,
     probes: Option<DemInferenceData>,
     inference: Option<DemInferenceSettings>,
@@ -461,6 +500,13 @@ impl DemBuildBuilder {
         self.qubits = Some(qubits);
         self
     }
+    /// Declare the count used by JSON record references.
+    #[must_use]
+    pub fn with_num_measurements(mut self, count: usize) -> Self {
+        self.num_measurements = Some(count);
+        self
+    }
+
     #[must_use]
     pub fn with_seed(mut self, seed: u64) -> Self {
         self.seed = seed;
@@ -568,6 +614,18 @@ impl DemBuildBuilder {
     pub fn prepare(mut self) -> Result<PreparedDem, DemBuildError> {
         if let Some(error) = self.configuration_error {
             return Err(DemBuildError::Configuration(error));
+        }
+        if self.num_measurements.is_some() {
+            if self.inference.is_some() {
+                return Err(DemBuildError::Configuration(
+                    "num_measurements cannot be combined with inference".into(),
+                ));
+            }
+            if self.detector_definitions.is_some() || self.observable_definitions.is_some() {
+                return Err(DemBuildError::Configuration(
+                    "num_measurements cannot be combined with typed definitions".into(),
+                ));
+            }
         }
         let detector_outputs = requested_outputs(
             self.detector_definitions.as_deref(),
@@ -690,6 +748,12 @@ impl DemBuildBuilder {
             }
         };
         let mut circuit = input.circuit;
+        if let Some(declared) = self.num_measurements {
+            let actual = tick_circuit_emission(&circuit).len();
+            if declared != actual {
+                return Err(DefinitionError::MeasurementCountMismatch { declared, actual }.into());
+            }
+        }
         let sets_definitions = needs_inference
             || self.detectors.is_some()
             || self.observables.is_some()
@@ -932,6 +996,12 @@ impl DemBuildBuilder {
         )?;
         Ok(PreparedDem {
             inference: report,
+            inference_settings: settings,
+            detector_outputs: input.resolved_detector_outputs,
+            observable_outputs: input.resolved_observable_outputs,
+            result_traces: traces,
+            source_result_traces: input.result_traces,
+            result_trace_values: input.result_trace_values,
             evidence: input.evidence,
             generator_layout,
             requires_static_schedule,

@@ -42,7 +42,7 @@ pub(crate) fn generator_certificate_digest(
 )]
 #[derive(Clone, Debug, Default)]
 pub struct PyDemInferenceSettings {
-    inner: DemInferenceSettings,
+    pub(crate) inner: DemInferenceSettings,
 }
 
 #[pymethods]
@@ -155,7 +155,7 @@ impl PyDemInferenceSettings {
 )]
 #[derive(Clone, Default)]
 pub struct PySeleneRuntimeSpec {
-    runtime: Option<pecos_qis::SeleneRuntime>,
+    pub(crate) runtime: Option<pecos_qis::SeleneRuntime>,
 }
 
 #[pymethods]

@@ -1966,8 +1966,8 @@ fn contribution_record_to_pydict(
     Ok(dict.unbind())
 }
 
-#[pymethods]
-impl PyDetectorErrorModel {
+crate::dem_noise_bindings::dem_noise_methods! {
+    PyDetectorErrorModel,
     /// Build a DetectorErrorModel directly from a circuit and noise.
     ///
     /// Accepts both `TickCircuit` and `DagCircuit`. Reads detector/tracked-Pauli
@@ -1984,74 +1984,9 @@ impl PyDetectorErrorModel {
     /// Clifford action of a different scheduled gate are rejected, even if
     /// another scheduled gate matches the key.
     #[staticmethod]
-    #[pyo3(signature = (circuit, p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None, p2_gate_rates=None, p1_gate_rates=None))]
-    fn from_circuit(
-        circuit: &pyo3::Bound<'_, pyo3::PyAny>,
-        p1: f64,
-        p2: f64,
-        p_meas: f64,
-        p_prep: f64,
-        p_idle: Option<f64>,
-        t1: Option<f64>,
-        t2: Option<f64>,
-        idle_rz: Option<f64>,
-        p_idle_linear_rate: Option<f64>,
-        p_idle_quadratic_rate: Option<f64>,
-        p_idle_x_linear_rate: Option<f64>,
-        p_idle_y_linear_rate: Option<f64>,
-        p_idle_z_linear_rate: Option<f64>,
-        p_idle_x_quadratic_rate: Option<f64>,
-        p_idle_y_quadratic_rate: Option<f64>,
-        p_idle_z_quadratic_rate: Option<f64>,
-        p_idle_quadratic_sine_rate: Option<f64>,
-        p_idle_x_quadratic_sine_rate: Option<f64>,
-        p_idle_y_quadratic_sine_rate: Option<f64>,
-        p_idle_z_quadratic_sine_rate: Option<f64>,
-        p1_weights: Option<BTreeMap<String, f64>>,
-        p2_weights: Option<BTreeMap<String, f64>>,
-        p2_replacement_approximation: Option<String>,
-        p_meas_crosstalk_local: Option<f64>,
-        p_meas_crosstalk_global: Option<f64>,
-        p_meas_crosstalk_model: Option<BTreeMap<String, f64>>,
-        measurement_crosstalk_dem_mode: Option<String>,
-        p2_gate_rates: Option<BTreeMap<String, f64>>,
-        p1_gate_rates: Option<BTreeMap<String, f64>>,
-    ) -> PyResult<Self> {
+    from_circuit, [circuit: &pyo3::Bound<'_, pyo3::PyAny>], [circuit,],
+    noise, Self, {
         use pecos_qec::fault_tolerance::dem_builder::DemBuilder;
-
-        let noise = NoiseConfig::try_from(NoiseOptions {
-            p1,
-            p2,
-            p_meas,
-            p_prep,
-            p_idle,
-            t1,
-            t2,
-            idle_rz,
-            p_idle_linear_rate,
-            p_idle_quadratic_rate,
-            p_idle_x_linear_rate,
-            p_idle_y_linear_rate,
-            p_idle_z_linear_rate,
-            p_idle_x_quadratic_rate,
-            p_idle_y_quadratic_rate,
-            p_idle_z_quadratic_rate,
-            p_idle_quadratic_sine_rate,
-            p_idle_x_quadratic_sine_rate,
-            p_idle_y_quadratic_sine_rate,
-            p_idle_z_quadratic_sine_rate,
-            p1_weights,
-            p2_weights,
-            p2_replacement_approximation,
-            p_meas_crosstalk_local,
-            p_meas_crosstalk_global,
-            p_meas_crosstalk_model,
-            measurement_crosstalk_dem_mode,
-            p2_gate_rates,
-            p1_gate_rates,
-            ..NoiseOptions::default()
-        })
-        .map_err(pyo3::exceptions::PyValueError::new_err)?;
         if let Ok(dag) =
             circuit.extract::<pyo3::PyRef<'_, crate::dag_circuit_bindings::PyDagCircuit>>()
         {
@@ -2069,7 +2004,7 @@ impl PyDetectorErrorModel {
                 "from_circuit() expects a DagCircuit or TickCircuit",
             ))
         }
-    }
+    }, {
 
     /// Build a DetectorErrorModel from PECOS DEM metadata JSON.
     ///
@@ -2416,7 +2351,7 @@ impl PyDetectorErrorModel {
     /// their relative magnitude. An empty list means every categorical conversion
     /// was exact.
     #[getter]
-    fn idle_noise_residuals(&self, py: Python<'_>) -> PyResult<Vec<Py<pyo3::types::PyDict>>> {
+    pub(crate) fn idle_noise_residuals(&self, py: Python<'_>) -> PyResult<Vec<Py<pyo3::types::PyDict>>> {
         self.inner
             .idle_noise_residuals()
             .iter()
@@ -2566,6 +2501,7 @@ impl PyDetectorErrorModel {
 
     fn __str__(&self) -> String {
         self.to_string()
+    }
     }
 }
 
@@ -8182,6 +8118,7 @@ fn transform_two_patch_pauli(pauli: u8, gate: &str) -> PyResult<u8> {
 pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let qec = PyModule::new(m.py(), "qec")?;
     crate::dem_inference_bindings::register(&qec)?;
+    crate::dem_build_bindings::register(&qec)?;
     qec.add_function(wrap_pyfunction!(translate_structured_idle_noise, &qec)?)?;
     qec.add(
         "DEM_SLICE_ROUND_ATTRIBUTE",

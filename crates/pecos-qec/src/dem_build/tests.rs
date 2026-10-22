@@ -714,3 +714,48 @@ fn unified_result_reference_uses_available_inference_trace() {
         "observable 70 references every measurement with even multiplicity; its parity is identically zero"
     );
 }
+
+#[test]
+fn declared_measurement_count_is_checked_before_definition_resolution() {
+    let circuit = || {
+        let mut circuit = TickCircuit::new();
+        circuit.tick().mz(&[0]);
+        circuit
+    };
+    let prepared = DetectorErrorModel::builder()
+        .with_circuit(circuit())
+        .with_detectors_json(r#"[{"id":0,"records":[-1]}]"#)
+        .with_num_measurements(1)
+        .prepare()
+        .unwrap();
+    assert_eq!(prepared.measurement_ids(), [0]);
+    let error = DetectorErrorModel::builder()
+        .with_circuit(circuit())
+        .with_detectors_json(r#"[{"id":0,"records":[-2]}]"#)
+        .with_num_measurements(2)
+        .prepare()
+        .err()
+        .unwrap();
+    assert!(matches!(
+        error,
+        DemBuildError::Definitions(DefinitionError::MeasurementCountMismatch {
+            declared: 2,
+            actual: 1
+        })
+    ));
+    for builder in [
+        DetectorErrorModel::builder().with_inference(DemInferenceSettings::default()),
+        DetectorErrorModel::builder().with_detector_definitions(vec![]),
+        DetectorErrorModel::builder().with_observable_definitions(vec![]),
+    ] {
+        assert!(
+            builder
+                .with_num_measurements(1)
+                .prepare()
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("cannot be combined")
+        );
+    }
+}

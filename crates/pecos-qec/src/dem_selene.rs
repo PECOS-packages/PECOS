@@ -45,6 +45,21 @@ impl ProgramSource for Qis {
     }
 }
 
+struct FrontendCompiledSource {
+    program: Qis,
+    hugr_bytes: Vec<u8>,
+}
+
+impl ProgramSource for FrontendCompiledSource {
+    fn lower(&self) -> Result<Qis, DemBuildError> {
+        Ok(self.program.clone())
+    }
+
+    fn hugr_bytes(&self) -> Option<&[u8]> {
+        Some(&self.hugr_bytes)
+    }
+}
+
 #[cfg(feature = "hugr")]
 struct HugrSource {
     bytes: Vec<u8>,
@@ -100,6 +115,19 @@ impl SeleneDemProgram {
             generator_certificate: None,
             simplify_cliffords: false,
         }
+    }
+
+    /// Assert that the front end compiled these exact HUGR bytes to this QIS.
+    /// The front end owns compilation and certificate-carrier trust; retaining
+    /// the bytes permits the same generator digest validation as native lowering.
+    #[must_use]
+    pub fn from_frontend_compiled_hugr(program: Qis, hugr_bytes: Vec<u8>) -> Self {
+        let mut adapter = Self::new(program.clone());
+        adapter.source = Arc::new(FrontendCompiledSource {
+            program,
+            hugr_bytes,
+        });
+        adapter
     }
 
     /// Compile a HUGR envelope natively for the chosen platform and optimization level.
@@ -166,11 +194,12 @@ impl SeleneDemProgram {
     }
 
     /// Assert that a trusted built-in generator stamped this layout and certificate
-    /// on the definition compiled to the exact bytes supplied to `from_hugr`.
+    /// on the definition compiled to the exact bytes supplied to `from_hugr`
+    /// or `from_frontend_compiled_hugr`.
     /// This assertion permits control flow; the digest only binds the layout to
     /// those bytes and does not establish trust in their producer. The audit records
     /// `generator_layout_v2_program_bound` as the asserted source. QIS-only sources
-    /// cannot use this certificate.
+    /// without a front-end byte binding cannot use this certificate.
     #[must_use]
     pub fn with_trusted_generator_layout(
         mut self,
@@ -834,6 +863,11 @@ impl DemProgram for SeleneDemProgram {
                 raw_binding: evidence.binding.map(str::to_string),
                 provenance_shots: evidence.binding.map(|_| evidence.correlation_shots),
             },
+            result_trace_values: evidence
+                .named_result_traces
+                .iter()
+                .map(|trace| trace.values.clone())
+                .collect(),
             result_traces: evidence
                 .named_result_traces
                 .into_iter()

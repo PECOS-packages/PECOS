@@ -894,6 +894,113 @@ class _SeleneRuntimeSpec:
         clock_model: str = "continuous",
     ) -> _SeleneRuntimeSpec: ...
 
+# Positive record back-offset, or (tag, occurrence, element).
+# Definitions: ID, measurement IDs, references, inferred selector, coords, metadata JSON.
+# Exactly one of the three source slots must be present.
+_DemReference = int | tuple[str, int, int | None]
+_DemDefinition = tuple[
+    int | None,
+    list[int] | None,
+    list[_DemReference] | None,
+    tuple[str, int] | None,
+    list[float] | None,
+    str,
+]
+
+def _prepare_guppy_dem(
+    program: Qis,
+    num_qubits: int,
+    seed: int,
+    runtime: _SeleneRuntimeSpec,
+    *,
+    settings: DemInferenceSettings | None = None,
+    detectors: list[_DemDefinition] | None = None,
+    observables: list[_DemDefinition] | None = None,
+    detectors_json: str | None = None,
+    observables_json: str | None = None,
+    num_measurements: int | None = None,
+    frontend_static_schedule: str | None = None,
+    trusted_generator_layout: tuple[bytes, list[tuple[str, int]], str] | None = None,
+    require_hosted_operation_order: bool = False,
+    max_hosted_tick_separation: int | None = None,
+    hosted_context: str = "GuppyDemBuilder.build",
+    idle_after_2q: float | None = None,
+    strip_traced_idles: bool | None = None,
+    simplify_single_qubit_clifford_chains: bool = False,
+) -> _PreparedDem: ...
+
+class _PreparedDem:
+    @property
+    def circuit(self) -> TickCircuit: ...
+    @property
+    def detectors(self) -> list[dict[str, Any]]: ...
+    @property
+    def observables(self) -> list[dict[str, Any]]: ...
+    @property
+    def measurement_ids(self) -> list[int]: ...
+    @property
+    def measurement_ledger(self) -> list[dict[str, Any]]: ...
+    @property
+    def named_result_measurements(self) -> dict[str, tuple[int | None, ...]]: ...
+    @property
+    def schema_fingerprint(self) -> str: ...
+    @property
+    def definition_origins(self) -> list[dict[str, Any]]: ...
+    @property
+    def audit(self) -> dict[str, Any]: ...
+    @property
+    def inference(self) -> dict[str, Any] | None: ...
+    def evaluate_runtime_record(self, values: list[int]) -> tuple[list[int], int]: ...
+    def runtime_record_parities(self, values: list[int]) -> tuple[list[int], int]: ...
+    def evaluate_measurements(self, values: dict[int, int]) -> tuple[list[int], int]: ...
+    def measurement_parities(self, values: dict[int, int]) -> tuple[list[int], int]: ...
+    def evaluate_results(self, values: dict[str, list[int]]) -> tuple[list[int], int]: ...
+    def result_parities(self, values: dict[str, list[int]]) -> tuple[list[int], int]: ...
+    def evaluate_result_columns(self, columns: dict[str, list[list[int]]]) -> list[tuple[list[int], int]]: ...
+    def result_column_parities(self, columns: dict[str, list[list[int]]]) -> list[tuple[list[int], int]]: ...
+    def build_dem(
+        self,
+        p1: float = 0.001,
+        p2: float = 0.01,
+        p_meas: float = 0.001,
+        p_prep: float = 0.001,
+        p_idle: float | None = None,
+        t1: float | None = None,
+        t2: float | None = None,
+        idle_rz: float | None = None,
+        p_idle_linear_rate: float | None = None,
+        p_idle_quadratic_rate: float | None = None,
+        p_idle_x_linear_rate: float | None = None,
+        p_idle_y_linear_rate: float | None = None,
+        p_idle_z_linear_rate: float | None = None,
+        p_idle_x_quadratic_rate: float | None = None,
+        p_idle_y_quadratic_rate: float | None = None,
+        p_idle_z_quadratic_rate: float | None = None,
+        p_idle_quadratic_sine_rate: float | None = None,
+        p_idle_x_quadratic_sine_rate: float | None = None,
+        p_idle_y_quadratic_sine_rate: float | None = None,
+        p_idle_z_quadratic_sine_rate: float | None = None,
+        p1_weights: dict[str, float] | None = None,
+        p2_weights: dict[str, float] | None = None,
+        p2_replacement_approximation: str | None = None,
+        p_meas_crosstalk_local: float | None = None,
+        p_meas_crosstalk_global: float | None = None,
+        p_meas_crosstalk_model: dict[str, float] | None = None,
+        measurement_crosstalk_dem_mode: str | None = None,
+        p2_gate_rates: dict[str, float] | None = None,
+        p1_gate_rates: dict[str, float] | None = None,
+    ) -> _DemBuild: ...
+
+class _DemBuild:
+    @property
+    def dem(self) -> DetectorErrorModel: ...
+    @property
+    def prepared(self) -> _PreparedDem: ...
+    @property
+    def idle_noise_residuals(self) -> list[dict[str, Any]]: ...
+    def residual_summary(self, relative_threshold: float) -> list[dict[str, Any]]: ...
+
+
 class _DemEvidence(TypedDict):
     circuit: TickCircuit
     raw_measurement_ids: list[int]

@@ -774,3 +774,97 @@ fn native_hugr_control_flow_rejects_explicit_before_execution() {
         "{error}"
     );
 }
+
+#[test]
+#[cfg(feature = "hugr")]
+fn frontend_compilation_retains_generator_bytes_and_inference_values() {
+    let bytes = include_bytes!("fixtures/dem_programs/parities.hugr");
+    let program =
+        SeleneDemProgram::from_frontend_compiled_hugr(Qis::from_string(PARITIES), bytes.to_vec())
+            .with_runtime(runtime())
+            .with_schedule_validation_shots(0);
+    let prepared = DetectorErrorModel::builder()
+        .with_program(program.clone())
+        .with_qubits(3)
+        .with_inference(DemInferenceSettings::default())
+        .prepare()
+        .unwrap();
+    assert_eq!(
+        prepared.inference_settings().unwrap().raw_tag,
+        "raw measurements"
+    );
+    assert_eq!(
+        prepared.detector_outputs().unwrap(),
+        [DemOutputSelector {
+            tag: "DETECTOR".into(),
+            element: 0
+        }]
+    );
+    assert_eq!(
+        prepared.source_result_traces().len(),
+        prepared.result_trace_values().len()
+    );
+    for (trace, values) in prepared
+        .source_result_traces()
+        .iter()
+        .zip(prepared.result_trace_values())
+    {
+        assert_eq!(trace.width, values.len());
+    }
+    let explicit_bytes = include_bytes!("fixtures/dem_programs/explicit_only.hugr");
+    let layout = vec![("measurement".to_string(), 0)];
+    let digest = pecos_qec::dem_build::generator_certificate_digest(explicit_bytes, &layout);
+    let explicit = SeleneDemProgram::from_frontend_compiled_hugr(
+        Qis::from_string(include_str!("fixtures/dem_programs/explicit_only.ll")),
+        explicit_bytes.to_vec(),
+    )
+    .with_runtime(runtime())
+    .with_trusted_generator_layout(layout, digest);
+    let certified = DetectorErrorModel::builder()
+        .with_program(explicit)
+        .with_qubits(1)
+        .with_detector_definitions(vec![
+            DemDefinition::references(
+                0,
+                vec![pecos_qec::MeasurementRef::tag("measurement").unwrap()],
+            )
+            .unwrap(),
+        ])
+        .prepare()
+        .unwrap();
+    assert_eq!(
+        certified.audit().named_result_binding,
+        "generator_layout_v2_program_bound"
+    );
+    assert_eq!(
+        certified.named_result_measurements()["measurement"],
+        [Some(0)]
+    );
+    let error = DetectorErrorModel::builder()
+        .with_program(program.with_trusted_generator_layout(vec![], "bad digest"))
+        .with_qubits(3)
+        .with_detectors(vec![])
+        .prepare()
+        .err()
+        .unwrap();
+    assert!(
+        error.to_string().contains("certificate does not match"),
+        "{error}"
+    );
+}
+
+#[test]
+fn explicit_integer_result_slots_preserve_sparse_ids() {
+    let ir = include_str!("fixtures/dem_programs/explicit_only.ll")
+        .replace("%lazy_measure = tail call i64 @___lazy_measure(i64 %qalloc.i)",
+            "%lazy_measure = add i64 0, 7\n  call i32 @__quantum__qis__m__body(i64 %qalloc.i, i64 %lazy_measure)")
+        + "\ndeclare i32 @__quantum__qis__m__body(i64, i64)\n";
+    let prepared = DetectorErrorModel::builder()
+        .with_program(program(&ir).with_frontend_static_schedule("test_frontend"))
+        .with_qubits(1)
+        .with_detectors(vec![vec![7]])
+        .prepare()
+        .unwrap();
+    assert_eq!(prepared.measurement_ids(), [7]);
+    assert!(prepared.named_result_measurements().is_empty());
+}

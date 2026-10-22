@@ -243,3 +243,67 @@ def test_logical_h_single_faults_decode_with_code_family_sectors():
     batch = SampleBatch(shots, [truth for _, truth in unambiguous], num_observables=raw.num_observables)
     result = batch.decode(model, pymatching(correlated=False), workers=1, predictions=True)
     assert result.num_errors == 0
+
+
+def test_measurement_classes_manual_binding():
+    from pecos_rslib import TickCircuit
+    from pecos_rslib.qec import DagFaultAnalyzer, DemBuilder
+
+    circuit = TickCircuit()
+    circuit.tick().mz([0, 1])
+    influence = DagFaultAnalyzer(circuit.to_dag_circuit()).build_influence_map()
+    dem = (
+        DemBuilder(influence)
+        .with_detectors_json('[{"id":0,"records":[0]},{"id":1,"records":[1]}]')
+        .with_measurement_classes_json(
+            json.dumps(
+                [
+                    {"block": "a", "family": "X", "round": -1},
+                    {"block": "a", "family": "Z", "round": 0},
+                ],
+            ),
+        )
+        .build()
+    )
+    assert dem.detector_fault_sectors() == [(0, "X"), (1, "Z")]
+
+
+def test_measurement_classes_circuit_attribute():
+    from pecos_rslib import TickCircuit
+
+    circuit = TickCircuit()
+    circuit.tick().mz([0, 1])
+    circuit.set_meta("detectors", '[{"id":0,"records":[0,1],"fault_sector":null}]')
+    circuit.set_meta(
+        "measurement_classes",
+        json.dumps([{"block": "a", "family": "X", "round": -1}] * 2),
+    )
+    dem = DetectorErrorModel.from_circuit(circuit, p1=0.0, p2=0.0, p_meas=0.0, p_prep=0.0)
+    assert dem.detector_fault_sectors() == [(0, "X")]
+    assert circuit.circuit_definitions()["measurement_classes"] == [
+        {"block": "a", "family": "X", "round": -1},
+        {"block": "a", "family": "X", "round": -1},
+    ]
+
+
+def test_bb_measurement_classes_forwarded_by_tick_dem_generator(monkeypatch):
+    import pecos.qec
+    from pecos.qec import bb_memory_circuit
+    from pecos.qec.surface.circuit_builder import generate_dem_from_tick_circuit
+
+    real_builder = pecos.qec.DemBuilder
+    builders = []
+
+    def capture_builder(influence):
+        builder = real_builder(influence)
+        builders.append(builder)
+        return builder
+
+    monkeypatch.setattr(pecos.qec, "DemBuilder", capture_builder)
+    circuit = bb_memory_circuit(6, 6, [(3, 0), (0, 1), (0, 2)], [(0, 3), (1, 0), (2, 0)], 2, "Z")
+    generate_dem_from_tick_circuit(circuit, p1=0.0, p2=0.0, p_meas=0.001, p_prep=0.0)
+    assert circuit.get_meta("measurement_classes") is not None
+    sectors = [sector for _, sector in builders[0].build().detector_fault_sectors()]
+    assert set(sectors) == {"X", "Z"}
+    for detector, sector in zip(json.loads(circuit.get_meta("detectors")), sectors, strict=True):
+        assert sector == ("X" if detector["label"].startswith("X") else "Z")

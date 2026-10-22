@@ -716,6 +716,9 @@ def fit_dem_from_simulation(
     builder = DemBuilder(influence)
     builder = builder.with_noise(p1=0.01, p2=0.01, p_meas=0.01, p_prep=0.01)
     builder = builder.with_detectors_json(tick_circuit.get_meta("detectors"))
+    measurement_classes = tick_circuit.get_meta("measurement_classes")
+    if measurement_classes is not None:
+        builder.with_measurement_classes_json(measurement_classes)
     builder = builder.with_observables_json(tick_circuit.get_meta("observables"))
     builder = builder.with_num_measurements(
         int(tick_circuit.get_meta("num_measurements")),
@@ -841,6 +844,9 @@ def build_adaptive_dem(
             p_prep=noise_params.get("p_prep", 0.0),
         )
         builder = builder.with_detectors_json(tick_circuit.get_meta("detectors"))
+        measurement_classes = tick_circuit.get_meta("measurement_classes")
+        if measurement_classes is not None:
+            builder.with_measurement_classes_json(measurement_classes)
         builder = builder.with_observables_json(tick_circuit.get_meta("observables"))
         builder = builder.with_num_measurements(
             int(tick_circuit.get_meta("num_measurements")),

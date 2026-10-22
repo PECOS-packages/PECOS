@@ -583,75 +583,41 @@ fn rejected_admission_preserves_the_noise_stream() {
 }
 
 #[test]
-fn crosstalk_payload_lists_fit_one_record_on_both_paths() {
+fn crosstalk_payload_lists_above_255_work_on_both_paths() {
     let n_qubits = 300;
-    for (exposure, admitted) in [
-        (Exposure::Local((0..255).collect()), true),
-        (Exposure::GlobalExcluding((0..255).collect()), true),
-        (Exposure::Local((0..256).collect()), false),
-        (Exposure::GlobalExcluding((0..256).collect()), false),
+    for exposure in [
+        Exposure::Local((0..n_qubits).collect()),
+        Exposure::GlobalExcluding((0..n_qubits).collect()),
     ] {
         let mut model = ExplicitCrosstalkErrorModel::new(n_qubits, &flip()).unwrap();
         model.shot_start(0, 1).unwrap();
-        let result = model.handle_operations(
-            runtime_batch(vec![], 0, 0),
-            &[Placement {
-                before_operation: 0,
-                exposure,
-            }],
-            &mut ZeroSimulator,
-        );
-        if admitted {
-            assert!(result.is_ok());
-        } else {
-            let error = result.err().expect("oversized payload must be rejected");
-            assert!(
-                error
-                    .to_string()
-                    .contains("lists 256 qubits, but one crosstalk payload holds at most 255"),
-                "{error}"
-            );
-            model.shot_end().unwrap();
-        }
+        model
+            .handle_operations(
+                runtime_batch(vec![], 0, 0),
+                &[Placement {
+                    before_operation: 0,
+                    exposure,
+                }],
+                &mut ZeroSimulator,
+            )
+            .unwrap();
+        model.shot_end().unwrap();
     }
 
-    // The automatic path encodes measured qubits and local victims the same way.
-    let measurements =
-        |count: u64| -> Vec<Operation> { (0..count).map(|q| measure(q, q)).collect() };
-    // Measuring qubit 0 makes every other member of its local group a victim.
-    for (group_size, count, message) in [
-        (0, 255, None),
-        (
-            0,
-            256,
-            Some(
-                "batch measures 256 qubits, but one measurement-crosstalk payload holds at most 255",
-            ),
-        ),
-        (256, 1, None),
-        (
-            257,
-            1,
-            Some(
-                "batch has 256 local crosstalk victims, but one measurement-crosstalk payload holds at most 255",
-            ),
-        ),
-    ] {
+    // Encode 300 measured qubits, then 299 local victims of one measurement.
+    for (group_size, count) in [(0, 300), (300, 1)] {
         let config_json = format!(
             r#"{{"model":{{}},"local_groups":[{:?}]}}"#,
             (0..group_size).collect::<Vec<_>>()
         );
         let mut model = build_error_model(&config_json, n_qubits);
         model.shot_start(0, 1).unwrap();
-        let result =
-            model.handle_operations(runtime_batch(measurements(count), 0, 1), &mut ZeroSimulator);
-        match message {
-            None => assert!(result.is_ok()),
-            Some(message) => {
-                let error = result.err().expect("oversized payload must be rejected");
-                assert!(error.to_string().contains(message), "{error}");
-            }
-        }
+        let measurements = (0..count).map(|q| measure(q, q)).collect();
+        let result = model
+            .handle_operations(runtime_batch(measurements, 0, 1), &mut ZeroSimulator)
+            .unwrap();
+        assert_eq!(result.bool_results.len(), usize::try_from(count).unwrap());
+        model.shot_end().unwrap();
     }
 }
 

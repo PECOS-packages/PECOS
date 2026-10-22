@@ -304,7 +304,7 @@ fn quantum_validation_rejects_bad_counts_and_repeated_targets() {
 }
 
 #[test]
-fn broadcasts_larger_than_wire_payload_preserve_all_targets() {
+fn large_broadcasts_preserve_all_targets_in_both_paths() {
     for (name, arity, angles) in [
         ("H", 1, vec![]),
         ("RZZ", 2, vec![0.37]),
@@ -327,6 +327,39 @@ fn broadcasts_larger_than_wire_payload_preserve_all_targets() {
         assert_eq!(native.len(), 300 / arity, "{name}");
         assert_eq!(native, converted, "{name}");
     }
+}
+
+#[test]
+fn cx_broadcast_with_128_pairs_is_one_command_and_runs() {
+    let pairs: Vec<_> = (0..128).map(|i| (2 * i, 2 * i + 1)).collect();
+    let args: Vec<_> = pairs
+        .iter()
+        .map(|&(c, t)| json!([["q", c], ["q", t]]))
+        .collect();
+    let source = json!({"format":"PHIR/JSON","version":"0.1.0","ops":[
+        {"data":"qvar_define","data_type":"qubits","variable":"q","size":256},
+        {"qop":"CX","args":args}
+    ]})
+    .to_string();
+    let mut engine = PhirJsonEngine::from_json(&source).unwrap();
+    let commands = engine.generate_commands().unwrap();
+    assert_eq!(commands.quantum_ops().unwrap(), [Gate::cx(&pairs)]);
+    let mut quantum = pecos_engines::StabilizerEngine::new(256);
+    let controls: Vec<_> = pairs.iter().map(|&(c, _)| c).collect();
+    quantum
+        .process(ByteMessage::builder().x(&controls).build())
+        .unwrap();
+    let outcomes = quantum.process(commands).unwrap();
+    engine.handle_measurements(outcomes).unwrap();
+    assert!(engine.generate_commands().unwrap().is_empty().unwrap());
+    let measured = quantum
+        .process(
+            ByteMessage::builder()
+                .mz(&(0..256).collect::<Vec<_>>())
+                .build(),
+        )
+        .unwrap();
+    assert_eq!(measured.outcomes().unwrap(), vec![1; 256]);
 }
 
 fn drain_commands(engine: &mut dyn ClassicalEngine) -> Vec<Gate> {

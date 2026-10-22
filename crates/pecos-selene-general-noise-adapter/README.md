@@ -31,9 +31,7 @@ in the batch, measured from its previous batch's end; all touched qubits advance
 to the current batch's end after translation. Overlapping batches on a qubit are
 rejected. A qubit's first operation in a shot accrues no idle; resets retain the
 same idle timing rule as other operations. Automatic measurement crosstalk
-encodes a batch's measured qubits and local victims as single payload records,
-so a batch measuring more than 255 qubits (or with more than 255 local victims)
-is rejected.
+encodes a batch's measured qubits and local victims as single payload records.
 
 ## Explicit measurement exposures
 
@@ -44,7 +42,7 @@ adapter. Supply a complete normalized `BatchOperation` and an ordered slice of
 `CrosstalkExposure::Local(victims)` or `GlobalExcluding(exclusions)` before an
 ordinary operation index; `operations.len()` means after the final operation.
 Equal indices preserve slice order, including repeated exposures. Lists contain
-distinct, in-capacity qubits, at most 255 per list (one payload record); local
+distinct, in-capacity qubits, with one payload record per list; local
 victim order is preserved. Global effects
 use the noise model's tracked prepared qubits and exclusion semantics.
 

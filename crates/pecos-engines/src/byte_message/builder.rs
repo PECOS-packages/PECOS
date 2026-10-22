@@ -185,16 +185,20 @@ impl ByteMessageBuilder {
             gate_type != GateType::Channel,
             "Channel gates carry typed payloads and cannot be encoded in ByteMessage gate commands"
         );
-        let payload_size = size_of::<GateHeader>()
-            + num_qubits * size_of::<u32>()
-            + angles.len() * size_of::<u64>()
-            + std::mem::size_of_val(params);
+        let payload_size = num_qubits
+            .checked_mul(size_of::<u32>())
+            .and_then(|size| size.checked_add(size_of::<GateHeader>()))
+            .and_then(|size| size.checked_add(std::mem::size_of_val(angles)))
+            .and_then(|size| size.checked_add(std::mem::size_of_val(params)))
+            .expect("Gate payload size exceeds usize::MAX");
 
         self.prepare_message(MessageType::Gate, payload_size, MessageFlags::NONE);
 
         let header = GateHeader {
             gate_type: gate_type as u8,
-            num_qubits: u8::try_from(num_qubits).expect("Too many qubits for gate"),
+            num_qubits: u32::try_from(num_qubits).expect(
+                "prepare_message checked that the payload, including all qubit indices, fits u32",
+            ),
             has_params: u8::from(!angles.is_empty() || !params.is_empty()),
             reserved: 0,
         };
@@ -358,8 +362,9 @@ impl ByteMessageBuilder {
     ///
     /// # Panics
     ///
-    /// This function will panic if the number of qubits in the gate exceeds 255,
-    /// as the protocol uses a u8 to represent the qubit count.
+    /// Panics if the gate is invalid or carries a typed channel payload, a qubit
+    /// index or payload size exceeds `u32::MAX`, or the builder contains a
+    /// different message type.
     pub fn add_gate_command(&mut self, gate: &Gate) -> &mut Self {
         gate.validate()
             .unwrap_or_else(|err| panic!("Invalid gate command: {err}"));
@@ -1071,6 +1076,41 @@ mod tests {
     use crate::byte_message::GateType;
     use crate::byte_message::protocol::{BATCH_MAGIC, PROTOCOL_VERSION};
     use pecos_core::QubitId;
+
+    #[test]
+    fn cx_broadcasts_round_trip_across_the_old_count_limit() {
+        for count in [127, 128, 129] {
+            let pairs: Vec<_> = (0..count).map(|i| (2 * i + 1, 2 * i)).collect();
+            let expected = Gate::cx(&pairs);
+            let message = ByteMessage::builder().cx(&pairs).build();
+            assert_eq!(
+                message.quantum_ops().unwrap(),
+                std::slice::from_ref(&expected)
+            );
+            let message = ByteMessage::builder().add_gate_command(&expected).build();
+            assert_eq!(message.quantum_ops().unwrap(), [expected]);
+        }
+    }
+
+    #[test]
+    fn h_broadcast_round_trips_more_than_u16_qubits() {
+        let qubits: Vec<_> = (0..70_000).rev().collect();
+        let message = ByteMessage::builder().h(&qubits).build();
+        assert_eq!(message.quantum_ops().unwrap(), [Gate::h(&qubits)]);
+    }
+
+    #[test]
+    fn gate_header_has_the_version_eight_wire_layout() {
+        assert_eq!(size_of::<GateHeader>(), 8);
+        assert_eq!(std::mem::align_of::<GateHeader>(), 4);
+        let header = GateHeader {
+            gate_type: 50,
+            has_params: 1,
+            reserved: 0,
+            num_qubits: 70_000,
+        };
+        assert_eq!(bytes_of(&header), &[50, 1, 0, 0, 112, 17, 1, 0]);
+    }
 
     #[test]
     fn strict_all_gates_round_trip() {

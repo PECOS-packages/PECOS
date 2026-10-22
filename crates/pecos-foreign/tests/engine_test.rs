@@ -277,34 +277,56 @@ fn rzz_pair_count_overflow_returns_error() {
 }
 
 #[test]
-fn c_gate_payload_limits_return_errors_atomically() {
+fn c_large_gate_payloads_round_trip_and_invalid_appends_are_atomic() {
     unsafe {
         let circuit = pecos_circuit_new();
-        let too_many = [0_usize; 256];
-        for append in [
-            pecos_circuit_h,
-            pecos_circuit_x,
-            pecos_circuit_z,
-            pecos_circuit_sz,
+        let qubits: Vec<_> = (0..256).collect();
+        let mut expected = Vec::new();
+        for (append, gate) in [
+            (
+                pecos_circuit_h as unsafe extern "C" fn(_, _, _) -> _,
+                pecos_engines::Gate::h(&qubits),
+            ),
+            (pecos_circuit_x, pecos_engines::Gate::x(&qubits)),
+            (pecos_circuit_z, pecos_engines::Gate::z(&qubits)),
+            (pecos_circuit_sz, pecos_engines::Gate::sz(&qubits)),
         ] {
-            assert_eq!(append(circuit, too_many.as_ptr(), too_many.len()), -1);
-            assert_eq!(append(circuit, too_many.as_ptr(), usize::MAX), -1);
+            assert_eq!(append(circuit, qubits.as_ptr(), qubits.len()), 0);
+            expected.push(gate);
+            assert_eq!(append(circuit, qubits.as_ptr(), usize::MAX), -1);
         }
+        let pairs: Vec<_> = qubits
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|p| (p[0], p[1]))
+            .collect();
+        assert_eq!(pecos_circuit_cx(circuit, qubits.as_ptr(), pairs.len()), 0);
+        expected.push(pecos_engines::Gate::cx(&pairs));
+        let angle = pecos_core::Angle64::ZERO;
+        assert_eq!(
+            pecos_circuit_rx(circuit, 0.0, qubits.as_ptr(), qubits.len()),
+            0
+        );
+        expected.push(pecos_engines::Gate::rx(angle, &qubits));
+        assert_eq!(
+            pecos_circuit_rz(circuit, 0.0, qubits.as_ptr(), qubits.len()),
+            0
+        );
+        expected.push(pecos_engines::Gate::rz(angle, &qubits));
+        assert_eq!(
+            pecos_circuit_rzz(circuit, 0.0, qubits.as_ptr(), pairs.len()),
+            0
+        );
+        expected.push(pecos_engines::Gate::rzz(angle, &pairs));
         let bad = [usize::MAX];
         assert_eq!(pecos_circuit_mz(circuit, bad.as_ptr(), 1), -1);
         assert_eq!(pecos_circuit_rx(circuit, 0.0, bad.as_ptr(), 1), -1);
-        assert_eq!(
-            pecos_circuit_rz(circuit, 0.0, too_many.as_ptr(), too_many.len()),
-            -1
-        );
         let mut ptr = std::ptr::null_mut();
         let mut len = 0;
         pecos_circuit_build(circuit, &raw mut ptr, &raw mut len);
         let message = pecos_engines::ByteMessage::new(std::slice::from_raw_parts(ptr, len));
-        assert_eq!(
-            message.quantum_ops().unwrap(),
-            [] as [pecos_engines::Gate; 0]
-        );
+        assert_eq!(message.quantum_ops().unwrap(), expected);
         pecos_free_bytes(ptr, len);
         pecos_circuit_free(circuit);
     }

@@ -178,9 +178,6 @@ impl GeneralNoiseErrorModel {
     }
 }
 
-/// `ByteMessage` gate headers store a payload's target count in a `u8`.
-const MAX_PAYLOAD_QUBITS: usize = 255;
-
 struct PreparedBatch {
     message: ByteMessage,
     is_empty: bool,
@@ -232,19 +229,7 @@ impl GeneralNoiseErrorModel {
                     Operation::Measure { .. } | Operation::MeasureLeaked { .. }
                 )
             {
-                if measured.len() > MAX_PAYLOAD_QUBITS {
-                    bail!(
-                        "batch measures {} qubits, but one measurement-crosstalk payload holds at most {MAX_PAYLOAD_QUBITS}",
-                        measured.len()
-                    );
-                }
                 let local = self.local_victims(&measured);
-                if local.len() > MAX_PAYLOAD_QUBITS {
-                    bail!(
-                        "batch has {} local crosstalk victims, but one measurement-crosstalk payload holds at most {MAX_PAYLOAD_QUBITS}",
-                        local.len()
-                    );
-                }
                 builder
                     .meas_crosstalk_global_payload(&measured.iter().copied().collect::<Vec<_>>());
                 if !local.is_empty() {

@@ -1576,11 +1576,11 @@ impl OperationProcessor {
             })
             .collect::<Result<Vec<_>, _>>()?;
         // Preserve one command per preparation/measurement. Other broadcasts
-        // fit the wire header's u8 qubit count and split on gate boundaries.
+        // use one command per operation.
         let chunk_size = if matches!(gate, GateType::PZ | GateType::MZ) {
             1
         } else {
-            usize::from(u8::MAX) / gate.quantum_arity() * gate.quantum_arity()
+            qubit_args.len()
         };
         for chunk in qubit_args.chunks(chunk_size) {
             use pecos_engines::byte_message::protocol::{GateHeader, MessageHeader};

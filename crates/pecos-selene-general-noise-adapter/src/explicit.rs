@@ -8,7 +8,7 @@ use selene_core::error_model::interface::ErrorModelInterface;
 use selene_core::runtime::BatchOperation;
 use selene_core::simulator::SimulatorInterface;
 
-use crate::{GeneralNoiseErrorModel, MAX_PAYLOAD_QUBITS};
+use crate::GeneralNoiseErrorModel;
 
 /// One measurement-induced exposure. This describes noise, not physical occupancy.
 /// Lists must contain distinct in-capacity qubits. Repeated *records* are meaningful.
@@ -150,11 +150,6 @@ impl ExplicitCrosstalkErrorModel {
             );
             previous = position;
             let qubits = placement.exposure.qubits();
-            ensure!(
-                qubits.len() <= MAX_PAYLOAD_QUBITS,
-                "crosstalk placement {index} lists {} qubits, but one crosstalk payload holds at most {MAX_PAYLOAD_QUBITS}",
-                qubits.len()
-            );
             let mut seen = BTreeSet::new();
             for &qubit in qubits {
                 if qubit >= capacity {

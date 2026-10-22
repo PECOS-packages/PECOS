@@ -53,6 +53,8 @@ use std::rc::Rc;
 /// Parsed detector from JSON metadata.
 #[derive(Debug, Clone)]
 pub struct ParsedDetector {
+    /// Noiseless value from metadata; fault effects do not apply it.
+    pub reference: Option<u8>,
     /// Declared identifier.
     pub id: u32,
     /// Optional three-dimensional coordinates.
@@ -184,9 +186,9 @@ struct ExactBranchReplayRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct MeasurementParityExpression {
-    dependencies: BitSet,
-    flip: bool,
+pub(crate) struct MeasurementParityExpression {
+    pub(crate) dependencies: BitSet,
+    pub(crate) flip: bool,
 }
 
 impl<'a> DemBuilder<'a> {
@@ -604,6 +606,7 @@ impl<'a> DemBuilder<'a> {
                     }
                 };
                 Ok(ParsedDetector {
+                    reference: detector.reference,
                     fault_sector: detector.fault_sector,
                     id: detector.id,
                     coords,
@@ -2667,6 +2670,7 @@ fn parse_single_detector(value: &serde_json::Value) -> Result<ParsedDetector, De
     let label = extract_definition_label(object, "detector")?;
 
     Ok(ParsedDetector {
+        reference: extract_reference(object, "detector", id)?,
         fault_sector: parse_fault_sector(object.get("fault_sector"), id)
             .map_err(DemBuilderError::ParseError)?,
         id,
@@ -2713,18 +2717,7 @@ fn parse_single_observable(value: &serde_json::Value) -> Result<ParsedObservable
     let (records, meas_ids) = extract_measurement_refs(object, "observable")?;
     let label = extract_definition_label(object, "observable")?;
 
-    let reference = match object.get("reference") {
-        None | Some(serde_json::Value::Null) => None,
-        Some(value) => match value.as_u64() {
-            Some(0) => Some(0),
-            Some(1) => Some(1),
-            _ => {
-                return Err(DemBuilderError::ParseError(format!(
-                    "observable {id} has invalid 'reference' {value}; expected integer 0 or 1 or null"
-                )));
-            }
-        },
-    };
+    let reference = extract_reference(object, "observable", id)?;
 
     Ok(ParsedObservable {
         id,
@@ -2732,6 +2725,25 @@ fn parse_single_observable(value: &serde_json::Value) -> Result<ParsedObservable
         meas_ids,
         label,
         reference,
+    })
+}
+
+fn extract_reference(
+    object: &serde_json::Map<String, serde_json::Value>,
+    role: &str,
+    id: u32,
+) -> Result<Option<u8>, DemBuilderError> {
+    Ok(match object.get("reference") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(value) => match value.as_u64() {
+            Some(0) => Some(0),
+            Some(1) => Some(1),
+            _ => {
+                return Err(DemBuilderError::ParseError(format!(
+                    "{role} {id} has invalid 'reference' {value}; expected integer 0 or 1 or null"
+                )));
+            }
+        },
     })
 }
 
@@ -3335,7 +3347,7 @@ fn measurement_parity_differs_from_histories(
     Ok(ideal.flip ^ branch.flip)
 }
 
-fn measurement_parity_expression(
+pub(crate) fn measurement_parity_expression(
     history: &MeasurementHistory,
     influence_to_history: &[usize],
     measurement_indices: &[usize],

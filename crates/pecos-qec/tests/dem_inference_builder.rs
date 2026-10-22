@@ -314,7 +314,7 @@ fn selected_probe_widths_and_repeated_role_setters_are_rejected() {
 }
 
 #[test]
-fn typed_metadata_survives_explicit_inferred_and_mixed_builds() {
+fn matching_reference_metadata_survives_explicit_inferred_and_mixed_builds() {
     use pecos_quantum::Attribute;
     use serde_json::{Value, json};
 
@@ -336,7 +336,7 @@ fn typed_metadata_survives_explicit_inferred_and_mixed_builds() {
             DemDefinition::explicit(70, vec![0])
         }
         .with_metadata("label", "logical bit")
-        .with_metadata("reference", 1)
+        .with_metadata("reference", 0)
         .with_metadata("custom", json!([false, null, 3]));
         let noise = NoiseConfig::new(0.001, 0.01, 0.02, 0.001);
         let mut builder = DetectorErrorModel::builder()
@@ -366,18 +366,18 @@ fn typed_metadata_survives_explicit_inferred_and_mixed_builds() {
             infer_detector || infer_observable
         );
         assert_eq!(
-            build.definitions.detectors[0].coords,
+            build.definitions().detectors[0].coords,
             Some(vec![1.0, 2.0, 3.0])
         );
         assert_eq!(
-            build.definitions.detectors[0].label.as_deref(),
+            build.definitions().detectors[0].label.as_deref(),
             Some("check")
         );
         assert_eq!(
-            build.definitions.observables[0].label.as_deref(),
+            build.definitions().observables[0].label.as_deref(),
             Some("logical bit")
         );
-        assert_eq!(build.definitions.observables[0].reference, Some(1));
+        assert_eq!(build.definitions().observables[0].reference, Some(0));
         for (role, inferred, tag, element, custom) in [
             (
                 "detectors",
@@ -394,7 +394,7 @@ fn typed_metadata_survives_explicit_inferred_and_mixed_builds() {
                 json!([false, null, 3]),
             ),
         ] {
-            let Some(Attribute::String(text)) = build.circuit.get_meta(role) else {
+            let Some(Attribute::String(text)) = build.circuit().get_meta(role) else {
                 panic!("missing {role} metadata");
             };
             let entries: Value = serde_json::from_str(text).unwrap();
@@ -485,8 +485,8 @@ fn every_partition_of_explicit_and_inferred_definitions_matches_the_parity_oracl
     circuit.tick().cx(&[(0, 1), (2, 3)]);
     circuit.tick().mz(&[0, 1, 2, 3]);
     pass::assign_missing_meas_ids(&mut circuit);
-    let detector_supports = [vec![1], vec![0, 2], vec![1, 2, 3], vec![0, 1, 2, 3]];
-    let observable_supports = [vec![0], vec![1, 3], vec![0, 2, 3], vec![0, 1, 2, 3]];
+    let detector_supports = [vec![2], vec![0, 1], vec![0, 1, 3], vec![0, 1, 2, 3]];
+    let observable_supports = [vec![3], vec![2, 3], vec![0, 1, 2], vec![0, 1, 2, 3]];
     let observable_ids = [0, 1, 65, 70];
     let raw_ids = vec![2, 0, 3, 1];
     let parity = |record: usize, support: &[usize]| -> u8 {
@@ -512,6 +512,19 @@ fn every_partition_of_explicit_and_inferred_definitions_matches_the_parity_oracl
         .build()
         .unwrap();
     assert!(explicit.dem.to_string().contains("error("));
+
+    let random = DetectorErrorModel::builder()
+        .with_circuit(circuit.clone())
+        .with_detectors(vec![vec![0]])
+        .with_noise(noise.clone())
+        .build()
+        .err()
+        .unwrap();
+    assert!(
+        random
+            .to_string()
+            .contains("detector 0 has a random noiseless parity")
+    );
 
     // All 256 source assignments, including both pure cases and role-wise mixing.
     for partition in 0_usize..256 {
@@ -679,7 +692,7 @@ fn tracked_pauli_is_legal_with_explicit_and_inferred_definitions() {
             builder.with_detectors(vec![vec![0]])
         };
         let build = builder.build().unwrap();
-        assert_eq!(build.circuit.annotations().len(), 1);
+        assert_eq!(build.circuit().annotations().len(), 1);
     }
 }
 
@@ -803,4 +816,40 @@ fn malformed_json_is_a_configuration_error() {
         .with_observables(vec![])
         .build();
     assert!(matches!(result, Err(DemBuildError::Configuration(_))));
+}
+
+#[test]
+fn declared_reference_mismatch_rejected_for_each_role_and_source() {
+    for inferred in [false, true] {
+        for detector in [false, true] {
+            let definition = if inferred {
+                DemDefinition::inferred(0, "checks", 0)
+            } else {
+                DemDefinition::explicit(0, vec![0])
+            }
+            .with_metadata("reference", 1);
+            let mut builder = DetectorErrorModel::builder()
+                .with_circuit(circuit())
+                .with_noise(NoiseConfig::new(0.001, 0.01, 0.001, 0.001));
+            builder = if detector {
+                builder
+                    .with_detector_definitions(vec![definition])
+                    .with_observables(vec![])
+            } else {
+                builder
+                    .with_observable_definitions(vec![definition])
+                    .with_detectors(vec![])
+            };
+            if inferred {
+                builder = builder
+                    .with_inference(DemInferenceSettings::default().with_validation_rows(2))
+                    .with_inference_data(probes());
+            }
+            let role = if detector { "detector" } else { "observable" };
+            assert_eq!(
+                builder.build().err().unwrap().to_string(),
+                format!("{role} 0 declares reference 1, but its noiseless parity is 0")
+            );
+        }
+    }
 }

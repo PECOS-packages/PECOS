@@ -66,6 +66,8 @@ impl AnnotationDefinition {
 /// Resolved detector; repeated positions retain their multiplicity.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedDetector {
+    /// Noiseless value supplied only by metadata, never applied by the reader.
+    pub reference: Option<u8>,
     /// Declared metadata id or index among annotations of this kind.
     pub id: u32,
     /// Metadata coordinates, otherwise nonempty annotation coordinates.
@@ -388,7 +390,7 @@ pub fn resolve_definitions(
                 &entry.records,
                 &entry.meas_ids,
             )?,
-            reference: None,
+            reference: entry.reference,
             coords: entry.coords.map(Vec::from),
             label: entry.label,
         };
@@ -452,6 +454,7 @@ pub fn resolve_definitions(
         detectors: merge("detector", detectors, annotation_detectors)?
             .into_iter()
             .map(|(id, d)| ResolvedDetector {
+                reference: d.reference,
                 fault_sector: d.fault_sector,
                 id,
                 coords: d.coords,

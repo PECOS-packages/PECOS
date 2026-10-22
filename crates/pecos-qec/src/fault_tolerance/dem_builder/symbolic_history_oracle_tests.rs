@@ -691,3 +691,81 @@ fn exact_oracle_seeded_reset_and_leak_heavy_circuits() {
         check(&gates, n);
     }
 }
+
+#[test]
+fn dem_build_references_match_dense_distribution() {
+    use crate::dem_build::noiseless_references;
+    use crate::fault_tolerance::circuit_definitions::definitions_from_tick_circuit;
+    use pecos_quantum::Attribute;
+
+    let cases = [
+        vec![Gate::h(&[0]), Gate::cx(&[(0, 1)]), Gate::mz(&[0, 1])],
+        vec![
+            Gate::h(&[0]),
+            Gate::cx(&[(0, 1)]),
+            Gate::pz(&[0]),
+            Gate::mz(&[0, 1]),
+        ],
+        vec![
+            Gate::mx(&[0]),
+            Gate::sz(&[0]),
+            Gate::h(&[0]),
+            Gate::mx(&[0]),
+            Gate::mz(&[0]),
+        ],
+        vec![Gate::x(&[0]), Gate::mz(&[0, 1])],
+        vec![
+            Gate::h(&[0]),
+            Gate::cx(&[(0, 1)]),
+            Gate::measure_leaked(&[0]),
+            Gate::mz(&[0, 1]),
+        ],
+        vec![
+            Gate::h(&[0]),
+            Gate::cx(&[(0, 1)]),
+            Gate::measure_leaked(&[0]),
+            Gate::x(&[1]),
+            Gate::mz(&[0, 1]),
+        ],
+    ];
+    for gates in cases {
+        let probabilities = distribution(&gates, 2);
+        let count = probabilities.len().ilog2() as usize;
+        let mut circuit = TickCircuit::new();
+        for gate in &gates {
+            circuit.tick().try_add_gate(gate.clone()).unwrap();
+        }
+        for subset in 1..probabilities.len() {
+            let support: Vec<_> = (0..count)
+                .filter(|position| subset & (1 << position) != 0)
+                .collect();
+            let entries = serde_json::json!([{"id": 0, "records": support}]).to_string();
+            circuit.set_meta("detectors", Attribute::String(entries.clone()));
+            circuit.set_meta("observables", Attribute::String(entries));
+            let definitions = definitions_from_tick_circuit(&circuit).unwrap();
+            let probability_one: f64 = probabilities
+                .iter()
+                .enumerate()
+                .filter(|(record, _)| (record & subset).count_ones() % 2 == 1)
+                .map(|(_, probability)| probability)
+                .sum();
+            let result = noiseless_references(&circuit, &definitions);
+            if probability_one > 1e-12 && probability_one < 1.0 - 1e-12 {
+                assert!(
+                    result
+                        .unwrap_err()
+                        .to_string()
+                        .contains("random noiseless parity")
+                );
+            } else {
+                let expected = u8::from(probability_one > 0.5);
+                let references = result.unwrap();
+                assert_eq!(references.detectors[&0], expected, "{gates:?}, {subset:b}");
+                assert_eq!(
+                    references.observables[&0], expected,
+                    "{gates:?}, {subset:b}"
+                );
+            }
+        }
+    }
+}

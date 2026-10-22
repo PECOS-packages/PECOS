@@ -33,6 +33,14 @@ fn qis_inference_matches_explicit_definitions() {
         .with_inference(DemInferenceSettings::default())
         .build()
         .unwrap();
+    let audit = inferred.audit();
+    assert_eq!(audit.named_result_binding, "probe_correlated_result_ids");
+    let inference_audit = audit.inference.unwrap();
+    assert_eq!(inference_audit.provenance_shots, Some(32));
+    assert_eq!(
+        inference_audit.schedule_validation.as_deref(),
+        Some("empirical_trace_comparison")
+    );
     let report = inferred.inference.as_ref().unwrap();
     assert_eq!(report.raw_measurement_ids, [2, 0, 1]);
     assert_eq!(report.detector_supports, [vec![2, 0]]);
@@ -55,7 +63,7 @@ fn qis_inference_matches_explicit_definitions() {
         );
     }
     assert_eq!(
-        inferred.circuit.get_meta("dem_raw_measurement_binding"),
+        inferred.circuit().get_meta("dem_raw_measurement_binding"),
         Some(&Attribute::String("probe_correlated_result_ids".into()))
     );
 }
@@ -117,12 +125,12 @@ fn explicit_program_does_not_require_inference_outputs() {
     assert!(build.inference.is_none());
     assert!(
         build
-            .circuit
+            .circuit()
             .get_meta("dem_raw_measurement_binding")
             .is_none()
     );
     assert_eq!(
-        build.circuit.get_meta("dem_schedule_validation"),
+        build.circuit().get_meta("dem_schedule_validation"),
         Some(&Attribute::String("empirical_trace_comparison".into()))
     );
 }
@@ -254,7 +262,7 @@ fn direct_result_ids_skip_correlation_and_preserve_multiple_output_tags() {
         )
         .build()
         .unwrap();
-    let report = build.inference.unwrap();
+    let report = build.inference.as_ref().unwrap();
     assert_eq!(report.raw_measurement_ids, [0, 1, 2]);
     assert_eq!(report.detector_supports, [vec![0, 1]]);
     assert_eq!(report.observable_supports, [vec![0], vec![1], vec![2]]);
@@ -275,7 +283,7 @@ fn direct_result_ids_skip_correlation_and_preserve_multiple_output_tags() {
             }),
         );
     }
-    for (key, expected) in [
+    for (key, mut expected) in [
         (
             "detectors",
             serde_json::json!([
@@ -291,7 +299,10 @@ fn direct_result_ids_skip_correlation_and_preserve_multiple_output_tags() {
             ]),
         ),
     ] {
-        let Some(Attribute::String(json)) = build.circuit.get_meta(key) else {
+        for entry in expected.as_array_mut().unwrap() {
+            entry["reference"] = serde_json::json!(0);
+        }
+        let Some(Attribute::String(json)) = build.circuit().get_meta(key) else {
             panic!("missing {key} metadata");
         };
         assert_eq!(
@@ -301,11 +312,11 @@ fn direct_result_ids_skip_correlation_and_preserve_multiple_output_tags() {
     }
 
     assert_eq!(
-        build.circuit.get_meta("dem_raw_measurement_binding"),
+        build.circuit().get_meta("dem_raw_measurement_binding"),
         Some(&Attribute::String("runtime_result_ids".into()))
     );
     assert_eq!(
-        build.circuit.get_meta("dem_schedule_validation_shots"),
+        build.circuit().get_meta("dem_schedule_validation_shots"),
         Some(&Attribute::String("40".into()))
     );
 }
@@ -421,7 +432,7 @@ fn integer_outputs_bind_raw_ids_by_probe_correlation() {
         .build()
         .unwrap();
     assert_eq!(
-        build.circuit.get_meta("dem_raw_measurement_binding"),
+        build.circuit().get_meta("dem_raw_measurement_binding"),
         Some(&Attribute::String("probe_correlated_result_ids".into()))
     );
 }
@@ -545,5 +556,39 @@ fn hosted_order_validation_is_opt_in_during_native_preparation() {
         } else {
             assert!(result.is_ok(), "{}", result.err().unwrap());
         }
+    }
+}
+
+#[test]
+fn prepared_random_readouts_are_rejected_for_both_roles() {
+    let ir = r#"
+        define i64 @qmain(i64 %shot) #0 {
+            call void @__quantum__qis__reset__body(i64 0)
+            call void @__quantum__qis__h__body(i64 0)
+            %m = call i32 @__quantum__qis__m__body(i64 0, i64 0)
+            ret i64 0
+        }
+        declare void @__quantum__qis__reset__body(i64)
+        declare void @__quantum__qis__h__body(i64)
+        declare i32 @__quantum__qis__m__body(i64, i64)
+        attributes #0 = { "EntryPoint" }
+    "#;
+    for detector in [false, true] {
+        let builder = DetectorErrorModel::builder()
+            .with_program(program(ir))
+            .with_qubits(1)
+            .with_noise(NoiseConfig::new(0.001, 0.01, 0.001, 0.001));
+        let builder = if detector {
+            builder.with_detectors(vec![vec![0]])
+        } else {
+            builder.with_observables(vec![vec![0]])
+        };
+        let role = if detector { "detector" } else { "observable" };
+        assert_eq!(
+            builder.build().err().unwrap().to_string(),
+            format!(
+                "{role} 0 has a random noiseless parity; detectors and observables must be deterministic in the noiseless circuit"
+            )
+        );
     }
 }

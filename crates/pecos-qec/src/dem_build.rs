@@ -7,9 +7,19 @@
 //! The QEC layer owns annotation inference, circuit preparation, fault
 //! propagation and measurement evaluation, without depending on a runtime.
 
+mod audit;
 pub mod bindings;
 mod certificate;
+mod evaluation;
+mod fingerprint;
+mod references;
 pub mod specifications;
+
+pub use audit::{
+    DemBuildAudit, DemInferenceAudit, NoiseResidualSummary, summarize_noise_residuals,
+};
+pub use fingerprint::schema_fingerprint;
+pub use references::{NoiselessReferences, noiseless_references};
 
 pub use certificate::{check_generator_certificate_digest, generator_certificate_digest};
 
@@ -20,7 +30,6 @@ use crate::fault_tolerance::circuit_definitions::{
     CircuitDefinitions, DefinitionError, definitions_from_tick_circuit, tick_circuit_emission,
 };
 use crate::{DemBuilder, DemBuilderError, DetectorErrorModel, NoiseConfig};
-use pecos_decoder_core::obs_mask::ObsMask;
 use pecos_quantum::{Attribute, TickCircuit, pass};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -173,105 +182,117 @@ pub enum DemBuildError {
 /// A DEM and the resolved measurement schema used to construct it.
 pub struct DemBuild {
     pub dem: DetectorErrorModel,
-    pub circuit: TickCircuit,
-    pub definitions: CircuitDefinitions,
-    /// Stable measurement IDs in runtime emission order.
-    pub measurement_ids: Vec<usize>,
     pub inference: Option<DemInferenceReport>,
     /// Detectors first, then observables, with ascending IDs within each role.
     pub definition_origins: Vec<DemDefinitionOrigin>,
-    raw_tag: Option<String>,
+    schema: DemBuildSchema,
+}
+
+/// Finalized together so references, evaluators, audit data and digest agree.
+struct DemBuildSchema {
+    circuit: TickCircuit,
+    definitions: CircuitDefinitions,
+    measurement_ids: Vec<usize>,
+    named_result_measurements: BTreeMap<String, Vec<Option<usize>>>,
+    schema_fingerprint: String,
+    measurement_ledger: Vec<bindings::MeasurementLedgerEntry>,
+}
+
+impl DemBuildSchema {
+    fn new(
+        mut circuit: TickCircuit,
+        mut definitions: CircuitDefinitions,
+        measurement_ids: Vec<usize>,
+        traces: &[bindings::ResultTrace],
+        raw_array_tag: Option<&str>,
+    ) -> Result<Self, DemBuildError> {
+        let references = noiseless_references(&circuit, &definitions)?;
+        let (detectors, observables) = references::write_references(
+            &mut circuit,
+            &mut definitions,
+            &references,
+            &measurement_ids,
+        )?;
+        let index = bindings::ResultTraceIndex::new(&measurement_ids, traces)
+            .map_err(|error| DemBuildError::Configuration(error.to_string()))?;
+        let named_result_measurements = index.named_bindings(raw_array_tag);
+        let schema_fingerprint = schema_fingerprint(
+            &detectors,
+            &observables,
+            &measurement_ids,
+            &named_result_measurements,
+        )?;
+        circuit.set_meta(
+            "dem_schema_fingerprint",
+            Attribute::String(schema_fingerprint.clone()),
+        );
+        Ok(Self {
+            circuit,
+            definitions,
+            measurement_ids,
+            named_result_measurements,
+            schema_fingerprint,
+            measurement_ledger: index.ledger(),
+        })
+    }
 }
 
 impl DemBuild {
-    /// Evaluate a physical measurement record in circuit emission order.
-    /// These are measurement parities; no unknown noiseless references are invented.
-    ///
-    /// # Errors
-    /// Rejects invalid bits and wrong widths. Tracked Paulis are not readout definitions.
-    pub fn evaluate_runtime_record(
-        &self,
-        values: &[u8],
-    ) -> Result<(Vec<u8>, ObsMask), DemBuildError> {
-        if values.len() != self.measurement_ids.len() || values.iter().any(|&bit| bit > 1) {
-            return Err(DemBuildError::Configuration(
-                "measurement record must contain one bit per circuit measurement".into(),
-            ));
-        }
-        let parity = |positions: &[usize]| {
-            positions
+    /// The final circuit, including computed definition references and schema digest.
+    #[must_use]
+    pub fn circuit(&self) -> &TickCircuit {
+        &self.schema.circuit
+    }
+
+    /// Resolved definitions, the source of truth for noiseless references.
+    #[must_use]
+    pub fn definitions(&self) -> &CircuitDefinitions {
+        &self.schema.definitions
+    }
+
+    /// Stable measurement IDs in runtime emission order.
+    #[must_use]
+    pub fn measurement_ids(&self) -> &[usize] {
+        &self.schema.measurement_ids
+    }
+
+    /// A snapshot of the exact references stored in the resolved definitions.
+    #[must_use]
+    pub fn references(&self) -> NoiselessReferences {
+        NoiselessReferences {
+            detectors: self
+                .schema
+                .definitions
+                .detectors
                 .iter()
-                .fold(0, |value, &index| value ^ values[index])
-        };
-        let mut detectors = vec![0; self.dem.num_detectors()];
-        for detector in &self.definitions.detectors {
-            let event = detectors.get_mut(detector.id as usize).ok_or_else(|| {
-                DemBuildError::Configuration("detector IDs must fit the DEM detector vector".into())
-            })?;
-            *event = parity(&detector.measurements);
+                .filter_map(|d| d.reference.map(|reference| (d.id as usize, reference)))
+                .collect(),
+            observables: self
+                .schema
+                .definitions
+                .observables
+                .iter()
+                .filter_map(|d| d.reference.map(|reference| (d.id as usize, reference)))
+                .collect(),
         }
-        let mut observables = ObsMask::new();
-        for observable in &self.definitions.observables {
-            if parity(&observable.measurements) != 0 {
-                observables.set(observable.id as usize);
-            }
-        }
-        Ok((detectors, observables))
     }
 
-    /// Evaluate a record keyed by stable measurement ID.
-    ///
-    /// # Errors
-    /// Rejects missing measurements or invalid bits.
-    pub fn evaluate_measurements(
-        &self,
-        values: &BTreeMap<usize, u8>,
-    ) -> Result<(Vec<u8>, ObsMask), DemBuildError> {
-        let row = self
-            .measurement_ids
-            .iter()
-            .map(|id| {
-                values.get(id).copied().ok_or_else(|| {
-                    DemBuildError::Configuration(format!("missing measurement ID {id}"))
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        self.evaluate_runtime_record(&row)
+    /// Flattened named result slots, with None for unsupported provenance.
+    #[must_use]
+    pub fn named_result_measurements(&self) -> &BTreeMap<String, Vec<Option<usize>>> {
+        &self.schema.named_result_measurements
     }
 
-    /// Evaluate inferred programs' raw result columns, including reordered arrays.
-    ///
-    /// # Errors
-    /// Requires inferred raw-output bindings and correctly sized bit rows.
-    pub fn evaluate_result_columns(
-        &self,
-        columns: &BTreeMap<String, Vec<Vec<u8>>>,
-    ) -> Result<Vec<(Vec<u8>, ObsMask)>, DemBuildError> {
-        let report = self.inference.as_ref().ok_or_else(|| DemBuildError::Configuration("result-column evaluation requires an inferred raw-output binding; use evaluate_measurements for explicit definitions".into()))?;
-        let tag = self
-            .raw_tag
-            .as_ref()
-            .ok_or_else(|| DemBuildError::Configuration("missing raw output tag".into()))?;
-        let rows = columns.get(tag).ok_or_else(|| {
-            DemBuildError::Configuration(format!("missing raw result tag {tag:?}"))
-        })?;
-        rows.iter()
-            .map(|row| {
-                if row.len() != report.raw_measurement_ids.len() {
-                    return Err(DemBuildError::Configuration(
-                        "raw result width does not match inferred binding".into(),
-                    ));
-                }
-                self.evaluate_measurements(
-                    &report
-                        .raw_measurement_ids
-                        .iter()
-                        .copied()
-                        .zip(row.iter().copied())
-                        .collect(),
-                )
-            })
-            .collect()
+    /// Version-2 canonical schema digest, also stored on the circuit.
+    #[must_use]
+    pub fn schema_fingerprint(&self) -> &str {
+        &self.schema.schema_fingerprint
+    }
+
+    /// Measurement identity and result provenance in runtime emission order.
+    #[must_use]
+    pub fn measurement_ledger(&self) -> &[bindings::MeasurementLedgerEntry] {
+        &self.schema.measurement_ledger
     }
 }
 
@@ -670,15 +691,30 @@ impl DemBuildBuilder {
             }
         }
         definition_origins.sort_by_key(|origin| (origin.role != "detector", origin.id));
-        let dem = DemBuilder::try_from_tick_circuit_with_noise_config(&circuit, noise)?;
-        Ok(DemBuild {
-            dem,
+        let traces = report
+            .as_ref()
+            .zip(settings.as_ref())
+            .map(|(report, settings)| bindings::ResultTrace {
+                name: settings.raw_tag.clone(),
+                occurrence: Some(0),
+                width: report.raw_measurement_ids.len(),
+                measurement_ids: Some(report.raw_measurement_ids.clone()),
+            })
+            .into_iter()
+            .collect::<Vec<_>>();
+        let schema = DemBuildSchema::new(
             circuit,
             definitions,
             measurement_ids,
+            &traces,
+            settings.as_ref().map(|s| s.raw_tag.as_str()),
+        )?;
+        let dem = DemBuilder::try_from_tick_circuit_with_noise_config(&schema.circuit, noise)?;
+        Ok(DemBuild {
+            dem,
             inference: report,
             definition_origins,
-            raw_tag: settings.map(|s| s.raw_tag),
+            schema,
         })
     }
 }
@@ -866,3 +902,6 @@ fn resolve_definitions(
     }
     Ok(None)
 }
+
+#[cfg(test)]
+mod tests;

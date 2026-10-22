@@ -464,3 +464,38 @@ def test_abstract_result_refs_reject_labelled_multi_qubit_gates(gate_type, label
     circuit.set_gate_meta(0, 0, "syndrome_round", 0)
     with pytest.raises(ValueError, match="names one measurement but its gate measures 2 qubits"):
         _surface_abstract_measurement_result_refs(circuit)
+
+
+@pytest.mark.parametrize("reference", [0, 1])
+def test_decode_readers_carry_detector_reference(scrambled, monkeypatch, reference):
+    from pecos.qec.surface import decode
+    from pecos.qec.surface.decode import (
+        _surface_native_topology,
+        _surface_patch_cache_key,
+    )
+
+    scrambled.set_meta("detectors", json.dumps([{"id": 0, "meas_ids": [9], "reference": reference}]))
+    monkeypatch.setattr(decode, "_build_surface_tick_circuit_for_native_model", lambda *_args, **_kwargs: scrambled)
+    topology = _surface_native_topology(
+        _surface_patch_cache_key(SurfacePatch.create(distance=3)), 1, "Z", None, "abstract", False
+    )
+    entry = json.loads(topology.detectors_json)[0]
+    assert entry["reference"] == reference
+    assert entry["records"] == [-1]
+
+
+@pytest.mark.parametrize("reference", [0, 1])
+def test_remap_preserves_definition_references_without_projecting_into_descriptors(scrambled, reference):
+    from pecos.qec.surface.decode import _copy_surface_tick_circuit_metadata
+
+    for kind, descriptor_key in (("detectors", "detector_descriptors"), ("observables", "observable_descriptors")):
+        scrambled.set_meta(kind, json.dumps([{"id": 0, "meas_ids": [9], "reference": reference}]))
+        scrambled.set_meta(descriptor_key, '[{"id":0,"records":[-1],"weight":2}]')
+    target = TickCircuit()
+    _copy_surface_tick_circuit_metadata(scrambled, target, measurement_index_remap={0: 100, 1: 200})
+    for kind in ("detectors", "observables"):
+        assert json.loads(target.get_meta(kind)) == [{"id": 0, "meas_ids": [200], "reference": reference}]
+    for key in ("detector_descriptors", "observable_descriptors"):
+        descriptors = json.loads(target.get_meta(key))
+        assert descriptors == [{"id": 0, "meas_ids": [200], "weight": 2}]
+        assert all("reference" not in entry for entry in descriptors)

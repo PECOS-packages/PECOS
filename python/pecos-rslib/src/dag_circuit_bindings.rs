@@ -2450,6 +2450,7 @@ impl PyTickCircuit {
             entry.set_item("id", detector.id)?;
             entry.set_item("measurements", detector.measurements)?;
             entry.set_item("coords", detector.coords)?;
+            entry.set_item("reference", detector.reference)?;
             entry.set_item("label", detector.label)?;
             entry.set_item("fault_sector", detector.fault_sector.as_deref())?;
             detectors.append(entry)?;

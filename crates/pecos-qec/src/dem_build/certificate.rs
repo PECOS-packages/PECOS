@@ -42,7 +42,7 @@ pub fn check_generator_certificate_digest(
     Ok(())
 }
 
-fn hex_digest(bytes: &[u8]) -> String {
+pub(super) fn hex_digest(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut output = String::with_capacity(bytes.len() * 2);
     for &byte in bytes {

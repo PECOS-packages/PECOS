@@ -126,8 +126,9 @@ impl DemSpecSource {
 /// Python checks definition objects, non-boolean, non-negative integer IDs,
 /// coordinate iterability/numeric conversion and metadata mapping types.
 /// Coordinates retain arbitrary length. Python object conversion and metadata
-/// JSON-serializability checks belong at the boundary; `serde_json::Value` cannot
-/// contain non-finite numbers, including with `arbitrary_precision` enabled.
+/// JSON-serializability checks belong at the boundary. With `arbitrary_precision`,
+/// metadata can retain numeric tokens outside finite f64 range; the build
+/// fingerprint rejects these.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DemSpec {
     pub id: Option<usize>,

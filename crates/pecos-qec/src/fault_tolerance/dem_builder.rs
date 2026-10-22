@@ -127,3 +127,5 @@ pub use types::{
 
 #[cfg(test)]
 mod map_only_tests;
+
+pub(crate) use builder::measurement_parity_expression;

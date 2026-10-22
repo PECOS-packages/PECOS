@@ -782,82 +782,19 @@ fn append_merged_key(destination: &mut Vec<u64>, key: &[u64]) {
 /// original left-to-right fold. All omitted words are zero in every branch.
 /// Wide keys using only a comparison prefix must use the full-key fallback.
 #[inline]
-fn merge_sorted_records<K: Copy + Eq, M: Copy>(
+fn merge_sorted_records<K: Eq, M: Copy>(
     parent: &mut StateBuffer<M>,
     branches: &StateBuffer<M>,
-    records: &[(K, usize)],
+    records: impl IntoIterator<Item = (K, usize)>,
     stride: usize,
     fold: impl Fn(M, M) -> M,
 ) {
-    let Some((&(mut key, mut first), rest)) = records.split_first() else {
+    let mut records = records.into_iter();
+    let Some((mut key, mut first)) = records.next() else {
         return;
     };
     let mut mass = branches.masses[first];
-    for &(next_key, index) in rest {
-        if next_key == key {
-            mass = fold(mass, branches.masses[index]);
-        } else {
-            append_merged_key(&mut parent.words, branches.key(first, stride));
-            parent.masses.push(mass);
-            key = next_key;
-            first = index;
-            mass = branches.masses[index];
-        }
-    }
-    append_merged_key(&mut parent.words, branches.key(first, stride));
-    parent.masses.push(mass);
-}
-
-/// A complete key followed by a nine-bit arrival index. Compare the packed
-/// integer directly, then fold equal keys in exactly their original arrival order.
-#[inline]
-fn merge_compact_records<M: Copy>(
-    parent: &mut StateBuffer<M>,
-    branches: &StateBuffer<M>,
-    records: &[u128],
-    stride: usize,
-    fold: impl Fn(M, M) -> M,
-) {
-    let Some((&record, rest)) = records.split_first() else {
-        return;
-    };
-    let mut key = record >> 9;
-    let mut first = (record & 511) as usize;
-    let mut mass = branches.masses[first];
-    for &next in rest {
-        let index = (next & 511) as usize;
-        let next_key = next >> 9;
-        if next_key == key {
-            mass = fold(mass, branches.masses[index]);
-        } else {
-            append_merged_key(&mut parent.words, branches.key(first, stride));
-            parent.masses.push(mass);
-            key = next_key;
-            first = index;
-            mass = branches.masses[index];
-        }
-    }
-    append_merged_key(&mut parent.words, branches.key(first, stride));
-    parent.masses.push(mass);
-}
-
-#[inline]
-fn merge_narrow_records<M: Copy>(
-    parent: &mut StateBuffer<M>,
-    branches: &StateBuffer<M>,
-    records: &[u64],
-    stride: usize,
-    fold: impl Fn(M, M) -> M,
-) {
-    let Some((&record, rest)) = records.split_first() else {
-        return;
-    };
-    let mut key = record >> 9;
-    let mut first = (record & 511) as usize;
-    let mut mass = branches.masses[first];
-    for &next in rest {
-        let index = (next & 511) as usize;
-        let next_key = next >> 9;
+    for (next_key, index) in records {
         if next_key == key {
             mass = fold(mass, branches.masses[index]);
         } else {
@@ -875,7 +812,7 @@ fn merge_narrow_records<M: Copy>(
 // Expansion interleaves records whose parity subsequences can have different
 // amounts of existing order. Sort each independently, then merge full records.
 // The embedded arrival bits remain part of every comparison.
-fn sort_compact_parities(records: &mut [u128], scratch: &mut Vec<u128>) {
+fn sort_parities<T: Ord + Copy>(records: &mut [T], scratch: &mut Vec<T>) {
     scratch.clear();
     scratch.reserve(records.len());
     scratch.extend(records.iter().step_by(2).copied());
@@ -929,38 +866,10 @@ fn compact_parity_sort_matches_full_integer_order() {
                 .collect();
             let mut expected = values.clone();
             expected.sort_unstable();
-            sort_compact_parities(&mut values, &mut scratch);
+            sort_parities(&mut values, &mut scratch);
             assert_eq!(values, expected, "length={count}, pattern={pattern}");
         }
     }
-}
-
-// Expansion interleaves records whose parity subsequences can have different
-// amounts of existing order. Sort each independently, then merge full records.
-// The embedded arrival bits remain part of every comparison.
-fn sort_narrow_parities(records: &mut [u64], scratch: &mut Vec<u64>) {
-    scratch.clear();
-    scratch.reserve(records.len());
-    scratch.extend(records.iter().step_by(2).copied());
-    let middle = scratch.len();
-    scratch.extend(records.iter().skip(1).step_by(2).copied());
-    let (left, right) = scratch.split_at_mut(middle);
-    left.sort_unstable();
-    right.sort_unstable();
-    let (mut i, mut j, mut out) = (0, 0, 0);
-    while i < left.len() && j < right.len() {
-        if left[i] <= right[j] {
-            records[out] = left[i];
-            i += 1;
-        } else {
-            records[out] = right[j];
-            j += 1;
-        }
-        out += 1;
-    }
-    records[out..out + left.len() - i].copy_from_slice(&left[i..]);
-    out += left.len() - i;
-    records[out..].copy_from_slice(&right[j..]);
 }
 
 #[test]
@@ -990,7 +899,7 @@ fn narrow_parity_sort_matches_full_integer_order() {
                 .collect();
             let mut expected = values.clone();
             expected.sort_unstable();
-            sort_narrow_parities(&mut values, &mut scratch);
+            sort_parities(&mut values, &mut scratch);
             assert_eq!(values, expected, "length={count}, pattern={pattern}");
         }
     }
@@ -1109,7 +1018,7 @@ fn lazy_eligible_indices_match_original_pruning() {
 }
 
 #[test]
-fn final_score_group_matches_original_pass() {
+fn final_score_group_matches_reference() {
     for offset in [0usize, 2] {
         for row_count in 0..=17 {
             let rows: Vec<_> = (0..row_count)
@@ -1119,7 +1028,7 @@ fn final_score_group_matches_original_pass() {
                     epoch: u32::try_from(i).unwrap(),
                 })
                 .collect();
-            for pattern in 0..3 {
+            for pattern in 0..4 {
                 let mut values = SuffixValues::new(row_count, None);
                 for (i, p) in values.probabilities.iter_mut().enumerate() {
                     let pair = match pattern {
@@ -1128,6 +1037,11 @@ fn final_score_group_matches_original_pass() {
                             -0.375 * f64::from(u32::try_from(i + 1).unwrap()),
                         ),
                         1 => (-0.0, 0.0),
+                        // Inexact sums: any change in addition order changes bits.
+                        2 => {
+                            let scale = 1.0 + f64::from(u32::try_from(i).unwrap()).sqrt();
+                            (-0.1 * scale, -1e-9 * scale - 3.0)
+                        }
                         _ => (f64::NEG_INFINITY, -1.0),
                     };
                     p.zero = pair.0;
@@ -1162,7 +1076,7 @@ fn final_score_group_matches_original_pass() {
                             let mut actual = source.clone();
                             let mut expected = source.clone();
                             score_candidates(&mut actual, alpha, compatibility, &observed);
-                            score_candidates_original_pass(
+                            score_candidates_reference(
                                 &mut expected,
                                 alpha,
                                 compatibility,
@@ -1257,21 +1171,26 @@ impl<M: Copy> FrontierScratch<M> {
     fn merge(&mut self, fold: impl Fn(M, M) -> M) {
         self.sort_merge_indices();
         self.parent.clear(self.stride);
-        if self.use_compact_merge_records && self.use_narrow_merge_records {
-            merge_narrow_records(
+        // Packed records hold a complete key above a nine-bit arrival index.
+        if self.use_narrow_merge_records {
+            merge_sorted_records(
                 &mut self.parent,
                 &self.branches,
-                &self.narrow_merge_records,
+                self.narrow_merge_records
+                    .iter()
+                    .map(|&record| (record >> 9, (record & 511) as usize)),
                 self.stride,
                 fold,
             );
             return;
         }
         if self.use_compact_merge_records {
-            merge_compact_records(
+            merge_sorted_records(
                 &mut self.parent,
                 &self.branches,
-                &self.compact_merge_records,
+                self.compact_merge_records
+                    .iter()
+                    .map(|&record| (record >> 9, (record & 511) as usize)),
                 self.stride,
                 fold,
             );
@@ -1287,28 +1206,28 @@ impl<M: Copy> FrontierScratch<M> {
             0 | 1 => merge_sorted_records(
                 &mut self.parent,
                 &self.branches,
-                &self.merge_keys_one,
+                self.merge_keys_one.iter().copied(),
                 self.stride,
                 fold,
             ),
             2 => merge_sorted_records(
                 &mut self.parent,
                 &self.branches,
-                &self.merge_keys_two,
+                self.merge_keys_two.iter().copied(),
                 self.stride,
                 fold,
             ),
             3 => merge_sorted_records(
                 &mut self.parent,
                 &self.branches,
-                &self.merge_keys_three,
+                self.merge_keys_three.iter().copied(),
                 self.stride,
                 fold,
             ),
             4 => merge_sorted_records(
                 &mut self.parent,
                 &self.branches,
-                &self.merge_keys,
+                self.merge_keys.iter().copied(),
                 self.stride,
                 fold,
             ),
@@ -1469,7 +1388,7 @@ impl<M: Copy> FrontierScratch<M> {
                             self.narrow_merge_records.push((key << 9) | index as u64);
                         }
                     }
-                    sort_narrow_parities(
+                    sort_parities(
                         &mut self.narrow_merge_records,
                         &mut self.narrow_sort_scratch,
                     );
@@ -1532,7 +1451,7 @@ impl<M: Copy> FrontierScratch<M> {
                 }
             }
             if eligible {
-                sort_compact_parities(
+                sort_parities(
                     &mut self.compact_merge_records,
                     &mut self.compact_sort_scratch,
                 );
@@ -1540,19 +1459,11 @@ impl<M: Copy> FrontierScratch<M> {
                 #[cfg(any(test, feature = "runtime-checks"))]
                 {
                     self.indices.clear();
-                    if self.use_narrow_merge_records {
-                        self.indices.extend(
-                            self.narrow_merge_records
-                                .iter()
-                                .map(|&v| (v & 511) as usize),
-                        );
-                    } else {
-                        self.indices.extend(
-                            self.compact_merge_records
-                                .iter()
-                                .map(|&v| (v & 511) as usize),
-                        );
-                    }
+                    self.indices.extend(
+                        self.compact_merge_records
+                            .iter()
+                            .map(|&v| (v & 511) as usize),
+                    );
                 }
                 return;
             }
@@ -3823,12 +3734,44 @@ fn score_int_metric(log_mass: i64, parity: i64, alpha_int: i64, scale: i32) -> i
     )
 }
 
+/// One suffix row as seen by every candidate: its transposed detector word,
+/// bit mask, and the probability selected for a candidate bit of zero or one.
+#[derive(Clone, Copy)]
+struct ScoreRow<'a> {
+    candidates: &'a [u64],
+    mask: u64,
+    zero: f64,
+    one: f64,
+}
+
+/// Add `N` rows to each candidate's sum in row order, then store
+/// `finalize(candidate, sum)`.
+#[inline]
+fn add_score_rows<const N: usize>(
+    scores: &mut [f64],
+    rows: [ScoreRow<'_>; N],
+    finalize: impl Fn(usize, f64) -> f64,
+) {
+    let count = scores.len();
+    let rows = rows.map(|row| ScoreRow {
+        candidates: &row.candidates[..count],
+        ..row
+    });
+    for (index, accumulator) in scores.iter_mut().enumerate() {
+        let mut sum = *accumulator;
+        for row in &rows {
+            sum += if row.candidates[index] & row.mask != 0 {
+                row.one
+            } else {
+                row.zero
+            };
+        }
+        *accumulator = finalize(index, sum);
+    }
+}
+
 /// Rows must remain in ascending detector order: each candidate performs the
 /// original left-to-right sum. Only the independent candidates may vectorize.
-#[allow(
-    clippy::chunks_exact_to_as_chunks,
-    reason = "Preserve the validated scoring loop shape and addition order"
-)]
 fn score_candidates(
     frontier: &mut FrontierScratch<f64>,
     score_alpha: f64,
@@ -3861,8 +3804,8 @@ fn score_candidates(
     );
     let count = frontier.parent.masses.len();
     frontier.scores.resize(count, neutral);
-    // Keep the same four ordered additions for each candidate, while loading
-    // and storing its accumulator only once for each consecutive group of four rows.
+    // Load and store each candidate's accumulator once per group of up to four
+    // rows. Every candidate keeps exactly the same ordered additions.
     let row_values = |row: &SuffixRow| {
         let probabilities = &suffix_compatibility.values.probabilities[row.epoch as usize];
         let word = row.word as usize;
@@ -3873,98 +3816,32 @@ fn score_candidates(
             (probabilities.one, probabilities.zero)
         };
         let offset = word - first_word;
-        (
-            &frontier.transposed[offset * count..(offset + 1) * count],
+        ScoreRow {
+            candidates: &frontier.transposed[offset * count..(offset + 1) * count],
             mask,
             zero,
             one,
-        )
+        }
     };
     // Leave one final group of one to four rows for score finalization.
-    // Each candidate keeps exactly the same ordered additions, then multiply/add.
     let prefix_len = ((rows.len() - 1) / 4) * 4;
     let (prefix, final_rows) = rows.split_at(prefix_len);
-    let mut pairs = prefix.chunks_exact(4);
-    for pair in &mut pairs {
-        let (a, mask_a, zero_a, one_a) = row_values(&pair[0]);
-        let (b, mask_b, zero_b, one_b) = row_values(&pair[1]);
-        let (c, mask_c, zero_c, one_c) = row_values(&pair[2]);
-        let (d, mask_d, zero_d, one_d) = row_values(&pair[3]);
-        for ((((accumulator, &a), &b), &c), &d) in
-            frontier.scores.iter_mut().zip(a).zip(b).zip(c).zip(d)
-        {
-            *accumulator += if a & mask_a != 0 { one_a } else { zero_a };
-            *accumulator += if b & mask_b != 0 { one_b } else { zero_b };
-            *accumulator += if c & mask_c != 0 { one_c } else { zero_c };
-            *accumulator += if d & mask_d != 0 { one_d } else { zero_d };
-        }
+    let (groups, _) = prefix.as_chunks::<4>();
+    for group in groups {
+        add_score_rows(
+            &mut frontier.scores,
+            group.each_ref().map(row_values),
+            |_, sum| sum,
+        );
     }
-    match final_rows.len() {
-        1 => {
-            let (a, mask_a, zero_a, one_a) = row_values(&final_rows[0]);
-            for ((accumulator, &log_mass), &a) in frontier
-                .scores
-                .iter_mut()
-                .zip(&frontier.parent.masses)
-                .zip(a)
-            {
-                *accumulator += if a & mask_a != 0 { one_a } else { zero_a };
-                *accumulator = log_mass + score_alpha * *accumulator;
-            }
-        }
-        2 => {
-            let (a, mask_a, zero_a, one_a) = row_values(&final_rows[0]);
-            let (b, mask_b, zero_b, one_b) = row_values(&final_rows[1]);
-            for (((accumulator, &log_mass), &a), &b) in frontier
-                .scores
-                .iter_mut()
-                .zip(&frontier.parent.masses)
-                .zip(a)
-                .zip(b)
-            {
-                *accumulator += if a & mask_a != 0 { one_a } else { zero_a };
-                *accumulator += if b & mask_b != 0 { one_b } else { zero_b };
-                *accumulator = log_mass + score_alpha * *accumulator;
-            }
-        }
-        3 => {
-            let (a, mask_a, zero_a, one_a) = row_values(&final_rows[0]);
-            let (b, mask_b, zero_b, one_b) = row_values(&final_rows[1]);
-            let (c, mask_c, zero_c, one_c) = row_values(&final_rows[2]);
-            for ((((accumulator, &log_mass), &a), &b), &c) in frontier
-                .scores
-                .iter_mut()
-                .zip(&frontier.parent.masses)
-                .zip(a)
-                .zip(b)
-                .zip(c)
-            {
-                *accumulator += if a & mask_a != 0 { one_a } else { zero_a };
-                *accumulator += if b & mask_b != 0 { one_b } else { zero_b };
-                *accumulator += if c & mask_c != 0 { one_c } else { zero_c };
-                *accumulator = log_mass + score_alpha * *accumulator;
-            }
-        }
-        4 => {
-            let (a, mask_a, zero_a, one_a) = row_values(&final_rows[0]);
-            let (b, mask_b, zero_b, one_b) = row_values(&final_rows[1]);
-            let (c, mask_c, zero_c, one_c) = row_values(&final_rows[2]);
-            let (d, mask_d, zero_d, one_d) = row_values(&final_rows[3]);
-            for (((((accumulator, &log_mass), &a), &b), &c), &d) in frontier
-                .scores
-                .iter_mut()
-                .zip(&frontier.parent.masses)
-                .zip(a)
-                .zip(b)
-                .zip(c)
-                .zip(d)
-            {
-                *accumulator += if a & mask_a != 0 { one_a } else { zero_a };
-                *accumulator += if b & mask_b != 0 { one_b } else { zero_b };
-                *accumulator += if c & mask_c != 0 { one_c } else { zero_c };
-                *accumulator += if d & mask_d != 0 { one_d } else { zero_d };
-                *accumulator = log_mass + score_alpha * *accumulator;
-            }
+    let masses = &frontier.parent.masses[..count];
+    let finalize = |index: usize, sum: f64| masses[index] + score_alpha * sum;
+    match final_rows {
+        [a] => add_score_rows(&mut frontier.scores, [row_values(a)], finalize),
+        [a, b] => add_score_rows(&mut frontier.scores, [a, b].map(row_values), finalize),
+        [a, b, c] => add_score_rows(&mut frontier.scores, [a, b, c].map(row_values), finalize),
+        [a, b, c, d] => {
+            add_score_rows(&mut frontier.scores, [a, b, c, d].map(row_values), finalize);
         }
         _ => unreachable!("nonempty final scoring group"),
     }
@@ -3995,12 +3872,9 @@ fn score_candidates(
     }
 }
 
+/// The scorer as it was before grouping, kept verbatim as the test oracle.
 #[cfg(test)]
-#[allow(
-    clippy::chunks_exact_to_as_chunks,
-    reason = "Keep the original scoring pass as the test oracle"
-)]
-fn score_candidates_original_pass(
+fn score_candidates_reference(
     frontier: &mut FrontierScratch<f64>,
     score_alpha: f64,
     suffix_compatibility: SuffixCompatibility<'_>,
@@ -4032,95 +3906,21 @@ fn score_candidates_original_pass(
     );
     let count = frontier.parent.masses.len();
     frontier.scores.resize(count, neutral);
-    // Keep the same four ordered additions for each candidate, while loading
-    // and storing its accumulator only once for each consecutive group of four rows.
-    let row_values = |row: &SuffixRow| {
+    for row in suffix_compatibility.rows {
         let probabilities = &suffix_compatibility.values.probabilities[row.epoch as usize];
+        let (zero, one) = (probabilities.zero, probabilities.one);
         let word = row.word as usize;
+        let observed_word = observed[word];
         let mask = 1_u64 << row.bit;
-        let (zero, one) = if observed[word] & mask == 0 {
-            (probabilities.zero, probabilities.one)
-        } else {
-            (probabilities.one, probabilities.zero)
-        };
-        let offset = word - first_word;
-        (
-            &frontier.transposed[offset * count..(offset + 1) * count],
-            mask,
-            zero,
-            one,
-        )
-    };
-    let mut pairs = suffix_compatibility.rows.chunks_exact(4);
-    for pair in &mut pairs {
-        let (a, mask_a, zero_a, one_a) = row_values(&pair[0]);
-        let (b, mask_b, zero_b, one_b) = row_values(&pair[1]);
-        let (c, mask_c, zero_c, one_c) = row_values(&pair[2]);
-        let (d, mask_d, zero_d, one_d) = row_values(&pair[3]);
-        for ((((accumulator, &a), &b), &c), &d) in
-            frontier.scores.iter_mut().zip(a).zip(b).zip(c).zip(d)
-        {
-            *accumulator += if a & mask_a != 0 { one_a } else { zero_a };
-            *accumulator += if b & mask_b != 0 { one_b } else { zero_b };
-            *accumulator += if c & mask_c != 0 { one_c } else { zero_c };
-            *accumulator += if d & mask_d != 0 { one_d } else { zero_d };
-        }
-    }
-    // A remainder of two or three rows still benefits from one paired pass.
-    let mut tail_pairs = pairs.remainder().chunks_exact(2);
-    for pair in &mut tail_pairs {
-        let (a, mask_a, zero_a, one_a) = row_values(&pair[0]);
-        let (b, mask_b, zero_b, one_b) = row_values(&pair[1]);
-        for ((accumulator, &a), &b) in frontier.scores.iter_mut().zip(a).zip(b) {
-            *accumulator += if a & mask_a != 0 { one_a } else { zero_a };
-            *accumulator += if b & mask_b != 0 { one_b } else { zero_b };
-        }
-    }
-    for row in tail_pairs.remainder() {
-        let probabilities = &suffix_compatibility.values.probabilities[row.epoch as usize];
-        let word = row.word as usize;
-        let mask = 1_u64 << row.bit;
-        // The observation is common to the entire row. Swap the selected
-        // values once; each candidate keeps the identical probability bits.
-        let (zero, one) = if observed[word] & mask == 0 {
-            (probabilities.zero, probabilities.one)
-        } else {
-            (probabilities.one, probabilities.zero)
-        };
         let offset = word - first_word;
         let candidates = &frontier.transposed[offset * count..(offset + 1) * count];
         for (accumulator, &candidate) in frontier.scores.iter_mut().zip(candidates) {
-            let mismatch = candidate & mask != 0;
+            let mismatch = (candidate ^ observed_word) & mask != 0;
             *accumulator += if mismatch { one } else { zero };
         }
     }
     for (score, &log_mass) in frontier.scores.iter_mut().zip(&frontier.parent.masses) {
         *score = log_mass + score_alpha * *score;
-    }
-    #[cfg(any(test, feature = "runtime-checks"))]
-    {
-        // Independent original scalar XOR selection and left fold, reading
-        // physical parent keys rather than the transposed candidate buffer.
-        for (index, &mass) in frontier.parent.masses.iter().enumerate() {
-            let key = frontier.parent.key(index, frontier.stride);
-            let parity: f64 = suffix_compatibility
-                .rows
-                .iter()
-                .map(|row| {
-                    let pair = &suffix_compatibility.values.probabilities[row.epoch as usize];
-                    let original = (key[row.word as usize - frontier.detector_word_offset]
-                        ^ observed[row.word as usize])
-                        & (1_u64 << row.bit);
-                    if original == 0 { pair.zero } else { pair.one }
-                })
-                .sum();
-            let expected = mass + score_alpha * parity;
-            assert_eq!(
-                frontier.scores[index].to_bits(),
-                expected.to_bits(),
-                "observed-row scalar score bits"
-            );
-        }
     }
 }
 

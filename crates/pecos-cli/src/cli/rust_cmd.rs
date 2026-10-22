@@ -554,6 +554,27 @@ fn run_test(profile: super::BuildProfile, include_ffi: bool) -> Result<()> {
         ));
     }
 
+    // The trellis scalar-reference oracles compile into the library only with
+    // runtime-checks, so this run applies them to the Frontier integration
+    // tests and the bitwise snapshots as well as the trellis unit tests.
+    println!("Testing Frontier with trellis runtime checks...");
+    let mut frontier_args: Vec<&str> = vec![
+        "test",
+        "-p",
+        "pecos-trellis",
+        "-p",
+        "pecos-frontier",
+        "-p",
+        "pecos-frontier-wasm",
+        "--features=pecos-trellis/runtime-checks",
+    ];
+    frontier_args.extend(profile_args);
+    if !run(&frontier_args) {
+        return Err(Error::Config(
+            "cargo test (Frontier with trellis runtime-checks) failed".to_string(),
+        ));
+    }
+
     // Test cuQuantum if SDK is available (requires both CUDA and cuQuantum)
     if probe_cuquantum_availability() {
         println!("cuQuantum runtime available - testing pecos-cuquantum");

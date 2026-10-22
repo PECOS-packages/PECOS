@@ -483,10 +483,13 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   removed in favour of `try_from_radians` / `try_from_turns` (which return
   `NonFiniteAngleError`) and the compile-time `radians!` / `turns!` macros.
   `from_turn_ratio` rejects ratios above one full turn at every width.
-- ByteMessage gate payloads encode angles as exact `u64` fractions (protocol
-  version 5); scheduled batches and events use versions 6 and 7. Older versions
-  are rejected with an error naming the expected version. A `Custom` gate with
-  non-angle parameters is rejected by `Gate::validate`.
+- Ordinary ByteMessage batches now use version 8 with an 8-byte gate header
+  and a `u32` qubit count. Version 5 batches used a one-byte count and are rejected;
+  they must be re-encoded, not patched by changing only the version byte.
+- ByteMessage gate payloads encode angles as exact `u64` fractions (introduced
+  in version 5); scheduled batches and events retain versions 6 and 7. Older
+  versions are rejected with an error naming the expected version. A `Custom`
+  gate with non-angle parameters is rejected by `Gate::validate`.
 - Every simulator has a fixed qubit count: `StateVectorEngine` no longer grows,
   `StateVectorSimulator::create_with_rng` is removed, and `QuantumEngineBuilder`
   has a required `num_qubits()` accessor. `SimBuilder` and the `MonteCarloEngine`
@@ -533,6 +536,11 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   with ties away from zero on the signed principal representative.
 
 ### Rust bug fixes
+
+- Gate commands with more than 255 qubits no longer panic. PHIR-JSON broadcasts
+  use one command per operation, retaining individual preparation/measurement
+  commands. The C API no longer rejects more than 255 operands or 127 pairs,
+  and the Selene adapter no longer rejects crosstalk payloads above 255 qubits.
 
 - Native PHIR-JSON loading, the Rust interpreter, shared input validation and
   JSON-to-module conversion use the same declaration-size decoder. Negative,

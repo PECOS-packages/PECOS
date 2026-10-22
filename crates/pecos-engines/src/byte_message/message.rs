@@ -188,6 +188,9 @@ impl ByteMessage {
                 | super::protocol::SCHEDULED_EVENT_VERSION => {
                     "scheduled versions 6 and 7 need the scheduled-idle path, not an ordinary batch consumer"
                 }
+                5 => {
+                    "version 5 batches used a one-byte qubit count; rebuild them with the current encoder (changing only the version byte is incorrect)"
+                }
                 1 | 3 | 4 => {
                     "rebuild legacy f64-angle batches with the current encoder for the ordinary or scheduled path"
                 }
@@ -386,15 +389,17 @@ impl ByteMessage {
     fn validate_qubit_indices_size(
         payload: &[u8],
         qubits_offset: usize,
-        qubits_size: usize,
-    ) -> Result<(), PecosError> {
-        let minimum_size = qubits_offset + qubits_size;
-        if payload.len() < minimum_size {
-            return Err(PecosError::Input(
-                "Quantum gate message payload too small for qubit indices".to_string(),
-            ));
-        }
-        Ok(())
+        num_qubits: usize,
+    ) -> Result<usize, PecosError> {
+        num_qubits
+            .checked_mul(size_of::<u32>())
+            .and_then(|size| qubits_offset.checked_add(size))
+            .filter(|&end| end <= payload.len())
+            .ok_or_else(|| {
+                PecosError::Input(
+                    "Quantum gate message payload too small for qubit indices".to_string(),
+                )
+            })
     }
 
     /// Parse qubit indices from the payload and convert to `QubitIds` directly
@@ -524,15 +529,12 @@ impl ByteMessage {
         }
 
         // Calculate sizes
-        let qubits_byte_size = num_qubits * size_of::<u32>();
         let qubits_offset = size_of::<GateHeader>();
-
-        Self::validate_qubit_indices_size(payload, qubits_offset, qubits_byte_size)?;
+        let params_offset = Self::validate_qubit_indices_size(payload, qubits_offset, num_qubits)?;
 
         // Parse qubit indices directly to QubitId
         let qubits = Self::parse_qubit_indices(payload, qubits_offset, num_qubits);
 
-        let params_offset = qubits_offset + qubits_byte_size;
         let required_params_size = gate_type.classical_arity() * size_of::<f64>();
         let param_count =
             Self::validate_params_size(payload, params_offset, required_params_size, gate_type)?;
@@ -753,8 +755,43 @@ mod tests {
         bytes[4] = 255;
         assert_input(
             ByteMessage::new(&bytes).quantum_ops(),
-            "Invalid ordinary batch version 255; expected version 5; encode an ordinary batch with the current ByteMessage builder",
+            "Invalid ordinary batch version 255; expected version 8; encode an ordinary batch with the current ByteMessage builder",
         );
+    }
+
+    #[test]
+    fn version_five_requires_reencoding() {
+        // Version 5 H on qubit 0: four-byte gate header and one qubit index.
+        let mut bytes = vec![
+            83, 67, 69, 80, 5, 0, 0, 0, 1, 0, 0, 0, 32, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0,
+        ];
+        bytes.extend_from_slice(&[GateType::H as u8, 1, 0, 0]);
+        bytes.extend_from_slice(&0_u32.to_le_bytes());
+        assert_input(
+            ByteMessage::new(&bytes).quantum_ops(),
+            "Invalid ordinary batch version 5; expected version 8; version 5 batches used a one-byte qubit count; rebuild them with the current encoder (changing only the version byte is incorrect)",
+        );
+        let dump = crate::byte_message::debug::dump_batch_raw(&bytes);
+        assert!(dump.contains("one-byte qubit count"));
+        assert!(dump.contains("rebuild them with the current encoder"));
+        assert!(dump.contains("changing only the version byte is incorrect"));
+    }
+
+    #[test]
+    fn truncated_qubit_lists_return_input_errors() {
+        for count in [2, 300, u32::MAX / 4, u32::MAX] {
+            let mut bytes = ByteMessage::builder().h(&[0]).build().into_bytes();
+            let count_offset = size_of::<BatchHeader>()
+                + size_of::<MessageHeader>()
+                + std::mem::offset_of!(GateHeader, num_qubits);
+            patch_word(&mut bytes, count_offset, count);
+            assert_input(
+                ByteMessage::new(&bytes).quantum_ops(),
+                "Quantum gate message payload too small for qubit indices",
+            );
+            let dump = crate::byte_message::debug::dump_batch_raw(&bytes);
+            assert!(dump.contains(&format!("declares {count} qubits")));
+        }
     }
 
     #[test]
@@ -780,7 +817,11 @@ mod tests {
     #[test]
     fn strict_later_header() {
         let mut bytes = ByteMessage::builder().h(&[0]).x(&[1]).build().into_bytes();
-        bytes.truncate(36);
+        let second_header = size_of::<BatchHeader>()
+            + size_of::<MessageHeader>()
+            + size_of::<GateHeader>()
+            + size_of::<u32>();
+        bytes.truncate(second_header + size_of::<MessageHeader>() - 1);
         let message = patched_message(bytes);
         assert_input(
             message.quantum_ops(),
@@ -801,7 +842,14 @@ mod tests {
     #[test]
     fn strict_payload_bounds() {
         let mut bytes = ByteMessage::builder().h(&[0]).build().into_bytes();
-        patch_word(&mut bytes, 20, 9);
+        let payload_size_offset =
+            size_of::<BatchHeader>() + std::mem::offset_of!(MessageHeader, payload_size);
+        let oversized_payload = size_of::<GateHeader>() + size_of::<u32>() + 1;
+        patch_word(
+            &mut bytes,
+            payload_size_offset,
+            u32::try_from(oversized_payload).unwrap(),
+        );
         assert_input(
             ByteMessage::new(&bytes).quantum_ops(),
             "Message 0: payload extends beyond buffer",

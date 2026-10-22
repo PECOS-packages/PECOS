@@ -216,11 +216,14 @@ typedef struct PecosEngine PecosEngine; /* opaque */
 /* Returns NULL for unknown engine types, unaddressable qubit counts, or
  * unrepresentable simulator allocations; reduce num_qubits on size errors. */
 PecosEngine *pecos_engine_create(const char *engine_type, size_t num_qubits, uint64_t seed);
-/* Input is a ByteMessage version-5 batch, normally from pecos_circuit_build.
- * Gate payload: 4-byte header, u32 LE qubit indices, leading u64 LE Angle64
- * fractions (fraction / 2^64 turns), then non-angle f64 LE parameters.
+/* Input is a ByteMessage version-8 batch, normally from pecos_circuit_build.
+ * Gate payload: 8-byte header (u8 gate type, u8 has-parameters, u16 reserved,
+ * u32 qubit count), aligned to 4 bytes with no implicit padding; then u32 LE
+ * qubit indices, leading u64 LE Angle64 fractions (fraction / 2^64 turns),
+ * then non-angle f64 LE parameters.
  * Gate type determines angle count; Custom treats every word as an angle.
- * Version-1 f64-radian batches are rejected; rebuild them, do not relabel bytes.
+ * Version-1 f64-radian and version-5 one-byte-count batches are rejected;
+ * rebuild them with the current encoder, do not relabel the version byte.
  * The circuit-building rotation API below still accepts finite f64 radians. */
 int32_t pecos_engine_process(PecosEngine *engine, const uint8_t *input, size_t input_len,
                              uint8_t **output, size_t *output_len);
@@ -231,9 +234,8 @@ void pecos_free_bytes(uint8_t *ptr, size_t len);
 /* -- Circuit builder --
  * All gate appenders return 0 on success, -1 if the qubit/pair count
  * exceeds the slice size limit, the batch exceeds its u32 byte/message limits,
- * a qubit index exceeds UINT32_MAX, or a gate
- * has more than 255 operands (127 pairs). MZ emits individual gates and
- * has no 255-operand limit. Rejected calls leave the circuit unchanged. */
+ * or a qubit index exceeds UINT32_MAX.
+ * Rejected calls leave the circuit unchanged. */
 typedef struct PecosCircuitBuilder PecosCircuitBuilder; /* opaque */
 PecosCircuitBuilder *pecos_circuit_new(void);
 int32_t pecos_circuit_h(PecosCircuitBuilder *c, const size_t *qubits, size_t n);

@@ -31,7 +31,7 @@ use smallvec::SmallVec;
 ///
 /// This channel is responsible for ALL leakage-related effects:
 ///
-/// 1. **`BeforeGate`**: Skip gates if any involved qubit is leaked
+/// 1. **`BeforeGate`**: Skip the operand groups that contain a leaked qubit
 /// 2. **`AfterGate`**: For two-qubit gates where one qubit is leaked,
 ///    apply depolarizing noise to the non-leaked partner
 /// 3. **`BeforeMeasurement`**: Leaked qubits produce random results
@@ -143,7 +143,7 @@ impl NoiseChannel for LeakageChannel {
 }
 
 impl LeakageChannel {
-    /// Handle `BeforeGate` - skip the gate if any qubit is leaked.
+    /// Handle `BeforeGate` - skip operand groups containing leaked qubits.
     ///
     /// Note: Measurements and preparations are NOT skipped for leaked qubits.
     /// Measurements have special handling in the runner to return appropriate
@@ -158,10 +158,16 @@ impl LeakageChannel {
             return NoiseResponse::None;
         }
 
-        // If any qubit is leaked, skip the gate entirely
+        // If any qubit is leaked, skip its affected operand groups
         // Uses optimized any_leaked which has O(1) fast path when leaked_count == 0
         if ctx.any_leaked(qubits) {
-            return NoiseResponse::SkipGate;
+            return NoiseResponse::SkipGate(
+                qubits
+                    .iter()
+                    .copied()
+                    .filter(|&q| ctx.is_leaked(q))
+                    .collect(),
+            );
         }
         NoiseResponse::None
     }
@@ -169,8 +175,10 @@ impl LeakageChannel {
     /// Handle `AfterGate` - for two-qubit gates where one qubit is leaked,
     /// apply depolarizing noise to the non-leaked partner.
     ///
-    /// Note: This only triggers if the gate wasn't skipped (i.e., if leakage
-    /// happened during the gate itself, not before).
+    /// Uses leakage present when the after-gate event runs, normally on pairs
+    /// suppressed before the gate. Decomposition children can also leak a qubit
+    /// before the parent's after-gate event. State changes returned by channels
+    /// during this event are applied only after all channels have run.
     fn handle_after_gate(
         gate_type: GateType,
         qubits: &[pecos_core::QubitId],
@@ -182,27 +190,21 @@ impl LeakageChannel {
             return NoiseResponse::None;
         }
 
-        // Check if any involved qubit is leaked
-        let leaked: Vec<_> = qubits.iter().filter(|&&q| ctx.is_leaked(q)).collect();
-
-        if leaked.is_empty() {
-            return NoiseResponse::None;
-        }
-
-        // For two-qubit gates, if one qubit is leaked, apply depolarizing to the other
-        if gate_type.is_two_qubit() && qubits.len() >= 2 {
+        if gate_type.is_two_qubit() {
             let mut gates = SmallVec::new();
 
-            for &qubit in qubits {
-                if !ctx.is_leaked(qubit) {
-                    // Apply random Pauli to non-leaked partner
-                    let pauli = match rng.random_range(0..3) {
-                        0 => GateType::X,
-                        1 => GateType::Y,
-                        _ => GateType::Z,
-                    };
-                    gates.push(GateCommand::new(pauli, smallvec::smallvec![qubit]));
-                }
+            for &[q0, q1] in qubits.as_chunks::<2>().0 {
+                let partner = match (ctx.is_leaked(q0), ctx.is_leaked(q1)) {
+                    (true, false) => q1,
+                    (false, true) => q0,
+                    _ => continue,
+                };
+                let pauli = match rng.random_range(0..3) {
+                    0 => GateType::X,
+                    1 => GateType::Y,
+                    _ => GateType::Z,
+                };
+                gates.push(GateCommand::new(pauli, smallvec::smallvec![partner]));
             }
 
             if !gates.is_empty() {
@@ -244,10 +246,49 @@ mod tests {
     use pecos_core::QubitId;
 
     #[test]
+    fn test_batched_partner_noise_is_pair_local() {
+        let qubits = [QubitId(0), QubitId(1), QubitId(2), QubitId(3)];
+        for (leaked, partners) in [
+            (vec![0], vec![QubitId(1)]),
+            (vec![0, 1], vec![]),
+            (vec![0, 3], vec![QubitId(1), QubitId(2)]),
+            (vec![], vec![]),
+        ] {
+            let mut ctx = NoiseContext::new();
+            for q in leaked {
+                ctx.mark_leaked(QubitId(q));
+            }
+            let mut rng = PecosRng::seed_from_u64(42);
+            let mut expected_rng = rng.clone();
+            let expected_gates: Vec<_> = partners
+                .iter()
+                .map(|&q| {
+                    let pauli = match expected_rng.random_range(0..3) {
+                        0 => GateType::X,
+                        1 => GateType::Y,
+                        _ => GateType::Z,
+                    };
+                    GateCommand::new(pauli, smallvec::smallvec![q])
+                })
+                .collect();
+            let response = LeakageChannel::handle_after_gate(GateType::CX, &qubits, &ctx, &mut rng);
+            if partners.is_empty() {
+                assert!(response.is_none());
+            } else {
+                let NoiseResponse::InjectGates(gates) = response else {
+                    panic!("expected partner Paulis");
+                };
+                assert_eq!(gates.as_slice(), expected_gates.as_slice());
+            }
+            assert_eq!(rng.random::<u64>(), expected_rng.random::<u64>());
+        }
+    }
+
+    #[test]
     fn test_skip_gate_for_leaked_qubit() {
         let channel = LeakageChannel::new();
 
-        let qubits = [QubitId(0)];
+        let qubits = [QubitId(0), QubitId(1)];
         let angles = [];
         let event = NoiseEvent::BeforeGate {
             gate_type: GateType::H,
@@ -262,7 +303,7 @@ mod tests {
         let mut rng = PecosRng::seed_from_u64(42);
         let response = channel.apply(&event, &mut ctx, &mut rng);
 
-        assert!(response.should_skip_gate());
+        assert_eq!(response.skipped_qubits().as_slice(), &[QubitId(0)]);
     }
 
     #[test]
@@ -285,7 +326,7 @@ mod tests {
         let response = channel.apply(&event, &mut ctx, &mut rng);
 
         // Should skip even if only one qubit is leaked
-        assert!(response.should_skip_gate());
+        assert_eq!(response.skipped_qubits().as_slice(), &[QubitId(1)]);
     }
 
     #[test]
@@ -328,7 +369,7 @@ mod tests {
         let response = channel.apply(&event, &mut ctx, &mut rng);
 
         // Measurements should NOT be skipped - they have special handling
-        assert!(!response.should_skip_gate());
+        assert!(response.skipped_qubits().is_empty());
     }
 
     #[test]

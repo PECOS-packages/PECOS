@@ -636,12 +636,18 @@ impl NoiseChannel for TwoQubitChannel {
 }
 
 impl TwoQubitChannel {
-    /// Handle `BeforeGate` - skip if any qubit is leaked.
+    /// Handle `BeforeGate` - skip operand groups containing leaked qubits.
     fn handle_before_gate(qubits: &[pecos_core::QubitId], ctx: &NoiseContext) -> NoiseResponse {
-        // If any qubit is leaked, skip the gate
+        // If any qubit is leaked, skip its affected operand groups
         // Uses optimized any_leaked which has O(1) fast path when leaked_count == 0
         if ctx.any_leaked(qubits) {
-            return NoiseResponse::SkipGate;
+            return NoiseResponse::SkipGate(
+                qubits
+                    .iter()
+                    .copied()
+                    .filter(|&q| ctx.is_leaked(q))
+                    .collect(),
+            );
         }
         NoiseResponse::None
     }
@@ -1064,7 +1070,7 @@ mod tests {
     fn test_skip_gate_for_leaked_qubit() {
         let channel = TwoQubitChannel::depolarizing(1.0).unwrap();
 
-        let qubits = [QubitId(0), QubitId(1)];
+        let qubits = [QubitId(0), QubitId(1), QubitId(2), QubitId(3)];
         let angles = [];
         let event = NoiseEvent::BeforeGate {
             gate_type: GateType::CX,
@@ -1079,7 +1085,7 @@ mod tests {
         let mut rng = PecosRng::seed_from_u64(42);
 
         let response = channel.apply(&event, &mut ctx, &mut rng);
-        assert!(response.should_skip_gate());
+        assert_eq!(response.skipped_qubits().as_slice(), &[QubitId(0)]);
     }
 
     #[test]

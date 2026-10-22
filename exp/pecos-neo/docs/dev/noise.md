@@ -274,7 +274,7 @@ When noise is applied, it produces a `NoiseResponse` that the runner processes:
 |----------|--------|
 | `NoiseResponse::None` | No effect |
 | `NoiseResponse::InjectGates(gates)` | Insert gates after current operation |
-| `NoiseResponse::SkipGate` | Don't execute the triggering gate |
+| `NoiseResponse::SkipGate(qubits)` | Suppress operand groups containing a listed qubit; list all operands to skip the whole command |
 | `NoiseResponse::FlipOutcomes(qubits)` | Toggle measurement outcomes for qubits |
 | `NoiseResponse::ForceOutcomes(pairs)` | Set outcomes to specific values |
 | `NoiseResponse::MarkLeaked(qubits)` | Mark qubits as leaked in context |

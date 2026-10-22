@@ -46,6 +46,24 @@ pub struct StreamingProgress {
     pub committed_mask: ObsMask,
 }
 
+#[derive(Debug)]
+struct ScoringPrefixPlan {
+    known_count: usize,
+    start: usize,
+    ends: Vec<usize>,
+}
+
+impl ScoringPrefixPlan {
+    fn for_range(&self, known_count: usize, range: std::ops::Range<usize>) -> Option<&[usize]> {
+        if known_count != self.known_count {
+            return None;
+        }
+        let start = range.start.checked_sub(self.start)?;
+        let end = range.end.checked_sub(self.start)?;
+        self.ends.get(start..end)
+    }
+}
+
 /// Opt-in streaming decoder for detector blocks arriving in index order.
 ///
 /// In the default dependency-driven mode, a successful flush is bit-identical to batch
@@ -76,6 +94,7 @@ pub struct TrellisStreamingDecoder {
     failure: Option<BinaryFailure>,
     mode: StreamingMode,
     column_rounds: Vec<usize>,
+    scoring_prefix_plans: Vec<ScoringPrefixPlan>,
     arrived_round: usize,
     evidence_omitted: bool,
 }
@@ -158,6 +177,7 @@ impl TrellisStreamingDecoder {
             failure: None,
             mode: StreamingMode::DependencyDriven,
             column_rounds: Vec::new(),
+            scoring_prefix_plans: Vec::new(),
             arrived_round: 0,
             evidence_omitted: false,
         };
@@ -179,6 +199,7 @@ impl TrellisStreamingDecoder {
             ));
         }
         let mut requirements = Vec::new();
+        let mut scoring_prefix_plans = Vec::new();
         if let StreamingMode::FixedLag {
             detector_round_bounds: bounds,
             window_size,
@@ -216,7 +237,34 @@ impl TrellisStreamingDecoder {
                 prefix = prefix.max((*required).max(closing));
                 *required = prefix;
             }
+            // Cache only columns normally released at each arrival round. Each
+            // column contributes one end index, with no per-shot preparation.
+            let mut start = 0;
+            for (round, &known_count) in bounds.iter().enumerate() {
+                let target = if round == bounds.len() - 1 {
+                    round
+                } else {
+                    round.saturating_sub(window_size - 1)
+                };
+                let end = requirements.partition_point(|&release| release <= target);
+                let ends = columns[start..end]
+                    .iter()
+                    .map(|column| {
+                        column.suffix_compatibility.partition_point(|row| {
+                            row.word as usize * WORD_BITS + usize::from(row.bit) < known_count
+                        })
+                    })
+                    .collect();
+                scoring_prefix_plans.push(ScoringPrefixPlan {
+                    known_count,
+                    start,
+                    ends,
+                });
+                start = end;
+            }
+            debug_assert_eq!(start, columns.len());
         }
+        self.scoring_prefix_plans = scoring_prefix_plans;
         self.column_rounds = requirements;
         self.mode = mode;
         Ok(())
@@ -401,7 +449,13 @@ impl TrellisStreamingDecoder {
             }
         };
         self.evidence_omitted |= mode == crate::DecodeMode::PredictionOnly;
-        if let Err(failure) = self.model.process_binary_range_with_mode(
+        // Delayed advances can include columns from earlier rounds. Use a plan
+        // only when both the range and the known detector count match exactly.
+        let prefix_ends = self
+            .scoring_prefix_plans
+            .get(self.arrived_round)
+            .and_then(|plan| plan.for_range(self.arrived_count, self.next_column..end));
+        if let Err(failure) = self.model.process_binary_range_with_prefixes(
             &mut self.progress,
             &self.observed,
             &self.model.suffix_values,
@@ -411,6 +465,7 @@ impl TrellisStreamingDecoder {
                 delta: self.model.config.delta,
             },
             crate::BinaryRangeOptions { mode, known_count },
+            prefix_ends,
         ) {
             self.failure = Some(failure);
             return Err(failure.error());
@@ -725,5 +780,169 @@ mod fixed_lag_tests {
             columns_after_each_round(&mut decoder, &[&[1], &[1], &[1]]),
             [0, 1, 4]
         );
+    }
+}
+
+#[cfg(test)]
+mod scoring_prefix_plan_tests {
+    use super::*;
+
+    fn model() -> SparseDem {
+        SparseDem {
+            mechanisms: (0_u32..24)
+                .map(|i| (0.03 + f64::from(i % 3) * 0.02, vec![i % 8], vec![i % 2]))
+                .collect(),
+            detector_coords: std::collections::BTreeMap::new(),
+            num_detectors: 8,
+            num_observables: 2,
+        }
+    }
+    fn compare(a: &TrellisStreamingDecoder, b: &TrellisStreamingDecoder) {
+        let a = &a.progress;
+        let b = &b.progress;
+        assert_eq!(a.frontier.parent.words, b.frontier.parent.words);
+        assert!(
+            a.frontier.parent.masses.iter().map(|m| m.to_bits()).eq(b
+                .frontier
+                .parent
+                .masses
+                .iter()
+                .map(|m| m.to_bits()))
+        );
+        assert_eq!(a.transitions, b.transitions);
+        assert_eq!(a.dropped_states, b.dropped_states);
+        assert_eq!(a.dropped_log_mass.to_bits(), b.dropped_log_mass.to_bits());
+        assert_eq!(a.k_capped, b.k_capped);
+        assert_eq!(a.delta_pruned, b.delta_pruned);
+        assert_eq!(a.peak_retained_states, b.peak_retained_states);
+    }
+    #[test]
+    fn cache_matches_fallback_with_delayed_and_repeated_advances() {
+        let dem = model();
+        for bounds in [vec![0, 2, 4, 6, 8], vec![0, 0, 2, 5, 8]] {
+            for window_size in [2, 3] {
+                for full in [false, true] {
+                    for schedule in [0, 1, 2] {
+                        let mode = StreamingMode::FixedLag {
+                            detector_round_bounds: bounds.clone(),
+                            window_size,
+                        };
+                        let mut a = TrellisStreamingDecoder::from_sparse_dem(
+                            &dem,
+                            TrellisConfig::default(),
+                        )
+                        .unwrap();
+                        let mut b = TrellisStreamingDecoder::from_sparse_dem(
+                            &dem,
+                            TrellisConfig::default(),
+                        )
+                        .unwrap();
+                        a.set_streaming_mode(mode.clone()).unwrap();
+                        b.set_streaming_mode(mode).unwrap();
+                        b.scoring_prefix_plans.clear();
+                        for bits in 0..256 {
+                            a.reset();
+                            b.reset();
+                            for round in 1..bounds.len() {
+                                let block: Vec<u8> = (bounds[round - 1]..bounds[round])
+                                    .map(|i| u8::from((bits >> i) & 1 != 0))
+                                    .collect();
+                                assert_eq!(
+                                    format!("{:?}", a.feed_prefix(&block)),
+                                    format!("{:?}", b.feed_prefix(&block))
+                                );
+                                if schedule == 0
+                                    || (schedule == 1 && round % 2 == 0)
+                                    || round == bounds.len() - 1
+                                {
+                                    for _ in 0..2 {
+                                        let mode = if full {
+                                            crate::DecodeMode::Full
+                                        } else {
+                                            crate::DecodeMode::PredictionOnly
+                                        };
+                                        assert_eq!(
+                                            format!("{:?}", a.advance_prediction_mode(mode)),
+                                            format!("{:?}", b.advance_prediction_mode(mode))
+                                        );
+                                        compare(&a, &b);
+                                    }
+                                }
+                            }
+                            let mode = if full {
+                                crate::DecodeMode::Full
+                            } else {
+                                crate::DecodeMode::PredictionOnly
+                            };
+                            assert_eq!(
+                                format!("{:?}", a.flush_prediction_mode(mode)),
+                                format!("{:?}", b.flush_prediction_mode(mode))
+                            );
+                            compare(&a, &b);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    #[test]
+    fn plans_cover_columns_preserve_failed_mode_and_clear_on_dependency_mode() {
+        let mut a =
+            TrellisStreamingDecoder::from_sparse_dem(&model(), TrellisConfig::default()).unwrap();
+        a.set_streaming_mode(StreamingMode::FixedLag {
+            detector_round_bounds: vec![0, 2, 4, 6, 8],
+            window_size: 2,
+        })
+        .unwrap();
+        let Kernel::Binary(columns) = &a.model.kernel else {
+            panic!()
+        };
+        assert_eq!(
+            a.scoring_prefix_plans
+                .iter()
+                .map(|p| p.ends.len())
+                .sum::<usize>(),
+            columns.len()
+        );
+        for plan in &a.scoring_prefix_plans {
+            for (i, &end) in plan.ends.iter().enumerate() {
+                assert_eq!(
+                    end,
+                    columns[plan.start + i]
+                        .suffix_compatibility
+                        .partition_point(|row| row.word as usize * WORD_BITS
+                            + usize::from(row.bit)
+                            < plan.known_count)
+                );
+            }
+        }
+        let before = format!("{:?}", a.scoring_prefix_plans);
+        assert!(
+            a.set_streaming_mode(StreamingMode::FixedLag {
+                detector_round_bounds: vec![0, 8],
+                window_size: 2
+            })
+            .is_err()
+        );
+        assert_eq!(before, format!("{:?}", a.scoring_prefix_plans));
+        a.reset();
+        assert_eq!(before, format!("{:?}", a.scoring_prefix_plans));
+        a.set_streaming_mode(StreamingMode::DependencyDriven)
+            .unwrap();
+        assert!(a.scoring_prefix_plans.is_empty());
+    }
+    #[test]
+    fn mismatched_prefix_and_outside_plan_use_fallback() {
+        let plan = ScoringPrefixPlan {
+            known_count: 64,
+            start: 5,
+            ends: vec![1, 2, 3],
+        };
+        assert_eq!(plan.for_range(64, 5..8), Some(&[1, 2, 3][..]));
+        assert_eq!(plan.for_range(64, 6..7), Some(&[2][..]));
+        assert_eq!(plan.for_range(64, 8..8), Some(&[][..]));
+        assert_eq!(plan.for_range(63, 5..8), None);
+        assert_eq!(plan.for_range(64, 4..8), None);
+        assert_eq!(plan.for_range(64, 5..9), None);
     }
 }

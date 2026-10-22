@@ -570,21 +570,23 @@ configure that gate's physical duration or model spectator waiting times.
 
 For a Z-only channel, the laws are:
 
-| Family | Probability over duration `t` | Parameter units |
-| --- | --- | --- |
-| Linear | `r * t` | inverse time |
-| Sine-squared | `sin(s * t)**2` | radians per time |
-| Coefficient quadratic (low-level DEM only) | `q * t**2` | inverse time squared |
+| Family | Parameter | Probability over duration `t` | Parameter units |
+| --- | --- | --- | --- |
+| Linear | `p_idle_linear` | `r * t` | inverse time |
+| Sine-squared | `p_idle_sin_squared` | `sin(s * t)**2` | radians per time |
+| Coefficient quadratic (low-level DEM only) | `p_idle_z_quadratic_rate` | `q * t**2` | inverse time squared |
 
 The linear probability must be valid; an out-of-range channel is rejected.
 For a uniform linear model, each Pauli axis receives `r * t / 3`.
 
 **Simulation and traced DEM construction currently use different time units.**
 The Selene general-noise plugin converts runtime timestamps to seconds. Traced
-DEM circuits instead store idle durations as nanosecond `TimeUnits`. There is
-no automatic conversion of the supplied noise parameters between those APIs.
-For a physical configuration expressed in seconds, convert before building a
-DEM from runtime-emitted idles:
+DEM circuits instead store idle durations as whole nanosecond `TimeUnits`; a
+nonzero runtime gap shorter than 1 ns is replayed as 1 ns. Neither API converts
+the supplied noise parameters for the other. For a physical configuration
+expressed in seconds, convert it with `NoiseParameters.for_runtime_idle_time_units()`
+before building a DEM from runtime-emitted idles. The method returns a copy
+with these values:
 
 | Physical parameter | Value for nanosecond DEM durations |
 | --- | --- |
@@ -593,32 +595,55 @@ DEM from runtime-emitted idles:
 | Coefficient-quadratic rate `q_per_second_squared` | `q_per_second_squared * 1e-18` |
 | Relaxation/dephasing time `t_seconds` | `t_seconds * 1e9` |
 
-For example, a linear rate of 1000 per second over a 1000 ns gap gives
-probability 0.001 in both representations:
+For example, a linear X rate of 1000 per second over a 1000 ns gap gives
+probability 0.001. Here an inserted idle of 1000 stands for that gap in the
+nanosecond units the runtime replay uses. Copying the per-second rate without
+conversion would request probability 1000 per idle, which is rejected:
 
 <!--test-name: dem_idle_time_unit_conversion-->
 ```python
-from math import isclose, sin
+from math import isclose
 
-idle_seconds = 1e-6
-idle_nanoseconds = 1000
-linear_per_second = 1000.0
-sine_per_second = 100_000.0
-quadratic_per_second_squared = 1e9
+from guppylang import guppy
+from guppylang.std.builtins import result
+from guppylang.std.quantum import cx, measure, qubit
 
-assert isclose(linear_per_second * idle_seconds, 0.001)
-assert isclose(
-    linear_per_second * idle_seconds,
-    (linear_per_second * 1e-9) * idle_nanoseconds,
-)
-assert isclose(
-    sin(sine_per_second * idle_seconds) ** 2,
-    sin((sine_per_second * 1e-9) * idle_nanoseconds) ** 2,
-)
-assert isclose(
-    quadratic_per_second_squared * idle_seconds**2,
-    (quadratic_per_second_squared * 1e-18) * idle_nanoseconds**2,
-)
+from pecos import NoiseParameters
+from pecos.qec import DetectorErrorModel
+
+
+@guppy
+def idle_units_demo() -> None:
+    q0, q1 = qubit(), qubit()
+    cx(q0, q1)
+    result("m0", measure(q0).read())
+    result("m1", measure(q1).read())
+
+
+per_second = NoiseParameters().with_p_idle_linear(1000.0, {"X": 1.0})
+per_nanosecond = per_second.for_runtime_idle_time_units()
+
+common = {
+    "num_qubits": 2,
+    "detectors_json": '[{"id": "D0", "result_tags": ["m0"]}]',
+    "observables_json": '[{"id": "L0", "result_tags": ["m1"]}]',
+    "idle_after_2q_duration": 1000.0,
+    "seed": 0,
+}
+
+dem = DetectorErrorModel.from_guppy(idle_units_demo, noise=per_nanosecond, **common)
+probabilities = [
+    float(line.split("(", 1)[1].split(")", 1)[0]) for line in dem.to_string().splitlines() if line.startswith("error(")
+]
+assert len(probabilities) == 2
+assert all(isclose(p, 0.001) for p in probabilities)
+
+try:
+    DetectorErrorModel.from_guppy(idle_units_demo, noise=per_second, **common)
+except ValueError:
+    pass
+else:
+    raise AssertionError("an unconverted per-second rate should be rejected")
 ```
 
 Inserted idles carry the positive duration supplied by the caller. A normalized
@@ -626,20 +651,22 @@ convention such as `.with_idle_after_2q(1.0)` instead uses one unit per inserted
 idle. If that unit represents a physical duration `tau_seconds`, use linear
 rate `r_per_second * tau_seconds`, sine rate `s_per_second * tau_seconds`, or
 coefficient-quadratic rate `q_per_second_squared * tau_seconds**2`. T1/T2 must
-then be divided by `tau_seconds`. Do not multiply by the physical duration
-again when applying noise to those unit-duration idles.
+then be divided by `tau_seconds`. The same method performs this conversion with
+`for_runtime_idle_time_units(time_units_per_second=1 / tau_seconds)`. Do not
+multiply by the physical duration again when applying noise to those
+unit-duration idles.
 
-This is why a factor such as `0.03` needs a stated meaning and unit. It could
-convert a physical rate to a normalized-duration coefficient, or scale the
-noise strength; the API cannot infer which. Do not mix retained runtime idles
-in nanoseconds with inserted idles in another unit. By default, idle insertion
-strips runtime idles first.
+A scale factor applied to idle rates therefore needs a stated meaning and unit.
+It could convert a physical rate to a normalized-duration coefficient, or scale
+the noise strength; the API cannot infer which. Do not mix retained runtime
+idles in nanoseconds with inserted idles in another unit. By default, idle
+insertion strips runtime idles first.
 
 The legacy engine quadratic-to-sine migration above is a separate conversion
 from this time-unit conversion. In particular, the DEM's coefficient-quadratic
 rate cannot be converted to an exactly equivalent sine-squared law at all
-durations by multiplying by pi. Match the formula of the model being used,
-including its version-specific calibration factors, before converting units.
+durations by multiplying by pi. When copying rates from another noise model,
+first match that model's probability formula, then convert units.
 
 ## Exporting the DEM as Stim Text
 
@@ -861,6 +888,9 @@ The direct backend `from_dem` constructors above remain text-only.
   `strip_traced_idles` removes runtime-provided `Idle` gates. Passing
   idle-noise parameters without any final `Idle` gates raises `ValueError`; see
   [Idle Noise](#idle-noise).
+- **Idle rates are per DEM time unit.** Runtime idles replay in nanoseconds,
+  while the Selene general-noise plugin applies rates per second; see
+  [rates, probabilities, and time units](#rates-probabilities-and-time-units).
 - **Hand-authored tracked-Pauli observables are rejected** in
   `observables_json`; tracked Paulis come from circuit annotations only.
 

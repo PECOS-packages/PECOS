@@ -77,7 +77,8 @@ noise locations on the two operands; it does not set physical gate times.
 See [rates, probabilities, and time units](dem-from-guppy.md#rates-probabilities-and-time-units)
 before copying rates from a shot-simulation configuration. In particular,
 `.with_idle_after_2q(1.0)` uses unit-duration idles, while runtime-emitted idles
-are replayed in nanoseconds.
+are replayed in nanoseconds; `NoiseParameters.for_runtime_idle_time_units()`
+converts per-second rates and T1/T2 to those nanosecond units.
 
 The low-level `infer_guppy_dem_annotations` helper remains available when you
 want to inspect the inferred annotations without building a DEM; the examples

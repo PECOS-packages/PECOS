@@ -78,7 +78,8 @@ pub struct ScheduledNoise {
 /// a checked distribution. Two-qubit rotation faults can use checked angle scaling.
 /// Emitted RZ gates receive single-qubit faults too; virtual frame updates must
 /// be resolved by the runtime/adapter rather than represented as physical RZ.
-/// Preparation faults can leak or flip the qubit. Gate faults optionally select
+/// Preparation faults can leak or flip the qubit, and preparation crosstalk can
+/// collapse other prepared qubits in Z. Gate faults optionally select
 /// emission models and seepage using the general model. Explicit measurement
 /// crosstalk can be enabled on the underlying `ScheduledNoise` profile.
 /// Capacity remains 1..=16 with a state-vector engine. Measurements capture
@@ -156,7 +157,9 @@ impl ScheduledLocalNoise {
     /// Set the probability that each other prepared qubit is collapsed in Z on PZ.
     /// Uses the general model's preparation crosstalk, independently of `prep`.
     /// Internal measurement results are discarded. This does not give spectators
-    /// physical occupancy or split their pending idle intervals.
+    /// physical occupancy or split their pending idle intervals: accrued idle noise
+    /// runs at the spectator's next physical operation, after the collapse. Non-Z
+    /// idle channels can change outcome distributions under this ordering.
     /// # Errors
     /// Rejects nonfinite probabilities or values outside [0, 1], even when prep is zero.
     pub fn with_prep_crosstalk(mut self, probability: f64) -> Result<Self, PecosError> {
@@ -406,8 +409,8 @@ impl ScheduledNoise {
     /// No exposures are inserted automatically. Local victims retain their order;
     /// global exposures select prepared qubits outside the adapter's exclusions.
     /// Uses `GeneralNoiseModel`'s 0/1/L transition distribution and leakage semantics.
-    /// Existing local/idle settings are retained. Preparation crosstalk and hooks
-    /// remain disabled; ordinary v6 input cannot encode spectator effects.
+    /// Existing local/idle settings, including preparation crosstalk, are retained.
+    /// Hooks remain disabled; ordinary v6 input cannot encode exposures.
     /// Exposures do not close idle gaps: accrued idle noise runs at the next
     /// physical operation, after the exposure. Non-Z idle channels can change
     /// outcome distributions under this ordering even with symmetric transitions.

@@ -221,8 +221,13 @@ map. Only qubits prepared in the current shot are eligible.
 
 A spectator's collapse does not make it physically busy or close its idle gap.
 The next physical operation still receives the whole runtime-supplied gap,
-including nonlinear idle channels. To observe this effect, prepare the spectator
-in a superposition and measure its coherence after resetting another qubit;
+including nonlinear idle channels. Consequently, idle noise the spectator accrued
+before the other qubit's preparation is applied after the collapse, not before
+it. Z/RZ idle channels commute with the collapse, but X/Y or RX/RY channels can
+change the output distribution under this ordering, as described for
+[measurement-crosstalk exposures](scheduled-event-adapters.md#measurement-crosstalk-exposures).
+To observe the dephasing itself, prepare the spectator in a superposition and
+measure its coherence after resetting another qubit;
 computational-basis inputs alone cannot reveal the dephasing.
 
 Other custom fault maps, transition hooks, repumping and

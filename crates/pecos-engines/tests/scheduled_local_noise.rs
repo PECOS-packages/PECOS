@@ -1724,32 +1724,37 @@ fn preparation_crosstalk_preserves_whole_spectator_idle_gap() {
 fn preparation_crosstalk_prepared_pool_is_cleared_on_host_reset_and_clone() {
     let angle = pecos_core::radians!(std::f64::consts::FRAC_PI_2);
     for events in [false, true] {
-        let mut active = system(prep_crosstalk_profile(1.0), events, 42);
-        run(&mut active, &[batch(0, 0, 0, vec![Gate::pz(&[0])])], events);
-        let mut cloned = active.clone();
-        for host in [&mut active, &mut cloned] {
-            host.reset().unwrap();
-            host.begin_shot(context(1)).unwrap();
-            // Qubit 0 has a state but was not prepared in this shot. The other
-            // qubit's reset must not collapse it via a stale prepared pool.
-            assert_eq!(
-                run(
-                    host,
-                    &[batch(
-                        0,
-                        0,
-                        0,
-                        vec![
-                            Gate::rxy1q(angle, Angle64::ZERO, &[0]),
-                            Gate::pz(&[1]),
-                            Gate::rxy1q(-angle, Angle64::ZERO, &[0]),
-                            Gate::mz(&[0]),
-                        ]
-                    )],
-                    events
-                ),
-                vec![0]
-            );
+        // A stale pool collapses qubit 0 into a fair coin, so one seed can pass
+        // by chance; every seed must read 0.
+        for seed in 0..32 {
+            let mut active = system(prep_crosstalk_profile(1.0), events, seed);
+            run(&mut active, &[batch(0, 0, 0, vec![Gate::pz(&[0])])], events);
+            let mut cloned = active.clone();
+            for host in [&mut active, &mut cloned] {
+                host.reset().unwrap();
+                host.begin_shot(context(1)).unwrap();
+                // Qubit 0 has a state but was not prepared in this shot. The other
+                // qubit's reset must not collapse it via a stale prepared pool.
+                assert_eq!(
+                    run(
+                        host,
+                        &[batch(
+                            0,
+                            0,
+                            0,
+                            vec![
+                                Gate::rxy1q(angle, Angle64::ZERO, &[0]),
+                                Gate::pz(&[1]),
+                                Gate::rxy1q(-angle, Angle64::ZERO, &[0]),
+                                Gate::mz(&[0]),
+                            ]
+                        )],
+                        events
+                    ),
+                    vec![0],
+                    "seed {seed}"
+                );
+            }
         }
     }
 }

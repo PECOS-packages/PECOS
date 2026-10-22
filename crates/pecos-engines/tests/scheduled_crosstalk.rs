@@ -345,14 +345,18 @@ fn production_matches_general_controller_for_ordered_exposures() {
         let mut expected = QuantumSystem::new(Box::new(model), Box::new(StateVecEngine::new(2)));
         actual.set_seed(seed);
         expected.set_seed(seed);
+        // Qubit 0 is in superposition when qubit 1 is prepared, so preparation
+        // crosstalk is observable; a computational-basis spectator would hide it.
+        let half = pecos_core::radians!(std::f64::consts::FRAC_PI_2);
         let input = batch(
             0,
             0,
             0,
             vec![
                 g(Gate::pz(&[0])),
+                g(Gate::rxy1q(half, Angle64::ZERO, &[0])),
                 g(Gate::pz(&[1])),
-                g(x(0)),
+                g(Gate::rxy1q(half, Angle64::ZERO, &[0])),
                 e(0, &[1, 0]),
                 g(Gate::mz(&[0])),
                 e(1, &[]),
@@ -362,12 +366,9 @@ fn production_matches_general_controller_for_ordered_exposures() {
         );
         let reference = ByteMessage::quantum_operations_builder()
             .pz(&[0])
+            .rxy1q(half, Angle64::ZERO, &[0])
             .pz(&[1])
-            .rxy1q(
-                pecos_core::radians!(std::f64::consts::PI),
-                Angle64::ZERO,
-                &[0],
-            )
+            .rxy1q(half, Angle64::ZERO, &[0])
             .meas_crosstalk_local_payload(&[1, 0])
             .mz(&[0])
             .meas_crosstalk_global_payload(&[])

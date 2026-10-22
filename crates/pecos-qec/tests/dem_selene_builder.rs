@@ -507,3 +507,43 @@ fn half_turn_keeps_two_qubit_noise_and_idle_sites() {
         assert!(build.dem.to_string().contains("error("));
     }
 }
+
+#[test]
+fn hosted_order_validation_is_opt_in_during_native_preparation() {
+    let ir = r#"
+        @host_key = private constant [7 x i8] c"host_id"
+        @role_key = private constant [10 x i8] c"local_role"
+        @host_id = private constant [6 x i8] c"host:a"
+        @role = private constant [12 x i8] c"basis_prefix"
+        define i64 @qmain(i64 %shot) #0 {
+            call void @pecos_qis_trace_metadata_direct(ptr @host_key, i64 7, ptr @host_id, i64 6)
+            call void @__quantum__qis__reset__body(i64 0)
+            call void @pecos_qis_trace_metadata_direct(ptr @host_key, i64 7, ptr @host_id, i64 6)
+            call void @pecos_qis_trace_metadata_direct(ptr @role_key, i64 10, ptr @role, i64 12)
+            %m = call i32 @__quantum__qis__m__body(i64 0, i64 0)
+            ret i64 0
+        }
+        declare void @pecos_qis_trace_metadata_direct(ptr, i64, ptr, i64)
+        declare void @__quantum__qis__reset__body(i64)
+        declare i32 @__quantum__qis__m__body(i64, i64)
+        attributes #0 = { "EntryPoint" }
+    "#;
+    for required in [false, true] {
+        let result = DetectorErrorModel::builder()
+            .with_program(
+                program(ir)
+                    .with_schedule_validation_shots(1)
+                    .with_require_hosted_operation_order(required),
+            )
+            .with_qubits(1)
+            .with_detectors(vec![vec![0]])
+            .with_observables(vec![])
+            .with_noise(NoiseConfig::new(0.001, 0.01, 0.001, 0.001))
+            .build();
+        if required {
+            assert!(result.err().unwrap().to_string().contains("ordering drift"));
+        } else {
+            assert!(result.is_ok(), "{}", result.err().unwrap());
+        }
+    }
+}

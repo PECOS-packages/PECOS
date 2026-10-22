@@ -10,6 +10,8 @@ source-host relationship was lost or separated too far.
 
 from __future__ import annotations
 
+import operator
+import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -78,7 +80,7 @@ def validate_hosted_operations(
         host_id_key: Metadata key naming the source host relationship.
         local_role_key: Metadata key identifying local operations.
         max_tick_separation: Optional maximum absolute signed tick separation
-            between the local and selected host operation.
+            between the local and selected host operation, in the unsigned 64-bit range.
         require_shared_qubit: Require the selected host to share a qubit with
             the local operation.
         require_host_after_local: Require host tick/gate order to follow local
@@ -95,135 +97,73 @@ def validate_hosted_operations(
 
     Raises:
         ValueError: If a local operation is missing a host id, has no later
-            compatible host, or exceeds ``max_tick_separation``.
+            compatible host, exceeds ``max_tick_separation``, or has a qubit or limit
+            outside the supported unsigned integer range.
         TypeError: If the supplied object is not TickCircuit-like.
     """
-    if max_tick_separation is not None and max_tick_separation < 0:
-        msg = f"{context}: max_tick_separation must be non-negative, got {max_tick_separation}"
-        raise ValueError(msg)
+    from pecos_rslib import _validate_hosted_operations
 
+    max_tick_separation = _hosted_tick_separation_limit(max_tick_separation, context=context)
     records = _hosted_gate_records(
         tick_circuit,
         host_id_key=host_id_key,
         local_role_key=local_role_key,
         context=context,
     )
-    if require_unique_host_id:
-        _raise_if_repeated_host_records(
-            records,
-            host_id_key=host_id_key,
-            context=context,
-        )
-    bindings: list[HostedOperationBinding] = []
-    for local in records:
-        if not local.local_role:
-            continue
-        if not local.host_id:
-            msg = (
-                f"{context}: hosted local gate {local.gate_name}@t{local.tick_index}/"
-                f"g{local.gate_index} on qubits {local.qubits} has local_role "
-                f"{local.local_role!r} but no non-empty {host_id_key!r} metadata."
-            )
-            raise ValueError(msg)
-        host_candidates = _matching_host_records(
-            records,
-            local,
-            require_shared_qubit=require_shared_qubit,
-        )
-        if not host_candidates:
-            shared_clause = " sharing a qubit" if require_shared_qubit else ""
-            msg = (
-                f"{context}: hosted local gate {local.gate_name}@t{local.tick_index}/"
-                f"g{local.gate_index} on qubits {local.qubits} with host_id "
-                f"{local.host_id!r} and local_role {local.local_role!r} has no "
-                f"host gate{shared_clause} carrying the same host_id."
-            )
-            raise ValueError(msg)
-        later_hosts = [candidate for candidate in host_candidates if _gate_order(candidate) > _gate_order(local)]
-        if require_host_after_local and not later_hosts:
-            nearest_host = host_candidates[-1]
-            msg = (
-                f"{context}: hosted local gate {local.gate_name}@t{local.tick_index}/"
-                f"g{local.gate_index} on qubits {local.qubits} with host_id "
-                f"{local.host_id!r} and local_role {local.local_role!r} has matching "
-                f"host metadata only before it; nearest host is {nearest_host.gate_name}"
-                f"@t{nearest_host.tick_index}/g{nearest_host.gate_index}. This "
-                "indicates source-host ordering drift in the traced runtime schedule."
-            )
-            raise ValueError(msg)
-        host = later_hosts[0] if later_hosts else host_candidates[-1]
-        tick_separation = host.tick_index - local.tick_index
-        if max_tick_separation is not None and abs(tick_separation) > max_tick_separation:
-            msg = (
-                f"{context}: hosted local gate {local.gate_name}@t{local.tick_index}/"
-                f"g{local.gate_index} on qubits {local.qubits} with host_id "
-                f"{local.host_id!r} binds to {host.gate_name}@t{host.tick_index}/"
-                f"g{host.gate_index} with signed tick separation {tick_separation}, "
-                f"exceeding max_tick_separation={max_tick_separation}."
-            )
-            raise ValueError(msg)
-        bindings.append(
-            HostedOperationBinding(
-                host_id=local.host_id,
-                local_role=local.local_role,
-                local=local,
-                host=host,
-                tick_separation=tick_separation,
-            ),
-        )
-    return tuple(bindings)
-
-
-def _matching_host_records(
-    records: Sequence[HostedGateRecord],
-    local: HostedGateRecord,
-    *,
-    require_shared_qubit: bool,
-) -> tuple[HostedGateRecord, ...]:
-    local_qubits = set(local.qubits)
-    candidates: list[HostedGateRecord] = []
-    for candidate in records:
-        if candidate.host_id != local.host_id or candidate.local_role:
-            continue
-        if require_shared_qubit and local_qubits.isdisjoint(candidate.qubits):
-            continue
-        candidates.append(candidate)
-    return tuple(candidates)
-
-
-def _raise_if_repeated_host_records(
-    records: Sequence[HostedGateRecord],
-    *,
-    host_id_key: str,
-    context: str,
-) -> None:
-    host_records_by_id: dict[str, list[HostedGateRecord]] = {}
-    for record in records:
-        if record.local_role or not record.host_id:
-            continue
-        host_records_by_id.setdefault(record.host_id, []).append(record)
-    repeated = {host_id: host_records for host_id, host_records in host_records_by_id.items() if len(host_records) > 1}
-    if not repeated:
-        return
-    host_id, host_records = next(iter(repeated.items()))
-    first_locations = ", ".join(
-        f"{record.gate_name}@t{record.tick_index}/g{record.gate_index}" for record in host_records[:4]
+    bindings = _validate_hosted_operations(
+        [(r.tick_index, r.gate_index, r.gate_name, r.qubits, r.host_id, r.local_role) for r in records],
+        max_tick_separation,
+        require_shared_qubit,
+        require_host_after_local,
+        require_unique_host_id,
+        host_id_key,
+        context,
     )
-    extra_count = len(host_records) - 4
-    if extra_count > 0:
-        first_locations = f"{first_locations}, ... (+{extra_count} more)"
-    msg = (
-        f"{context}: hosted metadata key {host_id_key!r} is ambiguous because "
-        f"host_id {host_id!r} appears on {len(host_records)} host gates "
-        f"({first_locations}). Strict hosted-operation validation requires "
-        "host ids to identify one source host gate; include invocation-scoped "
-        "metadata before validating ordering or tick separation."
+    return tuple(
+        HostedOperationBinding(
+            host_id=records[local].host_id,
+            local_role=records[local].local_role,
+            local=records[local],
+            host=records[host],
+            tick_separation=separation,
+        )
+        for local, host, separation in bindings
     )
-    raise ValueError(msg)
 
 
-def _gate_order(record: HostedGateRecord) -> tuple[int, int]:
-    return (record.tick_index, record.gate_index)
+def _hosted_tick_separation_limit(value: int | None, *, context: str) -> int | None:
+    if value is None:
+        return None
+    try:
+        maximum = operator.index(value)
+    except TypeError as exc:
+        msg = f"{context}: max_tick_separation must be an integer, got {value!r}"
+        raise ValueError(msg) from exc
+    if maximum < 0:
+        msg = f"{context}: max_tick_separation must be non-negative, got {value}"
+        raise ValueError(msg)
+    if maximum > 2**64 - 1:
+        msg = f"{context}: max_tick_separation exceeds the unsigned 64-bit maximum (18446744073709551615)"
+        raise ValueError(msg)
+    return maximum
+
+
+def _hosted_qubits(gate: object, *, location: str, context: str) -> tuple[int, ...]:
+    qubits: list[int] = []
+    for value in getattr(gate, "qubits", ()):
+        try:
+            qubit = operator.index(value)
+        except TypeError as exc:
+            msg = f"{context}: hosted gate {location} has non-integer qubit {value!r}"
+            raise ValueError(msg) from exc
+        if not 0 <= qubit <= 2 * sys.maxsize + 1:
+            msg = (
+                f"{context}: hosted gate {location} has a qubit outside the usize range "
+                f"(0 through {2 * sys.maxsize + 1})"
+            )
+            raise ValueError(msg)
+        qubits.append(qubit)
+    return tuple(qubits)
 
 
 def _hosted_gate_records(
@@ -245,12 +185,17 @@ def _hosted_gate_records(
         local_role = _metadata_text(metadata, local_role_key)
         if not host_id and not local_role:
             continue
+        gate_name = _gate_name(gate)
         records.append(
             HostedGateRecord(
                 tick_index=tick_index,
                 gate_index=gate_index,
-                gate_name=_gate_name(gate),
-                qubits=tuple(int(qubit) for qubit in getattr(gate, "qubits", ())),
+                gate_name=gate_name,
+                qubits=_hosted_qubits(
+                    gate,
+                    location=f"{gate_name}@t{tick_index}/g{gate_index}",
+                    context=context,
+                ),
                 host_id=host_id,
                 local_role=local_role,
                 metadata=metadata,

@@ -69,6 +69,7 @@ mod circuit_display;
 mod dag_circuit;
 pub mod diamond_norm;
 mod fault_sector;
+pub mod hosted;
 pub mod measures;
 pub mod pass;
 pub mod pauli_group;

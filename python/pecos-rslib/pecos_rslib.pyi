@@ -4581,3 +4581,14 @@ def _replay_qis_trace(
 ) -> TickCircuit: ...
 def _qis_named_result_traces(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]: ...
 def _qis_source_measurement_ids(chunks: list[dict[str, Any]]) -> list[int]: ...
+
+
+def _validate_hosted_operations(
+    records: list[tuple[int, int, str, tuple[int, ...], str, str]],
+    max_tick_separation: int | None,
+    require_shared_qubit: bool,
+    require_host_after_local: bool,
+    require_unique_host_id: bool,
+    host_id_key: str,
+    context: str,
+) -> list[tuple[int, int, int]]: ...

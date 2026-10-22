@@ -916,4 +916,6 @@ def _capture_dem_evidence(
     settings: DemInferenceSettings,
     detector_outputs: Sequence[tuple[str, int]] | None = None,
     observable_outputs: Sequence[tuple[str, int]] | None = None,
+    require_hosted_operation_order: bool = False,
+    max_hosted_tick_separation: int | None = None,
 ) -> _DemEvidence: ...

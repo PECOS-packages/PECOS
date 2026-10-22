@@ -14,6 +14,7 @@ use crate::{
 };
 use pecos_engines::{coin_toss, sim_builder};
 use pecos_programs::{Qis, QisContent};
+use pecos_qis::trace_replay::HostedReplayOptions;
 use pecos_qis::{
     OperationTraceChunk, OperationTraceStore, QisEngineBuilder, SeleneRuntime,
     helios_interface_builder, qis_engine, selene_simple_runtime,
@@ -40,6 +41,7 @@ pub struct SeleneDemProgram {
     source: ProgramSource,
     runtime: Option<SeleneRuntime>,
     schedule_shots: usize,
+    hosted: HostedReplayOptions,
 }
 
 impl SeleneDemProgram {
@@ -51,6 +53,7 @@ impl SeleneDemProgram {
             source: ProgramSource::Qis(program),
             runtime: None,
             schedule_shots: 32,
+            hosted: HostedReplayOptions::default(),
         }
     }
 
@@ -66,12 +69,27 @@ impl SeleneDemProgram {
             source: ProgramSource::Hugr(bytes.into(), platform, opt_level),
             runtime: None,
             schedule_shots: 32,
+            hosted: HostedReplayOptions::default(),
         }
     }
 
     #[must_use]
     pub fn with_runtime(mut self, runtime: SeleneRuntime) -> Self {
         self.runtime = Some(runtime);
+        self
+    }
+
+    /// Require local operations to precede their unique host.
+    #[must_use]
+    pub fn with_require_hosted_operation_order(mut self, required: bool) -> Self {
+        self.hosted.require_hosted_operation_order = required;
+        self
+    }
+
+    /// Bound absolute hosted tick distance, requiring unique host IDs.
+    #[must_use]
+    pub fn with_max_hosted_tick_separation(mut self, maximum: Option<u64>) -> Self {
+        self.hosted.max_hosted_tick_separation = maximum;
         self
     }
 
@@ -380,7 +398,19 @@ impl SeleneDemProgram {
             analysis.evidence.schedule_shots,
             analysis.probe_seed,
         )?;
-        analyze_probes(analysis, &traces)
+        self.analyze_hosted_probes(analysis, &traces)
+    }
+
+    fn analyze_hosted_probes(
+        &self,
+        analysis: BaselineAnalysis<'_>,
+        traces: &[TraceShot],
+    ) -> Result<SeleneDemEvidence, DemBuildError> {
+        let evidence = analyze_probes(analysis, traces)?;
+        self.hosted
+            .validate(&evidence.circuit, "infer_guppy_dem_annotations")
+            .map_err(preparation)?;
+        Ok(evidence)
     }
 }
 
@@ -695,6 +725,74 @@ mod tests {
         shot[1].chunk_index = 2;
         shot.insert(1, lowered);
         shot
+    }
+
+    #[test]
+    fn hosted_options_reject_order_drift_only_when_requested() {
+        let mut baseline = trace();
+        let host = LoweredQuantumGateTrace {
+            gate_type: "H".into(),
+            angles: vec![],
+            params: vec![],
+            qubits: vec![0],
+            measurement_result_ids: vec![],
+            metadata: BTreeMap::from([("host_id".into(), "host:a".into())]),
+        };
+        let mut local = host.clone();
+        local
+            .metadata
+            .insert("local_role".into(), "basis_prefix".into());
+        baseline[0].lowered_quantum_ops.splice(0..0, [host, local]);
+        let request = DemProgramRequest {
+            num_qubits: 1,
+            seed: 42,
+            inference: None,
+            detector_outputs: None,
+            observable_outputs: None,
+        };
+        for required in [false, true] {
+            let program = SeleneDemProgram::new(Qis::from_string(""))
+                .with_require_hosted_operation_order(required);
+            let analysis = analyze_baseline(baseline.clone(), &request, 1).unwrap();
+            let result = program.analyze_hosted_probes(analysis, std::slice::from_ref(&baseline));
+            if required {
+                let analysis = analyze_baseline(baseline.clone(), &request, 1).unwrap();
+                let probe_error = program.analyze_hosted_probes(analysis, &[]).err().unwrap();
+                assert!(
+                    probe_error
+                        .to_string()
+                        .contains("QIS probe trace contains 0 shots")
+                );
+                assert!(result.err().unwrap().to_string().contains("ordering drift"));
+            } else {
+                assert!(result.is_ok());
+            }
+        }
+        let mut repeated = baseline.clone();
+        let host = repeated[0].lowered_quantum_ops[0].clone();
+        repeated[0].lowered_quantum_ops.insert(0, host);
+        let program =
+            SeleneDemProgram::new(Qis::from_string("")).with_max_hosted_tick_separation(Some(10));
+        let analysis = analyze_baseline(repeated.clone(), &request, 1).unwrap();
+        assert!(
+            program
+                .analyze_hosted_probes(analysis, &[repeated])
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("appears on 2 host gates")
+        );
+        let program =
+            SeleneDemProgram::new(Qis::from_string("")).with_max_hosted_tick_separation(Some(0));
+        let analysis = analyze_baseline(baseline.clone(), &request, 1).unwrap();
+        assert!(
+            program
+                .analyze_hosted_probes(analysis, &[baseline])
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("signed tick separation -1")
+        );
     }
 
     fn inference_trace(direct: bool, bits: [bool; 2]) -> TraceShot {

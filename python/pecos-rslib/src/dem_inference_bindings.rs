@@ -196,7 +196,7 @@ impl PySeleneRuntimeSpec {
 }
 
 #[pyfunction(name = "_capture_dem_evidence")]
-#[pyo3(signature = (program, num_qubits, seed, runtime, settings, detector_outputs = None, observable_outputs = None))]
+#[pyo3(signature = (program, num_qubits, seed, runtime, settings, detector_outputs = None, observable_outputs = None, require_hosted_operation_order = false, max_hosted_tick_separation = None))]
 fn capture_dem_evidence<'py>(
     py: Python<'py>,
     program: &PyQis,
@@ -206,12 +206,25 @@ fn capture_dem_evidence<'py>(
     settings: &PyDemInferenceSettings,
     detector_outputs: Option<Vec<(String, usize)>>,
     observable_outputs: Option<Vec<(String, usize)>>,
+    require_hosted_operation_order: bool,
+    max_hosted_tick_separation: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<Bound<'py, PyDict>> {
     let runtime = runtime
         .runtime
         .clone()
         .ok_or_else(|| PyValueError::new_err("Selene runtime spec is not configured"))?;
-    let program = SeleneDemProgram::new(program.inner.clone()).with_runtime(runtime);
+    let maximum = max_hosted_tick_separation
+        .map(|value| {
+            crate::pauli_bindings::extract_unsigned_index(
+                value,
+                "infer_guppy_dem_annotations: max_tick_separation",
+            )
+        })
+        .transpose()?;
+    let program = SeleneDemProgram::new(program.inner.clone())
+        .with_runtime(runtime)
+        .with_require_hosted_operation_order(require_hosted_operation_order)
+        .with_max_hosted_tick_separation(maximum);
     let convert = |outputs: Vec<(String, usize)>| {
         outputs
             .into_iter()

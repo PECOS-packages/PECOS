@@ -312,6 +312,25 @@ pub fn replay_in_memory(
     )
 }
 
+/// Replay runtime chunks and validate hosted metadata after compaction.
+///
+/// # Errors
+/// Returns replay or hosted validation errors.
+pub fn replay_in_memory_with_hosted_options(
+    shot: &[OperationTraceChunk],
+    qubits: usize,
+    hosted: &HostedReplayOptions,
+    context: &str,
+) -> Result<TickCircuit, TraceReplayError> {
+    replay_with_hosted_options(
+        &shot.iter().map(StoredTraceChunk::from).collect::<Vec<_>>(),
+        Some(qubits),
+        None,
+        hosted,
+        context,
+    )
+}
+
 /// Extract named result provenance in emission order.
 #[must_use]
 pub fn named_result_traces(shot: &[StoredTraceChunk]) -> Vec<NamedResultTrace> {
@@ -426,6 +445,53 @@ pub fn source_ids(shot: &[StoredTraceChunk]) -> Result<Vec<usize>, TraceReplayEr
         return Err(replay_error("source trace repeats measurement IDs"));
     }
     Ok(ids)
+}
+
+/// Optional hosted checks on the compacted replay circuit.
+#[derive(Clone, Debug, Default)]
+pub struct HostedReplayOptions {
+    pub require_hosted_operation_order: bool,
+    pub max_hosted_tick_separation: Option<u64>,
+}
+
+impl HostedReplayOptions {
+    /// Validate after replay, or after evidence capture for inference callers.
+    ///
+    /// # Errors
+    /// Returns a hosted metadata violation when checks are requested.
+    pub fn validate(&self, circuit: &TickCircuit, context: &str) -> Result<(), TraceReplayError> {
+        if self.require_hosted_operation_order || self.max_hosted_tick_separation.is_some() {
+            pecos_quantum::hosted::validate_hosted_circuit(
+                circuit,
+                "local_role",
+                &pecos_quantum::hosted::HostedOperationOptions {
+                    require_host_after_local: self.require_hosted_operation_order,
+                    max_tick_separation: self.max_hosted_tick_separation,
+                    require_unique_host_id: true,
+                    context,
+                    ..Default::default()
+                },
+            )
+            .map_err(replay_error)?;
+        }
+        Ok(())
+    }
+}
+
+/// Replay and validate hosted metadata after compaction.
+///
+/// # Errors
+/// Returns replay or hosted validation errors.
+pub fn replay_with_hosted_options(
+    shot: &[StoredTraceChunk],
+    qubits: Option<usize>,
+    measurement_crosstalk_topology: Option<&str>,
+    hosted: &HostedReplayOptions,
+    context: &str,
+) -> Result<TickCircuit, TraceReplayError> {
+    let circuit = replay(shot, qubits, measurement_crosstalk_topology)?;
+    hosted.validate(&circuit, context)?;
+    Ok(circuit)
 }
 
 /// Replay only runtime-lowered operations; never reconstruct measurement IDs

@@ -411,3 +411,40 @@ fn deferred_runtime_work_requires_complete_handled_drain() {
     value[0]["num_operations"] = json!(1);
     assert!(validate_shot(&decode(&value)).is_err());
 }
+
+#[test]
+fn hosted_replay_options_validate_compacted_metadata() {
+    let mut value = fixture();
+    value[0]["lowered_quantum_ops"][0]["metadata"] = json!({"host_id": "a"});
+    value[0]["lowered_quantum_ops"][1]["metadata"] =
+        json!({"host_id": "a", "local_role": "prefix"});
+    let shot = decode(&value);
+    assert!(
+        replay_with_hosted_options(&shot, None, None, &HostedReplayOptions::default(), "test")
+            .is_ok()
+    );
+    let options = HostedReplayOptions {
+        require_hosted_operation_order: true,
+        max_hosted_tick_separation: None,
+    };
+    let error = replay_with_hosted_options(&shot, None, None, &options, "test").unwrap_err();
+    assert!(error.to_string().starts_with("test: hosted local gate MZ"));
+    assert!(error.to_string().contains("ordering drift"));
+    let options = HostedReplayOptions {
+        require_hosted_operation_order: false,
+        max_hosted_tick_separation: Some(0),
+    };
+    assert!(
+        replay_with_hosted_options(&shot, None, None, &options, "test")
+            .unwrap_err()
+            .to_string()
+            .contains("signed tick separation -1")
+    );
+    value[0]["lowered_quantum_ops"][1]["metadata"] = json!({"host_id": "a"});
+    assert!(
+        replay_with_hosted_options(&decode(&value), None, None, &options, "test")
+            .unwrap_err()
+            .to_string()
+            .contains("appears on 2 host gates")
+    );
+}

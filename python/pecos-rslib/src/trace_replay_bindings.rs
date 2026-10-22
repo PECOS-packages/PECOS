@@ -56,7 +56,63 @@ fn _qis_source_measurement_ids(chunks: &Bound<'_, PyList>) -> PyResult<Vec<usize
     trace_replay::source_ids(&shot).map_err(|error| PyValueError::new_err(error.to_string()))
 }
 
+type HostedRecord = (usize, usize, String, Vec<usize>, String, String);
+
+#[pyfunction]
+#[pyo3(signature = (records, max_tick_separation, require_shared_qubit, require_host_after_local, require_unique_host_id, host_id_key, context))]
+fn _validate_hosted_operations(
+    records: Vec<HostedRecord>,
+    max_tick_separation: Option<&Bound<'_, PyAny>>,
+    require_shared_qubit: bool,
+    require_host_after_local: bool,
+    require_unique_host_id: bool,
+    host_id_key: &str,
+    context: &str,
+) -> PyResult<Vec<(usize, usize, i128)>> {
+    use pecos_quantum::hosted::{
+        HostedGateRecord, HostedOperationOptions, validate_hosted_operations,
+    };
+    let records: Vec<_> = records
+        .into_iter()
+        .map(
+            |(tick_index, gate_index, gate_name, qubits, host_id, local_role)| HostedGateRecord {
+                tick_index,
+                gate_index,
+                gate_name,
+                qubits,
+                host_id,
+                local_role,
+            },
+        )
+        .collect();
+    let max_tick_separation = max_tick_separation
+        .map(|value| {
+            crate::pauli_bindings::extract_unsigned_index(
+                value,
+                format!("{context}: max_tick_separation"),
+            )
+        })
+        .transpose()?;
+    let options = HostedOperationOptions {
+        max_tick_separation,
+        require_shared_qubit,
+        require_host_after_local,
+        require_unique_host_id,
+        host_id_key,
+        context,
+    };
+    validate_hosted_operations(&records, &options)
+        .map(|bindings| {
+            bindings
+                .into_iter()
+                .map(|b| (b.local, b.host, b.tick_separation))
+                .collect()
+        })
+        .map_err(|error| PyValueError::new_err(error.to_string()))
+}
+
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(_validate_hosted_operations, m)?)?;
     m.add_function(wrap_pyfunction!(_replay_qis_trace, m)?)?;
     m.add_function(wrap_pyfunction!(_qis_named_result_traces, m)?)?;
     m.add_function(wrap_pyfunction!(_qis_source_measurement_ids, m)?)?;

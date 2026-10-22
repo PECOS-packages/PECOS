@@ -22,7 +22,7 @@ from pecos._engine_builders import _configure_selene_runtime
 from pecos._traced_circuit import normalize_traced_tick_circuit
 from pecos.programs import Guppy
 from pecos.qec.dem_spec import InferredOutput
-from pecos.tracing import _validate_trace_hosted_operations_if_requested
+from pecos.quantum.hosted import _hosted_tick_separation_limit
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
@@ -151,6 +151,10 @@ def infer_guppy_dem_annotations(
     if to_program is not None:
         program = to_program()
     runtime_spec = _configure_selene_runtime(_SeleneRuntimeSpec(), runtime)
+    max_hosted_tick_separation = _hosted_tick_separation_limit(
+        max_hosted_tick_separation,
+        context="infer_guppy_dem_annotations",
+    )
     evidence = _capture_dem_evidence(
         program,
         num_qubits,
@@ -159,14 +163,10 @@ def infer_guppy_dem_annotations(
         settings,
         detector_outputs,
         observable_outputs,
+        require_hosted_operation_order,
+        max_hosted_tick_separation,
     )
     circuit = evidence["circuit"]
-    _validate_trace_hosted_operations_if_requested(
-        circuit,
-        require_hosted_operation_order=require_hosted_operation_order,
-        max_hosted_tick_separation=max_hosted_tick_separation,
-        context="infer_guppy_dem_annotations",
-    )
     # Preserve the runtime's physical gates: each carries an independent noise site.
     normalize_traced_tick_circuit(
         circuit,

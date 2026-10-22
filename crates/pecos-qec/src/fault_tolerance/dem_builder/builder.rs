@@ -1098,10 +1098,20 @@ impl<'a> DemBuilder<'a> {
     }
 
     fn validate_idle_noise(&self) -> Result<(), DemBuilderError> {
+        let mut has_idle = false;
         for loc in &self.influence_map.locations {
             if loc.gate_type == GateType::Idle && !loc.before {
+                has_idle = true;
                 let _ = self.idle_probabilities_for_loc(loc)?;
             }
+        }
+        // Per-gate configuration owns the effective base, just as it does in
+        // idle_probabilities_for_loc. Do not inspect overridden scalar noise.
+        let noise = self.per_gate.as_ref().map_or(&self.noise, |pg| &pg.base);
+        if !has_idle && (noise.uses_dedicated_idle_noise() || noise.idle_rz != 0.0) {
+            return Err(DemBuilderError::ConfigurationError(
+                "idle-noise parameters have no idle gates to attach to; insert explicit Idle gates with durations, or use a runtime that emits scheduled idles".to_string(),
+            ));
         }
         Ok(())
     }
@@ -3646,6 +3656,74 @@ impl std::error::Error for DemBuilderError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dedicated_idle_noise_requires_idle_locations() {
+        use super::super::types::IdleNoiseFamily;
+
+        let map = DagFaultInfluenceMap::with_capacity(0);
+        let zero = NoiseConfig::new(0.0, 0.0, 0.0, 0.0);
+        let family = IdleNoiseFamily::new(0.01, BTreeMap::from([("Z".into(), 1.0)]));
+        let mut thermal = zero.clone();
+        thermal.t1 = Some(100.0);
+        thermal.t2 = Some(100.0);
+        let mut legacy_rz = zero.clone();
+        legacy_rz.idle_rz = 0.01;
+        let builder = DemBuilder::new(&map).with_noise_config(zero.clone());
+        assert!(builder.build().is_ok());
+        assert!(builder.try_build().is_ok());
+        for noise in [
+            zero.clone().set_idle(0.01),
+            legacy_rz,
+            zero.clone().set_idle_linear(family.clone()),
+            zero.clone().set_idle_quadratic(family.clone()),
+            zero.clone().set_idle_quadratic_sine(family),
+            thermal,
+        ] {
+            for builder in [
+                DemBuilder::new(&map).with_noise_config(noise.clone()),
+                DemBuilder::new(&map).with_per_gate_noise(PerGateTypeNoise::from_base_noise(noise)),
+            ] {
+                for result in [builder.build(), builder.try_build()] {
+                    let error = result.unwrap_err().to_string();
+                    assert!(
+                        error.contains("idle-noise parameters have no idle gates"),
+                        "{error}"
+                    );
+                }
+            }
+        }
+        // Zero noise is a valid sweep endpoint, and an overridden scalar
+        // configuration must not reject an otherwise noiseless per-gate model.
+        let builder = DemBuilder::new(&map)
+            .with_noise_config(zero.clone().set_idle(0.01))
+            .with_per_gate_noise(PerGateTypeNoise::from_base_noise(zero));
+        assert!(builder.build().is_ok());
+        assert!(builder.try_build().is_ok());
+    }
+
+    #[test]
+    fn dedicated_idle_noise_validates_existing_locations() {
+        use crate::fault_tolerance::propagator::DagFaultAnalyzer;
+        use pecos_core::{Gate, QubitId};
+        use pecos_quantum::DagCircuit;
+
+        let mut circuit = DagCircuit::new();
+        circuit.add_gate_auto_wire(Gate::pz(&[QubitId(0)]));
+        circuit.add_gate_auto_wire(Gate::idle(2.0, vec![QubitId(0)]));
+        circuit.add_gate_auto_wire(Gate::mz(&[QubitId(0)]));
+        let map = DagFaultAnalyzer::new(&circuit)
+            .build_influence_map()
+            .unwrap();
+        let zero = NoiseConfig::new(0.0, 0.0, 0.0, 0.0);
+        let builder = DemBuilder::new(&map).with_noise_config(zero.clone().set_idle(0.1));
+        assert!(builder.build().is_ok());
+        assert!(builder.try_build().is_ok());
+        // Having an Idle does not bypass the existing probability validation.
+        let builder = DemBuilder::new(&map).with_noise_config(zero.set_idle(1.0));
+        assert!(builder.build().is_err());
+        assert!(builder.try_build().is_err());
+    }
 
     #[test]
     fn map_only_records_are_bounded() {

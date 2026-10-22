@@ -21,7 +21,7 @@ even when the key also matches another scheduled gate.
 This wrapper is intentionally thin: it traces the Guppy program into a
 ``TickCircuit``, compiles Guppy inputs to a HUGR to reject unverified control
 flow, then lowers it once to QIS for both execution and tag -> measurement
-binding via ``pecos.qec._qis_result_tags.extract_result_tag_measurements``, and hands
+binding via ``pecos_rslib.qis.extract_result_tag_measurements``, and hands
 the caller's detector/observable JSON to the Rust DEM builder. The metadata
 validation that applies to **every** ingest path (``from_guppy``,
 ``from_circuit``, ``DemSampler.from_circuit``, public ``DemBuilder``) lives
@@ -52,17 +52,17 @@ from collections.abc import Mapping, Sequence
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
+from pecos_rslib import qis as _qis_analysis
 from pecos_rslib.qec import DemInferenceSettings
 from pecos_rslib.qec import DetectorErrorModel as _RustDetectorErrorModel
+from pecos_rslib.qis import ResultTagCertificationError
 
 from pecos._traced_circuit import (
     measurement_ids_in_execution_order,
     normalize_traced_tick_circuit,
 )
 from pecos.programs import Guppy
-from pecos.qec import _qis_result_tags
 from pecos.qec._idle_noise import _translate_structured_idle_noise
-from pecos.qec._qis_result_tags import _CertificationError
 from pecos.qec.dem_spec import (
     GuppyDemBuild,
     ResultRef,
@@ -722,18 +722,18 @@ class _GuppyProgramAnalysis:
         return compile_hugr_to_qis(self.hugr_bytes)
 
     @cached_property
-    def _tag_analysis(self) -> tuple[dict[str, list[int | None]], int] | _CertificationError:
+    def _tag_analysis(self) -> tuple[dict[str, list[int | None]], int] | ResultTagCertificationError:
         """Cache certification failures too, for builds with multiple consumers."""
         try:
-            return _qis_result_tags.extract_result_tag_measurements(self.qis)
-        except _CertificationError as error:
+            return _qis_analysis.extract_result_tag_measurements(self.qis)
+        except ResultTagCertificationError as error:
             return error
 
     @property
     def result_tags(self) -> tuple[dict[str, list[int | None]], int]:
         """Extract tag occurrences and the static count only on first use."""
         result = self._tag_analysis
-        if isinstance(result, _CertificationError):
+        if isinstance(result, ResultTagCertificationError):
             raise result
         return result
 
@@ -807,10 +807,11 @@ def _tag_certification_message(reference: str) -> str:
 def _check_measurement_count(static_count: int, source_ids: Sequence[int]) -> None:
     if static_count != len(source_ids):
         msg = (
+            "Cannot certify measurement order from the lowered program: "
             f"the certified lowered program has {static_count} measurement(s) but "
             f"the traced program emitted {len(source_ids)} measurement(s)"
         )
-        raise _CertificationError(msg)
+        raise ResultTagCertificationError(msg)
 
 
 def _compiler_certified_result_traces(
@@ -855,7 +856,7 @@ def _compiler_certified_result_traces(
         tag_occurrences, static_measurement_count = analysis.result_tags
         source_measurement_ids = _validated_source_measurement_ids(circuit)
         _check_measurement_count(static_measurement_count, source_measurement_ids)
-    except _CertificationError as error:
+    except ResultTagCertificationError as error:
         if required_tags:
             msg = _tag_certification_message("result_ref")
             raise ValueError(msg) from error
@@ -1546,7 +1547,7 @@ class GuppyDemBuilder:
             source_measurement_ids = json.loads(source_ids_json) if source_ids_json else []
             try:
                 tag_occurrences, static_measurement_count = analysis.result_tags
-            except _CertificationError as error:
+            except ResultTagCertificationError as error:
                 msg = _tag_certification_message("result_tags")
                 raise ValueError(msg) from error
             detectors_json, observables_json = resolve_result_tags_for_guppy(

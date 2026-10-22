@@ -7,8 +7,9 @@ from guppylang import guppy
 from guppylang.std.builtins import result
 from guppylang.std.quantum import measure, qubit
 from pecos.compilation_pipeline import compile_guppy_to_hugr
-from pecos.qec._qis_result_tags import _CertificationError, extract_result_tag_measurements
 from pecos_rslib.hugr_lowering import compile_hugr_to_qis
+from pecos_rslib.qis import ResultTagCertificationError as _CertificationError
+from pecos_rslib.qis import extract_result_tag_measurements
 
 FIXTURES = Path(__file__).parent / "fixtures" / "result_tags"
 TAG = '@tag = private constant [12 x i8] c"\\0BUSER:BOOL:t"'

@@ -13,7 +13,7 @@ from guppylang.std.lang import owned
 from guppylang.std.quantum import cx, h, measure, qubit, x
 from pecos.guppy_gen import get_num_qubits, make_surface_code
 from pecos.qec import Detector, DetectorErrorModel, build_dem_from_guppy, rec, result_ref
-from pecos.qec._qis_result_tags import _CertificationError
+from pecos_rslib.qis import ResultTagCertificationError as _CertificationError
 
 
 # A scrambled straight-line program: three measurements in source order

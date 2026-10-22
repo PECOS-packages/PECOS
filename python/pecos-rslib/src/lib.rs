@@ -66,6 +66,7 @@ mod phir_json_bridge;
 mod programs_module;
 mod py_foreign_decoder;
 mod py_foreign_simulator;
+mod qis_text_bindings;
 mod quantum_info_bindings;
 mod qudit_bindings;
 mod runtime_batch_adapter;
@@ -206,6 +207,7 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     setup_cuda_library_path();
 
     m.add_function(wrap_pyfunction!(_set_qis_library_dir, m)?)?;
+    qis_text_bindings::register(m)?;
 
     m.add_class::<PyStabVec>()?;
     m.add_class::<PySparseStab>()?;

@@ -83,6 +83,7 @@ pub mod runtime;
 pub mod runtime_decoder;
 pub mod scheduled;
 mod scheduled_transport;
+pub mod text;
 
 pub use qis_interface::{
     BoxedInterface, DynamicSyncHandle, InterfaceError, ProgramFormat, QisInterface,

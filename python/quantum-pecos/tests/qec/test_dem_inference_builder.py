@@ -218,17 +218,18 @@ def test_role_mixing_does_not_require_unused_tags(explicit_role: str) -> None:
 def test_mixed_named_explicit_binding_keeps_compiler_provenance(monkeypatch: pytest.MonkeyPatch) -> None:
     from unittest.mock import Mock
 
-    from pecos.qec import _qis_result_tags, guppy_output_dem
+    from pecos.qec import guppy_output_dem
     from pecos_rslib import hugr_lowering
+    from pecos_rslib import qis as _qis_analysis
 
     compiler = Mock(wraps=hugr_lowering.compile_hugr_to_qis)
     wrapper = Mock(wraps=pecos.Qis)
     inference = Mock(wraps=guppy_output_dem.infer_guppy_dem_annotations)
-    extractor = Mock(wraps=_qis_result_tags.extract_result_tag_measurements)
+    extractor = Mock(wraps=_qis_analysis.extract_result_tag_measurements)
     monkeypatch.setattr(hugr_lowering, "compile_hugr_to_qis", compiler)
     monkeypatch.setattr(pecos.programs, "Qis", wrapper)
     monkeypatch.setattr(guppy_output_dem, "infer_guppy_dem_annotations", inference)
-    monkeypatch.setattr(_qis_result_tags, "extract_result_tag_measurements", extractor)
+    monkeypatch.setattr(_qis_analysis, "extract_result_tag_measurements", extractor)
     build = (
         DetectorErrorModel.builder()
         .with_program(_selected_program)

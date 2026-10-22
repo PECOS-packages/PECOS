@@ -1,0 +1,322 @@
+{
+  "test_rename_every_symbol_occurrence": [
+    {
+      "ir": "declare i64 @__hugr__.pecos_qis_trace_metadata_qubit_hugr(i64, ptr, ptr) local_unnamed_addr\ndefine i64 @user() { %q = call i64 @__hugr__.pecos_qis_trace_metadata_qubit_hugr(i64 0, ptr null, ptr null) ret i64 %q }\n",
+      "expected": "declare i64 @pecos_qis_trace_metadata_qubit_hugr(i64, ptr, ptr) local_unnamed_addr\ndefine i64 @user() { %q = call i64 @pecos_qis_trace_metadata_qubit_hugr(i64 0, ptr null, ptr null) ret i64 %q }\n"
+    },
+    {
+      "ir": "declare i64 @__hugr__.__main__.pecos_qis_trace_metadata_qubit_hugr(i64, ptr, ptr) local_unnamed_addr\ndefine i64 @user() { %q = call i64 @__hugr__.__main__.pecos_qis_trace_metadata_qubit_hugr(i64 0, ptr null, ptr null) ret i64 %q }\n",
+      "expected": "declare i64 @pecos_qis_trace_metadata_qubit_hugr(i64, ptr, ptr) local_unnamed_addr\ndefine i64 @user() { %q = call i64 @pecos_qis_trace_metadata_qubit_hugr(i64 0, ptr null, ptr null) ret i64 %q }\n"
+    },
+    {
+      "ir": "declare i64 @__hugr__.a.b.pecos_qis_trace_metadata_qubit_hugr(i64, ptr, ptr) local_unnamed_addr\ndefine i64 @user() { %q = call i64 @__hugr__.a.b.pecos_qis_trace_metadata_qubit_hugr(i64 0, ptr null, ptr null) ret i64 %q }\n",
+      "expected": "declare i64 @pecos_qis_trace_metadata_qubit_hugr(i64, ptr, ptr) local_unnamed_addr\ndefine i64 @user() { %q = call i64 @pecos_qis_trace_metadata_qubit_hugr(i64 0, ptr null, ptr null) ret i64 %q }\n"
+    },
+    {
+      "ir": "declare i64 @__hugr__.pecos_qis_trace_metadata_qubit_hugr.14(i64, ptr, ptr) local_unnamed_addr\ndefine i64 @user() { %q = call i64 @__hugr__.pecos_qis_trace_metadata_qubit_hugr.14(i64 0, ptr null, ptr null) ret i64 %q }\n",
+      "expected": "declare i64 @pecos_qis_trace_metadata_qubit_hugr(i64, ptr, ptr) local_unnamed_addr\ndefine i64 @user() { %q = call i64 @pecos_qis_trace_metadata_qubit_hugr(i64 0, ptr null, ptr null) ret i64 %q }\n"
+    },
+    {
+      "ir": "declare i64 @__hugr__.__main__.pecos_qis_trace_metadata_qubit_hugr.14(i64, ptr, ptr) local_unnamed_addr\ndefine i64 @user() { %q = call i64 @__hugr__.__main__.pecos_qis_trace_metadata_qubit_hugr.14(i64 0, ptr null, ptr null) ret i64 %q }\n",
+      "expected": "declare i64 @pecos_qis_trace_metadata_qubit_hugr(i64, ptr, ptr) local_unnamed_addr\ndefine i64 @user() { %q = call i64 @pecos_qis_trace_metadata_qubit_hugr(i64 0, ptr null, ptr null) ret i64 %q }\n"
+    },
+    {
+      "ir": "declare i64 @__hugr__.a.b.pecos_qis_trace_metadata_qubit_hugr.14(i64, ptr, ptr) local_unnamed_addr\ndefine i64 @user() { %q = call i64 @__hugr__.a.b.pecos_qis_trace_metadata_qubit_hugr.14(i64 0, ptr null, ptr null) ret i64 %q }\n",
+      "expected": "declare i64 @pecos_qis_trace_metadata_qubit_hugr(i64, ptr, ptr) local_unnamed_addr\ndefine i64 @user() { %q = call i64 @pecos_qis_trace_metadata_qubit_hugr(i64 0, ptr null, ptr null) ret i64 %q }\n"
+    },
+    {
+      "ir": "declare i64 @__hugr__.pecos_qis_trace_metadata_qubit_hugr.001(i64, ptr, ptr) local_unnamed_addr\ndefine i64 @user() { %q = call i64 @__hugr__.pecos_qis_trace_metadata_qubit_hugr.001(i64 0, ptr null, ptr null) ret i64 %q }\n",
+      "expected": "declare i64 @pecos_qis_trace_metadata_qubit_hugr(i64, ptr, ptr) local_unnamed_addr\ndefine i64 @user() { %q = call i64 @pecos_qis_trace_metadata_qubit_hugr(i64 0, ptr null, ptr null) ret i64 %q }\n"
+    },
+    {
+      "ir": "declare i64 @__hugr__.__main__.pecos_qis_trace_metadata_qubit_hugr.001(i64, ptr, ptr) local_unnamed_addr\ndefine i64 @user() { %q = call i64 @__hugr__.__main__.pecos_qis_trace_metadata_qubit_hugr.001(i64 0, ptr null, ptr null) ret i64 %q }\n",
+      "expected": "declare i64 @pecos_qis_trace_metadata_qubit_hugr(i64, ptr, ptr) local_unnamed_addr\ndefine i64 @user() { %q = call i64 @pecos_qis_trace_metadata_qubit_hugr(i64 0, ptr null, ptr null) ret i64 %q }\n"
+    },
+    {
+      "ir": "declare i64 @__hugr__.a.b.pecos_qis_trace_metadata_qubit_hugr.001(i64, ptr, ptr) local_unnamed_addr\ndefine i64 @user() { %q = call i64 @__hugr__.a.b.pecos_qis_trace_metadata_qubit_hugr.001(i64 0, ptr null, ptr null) ret i64 %q }\n",
+      "expected": "declare i64 @pecos_qis_trace_metadata_qubit_hugr(i64, ptr, ptr) local_unnamed_addr\ndefine i64 @user() { %q = call i64 @pecos_qis_trace_metadata_qubit_hugr(i64 0, ptr null, ptr null) ret i64 %q }\n"
+    }
+  ],
+  "test_all_helper_abis": [
+    {
+      "ir": "declare void @__hugr__.pecos_qis_trace_metadata_hugr(ptr, ptr)\n",
+      "expected": "declare void @pecos_qis_trace_metadata_hugr(ptr, ptr)\n"
+    },
+    {
+      "ir": "declare void @pecos_qis_trace_metadata_hugr(ptr, ptr)\n",
+      "expected": "declare void @pecos_qis_trace_metadata_hugr(ptr, ptr)\n"
+    },
+    {
+      "ir": "declare i64 @__hugr__.pecos_qis_trace_metadata_qubit_hugr(i64, ptr, ptr)\n",
+      "expected": "declare i64 @pecos_qis_trace_metadata_qubit_hugr(i64, ptr, ptr)\n"
+    },
+    {
+      "ir": "declare i64 @pecos_qis_trace_metadata_qubit_hugr(i64, ptr, ptr)\n",
+      "expected": "declare i64 @pecos_qis_trace_metadata_qubit_hugr(i64, ptr, ptr)\n"
+    },
+    {
+      "ir": "declare i64 @__hugr__.pecos_qis_runtime_barrier_qubit_hugr(i64)\n",
+      "expected": "declare i64 @pecos_qis_runtime_barrier_qubit_hugr(i64)\n"
+    },
+    {
+      "ir": "declare i64 @pecos_qis_runtime_barrier_qubit_hugr(i64)\n",
+      "expected": "declare i64 @pecos_qis_runtime_barrier_qubit_hugr(i64)\n"
+    },
+    {
+      "ir": "declare { i64, i64 } @__hugr__.pecos_qis_runtime_barrier_qubits2_hugr(i64, i64)\n",
+      "expected": "declare { i64, i64 } @pecos_qis_runtime_barrier_qubits2_hugr(i64, i64)\n"
+    },
+    {
+      "ir": "declare { i64, i64 } @pecos_qis_runtime_barrier_qubits2_hugr(i64, i64)\n",
+      "expected": "declare { i64, i64 } @pecos_qis_runtime_barrier_qubits2_hugr(i64, i64)\n"
+    }
+  ],
+  "test_identical_declarations_merge_after_attributes_and_whitespace": [
+    {
+      "ir": "declare i64 @__hugr__.__main__.pecos_qis_trace_metadata_qubit_hugr.14(i64, ptr, ptr) local_unnamed_addr #0\ndeclare noundef i64 @__hugr__.other.pecos_qis_trace_metadata_qubit_hugr.92( i64 noundef, ptr nonnull, ptr ) nounwind\n",
+      "expected": "declare i64 @pecos_qis_trace_metadata_qubit_hugr(i64, ptr, ptr) local_unnamed_addr #0\n\n"
+    }
+  ],
+  "test_conflicting_declarations_report_both_signatures": [
+    {
+      "ir": "declare i64 @pecos_qis_trace_metadata_qubit_hugr(i64, ptr, ptr)\ndeclare void @__hugr__.pecos_qis_trace_metadata_qubit_hugr.2(ptr, ptr)\n",
+      "error": "PECOS helper 'pecos_qis_trace_metadata_qubit_hugr' has conflicting signatures: 'i64 (i64, ptr, ptr)' and 'void (ptr, ptr)'"
+    }
+  ],
+  "test_wrong_abi_reports_expected_and_actual": [
+    {
+      "ir": "declare i32 @pecos_qis_trace_metadata_qubit_hugr(i64, ptr, ptr)\n",
+      "error": "PECOS helper 'pecos_qis_trace_metadata_qubit_hugr' expects 'i64 (i64, ptr, ptr)', actual signature is 'i32 (i64, ptr, ptr)'"
+    },
+    {
+      "ir": "declare i64 @pecos_qis_trace_metadata_qubit_hugr(i32, ptr, ptr)\n",
+      "error": "PECOS helper 'pecos_qis_trace_metadata_qubit_hugr' expects 'i64 (i64, ptr, ptr)', actual signature is 'i64 (i32, ptr, ptr)'"
+    },
+    {
+      "ir": "declare i64 @pecos_qis_trace_metadata_qubit_hugr(i64, ptr addrspace(1), ptr)\n",
+      "error": "PECOS helper 'pecos_qis_trace_metadata_qubit_hugr' expects 'i64 (i64, ptr, ptr)', actual signature is 'i64 (i64, ptr addrspace(1), ptr)'"
+    },
+    {
+      "ir": "declare i64 @pecos_qis_trace_metadata_qubit_hugr(i64, ptr, ptr, ...)\n",
+      "error": "PECOS helper 'pecos_qis_trace_metadata_qubit_hugr' expects 'i64 (i64, ptr, ptr)', actual signature is 'i64 (i64, ptr, ptr, ...)'"
+    },
+    {
+      "ir": "declare i64 @pecos_qis_trace_metadata_qubit_hugr(i64 (i64)*, ptr, ptr)\n",
+      "error": "PECOS helper 'pecos_qis_trace_metadata_qubit_hugr' expects 'i64 (i64, ptr, ptr)', actual signature is 'i64 (i64 (i64)*, ptr, ptr)'"
+    },
+    {
+      "ir": "declare i64 @pecos_qis_trace_metadata_qubit_hugr(i64 *, ptr, ptr)\n",
+      "error": "PECOS helper 'pecos_qis_trace_metadata_qubit_hugr' expects 'i64 (i64, ptr, ptr)', actual signature is 'i64 (i64 *, ptr, ptr)'"
+    },
+    {
+      "ir": "declare i64 * @pecos_qis_trace_metadata_qubit_hugr(i64, ptr, ptr)\n",
+      "error": "PECOS helper 'pecos_qis_trace_metadata_qubit_hugr' expects 'i64 (i64, ptr, ptr)', actual signature is 'i64 * (i64, ptr, ptr)'"
+    },
+    {
+      "ir": "declare %\"return type\" @pecos_qis_trace_metadata_qubit_hugr(i64, ptr, ptr)\n",
+      "error": "PECOS helper 'pecos_qis_trace_metadata_qubit_hugr' expects 'i64 (i64, ptr, ptr)', actual signature is '%\"return type\" (i64, ptr, ptr)'"
+    },
+    {
+      "ir": "declare target(\"spirv.Event\") @pecos_qis_trace_metadata_qubit_hugr(i64, ptr, ptr)\n",
+      "error": "PECOS helper 'pecos_qis_trace_metadata_qubit_hugr' expects 'i64 (i64, ptr, ptr)', actual signature is 'target(\"spirv.Event\") (i64, ptr, ptr)'"
+    }
+  ],
+  "test_helper_definition_is_rejected": [
+    {
+      "ir": "define i64 @pecos_qis_trace_metadata_qubit_hugr(i64 %q, ptr %a, ptr %b) {\nret i64 %q\n}\n",
+      "error": "PECOS helper 'pecos_qis_trace_metadata_qubit_hugr' must be declared, not defined (line 1)"
+    },
+    {
+      "ir": "define i64 @__hugr__.__main__.pecos_qis_trace_metadata_qubit_hugr.14(i64 %q, ptr %a, ptr %b) {\nret i64 %q\n}\n",
+      "error": "PECOS helper 'pecos_qis_trace_metadata_qubit_hugr' must be declared, not defined (line 1)"
+    }
+  ],
+  "test_non_helpers_are_untouched": [
+    {
+      "ir": "declare i64 @__hugr__.other.14(i64)\n",
+      "expected": "declare i64 @__hugr__.other.14(i64)\n"
+    }
+  ],
+  "test_strings_and_comments_are_untouched": [
+    {
+      "ir": "@data = constant [90 x i8] c\"escaped \\22 @__hugr__.__main__.pecos_qis_trace_metadata_qubit_hugr.14\\00\"\n; @pecos_qis_trace_metadata_qubit_hugr\n",
+      "expected": "@data = constant [90 x i8] c\"escaped \\22 @__hugr__.__main__.pecos_qis_trace_metadata_qubit_hugr.14\\00\"\n; @pecos_qis_trace_metadata_qubit_hugr\n"
+    }
+  ],
+  "test_function_body_reference_is_not_a_definition": [
+    {
+      "ir": "define ptr @user() { ret ptr @__hugr__.pecos_qis_trace_metadata_qubit_hugr.14 }\n",
+      "expected": "define ptr @user() { ret ptr @pecos_qis_trace_metadata_qubit_hugr }\n"
+    }
+  ],
+  "test_quoted_symbol_with_guppy_scope_is_renamed": [
+    {
+      "ir": "declare i64 @\"__hugr__.tests.test_probe.<locals>.pecos_qis_trace_metadata_qubit_hugr.12\"(i64, ptr, ptr)\ndefine i64 @user() { %q = call i64 @\"__hugr__.tests.test_probe.<locals>.pecos_qis_trace_metadata_qubit_hugr.12\"(i64 0, ptr null, ptr null) ret i64 %q }\n",
+      "expected": "declare i64 @pecos_qis_trace_metadata_qubit_hugr(i64, ptr, ptr)\ndefine i64 @user() { %q = call i64 @pecos_qis_trace_metadata_qubit_hugr(i64 0, ptr null, ptr null) ret i64 %q }\n"
+    }
+  ],
+  "test_declaration_text_inside_multiline_string_is_untouched": [
+    {
+      "ir": "@data = constant [99 x i8] c\"\ndeclare void @pecos_qis_trace_metadata_qubit_hugr()\n\"\n",
+      "expected": "@data = constant [99 x i8] c\"\ndeclare void @pecos_qis_trace_metadata_qubit_hugr()\n\"\n"
+    }
+  ],
+  "test_aggregate_declarations_merge_with_spacing_and_return_attributes": [
+    {
+      "ir": "declare {i64,i64} @__hugr__.a.pecos_qis_runtime_barrier_qubits2_hugr.1(i64,i64) local_unnamed_addr\ndeclare noundef { i64, i64 } @pecos_qis_runtime_barrier_qubits2_hugr(i64 noundef, i64) #1\n",
+      "expected": "declare {i64,i64} @pecos_qis_runtime_barrier_qubits2_hugr(i64,i64) local_unnamed_addr\n\n"
+    }
+  ],
+  "test_declaration_modifiers_are_not_return_types": [
+    {
+      "ir": "declare dso_local i64 @pecos_qis_trace_metadata_qubit_hugr(i64 noundef, ptr align 8, ptr) local_unnamed_addr\n",
+      "expected": "declare dso_local i64 @pecos_qis_trace_metadata_qubit_hugr(i64 noundef, ptr align 8, ptr) local_unnamed_addr\n"
+    },
+    {
+      "ir": "declare hidden i64 @pecos_qis_trace_metadata_qubit_hugr(i64 noundef, ptr align 8, ptr) local_unnamed_addr\n",
+      "expected": "declare hidden i64 @pecos_qis_trace_metadata_qubit_hugr(i64 noundef, ptr align 8, ptr) local_unnamed_addr\n"
+    },
+    {
+      "ir": "declare ccc i64 @pecos_qis_trace_metadata_qubit_hugr(i64 noundef, ptr align 8, ptr) local_unnamed_addr\n",
+      "expected": "declare ccc i64 @pecos_qis_trace_metadata_qubit_hugr(i64 noundef, ptr align 8, ptr) local_unnamed_addr\n"
+    },
+    {
+      "ir": "declare noundef range(i64 0, 4) i64 @pecos_qis_trace_metadata_qubit_hugr(i64 noundef, ptr align 8, ptr) local_unnamed_addr\n",
+      "expected": "declare noundef range(i64 0, 4) i64 @pecos_qis_trace_metadata_qubit_hugr(i64 noundef, ptr align 8, ptr) local_unnamed_addr\n"
+    }
+  ],
+  "test_declarations_with_different_modifiers_merge": [
+    {
+      "ir": "declare i64 @pecos_qis_trace_metadata_qubit_hugr(i64, ptr, ptr)\ndeclare dso_local i64 @__hugr__.pecos_qis_trace_metadata_qubit_hugr.14(i64, ptr, ptr)\n",
+      "expected": "declare i64 @pecos_qis_trace_metadata_qubit_hugr(i64, ptr, ptr)\n\n"
+    }
+  ],
+  "test_parameter_names_do_not_change_the_llvm_type": [
+    {
+      "ir": "declare i64 @pecos_qis_trace_metadata_qubit_hugr(i64 %\"a,b)\", ptr %key, ptr %value)\ndeclare noundef i64 @pecos_qis_trace_metadata_qubit_hugr(i64 %\"a,b)\", ptr %key, ptr %value)\n",
+      "expected": "declare i64 @pecos_qis_trace_metadata_qubit_hugr(i64 %\"a,b)\", ptr %key, ptr %value)\n\n"
+    },
+    {
+      "ir": "declare i64 @pecos_qis_trace_metadata_qubit_hugr(i64 %\"a,b)\", ptr %key, ptr %value)\ndeclare i64 @pecos_qis_trace_metadata_qubit_hugr(i64 %\"different\", ptr %key, ptr %value)\n",
+      "expected": "declare i64 @pecos_qis_trace_metadata_qubit_hugr(i64 %\"a,b)\", ptr %key, ptr %value)\n\n"
+    }
+  ],
+  "test_control_characters_inside_string_do_not_split_declarations": [
+    {
+      "ir": "@data = constant [99 x i8] c\"\f@__hugr__.pecos_qis_trace_metadata_qubit_hugr.14\"\ndeclare i64 @__hugr__.pecos_qis_trace_metadata_qubit_hugr.14(i64, ptr, ptr)\n",
+      "expected": "@data = constant [99 x i8] c\"\f@__hugr__.pecos_qis_trace_metadata_qubit_hugr.14\"\ndeclare i64 @pecos_qis_trace_metadata_qubit_hugr(i64, ptr, ptr)\n"
+    },
+    {
+      "ir": "@data = constant [99 x i8] c\"\r@__hugr__.pecos_qis_trace_metadata_qubit_hugr.14\"\ndeclare i64 @__hugr__.pecos_qis_trace_metadata_qubit_hugr.14(i64, ptr, ptr)\n",
+      "expected": "@data = constant [99 x i8] c\"\r@__hugr__.pecos_qis_trace_metadata_qubit_hugr.14\"\ndeclare i64 @pecos_qis_trace_metadata_qubit_hugr(i64, ptr, ptr)\n"
+    },
+    {
+      "ir": "@data = constant [99 x i8] c\"\u2028@__hugr__.pecos_qis_trace_metadata_qubit_hugr.14\"\ndeclare i64 @__hugr__.pecos_qis_trace_metadata_qubit_hugr.14(i64, ptr, ptr)\n",
+      "expected": "@data = constant [99 x i8] c\"\u2028@__hugr__.pecos_qis_trace_metadata_qubit_hugr.14\"\ndeclare i64 @pecos_qis_trace_metadata_qubit_hugr(i64, ptr, ptr)\n"
+    }
+  ],
+  "test_multiline_helper_definition_is_rejected": [
+    {
+      "ir": "define i64\n@__hugr__.m.pecos_qis_runtime_barrier_qubit_hugr.1(i64 %q) { ret i64 %q }",
+      "error": "PECOS helper 'pecos_qis_runtime_barrier_qubit_hugr' must be declared, not defined (line 2)"
+    }
+  ],
+  "test_multiline_declaration_is_validated": [
+    {
+      "ir": "declare\n noundef i64\n @__hugr__.pecos_qis_trace_metadata_qubit_hugr.1(\n i64, ; qubit\n ptr,\n ptr\n) nounwind\n",
+      "expected": "declare\n noundef i64\n @pecos_qis_trace_metadata_qubit_hugr(\n i64, ; qubit\n ptr,\n ptr\n) nounwind\n"
+    }
+  ],
+  "test_two_declarations_on_one_line": [
+    {
+      "ir": "declare i64 @pecos_qis_trace_metadata_qubit_hugr(i64, ptr, ptr) declare i64 @__hugr__.pecos_qis_trace_metadata_qubit_hugr.2(i64, ptr, ptr)",
+      "expected": "declare i64 @pecos_qis_trace_metadata_qubit_hugr(i64, ptr, ptr) "
+    },
+    {
+      "ir": "declare i64 @pecos_qis_trace_metadata_qubit_hugr(i64, ptr, ptr) declare void @__hugr__.pecos_qis_trace_metadata_qubit_hugr.2(i64, ptr, ptr)",
+      "error": "PECOS helper 'pecos_qis_trace_metadata_qubit_hugr' has conflicting signatures: 'i64 (i64, ptr, ptr)' and 'void (i64, ptr, ptr)'"
+    }
+  ],
+  "test_hex_escaped_public_helper_is_validated": [
+    {
+      "ir": "declare void @\"\\70ecos_qis_runtime_barrier_qubit_hugr\"(i64)",
+      "error": "PECOS helper 'pecos_qis_runtime_barrier_qubit_hugr' expects 'i64 (i64)', actual signature is 'void (i64)'"
+    },
+    {
+      "ir": "define void @\"\\70ecos_qis_runtime_barrier_qubit_hugr\"(i64) { ret void }",
+      "error": "PECOS helper 'pecos_qis_runtime_barrier_qubit_hugr' must be declared, not defined (line 1)"
+    }
+  ],
+  "test_hex_escaped_private_helper_is_renamed_everywhere": [
+    {
+      "ir": "declare i64 @\"__hugr__\\2Em.\\70ecos_qis_trace_metadata_qubit_hugr.10\"(i64, ptr, ptr)\ndefine i64 @user(i64 %q) { %r = call i64 @\"__hugr__\\2Em.\\70ecos_qis_trace_metadata_qubit_hugr.10\"(i64 %q, ptr null, ptr null) ret i64 %r }\n",
+      "expected": "declare i64 @pecos_qis_trace_metadata_qubit_hugr(i64, ptr, ptr)\ndefine i64 @user(i64 %q) { %r = call i64 @pecos_qis_trace_metadata_qubit_hugr(i64 %q, ptr null, ptr null) ret i64 %r }\n"
+    }
+  ],
+  "test_duplicate_removal_preserves_trailing_comment_and_next_declaration": [
+    {
+      "ir": "declare i64 @pecos_qis_trace_metadata_qubit_hugr(i64, ptr, ptr)\ndeclare i64 @__hugr__.pecos_qis_trace_metadata_qubit_hugr.2(i64, ptr, ptr) nounwind ; keep me\ndeclare void @other()\n",
+      "expected": "declare i64 @pecos_qis_trace_metadata_qubit_hugr(i64, ptr, ptr)\n ; keep me\ndeclare void @other()\n"
+    }
+  ],
+  "test_duplicate_removal_preserves_internal_comment": [
+    {
+      "ir": "declare i64 @pecos_qis_trace_metadata_qubit_hugr(i64, ptr, ptr)\ndeclare i64 @__hugr__.pecos_qis_trace_metadata_qubit_hugr.2(i64, ; keep me\n ptr, ptr)\n",
+      "expected": "declare i64 @pecos_qis_trace_metadata_qubit_hugr(i64, ptr, ptr)\n; keep me\n\n"
+    }
+  ],
+  "test_helper_outside_declaration_or_instruction_is_rejected": [
+    {
+      "ir": "; first line\n@pecos_qis_trace_metadata_qubit_hugr = global i64 0",
+      "error": "PECOS helper 'pecos_qis_trace_metadata_qubit_hugr' has unsupported placement on line 2"
+    },
+    {
+      "ir": "; first line\n@other = global ptr @pecos_qis_trace_metadata_qubit_hugr",
+      "error": "PECOS helper 'pecos_qis_trace_metadata_qubit_hugr' has unsupported placement on line 2"
+    },
+    {
+      "ir": "; first line\n@other = alias i64 (i64, ptr, ptr), ptr @pecos_qis_trace_metadata_qubit_hugr",
+      "error": "PECOS helper 'pecos_qis_trace_metadata_qubit_hugr' has unsupported placement on line 2"
+    },
+    {
+      "ir": "; first line\n!0 = !{ptr @pecos_qis_trace_metadata_qubit_hugr}",
+      "error": "PECOS helper 'pecos_qis_trace_metadata_qubit_hugr' has unsupported placement on line 2"
+    },
+    {
+      "ir": "; first line\ndefine void @other() personality ptr @pecos_qis_trace_metadata_qubit_hugr { ret void }",
+      "error": "PECOS helper 'pecos_qis_trace_metadata_qubit_hugr' has unsupported placement on line 2"
+    },
+    {
+      "ir": "; first line\ndefine void @other() prefix {ptr} {ptr @pecos_qis_trace_metadata_qubit_hugr} { ret void }",
+      "error": "PECOS helper 'pecos_qis_trace_metadata_qubit_hugr' has unsupported placement on line 2"
+    },
+    {
+      "ir": "; first line\n@pecos_qis_trace_metadata_qubit_hugr",
+      "error": "PECOS helper 'pecos_qis_trace_metadata_qubit_hugr' has unsupported placement on line 2"
+    }
+  ],
+  "test_instruction_operands_are_allowed_across_lines": [
+    {
+      "ir": "declare i64 @pecos_qis_trace_metadata_qubit_hugr(i64, ptr, ptr)\ndefine ptr @other() { %f = bitcast ptr\n @pecos_qis_trace_metadata_qubit_hugr to ptr ret ptr %f }\n",
+      "expected": "declare i64 @pecos_qis_trace_metadata_qubit_hugr(i64, ptr, ptr)\ndefine ptr @other() { %f = bitcast ptr\n @pecos_qis_trace_metadata_qubit_hugr to ptr ret ptr %f }\n"
+    }
+  ],
+  "test_unrecognized_namer_suffix_is_rejected": [
+    {
+      "ir": "declare i64 @__hugr__.__main__.pecos_qis_runtime_barrier_qubit_hugr.10.7(i64)",
+      "error": "Unrecognized PECOS helper symbol '@__hugr__.__main__.pecos_qis_runtime_barrier_qubit_hugr.10.7' on line 1"
+    }
+  ],
+  "test_non_numeric_helper_suffix_is_rejected": [
+    {
+      "ir": "declare i64 @__hugr__.pecos_qis_trace_metadata_qubit_hugr.user(i64)",
+      "error": "Unrecognized PECOS helper symbol '@__hugr__.pecos_qis_trace_metadata_qubit_hugr.user' on line 1"
+    }
+  ],
+  "test_conflicting_return_pointer_types_report_complete_signatures": [
+    {
+      "ir": "declare i64 * @pecos_qis_trace_metadata_qubit_hugr(i64, ptr, ptr)\ndeclare i32 * @__hugr__.pecos_qis_trace_metadata_qubit_hugr.1(i64, ptr, ptr)\n",
+      "error": "PECOS helper 'pecos_qis_trace_metadata_qubit_hugr' has conflicting signatures: 'i64 * (i64, ptr, ptr)' and 'i32 * (i64, ptr, ptr)'"
+    }
+  ]
+}

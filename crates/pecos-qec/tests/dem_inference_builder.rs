@@ -119,6 +119,7 @@ impl DemProgram for PreparedProgram {
             probes: Some(probes()),
             resolved_detector_outputs: None,
             resolved_observable_outputs: None,
+            ..Default::default()
         })
     }
 }
@@ -197,6 +198,10 @@ fn mixed_definitions_share_one_schema_and_ignore_unused_probe_roles() {
 
 struct ExplicitProgram;
 impl DemProgram for ExplicitProgram {
+    fn static_schedule_evidence(&self) -> Result<Option<String>, DemBuildError> {
+        Ok(Some("test_static_program".into()))
+    }
+
     fn prepare(&mut self, request: &DemProgramRequest<'_>) -> Result<DemBuildInput, DemBuildError> {
         assert!(
             request.inference.is_none(),
@@ -206,9 +211,17 @@ impl DemProgram for ExplicitProgram {
         assert_eq!(request.observable_outputs, Some([].as_slice()));
         Ok(DemBuildInput {
             circuit: circuit(),
+            evidence: pecos_qec::DemExecutionEvidence {
+                schedule: pecos_qec::DemScheduleEvidence {
+                    static_source: Some("test_static_program".into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             probes: None,
             resolved_detector_outputs: None,
             resolved_observable_outputs: None,
+            ..Default::default()
         })
     }
 }
@@ -252,6 +265,7 @@ impl DemProgram for SelectiveProgram {
             probes: Some(data),
             resolved_detector_outputs: None,
             resolved_observable_outputs: None,
+            ..Default::default()
         })
     }
 }
@@ -745,6 +759,7 @@ impl DemProgram for MismatchedSelectors {
             probes: Some(probes()),
             resolved_detector_outputs: (self.role == "detector").then_some(selectors.clone()),
             resolved_observable_outputs: (self.role == "observable").then_some(selectors),
+            ..Default::default()
         })
     }
 }

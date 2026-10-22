@@ -715,3 +715,14 @@ fn sparse_generator_slots_remain_sparse_named_bindings() {
             .is_empty()
     );
 }
+
+#[test]
+fn raw_binding_check_rejects_unnumbered_certified_calls() {
+    let raw = [trace("raw", None, 1, Some(&[3]))];
+    assert_eq!(
+        check_certified_raw_binding(&raw, &raw, "raw", false)
+            .unwrap_err()
+            .to_string(),
+        "certified result trace \"raw\" has no explicit occurrence"
+    );
+}

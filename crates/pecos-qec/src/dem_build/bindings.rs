@@ -5,7 +5,7 @@
 
 use super::specifications::{MeasurementRef, ResultRef};
 #[cfg(feature = "selene")]
-pub(crate) use pecos_qis::text::ResultTagMeasurements;
+pub use pecos_qis::text::ResultTagMeasurements;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -33,10 +33,10 @@ impl DemBindingError {
 }
 
 type Result<T> = std::result::Result<T, DemBindingError>;
-/// The P4 result-tag map and static measurement count, without requiring LLVM.
+/// The compiler result-tag map and static measurement count, without requiring LLVM.
 /// This is the value returned by `pecos_qis::text::extract_result_tag_measurements`.
 #[cfg(not(feature = "selene"))]
-pub(crate) type ResultTagMeasurements = (BTreeMap<String, Vec<Option<usize>>>, usize);
+pub type ResultTagMeasurements = (BTreeMap<String, Vec<Option<usize>>>, usize);
 
 /// One runtime `result()` call after Python object conversion.
 /// Non-string names are omitted at the boundary. Non-list values, mismatched
@@ -51,6 +51,23 @@ pub struct ResultTrace {
     pub occurrence: Option<usize>,
     pub width: usize,
     pub measurement_ids: Option<Vec<usize>>,
+}
+
+pub(super) fn numbered_occurrences(
+    traces: &[ResultTrace],
+) -> impl Iterator<Item = Result<usize>> + '_ {
+    let mut next_occurrence = BTreeMap::<&str, Option<usize>>::new();
+    traces.iter().map(move |trace| {
+        let next = next_occurrence.entry(&trace.name).or_insert(Some(0));
+        let occurrence = trace.occurrence.or(*next).ok_or_else(|| {
+            DemBindingError::value(format!(
+                "result trace {:?} has no available occurrence after usize::MAX",
+                trace.name
+            ))
+        })?;
+        *next = next.and_then(|next| occurrence.checked_add(1).map(|n| next.max(n)));
+        Ok(occurrence)
+    })
 }
 
 /// One runtime identity, its positions, and every result reference in encounter order.
@@ -108,16 +125,8 @@ impl ResultTraceIndex {
             runtime_order: runtime_order.to_vec(),
             runtime_ids,
         };
-        let mut next_occurrence = BTreeMap::<&str, Option<usize>>::new();
-        for trace in traces {
-            let next = next_occurrence.entry(&trace.name).or_insert(Some(0));
-            let occurrence = trace.occurrence.or(*next).ok_or_else(|| {
-                DemBindingError::value(format!(
-                    "result trace {:?} has no available occurrence after usize::MAX",
-                    trace.name
-                ))
-            })?;
-            *next = next.and_then(|next| occurrence.checked_add(1).map(|n| next.max(n)));
+        for (trace, occurrence) in traces.iter().zip(numbered_occurrences(traces)) {
+            let occurrence = occurrence?;
             let calls = index.calls.entry(trace.name.clone()).or_default();
             if calls.contains_key(&occurrence) {
                 return Err(DemBindingError::value(format!(
@@ -250,7 +259,7 @@ pub(crate) fn validate_source_ids(source: &[usize], runtime: &[usize]) -> Result
     Ok(())
 }
 
-/// Certify scalar calls using a lazily supplied P4 analysis. No candidate tags
+/// Certify scalar calls using lazily supplied compiler result-tag analysis. No candidate tags
 /// means no analysis or identity validation. Only certification errors may be
 /// dropped for optional enrichment; unrelated errors always propagate.
 /// # Errors
@@ -322,7 +331,7 @@ pub fn compiler_certified_traces(
     Ok(certified)
 }
 
-/// Adapt the existing P4 extractor without changing its error category.
+/// Adapt the existing compiler result-tag extractor without changing its error category.
 #[cfg(feature = "selene")]
 impl From<pecos_qis::text::ResultTagCertificationError> for DemBindingError {
     fn from(error: pecos_qis::text::ResultTagCertificationError) -> Self {
@@ -457,9 +466,7 @@ fn synthetic_slot(tag: &str) -> Option<SyntheticSlot<'_>> {
 /// Compiler occurrences address calls; generator occurrences address flat slots.
 /// # Errors
 /// Rejects call-width disagreements or mismatched IDs, including absent slots.
-/// # Panics
-/// The certified records must have explicit occurrences, as
-/// returned by the compiler and generator certification functions.
+/// Rejects certified records without explicit occurrences.
 pub fn check_certified_raw_binding(
     certified: &[ResultTrace],
     bound: &[ResultTrace],
@@ -485,7 +492,12 @@ pub fn check_certified_raw_binding(
         if ids.is_empty() {
             continue;
         }
-        let occurrence = item.occurrence.expect("certified occurrences are explicit");
+        let occurrence = item.occurrence.ok_or_else(|| {
+            DemBindingError::value(format!(
+                "certified result trace {:?} has no explicit occurrence",
+                item.name
+            ))
+        })?;
         let position = if !generator_slots && item.name == raw_tag {
             if let Some(call) = calls.get(occurrence)
                 && call.len() != ids.len()

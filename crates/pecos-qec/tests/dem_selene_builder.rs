@@ -22,6 +22,7 @@ fn program(ir: &str) -> SeleneDemProgram {
 const PARITIES: &str = include_str!("fixtures/dem_programs/parities.ll");
 
 #[test]
+#[cfg(feature = "hugr")]
 fn qis_inference_matches_explicit_definitions() {
     let noise = NoiseConfig::new(0.001, 0.01, 0.02, 0.001);
     let inferred = DetectorErrorModel::builder()
@@ -46,7 +47,9 @@ fn qis_inference_matches_explicit_definitions() {
     assert_eq!(report.detector_supports, [vec![2, 0]]);
     assert_eq!(report.observable_supports, [vec![1]]);
     let explicit = DetectorErrorModel::builder()
-        .with_program(program(PARITIES))
+        .with_program(hugr_program(include_bytes!(
+            "fixtures/dem_programs/parities.hugr"
+        )))
         .with_qubits(3)
         .with_noise(noise)
         .with_idle_after_2q(1.0)
@@ -122,32 +125,60 @@ fn requested_nonlinear_output_is_rejected() {
 }
 
 #[test]
+fn explicit_qis_is_rejected_before_capture_even_with_inference_settings() {
+    // Invalid IR would fail if capture or compilation happened before policy validation.
+    let error = DetectorErrorModel::builder()
+        .with_program(SeleneDemProgram::new(Qis::from_string("must not execute")))
+        .with_qubits(1)
+        .with_detectors(vec![vec![0]])
+        .with_observables(vec![])
+        .with_inference(DemInferenceSettings::default())
+        .prepare()
+        .err()
+        .unwrap();
+    assert!(
+        error
+            .to_string()
+            .contains("requires static schedule evidence"),
+        "{error}"
+    );
+}
+
+#[cfg(feature = "hugr")]
+fn hugr_program(bytes: &[u8]) -> SeleneDemProgram {
+    SeleneDemProgram::from_hugr(
+        bytes.to_vec(),
+        pecos_qec::QSystemPlatform::Helios,
+        pecos_qec::OptimizationLevel::Default,
+    )
+    .with_runtime(runtime())
+}
+
+#[test]
+#[cfg(feature = "hugr")]
 fn explicit_program_does_not_require_inference_outputs() {
-    let build = DetectorErrorModel::builder()
-        .with_noise(NoiseConfig::new(0.001, 0.01, 0.001, 0.001))
-        .with_program(program(include_str!(
-            "fixtures/dem_programs/explicit_only.ll"
+    let prepared = DetectorErrorModel::builder()
+        .with_program(hugr_program(include_bytes!(
+            "fixtures/dem_programs/explicit_only.hugr"
         )))
         .with_qubits(1)
         .with_detectors(vec![vec![0]])
         .with_observables(vec![])
         .with_inference(DemInferenceSettings::default())
-        .build()
+        .prepare()
         .unwrap();
-    assert!(build.prepared().inference().is_none());
-    assert!(
-        build
-            .prepared()
-            .circuit()
-            .get_meta("dem_raw_measurement_binding")
-            .is_none()
-    );
+    assert!(prepared.inference().is_none());
+    let audit = prepared.audit();
     assert_eq!(
-        build
-            .prepared()
+        audit.static_schedule_source.as_deref(),
+        Some("native_hugr_control_flow")
+    );
+    assert_eq!(audit.schedule_validation_shots, None);
+    assert!(
+        prepared
             .circuit()
-            .get_meta("dem_schedule_validation"),
-        Some(&Attribute::String("empirical_trace_comparison".into()))
+            .get_meta("dem_schedule_validation")
+            .is_none()
     );
 }
 
@@ -162,6 +193,11 @@ fn public_runtimes_support_explicit_and_inferred_lazy_measurement_dems() {
             };
             let program = SeleneDemProgram::new(Qis::from_string(source))
                 .with_runtime(runtime().expect("Selene public runtime is required"));
+            let program = if inferred {
+                program
+            } else {
+                program.with_frontend_static_schedule("explicit_only_fixture")
+            };
             let builder = DetectorErrorModel::builder()
                 .with_noise(NoiseConfig::new(0.001, 0.01, 0.001, 0.001))
                 .with_program(program)
@@ -210,10 +246,10 @@ fn explicit_program_requires_positive_schedule_validation_shots() {
         .with_observables(vec![])
         .build()
         .err()
-        .expect("zero schedule-validation shots must be rejected")
+        .expect("uncertified QIS must be rejected before shot validation")
         .to_string();
     assert!(
-        error.contains("schedule validation shots must be positive"),
+        error.contains("requires static schedule evidence"),
         "{error}"
     );
 }
@@ -235,7 +271,12 @@ fn measurement_dependent_schedule_is_rejected() {
                 .with_observables(vec![])
         };
         let error = builder.build().err().unwrap();
-        assert!(error.to_string().contains("schedule changed"), "{error}");
+        let expected = if inferred {
+            "schedule changed"
+        } else {
+            "requires static schedule evidence"
+        };
+        assert!(error.to_string().contains(expected), "{error}");
     }
 }
 
@@ -480,7 +521,7 @@ fn classical_delay_trace_uses_existing_idle_noise_in_nanoseconds() {
     let source = format!("{source}\ndeclare i32 @selene_simulate_delay(ptr, i64)\n");
     let rate_per_nanosecond = 0.0001;
     let build = DetectorErrorModel::builder()
-        .with_program(program(&source))
+        .with_program(program(&source).with_frontend_static_schedule("classical_delay_fixture"))
         .with_qubits(1)
         .with_detectors(vec![vec![0]])
         .with_observables(vec![])
@@ -515,7 +556,8 @@ fn half_turn_keeps_two_qubit_noise_and_idle_sites() {
         let program = SeleneDemProgram::new(Qis::from_string(include_str!(
             "fixtures/dem_programs/half_turn.ll"
         )))
-        .with_runtime(runtime().expect("Selene public runtime is required"));
+        .with_runtime(runtime().expect("Selene public runtime is required"))
+        .with_frontend_static_schedule("half_turn_fixture");
         let build = DetectorErrorModel::builder()
             .with_program(program)
             .with_qubits(2)
@@ -575,6 +617,8 @@ fn hosted_order_validation_is_opt_in_during_native_preparation() {
         let result = DetectorErrorModel::builder()
             .with_program(
                 program(ir)
+                    .with_frontend_static_schedule("test_fixture_preflight")
+                    .with_hosted_validation_context("native hosted fixture")
                     .with_schedule_validation_shots(1)
                     .with_require_hosted_operation_order(required),
             )
@@ -584,7 +628,9 @@ fn hosted_order_validation_is_opt_in_during_native_preparation() {
             .with_noise(NoiseConfig::new(0.001, 0.01, 0.001, 0.001))
             .build();
         if required {
-            assert!(result.err().unwrap().to_string().contains("ordering drift"));
+            let error = result.err().unwrap().to_string();
+            assert!(error.contains("ordering drift"));
+            assert!(error.contains("native hosted fixture"));
         } else {
             assert!(result.is_ok(), "{}", result.err().unwrap());
         }
@@ -607,7 +653,7 @@ fn prepared_random_readouts_are_rejected_for_both_roles() {
     "#;
     for detector in [false, true] {
         let builder = DetectorErrorModel::builder()
-            .with_program(program(ir))
+            .with_program(program(ir).with_frontend_static_schedule("test_fixture_preflight"))
             .with_qubits(1)
             .with_noise(NoiseConfig::new(0.001, 0.01, 0.001, 0.001));
         let builder = if detector {
@@ -623,4 +669,108 @@ fn prepared_random_readouts_are_rejected_for_both_roles() {
             )
         );
     }
+}
+
+#[test]
+#[cfg(feature = "hugr")]
+fn generator_certificate_binds_exact_executed_hugr_bytes() {
+    use pecos_qec::dem_build::generator_certificate_digest;
+    let bytes = include_bytes!("fixtures/dem_programs/explicit_only.hugr");
+    let layout = vec![("measurement".into(), 0)];
+    let digest = generator_certificate_digest(bytes, &layout);
+    let prepared = DetectorErrorModel::builder()
+        .with_program(hugr_program(bytes).with_trusted_generator_layout(layout.clone(), &digest))
+        .with_qubits(1)
+        .with_detector_definitions(vec![
+            DemDefinition::references(
+                0,
+                vec![pecos_qec::MeasurementRef::tag("measurement").unwrap()],
+            )
+            .unwrap(),
+        ])
+        .prepare()
+        .unwrap();
+    assert_eq!(
+        prepared.audit().static_schedule_source.as_deref(),
+        Some("generator_layout_v2_program_bound")
+    );
+    assert_eq!(
+        prepared.audit().named_result_binding,
+        "generator_layout_v2_program_bound"
+    );
+    assert_eq!(
+        prepared.named_result_measurements()["measurement"],
+        [Some(0)]
+    );
+    for (source, expected) in [
+        (bytes.as_slice(), "bad digest"),
+        (b"foreign bytes".as_slice(), digest.as_str()),
+    ] {
+        let error = DetectorErrorModel::builder()
+            .with_program(
+                hugr_program(source).with_trusted_generator_layout(layout.clone(), expected),
+            )
+            .with_qubits(1)
+            .with_detectors(vec![vec![0]])
+            .prepare()
+            .err()
+            .unwrap();
+        assert!(
+            error.to_string().contains("certificate does not match"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+#[cfg(feature = "hugr")]
+fn explicit_hugr_named_and_json_results_use_executed_qis_analysis() {
+    for json in [false, true] {
+        let builder = DetectorErrorModel::builder()
+            .with_program(hugr_program(include_bytes!(
+                "fixtures/dem_programs/explicit_only.hugr"
+            )))
+            .with_qubits(1);
+        let builder = if json {
+            builder.with_detectors_json(r#"[{"id":0,"result_tags":["measurement"]}]"#)
+        } else {
+            builder.with_detector_definitions(vec![
+                DemDefinition::references(
+                    0,
+                    vec![pecos_qec::MeasurementRef::tag("measurement").unwrap()],
+                )
+                .unwrap(),
+            ])
+        };
+        let prepared = builder.prepare().unwrap();
+        assert_eq!(
+            prepared.named_result_measurements()["measurement"],
+            [Some(0)]
+        );
+        assert_eq!(
+            prepared.audit().named_result_binding,
+            "compiler_direct_scalar_complete"
+        );
+        assert_eq!(prepared.definitions().detectors[0].measurements, [0]);
+    }
+}
+
+#[test]
+#[cfg(feature = "hugr")]
+fn native_hugr_control_flow_rejects_explicit_before_execution() {
+    let error = DetectorErrorModel::builder()
+        .with_program(hugr_program(include_bytes!(
+            "fixtures/dem_programs/changing_schedule.hugr"
+        )))
+        .with_qubits(2)
+        .with_detectors(vec![vec![0]])
+        .prepare()
+        .err()
+        .unwrap();
+    assert!(
+        error.to_string().contains(
+            "branching or looping control flow cannot be certified from one runtime trace"
+        ),
+        "{error}"
+    );
 }

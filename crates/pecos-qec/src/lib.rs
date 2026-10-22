@@ -101,8 +101,9 @@ pub use bounded_enumeration_distance::{
 pub use coloration::{ColorationMemoryError, coloration_memory_circuit};
 pub use dem_build::{
     DemAnnotationOrigin, DemBuild, DemBuildBuilder, DemBuildError, DemBuildInput, DemDefinition,
-    DemDefinitionOrigin, DemDefinitionSource, DemOutputSelector, DemProgram, DemProgramRequest,
-    MeasurementRef, PreparedDem, ResultRef,
+    DemDefinitionOrigin, DemDefinitionSource, DemExecutionEvidence, DemOutputSelector, DemProgram,
+    DemProgramRequest, DemScheduleEvidence, GeneratorLayout, MeasurementRef, PreparedDem,
+    ResultRef,
 };
 pub use dem_inference::{
     DemInferenceData, DemInferenceError, DemInferenceReport, DemInferenceSettings,

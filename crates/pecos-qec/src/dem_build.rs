@@ -11,6 +11,7 @@ mod audit;
 pub mod bindings;
 mod certificate;
 mod evaluation;
+mod evidence;
 mod fingerprint;
 mod references;
 pub mod specifications;
@@ -18,6 +19,9 @@ pub mod specifications;
 pub use audit::{
     DemBuildAudit, DemInferenceAudit, NoiseResidualSummary, summarize_noise_residuals,
 };
+#[cfg(feature = "selene")]
+pub(crate) use evidence::require_static_schedule;
+pub use evidence::{DemExecutionEvidence, DemScheduleEvidence, GeneratorLayout};
 pub use fingerprint::schema_fingerprint;
 pub use references::{NoiselessReferences, noiseless_references};
 pub use specifications::{MeasurementRef, ResultRef};
@@ -152,8 +156,23 @@ pub struct DemDefinitionOrigin {
 
 /// Input prepared by a caller or runtime adapter. Probe IDs must be bound to
 /// this circuit's measurements; the builder checks complete identity coverage.
+#[derive(Default)]
 pub struct DemBuildInput {
     pub circuit: TickCircuit,
+    /// Adapter evidence; a successful inference solve adds no schedule evidence.
+    pub evidence: DemExecutionEvidence,
+    /// Runtime result calls, preserving their widths and encounter order.
+    /// Without compiler result-tag analysis or a generator layout, a custom adapter
+    /// owns certification of these bindings. Selene supplies compiler analysis
+    /// when static evidence is required and never trusts read timing.
+    pub result_traces: Vec<bindings::ResultTrace>,
+    /// Source measurement order before replay compaction, required for certification.
+    pub source_measurement_ids: Vec<usize>,
+    /// Compiler result-tag analysis of the exact executed QIS, including certification failures.
+    pub result_tag_analysis:
+        Option<Result<bindings::ResultTagMeasurements, bindings::DemBindingError>>,
+    /// Program-bound generator certificate, verified before use.
+    pub generator_layout: Option<GeneratorLayout>,
     pub probes: Option<DemInferenceData>,
     /// Resolved detector columns, when the adapter knows the per-tag widths.
     pub resolved_detector_outputs: Option<Vec<DemOutputSelector>>,
@@ -163,6 +182,8 @@ pub struct DemBuildInput {
 
 /// Execution options passed to a runtime adapter before building a DEM.
 pub struct DemProgramRequest<'a> {
+    /// Resolved policy, independent of whether inference settings were supplied.
+    pub requires_static_schedule: bool,
     pub num_qubits: usize,
     pub seed: u64,
     pub inference: Option<&'a DemInferenceSettings>,
@@ -177,6 +198,21 @@ pub struct DemProgramRequest<'a> {
 /// coin-toss probes. Implementations must validate the program's schedule and
 /// honor `require_raw_provenance`; a successful fit does not prove either.
 pub trait DemProgram {
+    /// Report static schedule evidence without executing the program.
+    /// Custom adapters must report the same source in `DemBuildInput::evidence`.
+    /// # Errors
+    /// Rejects invalid certificates or unsupported program structure.
+    fn static_schedule_evidence(&self) -> Result<Option<String>, DemBuildError> {
+        Ok(None)
+    }
+
+    /// Explain missing static evidence for this adapter's input route.
+    fn missing_static_schedule_error(&self) -> DemBuildError {
+        DemBuildError::Preparation(
+            "DEM program requires static schedule evidence; the adapter must report a nonempty static schedule source before execution".into(),
+        )
+    }
+
     /// Execute and prepare the requested program.
     ///
     /// # Errors
@@ -236,6 +272,9 @@ impl DemBuild {
 #[derive(Clone)]
 pub struct PreparedDem {
     inference: Option<DemInferenceReport>,
+    evidence: DemExecutionEvidence,
+    generator_layout: bool,
+    requires_static_schedule: bool,
     /// Detectors first, then observables, with ascending IDs within each role.
     definition_origins: Vec<DemDefinitionOrigin>,
     schema: Arc<DemBuildSchema>,
@@ -545,6 +584,28 @@ impl DemBuildBuilder {
         let needs_inference = [&detector_outputs, &observable_outputs]
             .iter()
             .any(|outputs| outputs.as_ref().is_none_or(|items| !items.is_empty()));
+        let required_tags = self
+            .detector_definitions
+            .iter()
+            .chain(&self.observable_definitions)
+            .flatten()
+            .filter_map(|definition| match &definition.source {
+                DemDefinitionSource::References(refs) => Some(refs),
+                _ => None,
+            })
+            .flatten()
+            .filter_map(|reference| match reference {
+                MeasurementRef::Result(result) => Some(result.tag().to_string()),
+                MeasurementRef::Record(_) => None,
+            })
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let detector_json_needs_tags = json_uses_result_tags(self.detectors.as_deref())?;
+        let observable_json_needs_tags = json_uses_result_tags(self.observables.as_deref())?;
+        let json_needs_tags = detector_json_needs_tags || observable_json_needs_tags;
+        let requires_static_schedule =
+            !needs_inference || !required_tags.is_empty() || json_needs_tags;
         let settings = needs_inference.then(|| self.inference.clone().unwrap_or_default());
         if self.probes.is_some() && (!needs_inference || self.program.is_some()) {
             return Err(DemBuildError::Configuration(
@@ -563,23 +624,65 @@ impl DemBuildBuilder {
             ));
         }
         let input = match (self.circuit, self.program.as_mut()) {
-            (Some(circuit), None) => DemBuildInput {
-                circuit,
-                probes: self.probes,
-                resolved_detector_outputs: None,
-                resolved_observable_outputs: None,
-            },
-            (None, Some(program)) => program.prepare(&DemProgramRequest {
-                num_qubits: self.qubits.filter(|&n| n > 0).ok_or_else(|| {
-                    DemBuildError::Configuration(
-                        "with_program requires a positive with_qubits".into(),
-                    )
-                })?,
-                seed: self.seed,
-                inference: settings.as_ref(),
-                detector_outputs: detector_outputs.as_deref(),
-                observable_outputs: observable_outputs.as_deref(),
-            })?,
+            (Some(circuit), None) => {
+                let result_traces = self
+                    .probes
+                    .as_ref()
+                    .zip(settings.as_ref())
+                    .map(|(data, settings)| bindings::ResultTrace {
+                        name: settings.raw_tag.clone(),
+                        occurrence: Some(0),
+                        width: data.raw_measurement_ids.len(),
+                        measurement_ids: Some(data.raw_measurement_ids.clone()),
+                    })
+                    .into_iter()
+                    .collect();
+                DemBuildInput {
+                    circuit,
+                    evidence: DemExecutionEvidence {
+                        schedule: DemScheduleEvidence {
+                            static_source: Some("fixed_circuit".into()),
+                            ..Default::default()
+                        },
+                        raw_binding: self
+                            .probes
+                            .as_ref()
+                            .map(|_| "caller_bound_measurement_ids".into()),
+                        ..Default::default()
+                    },
+                    probes: self.probes,
+                    result_traces,
+                    ..Default::default()
+                }
+            }
+            (None, Some(program)) => {
+                let request = DemProgramRequest {
+                    requires_static_schedule,
+                    num_qubits: self.qubits.filter(|&n| n > 0).ok_or_else(|| {
+                        DemBuildError::Configuration(
+                            "with_program requires a positive with_qubits".into(),
+                        )
+                    })?,
+                    seed: self.seed,
+                    inference: settings.as_ref(),
+                    detector_outputs: detector_outputs.as_deref(),
+                    observable_outputs: observable_outputs.as_deref(),
+                };
+                let static_source = program.static_schedule_evidence()?;
+                evidence::require_static_schedule(
+                    program.as_ref(),
+                    requires_static_schedule,
+                    static_source.as_deref(),
+                )?;
+                let input = program.prepare(&request)?;
+                if static_source.is_some() && input.evidence.schedule.static_source != static_source
+                {
+                    return Err(DemBuildError::Preparation(
+                        "adapter static schedule evidence changed during preparation".into(),
+                    ));
+                }
+                input
+            }
             _ => {
                 return Err(DemBuildError::Configuration(
                     "supply exactly one of with_program or with_circuit".into(),
@@ -665,17 +768,48 @@ impl DemBuildBuilder {
             }
             None
         };
-        let traces = report
-            .as_ref()
-            .zip(settings.as_ref())
-            .map(|(report, settings)| bindings::ResultTrace {
-                name: settings.raw_tag.clone(),
-                occurrence: Some(0),
-                width: report.raw_measurement_ids.len(),
-                measurement_ids: Some(report.raw_measurement_ids.clone()),
-            })
-            .into_iter()
-            .collect::<Vec<_>>();
+        let generator_layout = requires_static_schedule && input.generator_layout.is_some();
+        let traces = evidence::certify_traces(
+            &input.result_traces,
+            &input.source_measurement_ids,
+            &measurement_ids,
+            requires_static_schedule.then_some(evidence::TraceCertification {
+                analysis: input.result_tag_analysis.as_ref(),
+                generator: input.generator_layout.as_ref(),
+            }),
+            &required_tags,
+            report.as_ref().zip(settings.as_ref()),
+        )?;
+        if json_needs_tags {
+            let (tags, count) = input
+                .result_tag_analysis
+                .as_ref()
+                .ok_or_else(|| {
+                    DemBuildError::Configuration(evidence::JSON_CERTIFICATION_ERROR.into())
+                })?
+                .as_ref()
+                .map_err(|error| match error {
+                    bindings::DemBindingError::Certification(_) => {
+                        DemBuildError::Configuration(evidence::JSON_CERTIFICATION_ERROR.into())
+                    }
+                    _ => DemBuildError::Configuration(error.to_string()),
+                })?;
+            let (detectors, observables) =
+                crate::fault_tolerance::dem_builder::resolve_result_tags(
+                    self.detectors.as_deref().unwrap_or("[]"),
+                    self.observables.as_deref().unwrap_or("[]"),
+                    tags,
+                    *count,
+                    &input.source_measurement_ids,
+                    &measurement_ids,
+                )?;
+            if self.detectors.is_some() {
+                self.detectors = Some(detectors);
+            }
+            if self.observables.is_some() {
+                self.observables = Some(observables);
+            }
+        }
         let index = bindings::ResultTraceIndex::new(&measurement_ids, &traces)
             .map_err(|error| DemBuildError::Configuration(error.to_string()))?;
         let mut definition_origins = Vec::new();
@@ -798,10 +932,29 @@ impl DemBuildBuilder {
         )?;
         Ok(PreparedDem {
             inference: report,
+            evidence: input.evidence,
+            generator_layout,
+            requires_static_schedule,
             definition_origins,
             schema: Arc::new(schema),
         })
     }
+}
+
+fn json_uses_result_tags(json: Option<&str>) -> Result<bool, DemBuildError> {
+    let Some(json) = json.filter(|json| !json.trim().is_empty()) else {
+        return Ok(false);
+    };
+    let value: serde_json::Value = serde_json::from_str(json).map_err(|error| {
+        DemBuildError::Configuration(format!("invalid detector/observable JSON: {error}"))
+    })?;
+    Ok(value.as_array().is_some_and(|entries| {
+        entries.iter().any(|entry| {
+            entry
+                .as_object()
+                .is_some_and(|entry| entry.contains_key("result_tags"))
+        })
+    }))
 }
 
 fn supports_json(supports: impl IntoIterator<Item = impl AsRef<[usize]>>) -> String {

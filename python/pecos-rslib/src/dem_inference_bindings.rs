@@ -239,6 +239,7 @@ fn capture_dem_evidence<'py>(
         .transpose()?;
     let program = SeleneDemProgram::new(program.inner.clone())
         .with_runtime(runtime)
+        .with_schedule_validation_shots(0)
         .with_require_hosted_operation_order(require_hosted_operation_order)
         .with_max_hosted_tick_separation(maximum);
     let convert = |outputs: Vec<(String, usize)>| {
@@ -252,13 +253,16 @@ fn capture_dem_evidence<'py>(
     let settings = settings.inner.clone();
     let evidence = py
         .detach(|| {
-            program.capture_and_analyze(&DemProgramRequest {
-                num_qubits,
-                seed,
-                inference: Some(&settings),
-                detector_outputs: detector_outputs.as_deref(),
-                observable_outputs: observable_outputs.as_deref(),
-            })
+            program
+                .with_hosted_validation_context("infer_guppy_dem_annotations")
+                .capture_and_analyze(&DemProgramRequest {
+                    requires_static_schedule: false,
+                    num_qubits,
+                    seed,
+                    inference: Some(&settings),
+                    detector_outputs: detector_outputs.as_deref(),
+                    observable_outputs: observable_outputs.as_deref(),
+                })
         })
         .map_err(|err| PyValueError::new_err(err.to_string()))?;
     let data = evidence

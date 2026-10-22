@@ -4,7 +4,6 @@
 use super::bindings::{MeasurementLedgerEntry, named_binding_classification};
 use super::{DemAnnotationOrigin, DemBuildError, DemDefinitionOrigin, PreparedDem};
 use crate::fault_tolerance::dem_builder::NoiseChannelResidual;
-use pecos_quantum::Attribute;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
@@ -36,18 +35,19 @@ impl DemInferenceAudit {
     }
 }
 
-/// Build evidence using the Python audit keys. The later Python/two-phase-builder
-/// packet supplies compiler/generator binding classification and full result-call
-/// provenance. Today named bindings describe the inferred raw tag, or none;
-/// caller-supplied probes use `caller_bound_measurement_ids`. Runtime evidence
-/// absent from the current input is None, never a claim of certification.
+/// Build evidence with independent schedule and result-binding channels.
+/// Missing adapter evidence remains absent, even after a successful inference solve.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DemBuildAudit {
     pub schema_fingerprint: String,
     pub soundness_scope: &'static str,
+    pub schedule_policy: &'static str,
     pub inference: Option<DemInferenceAudit>,
     pub definition_origins: Vec<DemDefinitionOrigin>,
     pub named_result_binding: String,
+    pub static_schedule_source: Option<String>,
+    pub schedule_validation: Option<String>,
+    pub schedule_validation_shots: Option<usize>,
     pub measurement_count: usize,
     pub runtime_measurement_order: Vec<usize>,
     pub runtime_order_is_canonical: bool,
@@ -84,9 +84,13 @@ impl DemBuildAudit {
         json!({
             "schema_fingerprint": self.schema_fingerprint,
             "soundness_scope": self.soundness_scope,
+            "schedule_policy": self.schedule_policy,
             "inference": self.inference.as_ref().map(DemInferenceAudit::to_json),
             "definition_origins": origins,
             "named_result_binding": self.named_result_binding,
+            "static_schedule_source": self.static_schedule_source,
+            "schedule_validation": self.schedule_validation,
+            "schedule_validation_shots": self.schedule_validation_shots,
             "measurement_count": self.measurement_count,
             "runtime_measurement_order": self.runtime_measurement_order,
             "runtime_order_is_canonical": self.runtime_order_is_canonical,
@@ -99,26 +103,23 @@ impl DemBuildAudit {
 impl PreparedDem {
     #[must_use]
     pub fn audit(&self) -> DemBuildAudit {
-        let meta = |key| match self.schema.circuit.get_meta(key) {
-            Some(Attribute::String(value)) => Some(value.clone()),
-            _ => None,
-        };
-        let inference = self.inference.as_ref().map(|report| {
-            let schedule_shots =
-                meta("dem_schedule_validation_shots").and_then(|value| value.parse::<usize>().ok());
-            DemInferenceAudit {
-                method: "coin_toss_affine_inference_v2",
-                raw_binding: meta("dem_raw_measurement_binding")
-                    .unwrap_or_else(|| "caller_bound_measurement_ids".into()),
-                probe_shots: report.probe_shots,
-                provenance_shots: schedule_shots
-                    .and_then(|shots| shots.checked_sub(report.probe_shots)),
-                validation_rows: report.validation_rows,
-                validation_kind: "additional_consistency_equations",
-                schedule_validation: meta("dem_schedule_validation"),
-                schedule_validation_shots: schedule_shots,
-                raw_measurement_ids: report.raw_measurement_ids.clone(),
-            }
+        let schedule_shots = (self.evidence.schedule.validation_shots > 0)
+            .then_some(self.evidence.schedule.validation_shots);
+        let schedule_validation = schedule_shots.map(|_| "empirical_trace_comparison".to_string());
+        let inference = self.inference.as_ref().map(|report| DemInferenceAudit {
+            method: "coin_toss_affine_inference_v2",
+            raw_binding: self
+                .evidence
+                .raw_binding
+                .clone()
+                .unwrap_or_else(|| "none".into()),
+            probe_shots: report.probe_shots,
+            provenance_shots: self.evidence.provenance_shots,
+            validation_rows: report.validation_rows,
+            validation_kind: "additional_consistency_equations",
+            schedule_validation: schedule_validation.clone(),
+            schedule_validation_shots: schedule_shots,
+            raw_measurement_ids: report.raw_measurement_ids.clone(),
         });
         let mismatch_count = self
             .schema
@@ -129,14 +130,26 @@ impl PreparedDem {
             .count();
         DemBuildAudit {
             schema_fingerprint: self.schema.schema_fingerprint.clone(),
-            soundness_scope: if inference.is_some() {
+            soundness_scope: if schedule_shots.is_none()
+                && self.evidence.schedule.static_source.is_none()
+            {
+                "unverified_schedule"
+            } else if inference.is_some() {
                 "empirical_static_schedule"
             } else {
                 "static_schedule_only"
             },
+            schedule_policy: if self.requires_static_schedule {
+                "static_required"
+            } else {
+                "empirical"
+            },
+            static_schedule_source: self.evidence.schedule.static_source.clone(),
+            schedule_validation,
+            schedule_validation_shots: schedule_shots,
             named_result_binding: named_binding_classification(
-                inference.as_ref().map(|audit| audit.raw_binding.as_str()),
-                false,
+                self.evidence.raw_binding.as_deref(),
+                self.generator_layout,
                 &self.schema.named_result_measurements,
             )
             .into(),

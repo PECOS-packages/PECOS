@@ -95,6 +95,17 @@ pub fn lower_clifford_rotations_preserving_arity(circuit: &mut TickCircuit) {
     }
 }
 
+/// Normalize a runtime trace before fault analysis, preserving existing measurement IDs.
+/// Lowers Clifford rotations preserving arity, optionally simplifies single-qubit Clifford chains,
+/// then assigns IDs only to measurements that lack them.
+pub fn normalize_traced_tick_circuit(circuit: &mut TickCircuit, simplify_cliffords: bool) {
+    lower_clifford_rotations_preserving_arity(circuit);
+    if simplify_cliffords {
+        simplify_single_qubit_clifford_chains(circuit);
+    }
+    assign_missing_meas_ids(circuit);
+}
+
 /// Insert Idle gates after each two-qubit gate on both of its qubits.
 ///
 /// Adds Idle(duration) on both qubits of each 2q gate. Models idle noise
@@ -154,7 +165,7 @@ pub fn compact_ticks(circuit: &mut TickCircuit) {
 ///
 /// Walks the circuit in tick order and assigns sequential `MeasId`s
 /// to any MZ/MeasureFree gate with empty `meas_ids`. Existing `MeasId`s
-/// are preserved. New IDs continue from the circuit's current counter.
+/// are preserved. New IDs start above existing IDs and the current counter.
 pub fn assign_missing_meas_ids(circuit: &mut TickCircuit) {
     AssignMissingMeasIds.apply_tick(circuit);
 }
@@ -1586,7 +1597,7 @@ impl CircuitPass for CompactTicks {
 ///
 /// Walks the circuit in tick order and assigns sequential IDs to any
 /// measurement gate with empty `meas_ids`. Existing IDs are preserved.
-/// New IDs continue from the circuit's current measurement counter.
+/// New IDs start above existing IDs and the current measurement counter.
 ///
 /// Use this on circuits from external sources (QIS trace, Stim import)
 /// that don't assign `MeasId` during construction.
@@ -1611,8 +1622,21 @@ impl CircuitPass for AssignMissingMeasIds {
         if missing == 0 {
             return;
         }
+        let counter = circuit.num_measurements();
         let mut next_id = circuit
-            .try_advance_meas_counter(missing)
+            .iter_gate_batches()
+            .filter_map(|batch| batch.as_gate().meas_ids.iter().map(|id| id.index()).max())
+            .max()
+            .map_or(0, |id| {
+                id.checked_add(1)
+                    .expect("measurement IDs must remain below usize::MAX")
+            })
+            .max(counter);
+        let reservation = (next_id - counter)
+            .checked_add(missing)
+            .expect("measurement IDs must remain below usize::MAX");
+        circuit
+            .try_advance_meas_counter(reservation)
             .unwrap_or_else(|err| panic!("{err}"));
 
         for tick in circuit.ticks_mut() {
@@ -4472,6 +4496,55 @@ mod tests {
         // X(0) can't merge with PZ (qubit 0 busy) or MZ (qubit 0 busy).
         assert_eq!(tc.num_ticks(), 3);
         assert_eq!(count_gate_batches(&tc), 3);
+    }
+
+    #[test]
+    fn normalize_trace_preserves_sparse_permuted_ids_and_fills_missing_ids() {
+        for simplify in [false, true] {
+            let mut circuit = TickCircuit::new();
+            circuit.tick().rz(pecos_core::Angle64::QUARTER_TURN, &[0]);
+            circuit.tick().h(&[1]);
+            circuit.tick().h(&[1]);
+            let mut measured = Gate::mz(&[0usize, 1]);
+            measured.meas_ids = vec![MeasId::from_raw(9), MeasId::from_raw(3)].into();
+            circuit.tick().try_add_gate(measured).unwrap();
+            circuit.tick().try_add_gate(Gate::mz(&[2usize])).unwrap();
+            normalize_traced_tick_circuit(&mut circuit, simplify);
+            let ids = circuit
+                .iter_gate_batches()
+                .flat_map(|batch| batch.as_gate().meas_ids.to_vec())
+                .map(MeasId::index)
+                .collect::<Vec<_>>();
+            assert_eq!(ids, [9, 3, 10]);
+            assert!(
+                !circuit
+                    .iter_gate_batches()
+                    .any(|batch| batch.gate_type == GateType::RZ)
+            );
+            assert_eq!(
+                circuit
+                    .iter_gate_batches()
+                    .filter(|batch| batch.gate_type == GateType::H)
+                    .count(),
+                if simplify { 0 } else { 2 }
+            );
+        }
+    }
+
+    #[test]
+    fn assign_missing_ids_reserves_past_later_external_ids() {
+        let mut circuit = TickCircuit::new();
+        circuit.tick().try_add_gate(Gate::mz(&[0usize])).unwrap();
+        let mut external = Gate::mz(&[1usize]);
+        external.meas_ids.push(MeasId::from_raw(0));
+        circuit.tick().try_add_gate(external).unwrap();
+        assign_missing_meas_ids(&mut circuit);
+        let ids = circuit
+            .iter_gate_batches()
+            .flat_map(|batch| batch.as_gate().meas_ids.to_vec())
+            .collect::<Vec<_>>();
+        assert_eq!(ids, [MeasId::from_raw(1), MeasId::from_raw(0)]);
+        assert_eq!(circuit.num_measurements(), 2);
     }
 
     /// `AssignMissingMeasIds` fills in ids for measurements that arrived without

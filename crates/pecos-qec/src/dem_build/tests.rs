@@ -339,7 +339,7 @@ fn audit_tracks_order_bindings_references_and_fingerprint() {
         Some(1)
     );
     let value = audit.to_json();
-    assert_eq!(value.as_object().unwrap().len(), 10);
+    assert_eq!(value.as_object().unwrap().len(), 14);
     assert_eq!(value["inference"].as_object().unwrap().len(), 9);
     assert_eq!(
         value["definition_origins"][1],

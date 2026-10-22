@@ -5,12 +5,15 @@
 //!
 //! QIS programs run through Selene; the `hugr` feature also enables native
 //! HUGR lowering. Circuit-only construction does not enable either dependency.
-//! Schedule checks are empirical, including for explicit QIS definitions.
+//! Explicit builds and mixed builds with named references require static schedule
+//! evidence before execution. Explicit builds capture one baseline; inference
+//! validates the schedule across its probes and records that empirical evidence
+//! independently of static schedule and named-result binding evidence.
 
 use crate::dem_inference::correlate_measurement_ids;
 use crate::{
-    DemBuildError, DemBuildInput, DemInferenceData, DemInferenceSettings, DemOutputSelector,
-    DemProgram, DemProgramRequest,
+    DemBuildError, DemBuildInput, DemExecutionEvidence, DemInferenceData, DemInferenceSettings,
+    DemOutputSelector, DemProgram, DemProgramRequest, DemScheduleEvidence, GeneratorLayout,
 };
 use pecos_engines::{coin_toss, sim_builder};
 use pecos_programs::{Qis, QisContent};
@@ -24,11 +27,45 @@ use pecos_quantum::{Attribute, TickCircuit, pass};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-#[derive(Clone)]
-enum ProgramSource {
-    Qis(Qis),
-    #[cfg(feature = "hugr")]
-    Hugr(Vec<u8>, crate::QSystemPlatform, crate::OptimizationLevel),
+trait ProgramSource: Send + Sync {
+    fn lower(&self) -> Result<Qis, DemBuildError>;
+
+    fn hugr_bytes(&self) -> Option<&[u8]> {
+        None
+    }
+
+    fn static_schedule_verdict(&self) -> Result<Option<bool>, DemBuildError> {
+        Ok(None)
+    }
+}
+
+impl ProgramSource for Qis {
+    fn lower(&self) -> Result<Qis, DemBuildError> {
+        Ok(self.clone())
+    }
+}
+
+#[cfg(feature = "hugr")]
+struct HugrSource {
+    bytes: Vec<u8>,
+    platform: crate::QSystemPlatform,
+    opt_level: crate::OptimizationLevel,
+}
+
+#[cfg(feature = "hugr")]
+impl ProgramSource for HugrSource {
+    fn lower(&self) -> Result<Qis, DemBuildError> {
+        super::dem_hugr::lower(&self.bytes, self.platform, self.opt_level)
+    }
+
+    fn hugr_bytes(&self) -> Option<&[u8]> {
+        Some(&self.bytes)
+    }
+
+    fn static_schedule_verdict(&self) -> Result<Option<bool>, DemBuildError> {
+        let (_, nontrivial) = super::dem_hugr::parse(&self.bytes)?;
+        Ok(Some(!nontrivial))
+    }
 }
 
 /// Built-in runtime adapter for QIS, and (with `hugr`) HUGR envelopes.
@@ -38,10 +75,14 @@ enum ProgramSource {
 /// a program or configuring invalid definitions does not load a runtime.
 #[derive(Clone)]
 pub struct SeleneDemProgram {
-    source: ProgramSource,
+    source: Arc<dyn ProgramSource>,
     runtime: Option<SeleneRuntime>,
     schedule_shots: usize,
     hosted: HostedReplayOptions,
+    hosted_context: String,
+    frontend_static_source: Option<String>,
+    generator_certificate: Option<(Vec<(String, usize)>, String)>,
+    simplify_cliffords: bool,
 }
 
 impl SeleneDemProgram {
@@ -50,10 +91,14 @@ impl SeleneDemProgram {
     #[must_use]
     pub fn new(program: Qis) -> Self {
         Self {
-            source: ProgramSource::Qis(program),
+            source: Arc::new(program),
             runtime: None,
             schedule_shots: 32,
             hosted: HostedReplayOptions::default(),
+            hosted_context: "SeleneDemProgram::prepare".into(),
+            frontend_static_source: None,
+            generator_certificate: None,
+            simplify_cliffords: false,
         }
     }
 
@@ -66,10 +111,18 @@ impl SeleneDemProgram {
         opt_level: crate::OptimizationLevel,
     ) -> Self {
         Self {
-            source: ProgramSource::Hugr(bytes.into(), platform, opt_level),
+            source: Arc::new(HugrSource {
+                bytes: bytes.into(),
+                platform,
+                opt_level,
+            }),
             runtime: None,
             schedule_shots: 32,
             hosted: HostedReplayOptions::default(),
+            hosted_context: "SeleneDemProgram::prepare".into(),
+            frontend_static_source: None,
+            generator_certificate: None,
+            simplify_cliffords: false,
         }
     }
 
@@ -93,14 +146,70 @@ impl SeleneDemProgram {
         self
     }
 
-    /// Number of additional schedule-check shots for explicit programs.
-    /// Inferred programs instead validate every inference/provenance shot.
-    /// Must be positive for explicit builds; unused for inferred builds.
-    /// A sample comparison is not a compiler proof.
+    /// Minimum number of schedule comparisons on empirical inference routes.
+    /// The number of additional shots is the maximum of this minimum and the sum
+    /// of inference and provenance probe counts. Explicit static builds ignore
+    /// this setting and capture exactly one baseline.
     #[must_use]
     pub fn with_schedule_validation_shots(mut self, shots: usize) -> Self {
         self.schedule_shots = shots;
         self
+    }
+
+    /// Assert that a front end inspected the HUGR that produced this exact QIS
+    /// and established a static measurement schedule (the Python HUGR preflight).
+    /// The audit records `source`; this assertion supplies no named-result binding.
+    #[must_use]
+    pub fn with_frontend_static_schedule(mut self, source: impl Into<String>) -> Self {
+        self.frontend_static_source = Some(source.into());
+        self
+    }
+
+    /// Assert that a trusted built-in generator stamped this layout and certificate
+    /// on the definition compiled to the exact bytes supplied to `from_hugr`.
+    /// This assertion permits control flow; the digest only binds the layout to
+    /// those bytes and does not establish trust in their producer. The audit records
+    /// `generator_layout_v2_program_bound` as the asserted source. QIS-only sources
+    /// cannot use this certificate.
+    #[must_use]
+    pub fn with_trusted_generator_layout(
+        mut self,
+        layout: Vec<(String, usize)>,
+        expected_digest: impl Into<String>,
+    ) -> Self {
+        self.generator_certificate = Some((layout, expected_digest.into()));
+        self
+    }
+
+    /// Context attached to hosted validation errors after replay and probe checks.
+    #[must_use]
+    pub fn with_hosted_validation_context(mut self, context: impl Into<String>) -> Self {
+        self.hosted_context = context.into();
+        self
+    }
+
+    /// Enable or disable Clifford chain simplification during trace normalization.
+    /// Disabled by default to preserve each physical gate as an independent noise site.
+    #[must_use]
+    pub fn with_simplify_single_qubit_clifford_chains(mut self, simplify: bool) -> Self {
+        self.simplify_cliffords = simplify;
+        self
+    }
+
+    fn verified_generator_layout(&self) -> Result<Option<GeneratorLayout>, DemBuildError> {
+        let Some((layout, expected_digest)) = &self.generator_certificate else {
+            return Ok(None);
+        };
+        let bytes = self.source.hugr_bytes().ok_or_else(|| {
+            preparation("generator layout requires the exact HUGR bytes supplied to from_hugr")
+        })?;
+        let generator = GeneratorLayout {
+            hugr_bytes: bytes.to_vec(),
+            layout: layout.clone(),
+            expected_digest: expected_digest.clone(),
+        };
+        generator.verify().map_err(preparation)?;
+        Ok(Some(generator))
     }
 }
 
@@ -329,6 +438,14 @@ pub struct SeleneDemEvidence {
     pub correlation_shots: usize,
     pub schedule_shots: usize,
     pub named_result_traces: Vec<NamedResultTrace>,
+    pub schedule_evidence: DemScheduleEvidence,
+    pub source_measurement_ids: Vec<usize>,
+    pub result_tag_analysis: Option<
+        Result<
+            crate::dem_build::bindings::ResultTagMeasurements,
+            crate::dem_build::bindings::DemBindingError,
+        >,
+    >,
 }
 
 struct BaselineAnalysis<'a> {
@@ -351,26 +468,36 @@ impl SeleneDemProgram {
     /// Capture coin-toss shots and analyze them, without normalizing the replayed circuit.
     ///
     /// # Errors
-    /// Returns an error, before any capture, for invalid inference settings or zero
-    /// schedule-validation shots on an explicit request; otherwise for invalid
+    /// Returns an error, before any capture, for missing required static evidence
+    /// or invalid inference settings; otherwise for invalid
     /// traces, outputs, schedules, or measurement bindings.
     pub fn capture_and_analyze(
         &self,
         request: &DemProgramRequest<'_>,
     ) -> Result<SeleneDemEvidence, DemBuildError> {
-        if request.inference.is_none() && self.schedule_shots == 0 {
-            return Err(preparation("schedule validation shots must be positive"));
-        }
+        self.capture_with(request, capture)
+    }
+
+    fn capture_with(
+        &self,
+        request: &DemProgramRequest<'_>,
+        mut capture_shots: impl FnMut(
+            &QisEngineBuilder,
+            usize,
+            usize,
+            u64,
+        ) -> Result<Vec<TraceShot>, DemBuildError>,
+    ) -> Result<SeleneDemEvidence, DemBuildError> {
+        let static_source = self.static_schedule_evidence()?;
+        crate::dem_build::require_static_schedule(
+            self,
+            request.requires_static_schedule,
+            static_source.as_deref(),
+        )?;
         if let Some(settings) = request.inference {
             settings.validate()?;
         }
-        let program = match &self.source {
-            ProgramSource::Qis(program) => program.clone(),
-            #[cfg(feature = "hugr")]
-            ProgramSource::Hugr(bytes, platform, opt_level) => {
-                super::dem_hugr::lower(bytes, *platform, *opt_level)?
-            }
-        };
+        let program = self.source.lower()?;
         let QisContent::Ir(source_ir) = program.content else {
             return Err(preparation(
                 "Selene DEM preparation requires QIS IR text, not bitcode",
@@ -383,22 +510,41 @@ impl SeleneDemProgram {
         let engine = qis_engine()
             .runtime(runtime)
             .interface(helios_interface_builder())
-            .program_ir(source_ir);
-        let mut baselines = capture(&engine, request.num_qubits, 1, request.seed)?;
+            .program_ir(source_ir.clone());
+        let mut baselines = capture_shots(&engine, request.num_qubits, 1, request.seed)?;
         if baselines.len() != 1 {
             return Err(preparation(format!(
                 "runtime returned {} baseline shots; expected 1",
                 baselines.len()
             )));
         }
-        let analysis = analyze_baseline(baselines.remove(0), request, self.schedule_shots)?;
-        let traces = capture(
-            &engine,
-            request.num_qubits,
-            analysis.evidence.schedule_shots,
-            analysis.probe_seed,
+        let analysis = analyze_baseline(
+            baselines.remove(0),
+            request,
+            if request.inference.is_some() {
+                self.schedule_shots
+            } else {
+                0
+            },
         )?;
-        self.analyze_hosted_probes(analysis, &traces)
+        let traces = if analysis.evidence.schedule_shots == 0 {
+            Vec::new()
+        } else {
+            capture_shots(
+                &engine,
+                request.num_qubits,
+                analysis.evidence.schedule_shots,
+                analysis.probe_seed,
+            )?
+        };
+        let mut evidence = self.analyze_hosted_probes(analysis, &traces)?;
+        evidence.schedule_evidence.static_source = static_source;
+        if request.requires_static_schedule {
+            evidence.result_tag_analysis = Some(
+                pecos_qis::text::extract_result_tag_measurements(&source_ir).map_err(Into::into),
+            );
+        }
+        Ok(evidence)
     }
 
     fn analyze_hosted_probes(
@@ -408,7 +554,7 @@ impl SeleneDemProgram {
     ) -> Result<SeleneDemEvidence, DemBuildError> {
         let evidence = analyze_probes(analysis, traces)?;
         self.hosted
-            .validate(&evidence.circuit, "infer_guppy_dem_annotations")
+            .validate(&evidence.circuit, &self.hosted_context)
             .map_err(preparation)?;
         Ok(evidence)
     }
@@ -423,6 +569,9 @@ fn analyze_baseline<'a>(
     let circuit = replay(&baseline, request.num_qubits)?;
     let mut evidence = SeleneDemEvidence {
         circuit,
+        schedule_evidence: DemScheduleEvidence::default(),
+        source_measurement_ids: source.clone(),
+        result_tag_analysis: None,
         probes: None,
         binding: None,
         detector_outputs: Vec::new(),
@@ -513,7 +662,7 @@ fn analyze_baseline<'a>(
     evidence.observable_outputs = observable_outputs;
     evidence.probe_shots = probe_shots;
     evidence.correlation_shots = correlation_shots;
-    evidence.schedule_shots = shots;
+    evidence.schedule_shots = shots.max(schedule_shots);
     Ok(BaselineAnalysis {
         baseline,
         source,
@@ -551,14 +700,17 @@ fn analyze_probes(
         validate_shot(shot)?;
         check_schedule(&baseline, &source, shot)?;
     }
-    evidence.circuit.set_meta(
-        "dem_schedule_validation",
-        Attribute::String("empirical_trace_comparison".into()),
-    );
-    evidence.circuit.set_meta(
-        "dem_schedule_validation_shots",
-        Attribute::String(evidence.schedule_shots.to_string()),
-    );
+    if !traces.is_empty() {
+        evidence.schedule_evidence.validation_shots = traces.len();
+        evidence.circuit.set_meta(
+            "dem_schedule_validation",
+            Attribute::String("empirical_trace_comparison".into()),
+        );
+        evidence.circuit.set_meta(
+            "dem_schedule_validation_shots",
+            Attribute::String(evidence.schedule_shots.to_string()),
+        );
+    }
     let Some(BaselineInference {
         settings,
         raw_width,
@@ -622,11 +774,13 @@ fn analyze_probes(
                 "raw measurement binding changed across inference probes",
             ));
         }
-        data.raw_rows.push(row);
-        data.detector_rows
-            .push(selected_row(rows, detector_outputs)?);
-        data.observable_rows
-            .push(selected_row(rows, observable_outputs)?);
+        let detectors = selected_row(rows, detector_outputs)?;
+        let observables = selected_row(rows, observable_outputs)?;
+        if data.raw_rows.len() < evidence.probe_shots {
+            data.raw_rows.push(row);
+            data.detector_rows.push(detectors);
+            data.observable_rows.push(observables);
+        }
     }
     evidence.circuit.set_meta(
         "dem_raw_measurement_binding",
@@ -638,13 +792,67 @@ fn analyze_probes(
 }
 
 impl DemProgram for SeleneDemProgram {
+    fn static_schedule_evidence(&self) -> Result<Option<String>, DemBuildError> {
+        if self.verified_generator_layout()?.is_some() {
+            return Ok(Some("generator_layout_v2_program_bound".into()));
+        }
+        if let Some(verdict) = self.source.static_schedule_verdict()? {
+            return Ok(verdict.then(|| "native_hugr_control_flow".into()));
+        }
+        if self
+            .frontend_static_source
+            .as_ref()
+            .is_some_and(String::is_empty)
+        {
+            return Err(preparation(
+                "front-end static schedule source must be nonempty",
+            ));
+        }
+        Ok(self.frontend_static_source.clone())
+    }
+
+    fn missing_static_schedule_error(&self) -> DemBuildError {
+        if self.source.hugr_bytes().is_some() {
+            preparation(
+                "SeleneDemProgram requires a statically straight-line Guppy program unless it carries a trusted generator-owned measurement layout; branching or looping control flow cannot be certified from one runtime trace",
+            )
+        } else {
+            preparation(
+                "DEM program requires static schedule evidence; QIS-only input cannot be certified as statically scheduled. Use SeleneDemProgram::from_hugr, a front-end HUGR preflight, or with_circuit for circuit inputs",
+            )
+        }
+    }
+
     fn prepare(&mut self, request: &DemProgramRequest<'_>) -> Result<DemBuildInput, DemBuildError> {
         let evidence = self.capture_and_analyze(request)?;
         let mut circuit = evidence.circuit;
-        pass::lower_clifford_rotations_preserving_arity(&mut circuit);
-        pass::simplify_single_qubit_clifford_chains(&mut circuit);
+        pass::normalize_traced_tick_circuit(&mut circuit, self.simplify_cliffords);
         Ok(DemBuildInput {
             circuit,
+            evidence: DemExecutionEvidence {
+                schedule: evidence.schedule_evidence,
+                raw_binding: evidence.binding.map(str::to_string),
+                provenance_shots: evidence.binding.map(|_| evidence.correlation_shots),
+            },
+            result_traces: evidence
+                .named_result_traces
+                .into_iter()
+                .map(|trace| crate::dem_build::bindings::ResultTrace {
+                    name: trace.name,
+                    occurrence: None,
+                    width: trace.values.len(),
+                    measurement_ids: (!trace.result_ids.is_empty()
+                        && trace.result_ids.len() == trace.values.len())
+                    .then_some(trace.result_ids),
+                })
+                .collect(),
+            source_measurement_ids: evidence.source_measurement_ids,
+            result_tag_analysis: evidence.result_tag_analysis,
+            generator_layout: if request.requires_static_schedule {
+                self.verified_generator_layout()?
+            } else {
+                None
+            },
             probes: evidence.probes,
             resolved_detector_outputs: Some(evidence.detector_outputs),
             resolved_observable_outputs: Some(evidence.observable_outputs),
@@ -728,6 +936,160 @@ mod tests {
     }
 
     #[test]
+    fn explicit_static_capture_runs_exactly_one_shot() {
+        let program = SeleneDemProgram::new(Qis::from_string("not executed by this test"))
+            .with_frontend_static_schedule("test_frontend_hugr_preflight");
+        let request = DemProgramRequest {
+            requires_static_schedule: true,
+            num_qubits: 1,
+            seed: 42,
+            inference: None,
+            detector_outputs: None,
+            observable_outputs: None,
+        };
+        let mut counts = Vec::new();
+        let evidence = program
+            .capture_with(&request, |_, _, shots, _| {
+                counts.push(shots);
+                Ok(vec![trace()])
+            })
+            .unwrap();
+        assert_eq!(counts, [1]);
+        assert_eq!(
+            evidence.schedule_evidence.static_source.as_deref(),
+            Some("test_frontend_hugr_preflight")
+        );
+        assert_eq!(evidence.schedule_evidence.validation_shots, 0);
+        assert!(
+            evidence
+                .circuit
+                .get_meta("dem_schedule_validation")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn missing_static_evidence_rejects_before_capture() {
+        let program = SeleneDemProgram::new(Qis::from_string("must not execute"))
+            .with_schedule_validation_shots(0);
+        let request = DemProgramRequest {
+            requires_static_schedule: true,
+            num_qubits: 1,
+            seed: 42,
+            inference: None,
+            detector_outputs: None,
+            observable_outputs: None,
+        };
+        let error = program
+            .capture_with(&request, |_, _, _, _| panic!("capture ran"))
+            .err()
+            .unwrap();
+        assert!(
+            error
+                .to_string()
+                .contains("requires static schedule evidence")
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "hugr")]
+    fn invalid_generator_digest_rejects_before_capture() {
+        let bytes = include_bytes!("../tests/fixtures/dem_programs/explicit_only.hugr");
+        let program = SeleneDemProgram::from_hugr(
+            bytes.to_vec(),
+            crate::QSystemPlatform::Helios,
+            crate::OptimizationLevel::Default,
+        )
+        .with_trusted_generator_layout(vec![("measurement".into(), 0)], "bad digest");
+        let request = DemProgramRequest {
+            requires_static_schedule: true,
+            num_qubits: 1,
+            seed: 42,
+            inference: None,
+            detector_outputs: None,
+            observable_outputs: None,
+        };
+        let mut captures = 0;
+        let error = program
+            .capture_with(&request, |_, _, _, _| {
+                captures += 1;
+                Ok(vec![trace()])
+            })
+            .err()
+            .unwrap();
+        assert_eq!(captures, 0);
+        assert!(error.to_string().contains("certificate does not match"));
+    }
+
+    #[test]
+    #[cfg(feature = "hugr")]
+    fn trusted_generator_assertion_can_override_native_control_flow_verdict() {
+        let bytes = include_bytes!("../tests/fixtures/dem_programs/changing_schedule.hugr");
+        let program = SeleneDemProgram::from_hugr(
+            bytes.to_vec(),
+            crate::QSystemPlatform::Helios,
+            crate::OptimizationLevel::Default,
+        );
+        assert_eq!(program.static_schedule_evidence().unwrap(), None);
+        let layout = vec![("raw measurements".into(), 0)];
+        let digest = crate::dem_build::generator_certificate_digest(bytes, &layout);
+        let trusted = program.with_trusted_generator_layout(layout, digest);
+        assert_eq!(
+            trusted.static_schedule_evidence().unwrap().as_deref(),
+            Some("generator_layout_v2_program_bound")
+        );
+    }
+
+    #[test]
+    fn empirical_capture_does_not_analyze_result_tags() {
+        let program = SeleneDemProgram::new(Qis::from_string("not valid QIS analysis"))
+            .with_schedule_validation_shots(0);
+        let settings = analysis_settings();
+        let request = analysis_request(&settings);
+        let mut counts = Vec::new();
+        let evidence = program
+            .capture_with(&request, |_, _, shots, _| {
+                counts.push(shots);
+                if shots == 1 {
+                    Ok(vec![inference_trace(true, [false, false])])
+                } else {
+                    Ok(inference_probes(true))
+                }
+            })
+            .unwrap();
+        assert_eq!(counts, [1, 4]);
+        assert!(evidence.result_tag_analysis.is_none());
+        assert_eq!(evidence.schedule_evidence.validation_shots, 4);
+    }
+
+    #[test]
+    fn sampled_evidence_requires_actual_comparisons() {
+        let settings = analysis_settings();
+        let request = analysis_request(&settings);
+        let analysis =
+            analyze_baseline(inference_trace(true, [false, false]), &request, 0).unwrap();
+        assert_eq!(analysis.evidence.schedule_evidence.validation_shots, 0);
+        let evidence = analyze_probes(analysis, &inference_probes(true)).unwrap();
+        assert_eq!(evidence.schedule_evidence.validation_shots, 4);
+    }
+
+    #[test]
+    fn extra_schedule_comparisons_do_not_add_fitting_rows() {
+        let settings = analysis_settings();
+        let request = analysis_request(&settings);
+        let analysis =
+            analyze_baseline(inference_trace(true, [false, false]), &request, 8).unwrap();
+        let probes = inference_probes(true)
+            .into_iter()
+            .cycle()
+            .take(8)
+            .collect::<Vec<_>>();
+        let evidence = analyze_probes(analysis, &probes).unwrap();
+        assert_eq!(evidence.probes.unwrap().raw_rows.len(), 4);
+        assert_eq!(evidence.schedule_evidence.validation_shots, 8);
+    }
+
+    #[test]
     fn hosted_options_reject_order_drift_only_when_requested() {
         let mut baseline = trace();
         let host = LoweredQuantumGateTrace {
@@ -744,6 +1106,7 @@ mod tests {
             .insert("local_role".into(), "basis_prefix".into());
         baseline[0].lowered_quantum_ops.splice(0..0, [host, local]);
         let request = DemProgramRequest {
+            requires_static_schedule: false,
             num_qubits: 1,
             seed: 42,
             inference: None,
@@ -829,6 +1192,7 @@ mod tests {
 
     fn analysis_request(settings: &DemInferenceSettings) -> DemProgramRequest<'_> {
         DemProgramRequest {
+            requires_static_schedule: false,
             num_qubits: 1,
             seed: u64::MAX,
             inference: Some(settings),
@@ -843,7 +1207,7 @@ mod tests {
     ) -> Result<SeleneDemEvidence, DemBuildError> {
         let settings = analysis_settings();
         let request = analysis_request(&settings);
-        let analysis = analyze_baseline(baseline, &request, 32)?;
+        let analysis = analyze_baseline(baseline, &request, 0)?;
         assert_eq!(analysis.probe_seed, 0);
         analyze_probes(analysis, shots)
     }

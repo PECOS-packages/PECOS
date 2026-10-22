@@ -222,11 +222,24 @@ programs known to have a fixed quantum schedule. The circuit records this as
 `dem_schedule_validation = "empirical_trace_comparison"` and records the number
 of additional checked shots in `dem_schedule_validation_shots`.
 
-Explicit program builds perform 32 additional schedule-check shots by default,
-configurable with `SeleneDemProgram::with_schedule_validation_shots(n)`; `n` must
-be positive. They require no raw-output tags and perform no binding or parity inference.
+Explicit program builds require static schedule evidence before execution and
+capture exactly one baseline shot. Native HUGR inputs obtain this evidence from
+the control-flow preflight or an explicit trust assertion through
+`with_trusted_generator_layout(layout, digest)`. With this setter the caller asserts
+that a trusted built-in generator stamped the certificate on the definition compiled
+to these exact HUGR bytes; the audit records `generator_layout_v2_program_bound`.
+The digest binds the layout to the bytes and does not prove who produced them.
+This assertion also supports generator programs with control flow. QIS-only explicit
+inputs are rejected unless a front end asserts its HUGR preflight with
+`with_frontend_static_schedule(source)`; the audit records that source. Mixed
+builds using typed named references or JSON `result_tags` also require static
+evidence. Pure inference and mixed positional definitions use empirical checks.
+
+Explicit builds require no raw-output tags and perform no parity inference.
 Inferred builds reuse their inference and provenance shots for schedule
-validation. Additional provenance shots run only when raw outputs lack direct
+validation; `with_schedule_validation_shots(n)` sets a minimum number of empirical
+comparisons (default 32) and has no effect on explicit static builds. Extra
+comparisons do not add fitting rows. Additional provenance shots run only when raw outputs lack direct
 runtime IDs and provenance checking is enabled. Inferred builds record
 `dem_raw_measurement_binding` as `runtime_result_ids`,
 `probe_correlated_result_ids`, or `assumed_canonical_result_order`. A failed
@@ -269,7 +282,24 @@ those columns in list order; `None` requests all outputs under that role's defau
 tags. The adapter returns only selected inferred columns, not explicit definition
 columns. With no inferred definitions, `request.inference` is `None`, even when
 the caller supplied settings. No parity or provenance probes should be generated in that case; runtime
-schedule validation is a separate responsibility.
+schedule validation is a separate responsibility. `request.requires_static_schedule`
+records the resolved policy. Custom adapters report static evidence without running
+in `DemProgram::static_schedule_evidence` and return the same source in
+`DemBuildInput::evidence`. That input also carries sampled comparison counts,
+binding evidence, result-call traces, source measurement order, and compiler result-tag
+analysis or a program-bound generator layout. Compiler and generator result-tag
+certification run only when the request requires static schedule evidence; empirical
+routes keep only raw-bound result traces. A successful inference solve does
+not supply missing schedule evidence.
+
+The audit records the resolved `schedule_policy` (`static_required` or `empirical`)
+and separates `static_schedule_source`, `schedule_validation`, and
+`schedule_validation_shots` from `named_result_binding`. Fixed circuits report
+`fixed_circuit`; caller-supplied probes report `caller_bound_measurement_ids` and
+never count as sampled schedule validation. Runtime traces are normalized with
+`pecos_quantum::pass::normalize_traced_tick_circuit`, preserving sparse or permuted
+measurement IDs.
+
 Circuit/probe builds follow the same selected-column contract. They use empty
 rows for an unrequested role; the builder ignores any supplied values for that
 role. Existing circuit annotations must be supplied as builder definitions when

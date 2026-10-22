@@ -46,13 +46,22 @@ fn inferred_and_explicit_builds_share_noise_idle_and_evaluation() {
         .with_idle_after_2q(1.0)
         .build()
         .unwrap();
-    assert_eq!(explicit.dem.to_string(), inferred.dem.to_string());
+    assert_eq!(explicit.dem().to_string(), inferred.dem().to_string());
     assert_eq!(
-        explicit.evaluate_runtime_record(&[1, 0]).unwrap(),
-        inferred.evaluate_runtime_record(&[1, 0]).unwrap()
+        explicit
+            .prepared()
+            .evaluate_runtime_record(&[1, 0])
+            .unwrap(),
+        inferred
+            .prepared()
+            .evaluate_runtime_record(&[1, 0])
+            .unwrap()
     );
     let columns = BTreeMap::from([("raw measurements".into(), vec![vec![0, 1], vec![1, 1]])]);
-    let rows = inferred.evaluate_result_columns(&columns).unwrap();
+    let rows = inferred
+        .prepared()
+        .evaluate_result_columns(&columns)
+        .unwrap();
     assert_eq!(rows[0].0, vec![1]);
     assert!(rows[0].1.get(0));
     assert_eq!(rows[1].0, vec![0]);
@@ -124,8 +133,8 @@ fn program_adapter_receives_shared_execution_and_inference_settings() {
         .with_inference(DemInferenceSettings::default().with_validation_rows(2))
         .build()
         .unwrap();
-    assert_eq!(build.dem.num_detectors(), 1);
-    assert!(build.inference.is_some());
+    assert_eq!(build.dem().num_detectors(), 1);
+    assert!(build.prepared().inference().is_some());
 }
 
 #[test]
@@ -137,7 +146,14 @@ fn result_evaluation_preserves_wide_observable_ids() {
         .with_observables_json(r#"[{"id":70,"meas_ids":[1]}]"#)
         .build()
         .unwrap();
-    assert!(build.evaluate_runtime_record(&[0, 1]).unwrap().1.get(70));
+    assert!(
+        build
+            .prepared()
+            .evaluate_runtime_record(&[0, 1])
+            .unwrap()
+            .1
+            .get(70)
+    );
 }
 
 #[test]
@@ -164,16 +180,19 @@ fn mixed_definitions_share_one_schema_and_ignore_unused_probe_roles() {
         .with_observables_json(r#"[{"id":70,"meas_ids":[1]}]"#)
         .build()
         .unwrap();
-    assert_eq!(build.dem.to_string(), explicit.dem.to_string());
+    assert_eq!(build.dem().to_string(), explicit.dem().to_string());
     assert_eq!(
-        build.evaluate_runtime_record(&[0, 1]).unwrap(),
-        explicit.evaluate_runtime_record(&[0, 1]).unwrap()
+        build.prepared().evaluate_runtime_record(&[0, 1]).unwrap(),
+        explicit
+            .prepared()
+            .evaluate_runtime_record(&[0, 1])
+            .unwrap()
     );
     assert_eq!(
-        build.inference.as_ref().unwrap().observable_supports,
+        build.prepared().inference().unwrap().observable_supports,
         Vec::<Vec<usize>>::new()
     );
-    assert_eq!(build.definition_origins.len(), 3);
+    assert_eq!(build.prepared().definition_origins().len(), 3);
 }
 
 struct ExplicitProgram;
@@ -205,7 +224,7 @@ fn explicit_program_skips_inference_even_with_settings() {
         .with_observables(vec![])
         .build()
         .unwrap();
-    assert!(build.inference.is_none());
+    assert!(build.prepared().inference().is_none());
 }
 
 struct SelectiveProgram;
@@ -247,7 +266,10 @@ fn adapter_receives_selected_outputs_and_default_settings() {
         .with_observables(vec![])
         .build()
         .unwrap();
-    assert_eq!(build.evaluate_runtime_record(&[1, 0]).unwrap().0, vec![1]);
+    assert_eq!(
+        build.prepared().evaluate_runtime_record(&[1, 0]).unwrap().0,
+        vec![1]
+    );
 }
 
 #[test]
@@ -279,10 +301,10 @@ fn explicit_detector_role_and_inferred_observables_use_only_observable_probes() 
         .build()
         .unwrap();
     assert_eq!(
-        build.inference.as_ref().unwrap().detector_supports,
+        build.prepared().inference().unwrap().detector_supports,
         Vec::<Vec<usize>>::new()
     );
-    let (events, obs) = build.evaluate_runtime_record(&[1, 0]).unwrap();
+    let (events, obs) = build.prepared().evaluate_runtime_record(&[1, 0]).unwrap();
     assert_eq!(events, vec![0]);
     assert!(obs.get(0));
 }
@@ -356,28 +378,36 @@ fn matching_reference_metadata_survives_explicit_inferred_and_mixed_builds() {
             .with_noise(noise)
             .build()
             .unwrap();
-        assert_eq!(build.dem.to_string(), explicit.dem.to_string());
+        assert_eq!(build.dem().to_string(), explicit.dem().to_string());
         assert_eq!(
-            build.evaluate_runtime_record(&[1, 0]).unwrap(),
-            explicit.evaluate_runtime_record(&[1, 0]).unwrap()
+            build.prepared().evaluate_runtime_record(&[1, 0]).unwrap(),
+            explicit
+                .prepared()
+                .evaluate_runtime_record(&[1, 0])
+                .unwrap()
         );
         assert_eq!(
-            build.inference.is_some(),
+            build.prepared().inference().is_some(),
             infer_detector || infer_observable
         );
         assert_eq!(
-            build.definitions().detectors[0].coords,
+            build.prepared().definitions().detectors[0].coords,
             Some(vec![1.0, 2.0, 3.0])
         );
         assert_eq!(
-            build.definitions().detectors[0].label.as_deref(),
+            build.prepared().definitions().detectors[0].label.as_deref(),
             Some("check")
         );
         assert_eq!(
-            build.definitions().observables[0].label.as_deref(),
+            build.prepared().definitions().observables[0]
+                .label
+                .as_deref(),
             Some("logical bit")
         );
-        assert_eq!(build.definitions().observables[0].reference, Some(0));
+        assert_eq!(
+            build.prepared().definitions().observables[0].reference,
+            Some(0)
+        );
         for (role, inferred, tag, element, custom) in [
             (
                 "detectors",
@@ -394,7 +424,7 @@ fn matching_reference_metadata_survives_explicit_inferred_and_mixed_builds() {
                 json!([false, null, 3]),
             ),
         ] {
-            let Some(Attribute::String(text)) = build.circuit().get_meta(role) else {
+            let Some(Attribute::String(text)) = build.prepared().circuit().get_meta(role) else {
                 panic!("missing {role} metadata");
             };
             let entries: Value = serde_json::from_str(text).unwrap();
@@ -511,7 +541,7 @@ fn every_partition_of_explicit_and_inferred_definitions_matches_the_parity_oracl
         .with_noise(noise.clone())
         .build()
         .unwrap();
-    assert!(explicit.dem.to_string().contains("error("));
+    assert!(explicit.dem().to_string().contains("error("));
 
     let random = DetectorErrorModel::builder()
         .with_circuit(circuit.clone())
@@ -571,10 +601,10 @@ fn every_partition_of_explicit_and_inferred_definitions_matches_the_parity_oracl
             });
         }
         let build = builder.build().unwrap();
-        assert_eq!(build.inference.is_some(), partition != 0);
+        assert_eq!(build.prepared().inference().is_some(), partition != 0);
         assert_eq!(
-            build.dem.to_string(),
-            explicit.dem.to_string(),
+            build.dem().to_string(),
+            explicit.dem().to_string(),
             "partition {partition}"
         );
         for record in 0..16 {
@@ -590,7 +620,7 @@ fn every_partition_of_explicit_and_inferred_definitions_matches_the_parity_oracl
                 }
             }
             assert_eq!(
-                build.evaluate_runtime_record(&bits).unwrap(),
+                build.prepared().evaluate_runtime_record(&bits).unwrap(),
                 (expected_detectors, expected_observables),
                 "partition {partition}, record {record}"
             );
@@ -692,7 +722,7 @@ fn tracked_pauli_is_legal_with_explicit_and_inferred_definitions() {
             builder.with_detectors(vec![vec![0]])
         };
         let build = builder.build().unwrap();
-        assert_eq!(build.circuit().annotations().len(), 1);
+        assert_eq!(build.prepared().circuit().annotations().len(), 1);
     }
 }
 
@@ -751,7 +781,7 @@ fn supplied_probes_retain_default_column_origins() {
         .with_inference_data(probes())
         .build()
         .unwrap();
-    for origin in build.definition_origins {
+    for origin in build.prepared().definition_origins() {
         assert!(matches!(
             origin.source,
             pecos_qec::DemAnnotationOrigin::InferredDefaults { column: 0, .. }
@@ -791,7 +821,8 @@ fn origins_are_ordered_by_role_then_id_for_json_and_typed_definitions() {
         };
         let build = builder.build().unwrap();
         let origins: Vec<_> = build
-            .definition_origins
+            .prepared()
+            .definition_origins()
             .iter()
             .map(|origin| (origin.role, origin.id, origin.source.clone()))
             .collect();

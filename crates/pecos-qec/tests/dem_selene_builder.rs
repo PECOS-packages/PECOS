@@ -33,7 +33,7 @@ fn qis_inference_matches_explicit_definitions() {
         .with_inference(DemInferenceSettings::default())
         .build()
         .unwrap();
-    let audit = inferred.audit();
+    let audit = inferred.prepared().audit();
     assert_eq!(audit.named_result_binding, "probe_correlated_result_ids");
     let inference_audit = audit.inference.unwrap();
     assert_eq!(inference_audit.provenance_shots, Some(32));
@@ -41,7 +41,7 @@ fn qis_inference_matches_explicit_definitions() {
         inference_audit.schedule_validation.as_deref(),
         Some("empirical_trace_comparison")
     );
-    let report = inferred.inference.as_ref().unwrap();
+    let report = inferred.prepared().inference().unwrap();
     assert_eq!(report.raw_measurement_ids, [2, 0, 1]);
     assert_eq!(report.detector_supports, [vec![2, 0]]);
     assert_eq!(report.observable_supports, [vec![1]]);
@@ -54,16 +54,25 @@ fn qis_inference_matches_explicit_definitions() {
         .with_observables(vec![vec![1]])
         .build()
         .unwrap();
-    assert!(inferred.dem.to_string().contains("error("));
-    assert_eq!(inferred.dem.to_string(), explicit.dem.to_string());
+    assert!(inferred.dem().to_string().contains("error("));
+    assert_eq!(inferred.dem().to_string(), explicit.dem().to_string());
     for record in [[0, 0, 0], [1, 0, 1], [1, 1, 0]] {
         assert_eq!(
-            inferred.evaluate_runtime_record(&record).unwrap(),
-            explicit.evaluate_runtime_record(&record).unwrap()
+            inferred
+                .prepared()
+                .evaluate_runtime_record(&record)
+                .unwrap(),
+            explicit
+                .prepared()
+                .evaluate_runtime_record(&record)
+                .unwrap()
         );
     }
     assert_eq!(
-        inferred.circuit().get_meta("dem_raw_measurement_binding"),
+        inferred
+            .prepared()
+            .circuit()
+            .get_meta("dem_raw_measurement_binding"),
         Some(&Attribute::String("probe_correlated_result_ids".into()))
     );
 }
@@ -82,10 +91,13 @@ fn mixed_definitions_fit_only_requested_outputs() {
         .build()
         .unwrap();
     assert_eq!(
-        build.inference.as_ref().unwrap().detector_supports,
+        build.prepared().inference().unwrap().detector_supports,
         [vec![2, 0]]
     );
-    let (detectors, observables) = build.evaluate_runtime_record(&[1, 1, 0]).unwrap();
+    let (detectors, observables) = build
+        .prepared()
+        .evaluate_runtime_record(&[1, 1, 0])
+        .unwrap();
     assert_eq!(detectors, [1, 1]);
     assert!(observables.get(70));
 }
@@ -122,15 +134,19 @@ fn explicit_program_does_not_require_inference_outputs() {
         .with_inference(DemInferenceSettings::default())
         .build()
         .unwrap();
-    assert!(build.inference.is_none());
+    assert!(build.prepared().inference().is_none());
     assert!(
         build
+            .prepared()
             .circuit()
             .get_meta("dem_raw_measurement_binding")
             .is_none()
     );
     assert_eq!(
-        build.circuit().get_meta("dem_schedule_validation"),
+        build
+            .prepared()
+            .circuit()
+            .get_meta("dem_schedule_validation"),
         Some(&Attribute::String("empirical_trace_comparison".into()))
     );
 }
@@ -236,7 +252,7 @@ fn hugr_compiles_and_infers_without_python() {
         .with_inference(DemInferenceSettings::default())
         .build()
         .unwrap();
-    let report = build.inference.unwrap();
+    let report = build.prepared().inference().unwrap();
     assert_eq!(report.raw_measurement_ids, [2, 0, 1]);
     assert_eq!(report.detector_supports, [vec![2, 0]]);
     assert_eq!(report.observable_supports, [vec![1]]);
@@ -262,7 +278,7 @@ fn direct_result_ids_skip_correlation_and_preserve_multiple_output_tags() {
         )
         .build()
         .unwrap();
-    let report = build.inference.as_ref().unwrap();
+    let report = build.prepared().inference().unwrap();
     assert_eq!(report.raw_measurement_ids, [0, 1, 2]);
     assert_eq!(report.detector_supports, [vec![0, 1]]);
     assert_eq!(report.observable_supports, [vec![0], vec![1], vec![2]]);
@@ -272,8 +288,9 @@ fn direct_result_ids_skip_correlation_and_preserve_multiple_output_tags() {
         ("observable", "logical_x", 0),
         ("observable", "logical_x", 1),
     ];
-    assert_eq!(build.definition_origins.len(), expected.len());
-    for (origin, (role, tag, element)) in build.definition_origins.iter().zip(expected) {
+    assert_eq!(build.prepared().definition_origins().len(), expected.len());
+    for (origin, (role, tag, element)) in build.prepared().definition_origins().iter().zip(expected)
+    {
         assert_eq!(origin.role, role);
         assert_eq!(
             origin.source,
@@ -302,7 +319,7 @@ fn direct_result_ids_skip_correlation_and_preserve_multiple_output_tags() {
         for entry in expected.as_array_mut().unwrap() {
             entry["reference"] = serde_json::json!(0);
         }
-        let Some(Attribute::String(json)) = build.circuit().get_meta(key) else {
+        let Some(Attribute::String(json)) = build.prepared().circuit().get_meta(key) else {
             panic!("missing {key} metadata");
         };
         assert_eq!(
@@ -312,11 +329,17 @@ fn direct_result_ids_skip_correlation_and_preserve_multiple_output_tags() {
     }
 
     assert_eq!(
-        build.circuit().get_meta("dem_raw_measurement_binding"),
+        build
+            .prepared()
+            .circuit()
+            .get_meta("dem_raw_measurement_binding"),
         Some(&Attribute::String("runtime_result_ids".into()))
     );
     assert_eq!(
-        build.circuit().get_meta("dem_schedule_validation_shots"),
+        build
+            .prepared()
+            .circuit()
+            .get_meta("dem_schedule_validation_shots"),
         Some(&Attribute::String("40".into()))
     );
 }
@@ -338,7 +361,7 @@ fn integer_output_positions_follow_complete_stream() {
             .with_detector_definitions(vec![DemDefinition::inferred(0, tag, element)])
             .build()
             .unwrap();
-        let report = build.inference.unwrap();
+        let report = build.prepared().inference().unwrap();
         assert_eq!(report.raw_measurement_ids, [0, 1, 2]);
         assert_eq!(
             report.detector_supports,
@@ -368,7 +391,7 @@ fn integer_output_positions_follow_complete_stream() {
         .build()
         .unwrap();
     assert_eq!(
-        build.inference.unwrap().detector_supports,
+        build.prepared().inference().unwrap().detector_supports,
         [vec![0], vec![1]]
     );
 }
@@ -432,7 +455,10 @@ fn integer_outputs_bind_raw_ids_by_probe_correlation() {
         .build()
         .unwrap();
     assert_eq!(
-        build.circuit().get_meta("dem_raw_measurement_binding"),
+        build
+            .prepared()
+            .circuit()
+            .get_meta("dem_raw_measurement_binding"),
         Some(&Attribute::String("probe_correlated_result_ids".into()))
     );
 }

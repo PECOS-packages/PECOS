@@ -2,7 +2,7 @@
 // Licensed under the Apache License, Version 2.0
 
 use super::bindings::{MeasurementLedgerEntry, named_binding_classification};
-use super::{DemAnnotationOrigin, DemBuild, DemBuildError, DemDefinitionOrigin};
+use super::{DemAnnotationOrigin, DemBuildError, DemDefinitionOrigin, PreparedDem};
 use crate::fault_tolerance::dem_builder::NoiseChannelResidual;
 use pecos_quantum::Attribute;
 use serde_json::{Value, json};
@@ -53,7 +53,6 @@ pub struct DemBuildAudit {
     pub runtime_order_is_canonical: bool,
     pub runtime_order_mismatch_count: usize,
     pub measurement_ledger: Vec<MeasurementLedgerEntry>,
-    pub idle_noise_residuals: Vec<NoiseChannelResidual>,
 }
 
 impl DemBuildAudit {
@@ -93,21 +92,11 @@ impl DemBuildAudit {
             "runtime_order_is_canonical": self.runtime_order_is_canonical,
             "runtime_order_mismatch_count": self.runtime_order_mismatch_count,
             "measurement_ledger": self.measurement_ledger.iter().map(MeasurementLedgerEntry::to_json).collect::<Vec<_>>(),
-            "idle_noise_residuals": self.idle_noise_residuals.iter().map(|residual| json!({
-                "location_index": residual.location_index,
-                "channel_kind": residual.channel_kind.as_str(),
-                "detectors": residual.effect.detectors.to_vec(),
-                "dem_outputs": residual.effect.dem_outputs.to_vec(),
-                "tracked_paulis": residual.effect.tracked_paulis.to_vec(),
-                "magnitude": residual.magnitude,
-                "channel_weight": residual.channel_weight,
-                "relative_magnitude": residual.relative_magnitude(),
-            })).collect::<Vec<_>>(),
         })
     }
 }
 
-impl DemBuild {
+impl PreparedDem {
     #[must_use]
     pub fn audit(&self) -> DemBuildAudit {
         let meta = |key| match self.schema.circuit.get_meta(key) {
@@ -158,7 +147,6 @@ impl DemBuild {
             runtime_order_is_canonical: mismatch_count == 0,
             runtime_order_mismatch_count: mismatch_count,
             measurement_ledger: self.schema.measurement_ledger.clone(),
-            idle_noise_residuals: self.dem.idle_noise_residuals().to_vec(),
         }
     }
 }

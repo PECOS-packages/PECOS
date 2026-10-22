@@ -18,10 +18,10 @@ fn entries(definitions: &[ResolvedDemSpec]) -> Vec<Value> {
         .collect()
 }
 
-fn spec(refs: Vec<MeasurementRef>) -> DemSpec {
-    DemSpec {
+fn spec(refs: Vec<MeasurementRef>) -> DemDefinition {
+    DemDefinition {
         id: None,
-        source: DemSpecSource::References(refs),
+        source: DemDefinitionSource::References(refs),
         coords: None,
         metadata: Map::new(),
     }
@@ -44,8 +44,8 @@ fn trace(name: &str, ids: &[usize]) -> ResultTrace {
     }
 }
 fn resolve(
-    detectors: &[DemSpec],
-    observables: &[DemSpec],
+    detectors: &[DemDefinition],
+    observables: &[DemDefinition],
     runtime: &[usize],
     traces: &[ResultTrace],
 ) -> Result<ResolvedDemSpecs> {
@@ -144,11 +144,15 @@ fn reference_constructor_value_errors() {
         "result_ref tag must be a non-empty string"
     );
     assert_eq!(
-        DemSpecSource::references(vec![]).unwrap_err().to_string(),
+        DemDefinitionSource::references(vec![])
+            .unwrap_err()
+            .to_string(),
         "detectors and observables must reference at least one measurement"
     );
     assert_eq!(
-        DemSpecSource::inferred("", 0).unwrap_err().to_string(),
+        DemDefinitionSource::inferred("", 0)
+            .unwrap_err()
+            .to_string(),
         "inferred output tag must be a non-empty string"
     );
 }
@@ -160,7 +164,7 @@ fn maximum_usize_values_preserve_identities_and_check_record_bounds() {
         occurrence: Some(usize::MAX),
         ..trace("a", &[usize::MAX])
     }];
-    let observable = DemSpec {
+    let observable = DemDefinition {
         id: Some(usize::MAX),
         ..spec(vec![reference])
     };
@@ -189,8 +193,8 @@ fn maximum_usize_values_preserve_identities_and_check_record_bounds() {
         .to_string(),
         "scalar result_ref \"a\" only accepts element=None or element=0"
     );
-    let inferred = DemSpec {
-        source: DemSpecSource::inferred("a", usize::MAX).unwrap(),
+    let inferred = DemDefinition {
+        source: DemDefinitionSource::inferred("a", usize::MAX).unwrap(),
         ..spec(vec![])
     };
     let supports = BTreeMap::from([(("a".into(), usize::MAX), vec![usize::MAX])]);
@@ -422,7 +426,7 @@ fn reserved_metadata_rejected_for_every_role() {
         for role in ["detector", "observable", "inferred_detector"] {
             let mut definition = spec(vec![rec(1)]);
             if role == "inferred_detector" {
-                definition.source = DemSpecSource::inferred("checks", 0).unwrap();
+                definition.source = DemDefinitionSource::inferred("checks", 0).unwrap();
             }
             definition.metadata.insert(key.into(), json!(1));
             let supports = BTreeMap::from([(("checks".into(), 0), vec![0])]);
@@ -448,8 +452,8 @@ fn reserved_metadata_rejected_for_every_role() {
 
 #[test]
 fn inferred_support_required_known_and_nonzero() {
-    let definition = DemSpec {
-        source: DemSpecSource::inferred("checks", 0).unwrap(),
+    let definition = DemDefinition {
+        source: DemDefinitionSource::inferred("checks", 0).unwrap(),
         ..spec(vec![])
     };
     assert_eq!(
@@ -486,9 +490,9 @@ fn inferred_support_required_known_and_nonzero() {
 #[test]
 fn mixed_definitions_select_only_requested_elements() {
     let mut inferred = spec(vec![]);
-    inferred.source = DemSpecSource::inferred("parities", 0).unwrap();
+    inferred.source = DemDefinitionSource::inferred("parities", 0).unwrap();
     let mut logical = spec(vec![]);
-    logical.source = DemSpecSource::inferred("logical", 0).unwrap();
+    logical.source = DemDefinitionSource::inferred("logical", 0).unwrap();
     logical.id = Some(70);
     let mut explicit = spec(vec![rec(3)]);
     explicit.id = Some(2);
@@ -558,7 +562,7 @@ fn nonfinite_coordinates_are_not_silently_changed_to_null() {
 #[test]
 fn mixed_named_explicit_binding_keeps_compiler_provenance() {
     let mut detector = spec(vec![]);
-    detector.source = DemSpecSource::inferred("parities", 0).unwrap();
+    detector.source = DemDefinitionSource::inferred("parities", 0).unwrap();
     let supports = BTreeMap::from([(("parities".into(), 0), vec![0, 2])]);
     let traces = [
         trace("raw measurements", &[2, 0, 1]),
@@ -589,12 +593,14 @@ fn mixed_named_explicit_binding_keeps_compiler_provenance() {
 #[test]
 fn invalid_selectors_and_duplicate_ids_fail_before_execution() {
     assert_eq!(
-        DemSpecSource::inferred("", 0).unwrap_err().to_string(),
+        DemDefinitionSource::inferred("", 0)
+            .unwrap_err()
+            .to_string(),
         "inferred output tag must be a non-empty string"
     );
     let mut inferred = spec(vec![]);
     inferred.id = Some(0);
-    inferred.source = DemSpecSource::inferred("parities", 0).unwrap();
+    inferred.source = DemDefinitionSource::inferred("parities", 0).unwrap();
     let mut explicit = spec(vec![rec(1)]);
     explicit.id = Some(0);
     assert_eq!(
@@ -632,7 +638,7 @@ fn role_mixing_does_not_require_unused_tags() {
         (("logical".into(), 0), vec![1]),
     ]);
     let mut logical = spec(vec![]);
-    logical.source = DemSpecSource::inferred("logical", 0).unwrap();
+    logical.source = DemDefinitionSource::inferred("logical", 0).unwrap();
     let first = resolve_dem_specs(
         &[spec(vec![rec(3), rec(1)])],
         &[logical],
@@ -644,7 +650,7 @@ fn role_mixing_does_not_require_unused_tags() {
     assert_eq!(first.detectors[0].measurement_ids, [0, 2]);
     assert_eq!(first.observables[0].measurement_ids, [1]);
     let mut parity = spec(vec![]);
-    parity.source = DemSpecSource::inferred("parities", 0).unwrap();
+    parity.source = DemDefinitionSource::inferred("parities", 0).unwrap();
     assert_eq!(
         resolve_dem_specs(&[parity], &[], &[0, 1, 2], &[], &supports)
             .unwrap()
@@ -666,7 +672,7 @@ fn dem_definition_accepts_arbitrary_length_coordinates() {
 fn mixed_build_does_not_bind_nonraw_arrays() {
     let traces = [trace("raw measurements", &[0, 1]), trace("other", &[0, 1])];
     let mut inferred = spec(vec![]);
-    inferred.source = DemSpecSource::inferred("checks", 0).unwrap();
+    inferred.source = DemDefinitionSource::inferred("checks", 0).unwrap();
     let schema = resolve_dem_specs(
         &[spec(vec![rec(1)]), inferred],
         &[],

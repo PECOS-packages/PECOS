@@ -102,6 +102,7 @@ pub use coloration::{ColorationMemoryError, coloration_memory_circuit};
 pub use dem_build::{
     DemAnnotationOrigin, DemBuild, DemBuildBuilder, DemBuildError, DemBuildInput, DemDefinition,
     DemDefinitionOrigin, DemDefinitionSource, DemOutputSelector, DemProgram, DemProgramRequest,
+    MeasurementRef, PreparedDem, ResultRef,
 };
 pub use dem_inference::{
     DemInferenceData, DemInferenceError, DemInferenceReport, DemInferenceSettings,

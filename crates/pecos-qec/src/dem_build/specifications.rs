@@ -4,7 +4,9 @@
 //! Typed value specifications, resolved independently of program execution.
 
 use super::bindings::{DemBindingError, MeasurementLedgerEntry, ResultTrace, ResultTraceIndex};
-use super::{DemAnnotationOrigin, DemDefinitionOrigin, DemOutputSelector};
+use super::{
+    DemAnnotationOrigin, DemDefinition, DemDefinitionOrigin, DemDefinitionSource, DemOutputSelector,
+};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroUsize;
@@ -88,16 +90,7 @@ impl MeasurementRef {
     }
 }
 
-/// A reference-based source, or an output whose support is supplied by inference.
-/// Python checks reference object types, string tags and non-boolean,
-/// non-negative integer elements before conversion.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum DemSpecSource {
-    References(Vec<MeasurementRef>),
-    Inferred(DemOutputSelector),
-}
-
-impl DemSpecSource {
+impl DemDefinitionSource {
     /// # Errors
     /// Rejects empty tags.
     pub fn inferred(tag: impl Into<String>, element: usize) -> Result<Self> {
@@ -122,24 +115,9 @@ impl DemSpecSource {
     }
 }
 
-/// Sibling of `DemDefinition` for optional IDs and typed references.
-/// Python checks definition objects, non-boolean, non-negative integer IDs,
-/// coordinate iterability/numeric conversion and metadata mapping types.
-/// Coordinates retain arbitrary length. Python object conversion and metadata
-/// JSON-serializability checks belong at the boundary. With `arbitrary_precision`,
-/// metadata can retain numeric tokens outside finite f64 range; the build
-/// fingerprint rejects these.
-#[derive(Clone, Debug, PartialEq)]
-pub struct DemSpec {
-    pub id: Option<usize>,
-    pub source: DemSpecSource,
-    pub coords: Option<Vec<f64>>,
-    pub metadata: Map<String, Value>,
-}
-
 /// A resolved parity with coordinates kept as floats rather than JSON numbers.
 /// This preserves non-finite coordinates for the downstream coordinate validator.
-/// Inputs have passed the Python boundary checks documented on `DemSpec`.
+/// Inputs have passed the Python boundary checks documented on `DemDefinition`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ResolvedDemSpec {
     pub id: usize,
@@ -149,7 +127,7 @@ pub struct ResolvedDemSpec {
 }
 
 /// Resolved schema values, without fingerprinting or circuit preparation.
-/// Inputs have passed the boundary checks on `DemSpec` and `ResultTrace`.
+/// Inputs have passed the boundary checks on `DemDefinition` and `ResultTrace`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ResolvedDemSpecs {
     pub detectors: Vec<ResolvedDemSpec>,
@@ -167,8 +145,8 @@ pub struct ResolvedDemSpecs {
 /// Rejects invalid references, missing inferred supports, dead parities,
 /// reserved metadata, and invalid definition IDs.
 pub fn resolve_dem_specs(
-    detectors: &[DemSpec],
-    observables: &[DemSpec],
+    detectors: &[DemDefinition],
+    observables: &[DemDefinition],
     runtime_order: &[usize],
     traces: &[ResultTrace],
     inferred_supports: &BTreeMap<(String, usize), Vec<usize>>,
@@ -179,14 +157,22 @@ pub fn resolve_dem_specs(
         "detector",
         detectors,
         &index,
-        inferred_supports,
+        |output| {
+            inferred_supports
+                .get(&(output.tag.clone(), output.element))
+                .map(Vec::as_slice)
+        },
         &mut origins,
     )?;
     let observables = resolve_role(
         "observable",
         observables,
         &index,
-        inferred_supports,
+        |output| {
+            inferred_supports
+                .get(&(output.tag.clone(), output.element))
+                .map(Vec::as_slice)
+        },
         &mut origins,
     )?;
     origins.sort_by_key(|origin| (origin.role != "detector", origin.id));
@@ -199,11 +185,11 @@ pub fn resolve_dem_specs(
     })
 }
 
-fn resolve_role(
+pub(super) fn resolve_role<'a>(
     role: &'static str,
-    specs: &[DemSpec],
+    specs: &[DemDefinition],
     index: &ResultTraceIndex,
-    supports: &BTreeMap<(String, usize), Vec<usize>>,
+    mut support: impl FnMut(&DemOutputSelector) -> Option<&'a [usize]>,
     origins: &mut Vec<DemDefinitionOrigin>,
 ) -> Result<Vec<ResolvedDemSpec>> {
     let mut entries = Vec::new();
@@ -211,9 +197,10 @@ fn resolve_role(
         let id = spec.id.unwrap_or(position);
         let context = format!("{role} {id}");
         let (ids, origin) = match &spec.source {
-            DemSpecSource::References(refs) => {
+            DemDefinitionSource::Measurements(ids) => (ids.clone(), DemAnnotationOrigin::Explicit),
+            DemDefinitionSource::References(refs) => {
                 // Enum variants are public, so enforce constructor invariants here too.
-                DemSpecSource::references(refs.clone())?;
+                DemDefinitionSource::references(refs.clone())?;
                 (
                     refs.iter()
                         .map(|r| index.resolve_ref(r))
@@ -221,32 +208,34 @@ fn resolve_role(
                     DemAnnotationOrigin::Explicit,
                 )
             }
-            DemSpecSource::Inferred(output) => {
+            DemDefinitionSource::Inferred(output) => {
                 if output.tag.is_empty() {
                     return Err(DemBindingError::value(
                         "inferred output tag must be a non-empty string",
                     ));
                 }
-                let ids = supports
-                    .get(&(output.tag.clone(), output.element))
-                    .ok_or_else(|| {
-                        DemBindingError::value(format!(
-                            "{context} requires inferred output tag {:?} element {}",
-                            output.tag, output.element
-                        ))
-                    })?;
+                let ids = support(output).ok_or_else(|| {
+                    DemBindingError::value(format!(
+                        "{context} requires inferred output tag {:?} element {}",
+                        output.tag, output.element
+                    ))
+                })?;
                 if ids.iter().any(|id| !index.runtime_ids.contains(id)) {
                     return Err(DemBindingError::value(format!(
                         "{context} contains unknown inferred measurement IDs"
                     )));
                 }
-                (ids.clone(), DemAnnotationOrigin::Inferred(output.clone()))
+                (ids.to_vec(), DemAnnotationOrigin::Inferred(output.clone()))
             }
         };
-        let ids = xor_normalize(&ids, &context)?;
+        let ids = if matches!(spec.source, DemDefinitionSource::Measurements(_)) {
+            ids
+        } else {
+            xor_normalize(&ids, &context)?
+        };
         let mut entry = spec.metadata.clone();
         validate_metadata(&entry)?;
-        if let DemSpecSource::Inferred(output) = &spec.source {
+        if let DemDefinitionSource::Inferred(output) = &spec.source {
             entry.insert("inferred_from_result_tag".into(), json!(output.tag));
             entry.insert("result_element".into(), json!(output.element));
         }

@@ -159,8 +159,16 @@ let build = DetectorErrorModel::builder()
     .with_noise(NoiseConfig::new(0.001, 0.005, 0.001, 0.001))
     .with_idle_after_2q(1.0)
     .build()?;
-let shots = build.evaluate_result_columns(&columns)?;
+let shots = build.prepared().evaluate_result_columns(&columns)?;
 ```
+
+For noise-free preparation, replace `.build()?` with `.prepare()?`. The resulting
+`PreparedDem` exposes the circuit, resolved definitions, references, bindings,
+fingerprint, audit, and evaluators through read-only methods. Call
+`prepared.build_dem(noise)?` repeatedly to build different noise models from the
+same schema; each build uses its own circuit copy. `prepare()` ignores any
+configured noise, while `build()` still requires `with_noise`. DEM residuals and
+`residual_summary(threshold)` belong to `DemBuild`.
 
 `probes` is a `DemInferenceData` containing `raw_measurement_ids`, `raw_rows`,
 `detector_rows`, and `observable_rows`. IDs follow raw-output column order and
@@ -267,7 +275,7 @@ rows for an unrequested role; the builder ignores any supplied values for that
 role. Existing circuit annotations must be supplied as builder definitions when
 mixing with inference, so they cannot silently collide with inferred definitions.
 
-`build.definition_origins` records explicit, selected inferred, or default-tag
+`build.prepared().definition_origins()` records explicit, selected inferred, or default-tag
 inferred origins. The Selene adapter resolves default tags into exact
 `Inferred(selector)` origins, including each tag and element. Its definition JSON
 matches Python: default-expanded detectors carry `inferred_from_result_tag`, and

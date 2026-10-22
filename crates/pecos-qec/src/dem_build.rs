@@ -20,6 +20,7 @@ pub use audit::{
 };
 pub use fingerprint::schema_fingerprint;
 pub use references::{NoiselessReferences, noiseless_references};
+pub use specifications::{MeasurementRef, ResultRef};
 
 pub use certificate::{check_generator_certificate_digest, generator_certificate_digest};
 
@@ -29,9 +30,11 @@ use crate::dem_inference::{
 use crate::fault_tolerance::circuit_definitions::{
     CircuitDefinitions, DefinitionError, definitions_from_tick_circuit, tick_circuit_emission,
 };
+use crate::fault_tolerance::dem_builder::NoiseChannelResidual;
 use crate::{DemBuilder, DemBuilderError, DetectorErrorModel, NoiseConfig};
 use pecos_quantum::{Attribute, TickCircuit, pass};
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 /// A selected element in a tag's flattened per-shot output.
 /// Python checks string tags and non-boolean, non-negative integer elements
@@ -48,15 +51,17 @@ pub struct DemOutputSelector {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DemDefinitionSource {
     Measurements(Vec<usize>),
+    /// XOR-normalized typed references; cancelled support is rejected.
+    References(Vec<MeasurementRef>),
     Inferred(DemOutputSelector),
 }
 
-/// A definition with an explicit ID, independent of its preparation method.
+/// A definition independent of its preparation method; an omitted ID uses list order.
 /// Python checks non-boolean, non-negative integer IDs, coordinate numeric
 /// conversion and metadata JSON-serializability before constructing this value.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DemDefinition {
-    pub id: usize,
+    pub id: Option<usize>,
     pub source: DemDefinitionSource,
     /// Optional detector coordinates. Rejected for observables.
     pub coords: Option<Vec<f64>>,
@@ -68,7 +73,7 @@ impl DemDefinition {
     #[must_use]
     pub fn explicit(id: usize, measurement_ids: Vec<usize>) -> Self {
         Self {
-            id,
+            id: Some(id),
             source: DemDefinitionSource::Measurements(measurement_ids),
             coords: None,
             metadata: serde_json::Map::new(),
@@ -77,7 +82,7 @@ impl DemDefinition {
     #[must_use]
     pub fn inferred(id: usize, tag: impl Into<String>, element: usize) -> Self {
         Self {
-            id,
+            id: Some(id),
             source: DemDefinitionSource::Inferred(DemOutputSelector {
                 tag: tag.into(),
                 element,
@@ -85,6 +90,21 @@ impl DemDefinition {
             coords: None,
             metadata: serde_json::Map::new(),
         }
+    }
+
+    /// Construct a parity from typed measurement references.
+    /// # Errors
+    /// Rejects an empty reference list.
+    pub fn references(
+        id: usize,
+        references: Vec<MeasurementRef>,
+    ) -> Result<Self, bindings::DemBindingError> {
+        Ok(Self {
+            id: Some(id),
+            source: DemDefinitionSource::references(references)?,
+            coords: None,
+            metadata: serde_json::Map::new(),
+        })
     }
 
     /// Set detector coordinates; all values must be finite.
@@ -179,13 +199,46 @@ pub enum DemBuildError {
     Propagation(#[from] DemBuilderError),
 }
 
-/// A DEM and the resolved measurement schema used to construct it.
+/// A DEM built from a prepared measurement schema.
 pub struct DemBuild {
-    pub dem: DetectorErrorModel,
-    pub inference: Option<DemInferenceReport>,
+    prepared: PreparedDem,
+    dem: DetectorErrorModel,
+}
+
+impl DemBuild {
+    #[must_use]
+    pub fn prepared(&self) -> &PreparedDem {
+        &self.prepared
+    }
+
+    #[must_use]
+    pub fn dem(&self) -> &DetectorErrorModel {
+        &self.dem
+    }
+
+    #[must_use]
+    pub fn idle_noise_residuals(&self) -> &[NoiseChannelResidual] {
+        self.dem.idle_noise_residuals()
+    }
+
+    /// Summarize this DEM's residuals above the relative threshold.
+    /// # Errors
+    /// Rejects non-finite thresholds and thresholds outside [0, 1].
+    pub fn residual_summary(
+        &self,
+        relative_threshold: f64,
+    ) -> Result<Vec<NoiseResidualSummary>, DemBuildError> {
+        summarize_noise_residuals(self.idle_noise_residuals(), relative_threshold)
+    }
+}
+
+/// Noise-free circuit and schema, finalized together before DEM construction.
+#[derive(Clone)]
+pub struct PreparedDem {
+    inference: Option<DemInferenceReport>,
     /// Detectors first, then observables, with ascending IDs within each role.
-    pub definition_origins: Vec<DemDefinitionOrigin>,
-    schema: DemBuildSchema,
+    definition_origins: Vec<DemDefinitionOrigin>,
+    schema: Arc<DemBuildSchema>,
 }
 
 /// Finalized together so references, evaluators, audit data and digest agree.
@@ -237,7 +290,40 @@ impl DemBuildSchema {
     }
 }
 
-impl DemBuild {
+impl PreparedDem {
+    /// Build with noise using a separate copy of the prepared circuit.
+    /// # Errors
+    /// Rejects idle noise without idle gates and unsupported noise models.
+    pub fn build_dem(&self, noise: NoiseConfig) -> Result<DemBuild, DemBuildError> {
+        if (noise.uses_dedicated_idle_noise() || noise.idle_rz != 0.0)
+            && !self
+                .schema
+                .circuit
+                .iter_gate_batches()
+                .any(|batch| batch.gate_type == pecos_core::gate_type::GateType::Idle)
+        {
+            return Err(DemBuildError::Configuration(
+                "idle-noise parameters have no idle gates to attach to".into(),
+            ));
+        }
+        // The DEM builder only reads the circuit, so the prepared schema stays shared.
+        let dem = DemBuilder::try_from_tick_circuit_with_noise_config(&self.schema.circuit, noise)?;
+        Ok(DemBuild {
+            prepared: self.clone(),
+            dem,
+        })
+    }
+
+    #[must_use]
+    pub fn inference(&self) -> Option<&DemInferenceReport> {
+        self.inference.as_ref()
+    }
+
+    #[must_use]
+    pub fn definition_origins(&self) -> &[DemDefinitionOrigin] {
+        &self.definition_origins
+    }
+
     /// The final circuit, including computed definition references and schema digest.
     #[must_use]
     pub fn circuit(&self) -> &TickCircuit {
@@ -395,7 +481,7 @@ impl DemBuildBuilder {
     pub fn with_observables(self, supports: Vec<Vec<usize>>) -> Self {
         self.with_observables_json(supports_json(supports))
     }
-    /// Supply explicit and inferred detector definitions in one list.
+    /// Supply direct, reference-based and inferred detector definitions in one list.
     #[must_use]
     pub fn with_detector_definitions(mut self, definitions: Vec<DemDefinition>) -> Self {
         if self.detectors.is_some() || self.detector_definitions.is_some() {
@@ -405,7 +491,7 @@ impl DemBuildBuilder {
         self.detector_definitions = Some(definitions);
         self
     }
-    /// Supply explicit and inferred observable definitions in one list.
+    /// Supply direct, reference-based and inferred observable definitions in one list.
     #[must_use]
     pub fn with_observable_definitions(mut self, definitions: Vec<DemDefinition>) -> Self {
         if self.observables.is_some() || self.observable_definitions.is_some() {
@@ -432,20 +518,29 @@ impl DemBuildBuilder {
         self
     }
 
-    /// Resolve annotations, apply circuit passes and build through the existing
-    /// native DEM pipeline. Already supplied circuits retain their gate schedule;
-    /// runtime adapters are responsible for normalizing their lowered traces.
-    ///
+    /// Prepare the measurement schema and build through the native DEM pipeline.
     /// # Errors
-    /// Rejects conflicting inputs, invalid settings/metadata, failed inference,
-    /// and unsupported circuits or noise models.
+    /// Requires noise and rejects invalid preparation or unsupported noise models.
     pub fn build(mut self) -> Result<DemBuild, DemBuildError> {
-        if let Some(error) = self.configuration_error {
+        if let Some(error) = self.configuration_error.take() {
             return Err(DemBuildError::Configuration(error));
         }
         let noise = self.noise.take().ok_or_else(|| {
             DemBuildError::Configuration("supply a noise configuration with with_noise".into())
         })?;
+        self.prepare()?.build_dem(noise)
+    }
+
+    /// Resolve annotations, apply circuit passes and finalize the noiseless schema.
+    /// Supplied noise is ignored. Already supplied circuits retain their gate schedule;
+    /// runtime adapters are responsible for normalizing their lowered traces.
+    /// # Errors
+    /// Rejects conflicting inputs, invalid settings/metadata, failed inference,
+    /// and unsupported circuits or nondeterministic noiseless parities.
+    pub fn prepare(mut self) -> Result<PreparedDem, DemBuildError> {
+        if let Some(error) = self.configuration_error {
+            return Err(DemBuildError::Configuration(error));
+        }
         let detector_outputs = requested_outputs(
             self.detector_definitions.as_deref(),
             self.detectors.is_some(),
@@ -581,6 +676,19 @@ impl DemBuildBuilder {
             }
             None
         };
+        let traces = report
+            .as_ref()
+            .zip(settings.as_ref())
+            .map(|(report, settings)| bindings::ResultTrace {
+                name: settings.raw_tag.clone(),
+                occurrence: Some(0),
+                width: report.raw_measurement_ids.len(),
+                measurement_ids: Some(report.raw_measurement_ids.clone()),
+            })
+            .into_iter()
+            .collect::<Vec<_>>();
+        let index = bindings::ResultTraceIndex::new(&measurement_ids, &traces)
+            .map_err(|error| DemBuildError::Configuration(error.to_string()))?;
         let mut definition_origins = Vec::new();
         for (role, specs, json, outputs, supports, default_tags, resolved_outputs) in [
             (
@@ -621,6 +729,7 @@ impl DemBuildBuilder {
                 outputs.as_deref(),
                 supports,
                 DefaultOutputs {
+                    index: &index,
                     tags: &default_tags,
                     resolved: resolved_outputs,
                 },
@@ -691,17 +800,6 @@ impl DemBuildBuilder {
             }
         }
         definition_origins.sort_by_key(|origin| (origin.role != "detector", origin.id));
-        let traces = report
-            .as_ref()
-            .zip(settings.as_ref())
-            .map(|(report, settings)| bindings::ResultTrace {
-                name: settings.raw_tag.clone(),
-                occurrence: Some(0),
-                width: report.raw_measurement_ids.len(),
-                measurement_ids: Some(report.raw_measurement_ids.clone()),
-            })
-            .into_iter()
-            .collect::<Vec<_>>();
         let schema = DemBuildSchema::new(
             circuit,
             definitions,
@@ -709,12 +807,10 @@ impl DemBuildBuilder {
             &traces,
             settings.as_ref().map(|s| s.raw_tag.as_str()),
         )?;
-        let dem = DemBuilder::try_from_tick_circuit_with_noise_config(&schema.circuit, noise)?;
-        Ok(DemBuild {
-            dem,
+        Ok(PreparedDem {
             inference: report,
             definition_origins,
-            schema,
+            schema: Arc::new(schema),
         })
     }
 }
@@ -744,12 +840,20 @@ fn requested_outputs(
             Some(Vec::new())
         });
     };
-    let ids: BTreeSet<_> = definitions.iter().map(|d| d.id).collect();
+    let ids: BTreeSet<_> = definitions
+        .iter()
+        .enumerate()
+        .map(|(position, d)| d.id.unwrap_or(position))
+        .collect();
     // Fail before runtime preparation; the build rechecks every source.
     if ids.len() != definitions.len() || (detectors && ids.iter().copied().ne(0..ids.len())) {
         return Err(DemBuildError::Configuration(format!(
             "definition IDs must be unique, and detector IDs dense from zero; got {:?}",
-            definitions.iter().map(|d| d.id).collect::<Vec<_>>()
+            definitions
+                .iter()
+                .enumerate()
+                .map(|(position, d)| d.id.unwrap_or(position))
+                .collect::<Vec<_>>()
         )));
     }
     let mut outputs = Vec::new();
@@ -775,6 +879,10 @@ fn requested_outputs(
                     "definition metadata uses reserved key: {key}"
                 )));
             }
+        }
+        if let DemDefinitionSource::References(refs) = &definition.source {
+            DemDefinitionSource::references(refs.clone())
+                .map_err(|error| DemBuildError::Configuration(error.to_string()))?;
         }
         if let DemDefinitionSource::Inferred(output) = &definition.source {
             if output.tag.is_empty() {
@@ -808,6 +916,7 @@ fn select_probe_columns(
 /// A role's default-tag expansion, with the adapter's resolved columns when it knows them.
 #[derive(Clone, Copy)]
 struct DefaultOutputs<'a> {
+    index: &'a bindings::ResultTraceIndex,
     tags: &'a [String],
     resolved: Option<&'a [DemOutputSelector]>,
 }
@@ -823,37 +932,29 @@ fn resolve_definitions(
 ) -> Result<Option<String>, DemBuildError> {
     if let Some(definitions) = definitions {
         let mut inferred = supports.iter();
-        let mut entries = Vec::new();
-        for definition in definitions {
-            let (ids, output) = match &definition.source {
-                DemDefinitionSource::Measurements(ids) => (ids, None),
-                DemDefinitionSource::Inferred(output) => (
-                    inferred.next().ok_or_else(|| {
-                        DemBuildError::Configuration("missing inferred definition".into())
-                    })?,
-                    Some(output.clone()),
-                ),
-            };
-            let mut entry = definition.metadata.clone();
-            entry.insert("id".into(), serde_json::json!(definition.id));
-            entry.insert("meas_ids".into(), serde_json::json!(ids));
-            if let Some(coords) = &definition.coords {
-                entry.insert("coords".into(), serde_json::json!(coords));
-            }
-            if let Some(output) = &output {
+        let resolved = specifications::resolve_role(
+            role,
+            definitions,
+            defaults.index,
+            |_| inferred.next().map(Vec::as_slice),
+            origins,
+        )
+        .map_err(|error| DemBuildError::Configuration(error.to_string()))?;
+        let entries = resolved
+            .into_iter()
+            .map(|definition| {
+                let mut entry = definition.metadata;
+                entry.insert("id".into(), serde_json::json!(definition.id));
                 entry.insert(
-                    "inferred_from_result_tag".into(),
-                    serde_json::json!(output.tag),
+                    "meas_ids".into(),
+                    serde_json::json!(definition.measurement_ids),
                 );
-                entry.insert("result_element".into(), serde_json::json!(output.element));
-            }
-            origins.push(DemDefinitionOrigin {
-                role,
-                id: definition.id,
-                source: output.map_or(DemAnnotationOrigin::Explicit, DemAnnotationOrigin::Inferred),
-            });
-            entries.push(serde_json::Value::Object(entry));
-        }
+                if let Some(coords) = definition.coords {
+                    entry.insert("coords".into(), serde_json::json!(coords));
+                }
+                serde_json::Value::Object(entry)
+            })
+            .collect();
         return Ok(Some(serde_json::Value::Array(entries).to_string()));
     }
     if outputs.is_none() {

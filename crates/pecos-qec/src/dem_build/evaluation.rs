@@ -1,7 +1,7 @@
 // Copyright 2026 The PECOS Developers
 // Licensed under the Apache License, Version 2.0
 
-use super::{DemBuild, DemBuildError};
+use super::{DemBuildError, PreparedDem};
 use pecos_decoder_core::obs_mask::ObsMask;
 use std::collections::BTreeMap;
 
@@ -16,7 +16,7 @@ fn bit(value: u8, context: &str) -> Result<u8, DemBuildError> {
     Ok(value)
 }
 
-impl DemBuild {
+impl PreparedDem {
     /// Detection events and observable flips relative to exact noiseless references.
     /// # Errors
     /// Rejects incorrect runtime record widths and invalid bits.

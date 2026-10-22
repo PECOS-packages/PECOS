@@ -6,7 +6,7 @@ use pecos_core::{Gate, MeasId};
 use pecos_decoder_core::obs_mask::ObsMask;
 use serde_json::json;
 
-fn reference_one_build() -> DemBuild {
+fn reference_one_prepared() -> PreparedDem {
     let mut circuit = TickCircuit::new();
     circuit.tick().x(&[0]);
     let mut measurement = Gate::mz(&[0, 1]);
@@ -30,49 +30,53 @@ fn reference_one_build() -> DemBuild {
             observable_rows: raw_rows.iter().map(|row| vec![row[1]]).collect(),
             raw_rows,
         })
-        .with_noise(NoiseConfig::new(0.001, 0.01, 0.001, 0.001))
-        .build()
+        .prepare()
         .unwrap()
 }
 
 #[test]
 fn reference_one_all_evaluators_and_raw_variants() {
-    let build = reference_one_build();
-    let zero = (vec![0], ObsMask::new());
-    let mut mask = ObsMask::new();
-    mask.set(70);
-    let raw = (vec![1], mask);
-    let measurements = BTreeMap::from([(7, 1), (999, 255)]);
-    let results: BTreeMap<String, Vec<u8>> = BTreeMap::from([
-        ("raw measurements".into(), vec![0, 1]),
-        ("unbound".into(), vec![255]),
-    ]);
-    let columns = results
-        .iter()
-        .map(|(tag, row)| (tag.clone(), vec![row.clone()]))
-        .collect();
-    assert_eq!(build.evaluate_runtime_record(&[1, 0]).unwrap(), zero);
-    assert_eq!(build.evaluate_measurements(&measurements).unwrap(), zero);
-    assert_eq!(build.evaluate_results(&results).unwrap(), zero);
-    assert_eq!(build.evaluate_result_columns(&columns).unwrap(), vec![zero]);
-    assert_eq!(build.runtime_record_parities(&[1, 0]).unwrap(), raw);
-    assert_eq!(build.measurement_parities(&measurements).unwrap(), raw);
-    assert_eq!(build.result_parities(&results).unwrap(), raw);
-    assert_eq!(build.result_column_parities(&columns).unwrap(), vec![raw]);
-    assert_eq!(
-        definitions_from_tick_circuit(&build.schema.circuit).unwrap(),
-        build.schema.definitions
-    );
-    assert_eq!(build.references().detectors[&0], 1);
-    assert_eq!(build.references().observables[&70], 1);
-    // Complementing the measured bit produces one event and one flip.
-    assert_eq!(build.evaluate_runtime_record(&[0, 0]).unwrap().0, [1]);
-    assert!(build.evaluate_runtime_record(&[0, 0]).unwrap().1.get(70));
+    let prepared = reference_one_prepared();
+    let built = prepared
+        .build_dem(NoiseConfig::new(0.001, 0.01, 0.001, 0.001))
+        .unwrap();
+    for build in [&prepared, built.prepared()] {
+        let zero = (vec![0], ObsMask::new());
+        let mut mask = ObsMask::new();
+        mask.set(70);
+        let raw = (vec![1], mask);
+        let measurements = BTreeMap::from([(7, 1), (999, 255)]);
+        let results: BTreeMap<String, Vec<u8>> = BTreeMap::from([
+            ("raw measurements".into(), vec![0, 1]),
+            ("unbound".into(), vec![255]),
+        ]);
+        let columns = results
+            .iter()
+            .map(|(tag, row)| (tag.clone(), vec![row.clone()]))
+            .collect();
+        assert_eq!(build.evaluate_runtime_record(&[1, 0]).unwrap(), zero);
+        assert_eq!(build.evaluate_measurements(&measurements).unwrap(), zero);
+        assert_eq!(build.evaluate_results(&results).unwrap(), zero);
+        assert_eq!(build.evaluate_result_columns(&columns).unwrap(), vec![zero]);
+        assert_eq!(build.runtime_record_parities(&[1, 0]).unwrap(), raw);
+        assert_eq!(build.measurement_parities(&measurements).unwrap(), raw);
+        assert_eq!(build.result_parities(&results).unwrap(), raw);
+        assert_eq!(build.result_column_parities(&columns).unwrap(), vec![raw]);
+        assert_eq!(
+            definitions_from_tick_circuit(&build.schema.circuit).unwrap(),
+            build.schema.definitions
+        );
+        assert_eq!(build.references().detectors[&0], 1);
+        assert_eq!(build.references().observables[&70], 1);
+        // Complementing the measured bit produces one event and one flip.
+        assert_eq!(build.evaluate_runtime_record(&[0, 0]).unwrap().0, [1]);
+        assert!(build.evaluate_runtime_record(&[0, 0]).unwrap().1.get(70));
+    }
 }
 
 #[test]
 fn evaluator_validation_holes_aliases_and_columns() {
-    let original = reference_one_build();
+    let original = reference_one_prepared();
     let traces = [
         bindings::ResultTrace {
             name: "a".into(),
@@ -100,14 +104,17 @@ fn evaluator_validation_holes_aliases_and_columns() {
         },
     ];
     let schema = DemBuildSchema::new(
-        original.schema.circuit,
-        original.schema.definitions,
-        original.schema.measurement_ids,
+        original.schema.circuit.clone(),
+        original.schema.definitions.clone(),
+        original.schema.measurement_ids.clone(),
         &traces,
         None,
     )
     .unwrap();
-    let build = DemBuild { schema, ..original };
+    let build = PreparedDem {
+        schema: Arc::new(schema),
+        ..original
+    };
     assert_eq!(build.named_result_measurements()["a"], [Some(7), None]);
     assert_eq!(build.audit().measurement_ledger, build.measurement_ledger());
     let good = BTreeMap::from([
@@ -314,7 +321,7 @@ fn transparent_gates_leave_references_unchanged() {
 
 #[test]
 fn audit_tracks_order_bindings_references_and_fingerprint() {
-    let build = reference_one_build();
+    let build = reference_one_prepared();
     let audit = build.audit();
     assert_eq!(audit.runtime_measurement_order, [7, 3]);
     assert!(!audit.runtime_order_is_canonical);
@@ -332,7 +339,7 @@ fn audit_tracks_order_bindings_references_and_fingerprint() {
         Some(1)
     );
     let value = audit.to_json();
-    assert_eq!(value.as_object().unwrap().len(), 11);
+    assert_eq!(value.as_object().unwrap().len(), 10);
     assert_eq!(value["inference"].as_object().unwrap().len(), 9);
     assert_eq!(
         value["definition_origins"][1],
@@ -433,6 +440,7 @@ fn reference_metadata_preserves_aliases_custom_fields_and_annotations() {
         .with_noise(NoiseConfig::new(0.001, 0.01, 0.001, 0.001))
         .build()
         .unwrap();
+    let build = build.prepared();
     let Some(Attribute::String(text)) = build.schema.circuit.get_meta("detectors") else {
         panic!("metadata");
     };
@@ -476,6 +484,7 @@ fn references_preserve_sparse_identity_mapping_and_support_multiplicity() {
         .with_noise(NoiseConfig::new(0.001, 0.01, 0.001, 0.001))
         .build()
         .unwrap();
+    let build = build.prepared();
     assert_eq!(
         build.references().detectors,
         BTreeMap::from([(0, 1), (1, 0)])
@@ -530,5 +539,178 @@ fn unsupported_reference_gate_preserves_typed_propagation_error() {
             tick: 0,
             gate_in_tick: 0
         }
+    );
+}
+
+#[test]
+fn prepare_needs_no_noise_and_ignores_supplied_noise() {
+    let builder = || {
+        let mut circuit = TickCircuit::new();
+        circuit.tick().mz(&[0]);
+        DetectorErrorModel::builder()
+            .with_circuit(circuit)
+            .with_detectors(vec![vec![0]])
+    };
+    let prepared = builder().prepare().unwrap();
+    let ignored = builder()
+        .with_noise(NoiseConfig::with_idle(0.0, 0.0, 0.0, 0.0, 0.1))
+        .prepare()
+        .unwrap();
+    assert_eq!(prepared.audit(), ignored.audit());
+    assert_eq!(prepared.definitions(), ignored.definitions());
+    assert_eq!(
+        builder().build().err().unwrap().to_string(),
+        "supply a noise configuration with with_noise"
+    );
+}
+
+#[test]
+fn repeated_dem_builds_preserve_prepared_schema_and_circuit() {
+    let prepared = reference_one_prepared();
+    let before = prepared.circuit().clone();
+    let audit = prepared.audit();
+    let first = prepared
+        .build_dem(NoiseConfig::new(0.0, 0.0, 0.01, 0.0))
+        .unwrap();
+    let second = prepared
+        .build_dem(NoiseConfig::new(0.0, 0.0, 0.2, 0.0))
+        .unwrap();
+    assert_ne!(first.dem().to_string(), second.dem().to_string());
+    for build in [&first, &second] {
+        assert!(std::ptr::eq(build.prepared().circuit(), prepared.circuit()));
+        assert_eq!(build.prepared().audit(), audit);
+        assert_eq!(build.prepared().definitions(), prepared.definitions());
+        assert_eq!(build.prepared().references(), prepared.references());
+        assert_eq!(
+            build.prepared().schema_fingerprint(),
+            prepared.schema_fingerprint()
+        );
+        assert_eq!(
+            build.prepared().definition_origins(),
+            prepared.definition_origins()
+        );
+        assert_eq!(build.prepared().inference(), prepared.inference());
+        assert_eq!(
+            format!("{:?}", build.prepared().circuit()),
+            format!("{before:?}")
+        );
+        assert_eq!(
+            build.idle_noise_residuals(),
+            build.dem().idle_noise_residuals()
+        );
+        assert_eq!(
+            build.residual_summary(0.0).unwrap(),
+            summarize_noise_residuals(build.idle_noise_residuals(), 0.0).unwrap()
+        );
+    }
+    // TickCircuit has no PartialEq; its Debug representation includes all state.
+    assert_eq!(format!("{:?}", prepared.circuit()), format!("{before:?}"));
+    assert_eq!(prepared.audit(), audit);
+}
+
+#[test]
+fn failed_idle_dem_build_leaves_preparation_reusable() {
+    let prepared = reference_one_prepared();
+    let before = prepared.circuit().clone();
+    let mut coherent = NoiseConfig::new(0.0, 0.0, 0.0, 0.0);
+    coherent.idle_rz = 0.1;
+    for noise in [NoiseConfig::with_idle(0.0, 0.0, 0.0, 0.0, 0.1), coherent] {
+        assert_eq!(
+            prepared.build_dem(noise).err().unwrap().to_string(),
+            "idle-noise parameters have no idle gates to attach to"
+        );
+        assert!(
+            prepared
+                .build_dem(NoiseConfig::new(0.0, 0.0, 0.01, 0.0))
+                .is_ok()
+        );
+        assert_eq!(format!("{:?}", prepared.circuit()), format!("{before:?}"));
+    }
+    assert!(
+        prepared
+            .build_dem(NoiseConfig::with_idle(0.0, 0.0, 0.01, 0.0, 0.0))
+            .is_ok()
+    );
+}
+
+#[test]
+fn unified_references_prepare_records_and_cancel_support() {
+    let prepare = |refs| {
+        let mut circuit = TickCircuit::new();
+        circuit.tick().mz(&[0, 1]);
+        DetectorErrorModel::builder()
+            .with_circuit(circuit)
+            .with_detector_definitions(vec![DemDefinition::references(0, refs).unwrap()])
+            .with_observable_definitions(vec![
+                DemDefinition::references(70, vec![MeasurementRef::record(1).unwrap()]).unwrap(),
+            ])
+            .prepare()
+    };
+    let prepared = prepare(vec![
+        MeasurementRef::record(2).unwrap(),
+        MeasurementRef::record(1).unwrap(),
+        MeasurementRef::record(2).unwrap(),
+    ])
+    .unwrap();
+    assert_eq!(prepared.definitions().detectors[0].measurements, [1]);
+    assert_eq!(prepared.definitions().observables[0].measurements, [1]);
+    assert_eq!(
+        prepare(vec![
+            MeasurementRef::record(1).unwrap(),
+            MeasurementRef::record(1).unwrap()
+        ])
+        .err()
+        .unwrap()
+        .to_string(),
+        "detector 0 references every measurement with even multiplicity; its parity is identically zero"
+    );
+    assert_eq!(
+        prepare(vec![MeasurementRef::tag("missing").unwrap()])
+            .err()
+            .unwrap()
+            .to_string(),
+        "result_ref \"missing\" occurrence 0 is absent from the runtime trace"
+    );
+}
+
+#[test]
+fn unified_result_reference_uses_available_inference_trace() {
+    let prepare = |refs| {
+        let mut circuit = TickCircuit::new();
+        let mut measurement = Gate::mz(&[0]);
+        measurement.meas_ids.push(MeasId::from_raw(0));
+        circuit.tick().try_add_gate(measurement).unwrap();
+        let rows = vec![vec![0], vec![1], vec![0], vec![1]];
+        DetectorErrorModel::builder()
+            .with_circuit(circuit)
+            .with_detector_definitions(vec![DemDefinition::inferred(0, "check", 0)])
+            .with_observable_definitions(vec![DemDefinition::references(70, refs).unwrap()])
+            .with_inference(DemInferenceSettings::default().with_validation_rows(1))
+            .with_inference_data(DemInferenceData {
+                raw_measurement_ids: vec![0],
+                detector_rows: rows.clone(),
+                observable_rows: vec![vec![]; rows.len()],
+                raw_rows: rows,
+            })
+            .prepare()
+    };
+    let named = MeasurementRef::Result(ResultRef::new("raw measurements", 0, Some(0)).unwrap());
+    let prepared = prepare(vec![
+        named.clone(),
+        MeasurementRef::record(1).unwrap(),
+        named.clone(),
+    ])
+    .unwrap();
+    assert_eq!(prepared.definitions().observables[0].measurements, [0]);
+    assert_eq!(
+        prepared.named_result_measurements()["raw measurements"],
+        [Some(0)]
+    );
+    assert_eq!(
+        prepare(vec![named, MeasurementRef::record(1).unwrap()])
+            .err()
+            .unwrap()
+            .to_string(),
+        "observable 70 references every measurement with even multiplicity; its parity is identically zero"
     );
 }

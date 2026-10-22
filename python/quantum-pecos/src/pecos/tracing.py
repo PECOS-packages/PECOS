@@ -11,24 +11,63 @@ either the structured operation trace or the corresponding runtime-lowered
 
 from __future__ import annotations
 
-import json
-from collections import Counter
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any
 
-from pecos._qis_trace_replay import (
-    _replay_qis_trace_chunks_into_tick_circuit,
-    _validate_trace_hosted_operations_if_requested,
-    named_result_traces_from_operation_trace,
-    source_measurement_ids_from_operation_trace,
+import pecos_rslib
+from pecos_rslib import (
+    _qis_named_result_traces,
+    _qis_source_measurement_ids,
+    _replay_qis_trace,
 )
-from pecos._traced_circuit import measurement_ids_in_execution_order
+
+from pecos.quantum import validate_hosted_operations
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from pecos.quantum import TickCircuit
+
+
+def _replay_qis_trace_chunks_into_tick_circuit(
+    chunks: list[dict[str, Any]],
+    *,
+    measurement_crosstalk_topology: str | None = None,
+) -> TickCircuit:
+    """Replay audited stored chunks using the shared Rust implementation."""
+    return _replay_qis_trace(
+        chunks,
+        measurement_crosstalk_topology,
+    )
+
+
+def named_result_traces_from_operation_trace(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return named output provenance in emission order."""
+    return _qis_named_result_traces(chunks)
+
+
+def source_measurement_ids_from_operation_trace(chunks: list[dict[str, Any]]) -> list[int]:
+    """Return unique source measurement IDs in execution order."""
+    return _qis_source_measurement_ids(chunks)
+
+
+def _validate_trace_hosted_operations_if_requested(
+    tick_circuit: object,
+    *,
+    require_hosted_operation_order: bool,
+    max_hosted_tick_separation: int | None,
+    context: str,
+) -> None:
+    if not require_hosted_operation_order and max_hosted_tick_separation is None:
+        return
+    validate_hosted_operations(
+        tick_circuit,
+        max_tick_separation=max_hosted_tick_separation,
+        require_host_after_local=require_hosted_operation_order,
+        require_unique_host_id=True,
+        context=context,
+    )
 
 
 _RESULT_TRACE_COLLECTOR: ContextVar[list[dict[str, Any]] | None] = ContextVar(
@@ -51,8 +90,6 @@ def _capture_qis_operation_traces(
     if shots <= 0:
         msg = "trace shots must be greater than zero"
         raise ValueError(msg)
-    import pecos_rslib  # noqa: PLC0415
-
     import pecos  # noqa: PLC0415
 
     sim_builder = (
@@ -116,35 +153,12 @@ def _qis_operation_trace_to_tick_circuit(
     measurement_crosstalk_topology: str | None = None,
     require_hosted_operation_order: bool = False,
     max_hosted_tick_separation: int | None = None,
-    allow_raw_measurement_id_fallback: bool = False,
     context: str,
 ) -> TickCircuit:
     """Replay captured QIS operation-trace chunks into a ``TickCircuit``."""
     tick_circuit = _replay_qis_trace_chunks_into_tick_circuit(
         chunks,
         measurement_crosstalk_topology=measurement_crosstalk_topology,
-        allow_raw_measurement_id_fallback=allow_raw_measurement_id_fallback,
-    )
-    source_measurement_ids = source_measurement_ids_from_operation_trace(chunks)
-    runtime_measurement_ids = measurement_ids_in_execution_order(tick_circuit)
-    duplicate_runtime_ids = sorted(
-        measurement_id for measurement_id, count in Counter(runtime_measurement_ids).items() if count > 1
-    )
-    if duplicate_runtime_ids:
-        msg = f"runtime-lowered trace contains duplicate measurement result ids: {duplicate_runtime_ids[:8]}"
-        raise ValueError(msg)
-    if set(source_measurement_ids) != set(runtime_measurement_ids):
-        source_ids = set(source_measurement_ids)
-        runtime_ids = set(runtime_measurement_ids)
-        msg = (
-            "source and runtime-lowered measurement identities do not match; "
-            f"missing={sorted(source_ids - runtime_ids)[:8]}, "
-            f"extra={sorted(runtime_ids - source_ids)[:8]}"
-        )
-        raise ValueError(msg)
-    tick_circuit.set_meta(
-        "qis_source_measurement_ids",
-        json.dumps(source_measurement_ids, separators=(",", ":")),
     )
     _validate_trace_hosted_operations_if_requested(
         tick_circuit,
@@ -180,10 +194,10 @@ def qis_operation_trace_to_tick_circuit(
         preserved as integer nanosecond :class:`pecos.TimeUnits`.
 
     Raises:
-        TypeError: If trace framing, operation counts, or measurement metadata
-            have invalid types.
-        ValueError: If the trace is incomplete, mixes shots, lacks audited
-            runtime-lowered operations, or cannot be replayed.
+        TypeError: If the input cannot be serialized as JSON.
+        ValueError: If fields have invalid types, the trace is incomplete,
+            mixes shots, lacks audited runtime-lowered operations, or cannot
+            be replayed.
     """
     return _qis_operation_trace_to_tick_circuit(
         trace,
@@ -205,7 +219,6 @@ def _trace_program_to_tick_circuit_with_result_traces(
     measurement_crosstalk_topology: str | None = None,
     require_hosted_operation_order: bool = False,
     max_hosted_tick_separation: int | None = None,
-    allow_raw_measurement_id_fallback: bool = False,
 ) -> tuple[TickCircuit, list[dict[str, Any]]]:
     """Trace a program into a ``TickCircuit`` and result provenance.
 
@@ -226,7 +239,6 @@ def _trace_program_to_tick_circuit_with_result_traces(
         measurement_crosstalk_topology=measurement_crosstalk_topology,
         require_hosted_operation_order=require_hosted_operation_order,
         max_hosted_tick_separation=max_hosted_tick_separation,
-        allow_raw_measurement_id_fallback=allow_raw_measurement_id_fallback,
         context="_trace_program_to_tick_circuit_with_result_traces",
     )
     return tick_circuit, named_result_traces_from_operation_trace(chunks)
@@ -302,7 +314,6 @@ def trace_program_to_tick_circuit(
         measurement_crosstalk_topology=measurement_crosstalk_topology,
         require_hosted_operation_order=require_hosted_operation_order,
         max_hosted_tick_separation=max_hosted_tick_separation,
-        allow_raw_measurement_id_fallback=False,
     )
     collector = _RESULT_TRACE_COLLECTOR.get()
     if collector is not None:

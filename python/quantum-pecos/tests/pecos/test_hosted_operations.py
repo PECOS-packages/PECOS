@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import pytest
-from pecos._qis_trace_replay import _validate_trace_hosted_operations_if_requested
 from pecos.quantum.hosted import validate_hosted_operations
+from pecos.tracing import _validate_trace_hosted_operations_if_requested
 
 
 class FakeGateType:

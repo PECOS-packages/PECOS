@@ -4573,3 +4573,11 @@ def validate_phir_result_reference(reference_json: str, field: str) -> tuple[str
 
 def validate_phir_classical_declaration(name: str, data_type: str, size: int) -> None:
     """Validate classical register type and size using native storage rules."""
+
+
+def _replay_qis_trace(
+    chunks: list[dict[str, Any]],
+    measurement_crosstalk_topology: str | None = None,
+) -> TickCircuit: ...
+def _qis_named_result_traces(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]: ...
+def _qis_source_measurement_ids(chunks: list[dict[str, Any]]) -> list[int]: ...

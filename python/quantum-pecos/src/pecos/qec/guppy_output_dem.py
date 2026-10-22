@@ -19,10 +19,10 @@ from typing import TYPE_CHECKING, Any
 from pecos_rslib.qec import DemInferenceSettings, _capture_dem_evidence, _SeleneRuntimeSpec
 
 from pecos._engine_builders import _configure_selene_runtime
-from pecos._qis_trace_replay import _validate_trace_hosted_operations_if_requested
 from pecos._traced_circuit import normalize_traced_tick_circuit
 from pecos.programs import Guppy
 from pecos.qec.dem_spec import InferredOutput
+from pecos.tracing import _validate_trace_hosted_operations_if_requested
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence

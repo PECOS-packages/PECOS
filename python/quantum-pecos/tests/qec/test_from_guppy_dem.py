@@ -12,13 +12,6 @@ import pytest
 from guppylang import guppy
 from guppylang.std.builtins import barrier, owned, result
 from guppylang.std.quantum import cx, h, measure, qubit, x
-from pecos._qis_trace_replay import (
-    _reject_partially_lowered_trace,
-    _replay_lowered_qis_trace_into_tick_circuit,
-    _replay_qis_trace_chunks_into_tick_circuit,
-    _replay_qis_trace_into_tick_circuit,
-    named_result_traces_from_operation_trace,
-)
 from pecos._traced_circuit import (
     measurement_ids_in_execution_order,
     normalize_traced_tick_circuit,
@@ -40,6 +33,47 @@ from pecos.qec.surface.decode import (
     generate_circuit_level_dem_from_builder,
     trace_guppy_into_tick_circuit_with_result_traces,
 )
+from pecos.tracing import (
+    _replay_qis_trace_chunks_into_tick_circuit,
+    named_result_traces_from_operation_trace,
+)
+
+
+def _framed_trace(chunks):
+    """Frame abbreviated gate fixtures as a complete stored runtime trace."""
+    framed = [
+        {
+            "format": "pecos_qis_operation_trace_v1",
+            "engine_trace_id": 1,
+            "shot_index": 0,
+            "chunk_index": index,
+            "stage": "execute",
+            "num_operations": len(chunk.get("operations", [])),
+            "operations": [],
+            "lowered_quantum_ops": [],
+            "lowered_quantum_ops_complete": True,
+            **chunk,
+        }
+        for index, chunk in enumerate(chunks)
+    ]
+    framed.append(
+        {
+            "format": "pecos_qis_operation_trace_v1",
+            "engine_trace_id": 1,
+            "shot_index": 0,
+            "chunk_index": len(framed),
+            "stage": "trace_complete",
+            "num_operations": 0,
+            "operations": [],
+            "lowered_quantum_ops": [],
+            "lowered_quantum_ops_complete": True,
+        },
+    )
+    return framed
+
+
+def _replay_test_trace(chunks, **kwargs):
+    return _replay_qis_trace_chunks_into_tick_circuit(_framed_trace(chunks), **kwargs)
 
 
 @guppy
@@ -1041,7 +1075,7 @@ def test_lowered_replay_uses_measure_result_ids_directly() -> None:
         },
     ]
 
-    tc = _replay_lowered_qis_trace_into_tick_circuit(chunks)
+    tc = _replay_test_trace(chunks)
 
     assert _flat_mz_ids(tc) == [42, 99]
 
@@ -1056,8 +1090,8 @@ def test_lowered_replay_fails_on_measurement_count_mismatch() -> None:
         },
     ]
 
-    with pytest.raises(ValueError, match="carries 1 measurement_result_ids for 2"):
-        _replay_lowered_qis_trace_into_tick_circuit(chunks)
+    with pytest.raises(ValueError, match="measurement carries IDs"):
+        _replay_test_trace(chunks)
 
 
 def test_lowered_replay_fails_on_missing_measurement_result_ids() -> None:
@@ -1068,8 +1102,8 @@ def test_lowered_replay_fails_on_missing_measurement_result_ids() -> None:
         },
     ]
 
-    with pytest.raises(ValueError, match="missing measurement_result_ids"):
-        _replay_lowered_qis_trace_into_tick_circuit(chunks)
+    with pytest.raises(ValueError, match="measurement carries IDs"):
+        _replay_test_trace(chunks)
 
 
 def test_lowered_replay_preserves_runtime_idles() -> None:
@@ -1083,7 +1117,7 @@ def test_lowered_replay_preserves_runtime_idles() -> None:
         },
     ]
 
-    tc = _replay_lowered_qis_trace_into_tick_circuit(chunks)
+    tc = _replay_test_trace(chunks)
 
     assert _flat_idle_gates(tc) == [([0], 20.0)]
 
@@ -1099,7 +1133,7 @@ def test_lowered_replay_converts_runtime_idle_seconds_to_nanosecond_time_units()
         },
     ]
 
-    tc = _replay_lowered_qis_trace_into_tick_circuit(chunks)
+    tc = _replay_test_trace(chunks)
 
     assert _flat_idle_gates(tc) == [([0], 13857.0)]
 
@@ -1160,7 +1194,7 @@ def test_lowered_replay_preserves_gate_metadata() -> None:
         },
     ]
 
-    tc = _replay_lowered_qis_trace_into_tick_circuit(chunks)
+    tc = _replay_test_trace(chunks)
 
     assert tc.get_gate_meta(0, 0, "source_label") == "szz_physical_prefix:H:X0:q0"
     assert tc.get_gate_meta(0, 0, "source_kind") == "szz_prefix"
@@ -1195,7 +1229,7 @@ def test_lowered_replay_preserves_measurement_crosstalk_payloads() -> None:
         },
     ]
 
-    tc = _replay_lowered_qis_trace_into_tick_circuit(chunks)
+    tc = _replay_test_trace(chunks)
 
     assert _flat_gate_qubits(tc, "MeasCrosstalkLocalPayload") == [[1, 2]]
     assert _flat_gate_qubits(tc, "MeasCrosstalkGlobalPayload") == [[3, 4]]
@@ -1204,7 +1238,7 @@ def test_lowered_replay_preserves_measurement_crosstalk_payloads() -> None:
 def test_lowered_replay_can_add_global_crosstalk_payloads_from_measurements() -> None:
     chunks = [
         {
-            "operations": [{"Quantum": {"Measure": [0, 7]}}],
+            "operations": [{"Quantum": {"Measure": [0, 7]}}, {"Quantum": {"Measure": [1, 8]}}],
             "lowered_quantum_ops": [
                 {
                     "gate_type": "MZ",
@@ -1217,8 +1251,8 @@ def test_lowered_replay_can_add_global_crosstalk_payloads_from_measurements() ->
         },
     ]
 
-    without_payloads = _replay_lowered_qis_trace_into_tick_circuit(chunks)
-    with_payloads = _replay_lowered_qis_trace_into_tick_circuit(
+    without_payloads = _replay_test_trace(chunks)
+    with_payloads = _replay_test_trace(
         chunks,
         measurement_crosstalk_topology="global_from_measurements",
     )
@@ -1228,27 +1262,13 @@ def test_lowered_replay_can_add_global_crosstalk_payloads_from_measurements() ->
         [11, 12],
     ]
     assert _flat_mz_ids(with_payloads) == [7, 8]
-
-
-def test_raw_replay_can_add_global_crosstalk_payloads_from_measurements() -> None:
-    operations = [
-        {"AllocateQubit": {"id": 0}},
-        {"AllocateResult": {"id": 9}},
-        {"Quantum": {"Measure": [0, 9]}},
-    ]
-
-    tc = _replay_qis_trace_into_tick_circuit(
-        operations,
-        measurement_crosstalk_topology="global_from_measurements",
-    )
-
-    assert _flat_gate_qubits(tc, "MeasCrosstalkGlobalPayload") == [[0]]
-    assert _flat_mz_ids(tc) == [9]
+    assert with_payloads.get_tick(0).gate_batches()[0].gate_type.name == "MeasCrosstalkGlobalPayload"
+    assert with_payloads.get_tick(1).gate_batches()[0].gate_type.name == "MZ"
 
 
 def test_replay_rejects_unknown_measurement_crosstalk_topology() -> None:
     with pytest.raises(ValueError, match="measurement_crosstalk_topology"):
-        _replay_lowered_qis_trace_into_tick_circuit(
+        _replay_test_trace(
             [],
             measurement_crosstalk_topology="local_from_vibes",
         )
@@ -1269,7 +1289,7 @@ def test_lowered_runtime_idles_can_drive_memory_noise_dem() -> None:
             ],
         },
     ]
-    tc = _replay_lowered_qis_trace_into_tick_circuit(chunks)
+    tc = _replay_test_trace(chunks)
     tc.set_meta("detectors", '[{"id": 0, "records": [-1]}]')
     tc.set_meta("observables", "[]")
     tc.set_meta("num_measurements", "1")
@@ -1299,7 +1319,7 @@ def test_lowered_runtime_idles_accept_axis_memory_noise_dem() -> None:
             ],
         },
     ]
-    tc = _replay_lowered_qis_trace_into_tick_circuit(chunks)
+    tc = _replay_test_trace(chunks)
     tc.set_meta("detectors", '[{"id": 0, "records": [-1]}]')
     tc.set_meta("observables", "[]")
     tc.set_meta("num_measurements", "1")
@@ -1331,7 +1351,7 @@ def test_from_circuit_accepts_biased_p2_weights() -> None:
             ],
         },
     ]
-    tc = _replay_lowered_qis_trace_into_tick_circuit(chunks)
+    tc = _replay_test_trace(chunks)
     tc.set_meta("detectors", '[{"id": 0, "records": [-1]}]')
     tc.set_meta("observables", "[]")
     tc.set_meta("num_measurements", "1")
@@ -1380,7 +1400,7 @@ def test_from_circuit_accepts_biased_p1_weights() -> None:
             ],
         },
     ]
-    tc = _replay_lowered_qis_trace_into_tick_circuit(chunks)
+    tc = _replay_test_trace(chunks)
     tc.set_meta("detectors", '[{"id": 0, "records": [-1]}]')
     tc.set_meta("observables", "[]")
     tc.set_meta("num_measurements", "1")
@@ -1409,11 +1429,11 @@ def test_reject_partially_lowered_trace_passes_on_uniformly_lowered() -> None:
             "lowered_quantum_ops_complete": True,
         },
         {  # allocation/output bookkeeping only; legitimately has no lowered ops
-            "operations": [{"AllocateResult": {"id": 7}}, {"RecordOutput": {"id": 7}}],
+            "operations": [{"AllocateResult": {"id": 7}}, {"RecordOutput": {"result_id": 7, "register_name": "m"}}],
             "lowered_quantum_ops": [],
         },
     ]
-    _reject_partially_lowered_trace(chunks)  # must not raise
+    _replay_test_trace(chunks)  # must not raise
 
 
 def test_reject_partially_lowered_trace_fails_on_mixed_format() -> None:
@@ -1433,8 +1453,8 @@ def test_reject_partially_lowered_trace_fails_on_mixed_format() -> None:
             "lowered_quantum_ops_complete": False,
         },
     ]
-    with pytest.raises(ValueError, match=r"does not attest|mixed/partially-lowered|incomplete gate stream"):
-        _reject_partially_lowered_trace(chunks)
+    with pytest.raises(ValueError, match="lowered_quantum_ops_complete=false"):
+        _replay_test_trace(chunks)
 
 
 @pytest.mark.parametrize("complete", [False, True])
@@ -1445,7 +1465,7 @@ def test_reject_partially_lowered_trace_fails_on_mixed_format() -> None:
         [{"AllocateQubit": {"id": 1}}, {"ReleaseQubit": {"id": 1}}],
     ],
 )
-def test_reject_partially_lowered_trace_accepts_unused_allocation(operations, complete) -> None:
+def test_reject_partially_lowered_trace_requires_attestation_on_unused_allocation(operations, complete) -> None:
     """Red/green: unused allocations emit no gates, including in a final chunk."""
     chunks = [
         {
@@ -1459,12 +1479,17 @@ def test_reject_partially_lowered_trace_accepts_unused_allocation(operations, co
             "lowered_quantum_ops_complete": complete,
         },
     ]
-    _reject_partially_lowered_trace(chunks)
+    if complete:
+        _replay_test_trace(chunks)
+    else:
+        with pytest.raises(ValueError, match="lowered_quantum_ops_complete=false"):
+            _replay_test_trace(chunks)
 
 
 def test_reject_partially_lowered_trace_fails_within_one_chunk() -> None:
     chunks = [
         {
+            "lowered_quantum_ops_complete": False,
             "operations": [
                 {"AllocateQubit": {"id": 0}},
                 {"Quantum": {"H": 0}},
@@ -1476,8 +1501,8 @@ def test_reject_partially_lowered_trace_fails_within_one_chunk() -> None:
         },
     ]
 
-    with pytest.raises(ValueError, match="does not attest a complete lowered gate stream"):
-        _reject_partially_lowered_trace(chunks)
+    with pytest.raises(ValueError, match="lowered_quantum_ops_complete=false"):
+        _replay_test_trace(chunks)
 
 
 def test_from_guppy_rejects_entirely_raw_runtime_trace(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1489,9 +1514,10 @@ def test_from_guppy_rejects_entirely_raw_runtime_trace(monkeypatch: pytest.Monke
             ],
         },
     ]
+    chunks = _framed_trace(chunks)
     monkeypatch.setattr("pecos.tracing.capture_qis_operation_trace", lambda *_args, **_kwargs: chunks)
 
-    with pytest.raises(ValueError, match="does not contain lowered_quantum_ops"):
+    with pytest.raises(ValueError, match="no lowered_quantum_ops"):
         DetectorErrorModel.from_guppy(
             _single_measurement,
             num_qubits=1,
@@ -1500,122 +1526,6 @@ def test_from_guppy_rejects_entirely_raw_runtime_trace(monkeypatch: pytest.Monke
             p2=0.0,
             p_meas=0.1,
             p_prep=0.0,
-        )
-
-
-def test_non_lowered_replay_preserves_non_sequential_result_ids() -> None:
-    operations = [
-        {"AllocateQubit": {"id": 10}},
-        {"AllocateQubit": {"id": 20}},
-        {"Quantum": {"Measure": [10, 77]}},
-        {"Quantum": {"Measure": [20, 3]}},
-    ]
-
-    tc = _replay_qis_trace_into_tick_circuit(operations)
-
-    assert _flat_mz_ids(tc) == [77, 3]
-
-
-def test_non_lowered_replay_preserves_idle_ops() -> None:
-    operations = [
-        {"AllocateQubit": {"id": 10}},
-        {"Quantum": {"Idle": [20e-9, 10]}},
-        {"Quantum": {"H": 10}},
-    ]
-
-    tc = _replay_qis_trace_into_tick_circuit(operations)
-
-    assert _flat_idle_gates(tc) == [([0], 20.0)]
-
-
-def _raw_replay_qubit_gates(chunks, qubit=0):
-    circuit = _replay_qis_trace_chunks_into_tick_circuit(chunks, allow_raw_measurement_id_fallback=True)
-    dag = circuit.to_dag_circuit()
-    return [
-        gate.gate_type.name for node in dag.nodes() if (gate := dag.gate(node)) is not None and qubit in gate.qubits
-    ]
-
-
-@pytest.mark.parametrize("first_op", ["Reset", "H"])
-def test_raw_replay_defers_prep_to_first_use(first_op) -> None:
-    """Red/green: prep is deferred across chunks; a first Reset counts as that prep."""
-    allocated = [{"AllocateQubit": {"id": 7}}]
-    assert _raw_replay_qubit_gates(
-        [{"operations": allocated}, {"operations": [{"Quantum": {first_op: 7}}, {"Quantum": {"X": 7}}]}],
-    ) == (["PZ", "X"] if first_op == "Reset" else ["PZ", "H", "X"])
-    assert _raw_replay_qubit_gates([{"operations": allocated}]) == []
-
-
-def test_raw_replay_legacy_multi_qubit_first_use() -> None:
-    """Red/green: every fresh legacy operand receives one prep, then stays prepared."""
-    chunks = [{"operations": [{"Quantum": {"CX": [7, 3]}}, {"Quantum": {"H": 7}}]}]
-    assert _raw_replay_qubit_gates(chunks, 0) == ["PZ", "CX", "H"]
-    assert _raw_replay_qubit_gates(chunks, 1) == ["PZ", "CX"]
-
-
-def test_raw_replay_unused_and_reallocated_lifetimes() -> None:
-    """Red/green: unused lifetimes have no prep; reused slots get one at first use."""
-    chunks = [
-        {
-            "operations": [
-                {"AllocateQubit": {"id": 7}},
-                {"ReleaseQubit": {"id": 7}},
-                {"AllocateQubit": {"id": 7}},
-                {"Quantum": {"Reset": 7}},
-                {"Quantum": {"X": 7}},
-                {"ReleaseQubit": {"id": 7}},
-                {"AllocateQubit": {"id": 7}},
-                {"Quantum": {"H": 7}},
-                {"Quantum": {"Reset": 7}},
-            ],
-        },
-    ]
-    assert _raw_replay_qubit_gates(chunks) == ["PZ", "X", "PZ", "H", "PZ"]
-
-
-def test_raw_replay_unknown_release_preserves_legacy_prep() -> None:
-    """Red/green: releasing an unknown handle cannot suppress its first-use prep."""
-    chunks = [
-        {
-            "operations": [
-                {"AllocateQubit": {"id": 0}},
-                {"Quantum": {"X": 0}},
-                {"ReleaseQubit": {"id": 0}},
-                {"ReleaseQubit": {"id": 9}},
-                {"Quantum": {"Measure": [9, 0]}},
-            ],
-        },
-    ]
-    assert _raw_replay_qubit_gates(chunks) == ["PZ", "X", "PZ", "MZ"]
-
-
-@pytest.mark.parametrize(
-    "prefix",
-    [
-        [{"AllocateQubit": {"id": 7}}, {"Quantum": {"H": 7}}],
-        [{"Quantum": {"Measure": [7, 0]}}],
-    ],
-)
-def test_raw_replay_rejects_duplicate_live_allocation(prefix) -> None:
-    """Red/green: explicit and legacy live handles cannot be allocated again."""
-    with pytest.raises(ValueError, match="already allocated"):
-        _raw_replay_qubit_gates([{"operations": [*prefix, {"AllocateQubit": {"id": 7}}]}])
-
-
-def test_raw_replay_rejects_use_after_release() -> None:
-    """Compatibility: raw replay still rejects use of an explicitly released handle."""
-    with pytest.raises(ValueError, match="program qubit 7"):
-        _raw_replay_qubit_gates(
-            [
-                {
-                    "operations": [
-                        {"AllocateQubit": {"id": 7}},
-                        {"Quantum": {"X": 7}},
-                        {"ReleaseQubit": {"id": 7}},
-                        {"Quantum": {"Measure": [7, 0]}},
-                    ],
-                },
-            ],
         )
 
 

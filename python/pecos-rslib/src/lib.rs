@@ -86,6 +86,7 @@ mod stabilizer_code_spec_bindings;
 mod stabilizer_group_bindings;
 mod state_vec_bindings;
 mod state_vec_engine_bindings;
+mod trace_replay_bindings;
 mod types_module;
 #[cfg(feature = "wasm")]
 mod wasm_foreign_object_bindings;
@@ -325,6 +326,7 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Register quantum circuit types (DagCircuit, Gate, GateType, QubitId)
     dag_circuit_bindings::register_quantum_circuit_types(m)?;
+    trace_replay_bindings::register(m)?;
 
     // Register quantum-information channel and measure types
     quantum_info_bindings::register_quantum_info_module(m)?;

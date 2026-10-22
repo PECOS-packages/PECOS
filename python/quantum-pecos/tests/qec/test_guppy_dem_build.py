@@ -14,10 +14,6 @@ import pytest
 from guppylang import guppy
 from guppylang.std.builtins import array, result
 from guppylang.std.quantum import cx, h, measure, qubit, x
-from pecos._qis_trace_replay import (
-    _replay_qis_trace_chunks_into_tick_circuit,
-    _validate_audited_trace_stream,
-)
 from pecos.guppy_gen import get_num_qubits, make_surface_code
 from pecos.qec import (
     Detector,
@@ -31,6 +27,7 @@ from pecos.qec import (
 )
 from pecos.qec.dem import _generator_certified_result_traces
 from pecos.qec.dem_spec import GuppyDemBuild, RecordRef, ResultRef, _resolve_dem_specs
+from pecos.tracing import _replay_qis_trace_chunks_into_tick_circuit
 from pecos_rslib import qis as _qis_analysis
 from pecos_rslib.qis import ResultTagCertificationError as _CertificationError
 from pecos_rslib.quantum import TickCircuit
@@ -491,8 +488,8 @@ def test_audited_trace_stream_rejects_malformed_terminals(corruption: str) -> No
             "operations": [{"Quantum": {"H": 0}}],
         }
 
-    with pytest.raises(ValueError, match=r"exactly one terminal|terminal chunk must be empty"):
-        _validate_audited_trace_stream(chunks)
+    with pytest.raises(ValueError, match=r"exactly one trace_complete|terminal trace chunk|no lowered_quantum_ops"):
+        _replay_qis_trace_chunks_into_tick_circuit(chunks)
 
 
 def test_spec_rejects_non_json_metadata_and_dead_parity() -> None:
@@ -736,24 +733,15 @@ def test_audited_build_disables_raw_measurement_id_fallback(monkeypatch: pytest.
         p_prep=0.0,
     )
 
-    assert seen["allow_raw_measurement_id_fallback"] is False
+    assert "allow_raw_measurement_id_fallback" not in seen
 
 
 def test_audited_replay_rejects_entirely_raw_runtime_trace() -> None:
-    chunks = [
-        {
-            "operations": [
-                {"AllocateQubit": {"id": 0}},
-                {"Quantum": {"Measure": [0, 0]}},
-            ],
-        },
-    ]
+    chunks = _framed_trace_chunks()
+    chunks[0]["lowered_quantum_ops"] = []
 
-    with pytest.raises(ValueError, match="does not contain lowered_quantum_ops"):
-        _replay_qis_trace_chunks_into_tick_circuit(
-            chunks,
-            allow_raw_measurement_id_fallback=False,
-        )
+    with pytest.raises(ValueError, match="no lowered_quantum_ops"):
+        _replay_qis_trace_chunks_into_tick_circuit(chunks)
 
 
 def _framed_trace_chunks() -> list[dict[str, object]]:
@@ -761,6 +749,8 @@ def _framed_trace_chunks() -> list[dict[str, object]]:
         "format": "pecos_qis_operation_trace_v1",
         "engine_trace_id": 7,
         "shot_index": 1,
+        "lowered_quantum_ops_complete": True,
+        "lowered_quantum_ops": [],
     }
     return [
         {
@@ -768,6 +758,7 @@ def _framed_trace_chunks() -> list[dict[str, object]]:
             "chunk_index": 0,
             "stage": "pending_final",
             "num_operations": 1,
+            "lowered_quantum_ops": [{"gate_type": "MZ", "qubits": [0], "measurement_result_ids": [0]}],
             "operations": [{"Quantum": {"Measure": [0, 0]}}],
         },
         {
@@ -781,7 +772,7 @@ def _framed_trace_chunks() -> list[dict[str, object]]:
 
 
 def test_audited_trace_stream_accepts_contiguous_terminal_framing() -> None:
-    _validate_audited_trace_stream(_framed_trace_chunks())
+    _replay_qis_trace_chunks_into_tick_circuit(_framed_trace_chunks())
 
 
 @pytest.mark.parametrize("corruption", ["gap", "cross_shot", "truncated"])
@@ -794,8 +785,8 @@ def test_audited_trace_stream_rejects_incomplete_or_mixed_framing(corruption: st
     else:
         chunks.pop()
 
-    with pytest.raises(ValueError, match=r"contiguous|mixes engine or shot|terminal"):
-        _validate_audited_trace_stream(chunks)
+    with pytest.raises(ValueError, match=r"inconsistent framing|trace_complete"):
+        _replay_qis_trace_chunks_into_tick_circuit(chunks)
 
 
 def test_generated_surface_named_results_evaluate_without_private_adapter() -> None:

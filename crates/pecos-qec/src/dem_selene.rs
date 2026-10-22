@@ -12,16 +12,13 @@ use crate::{
     DemBuildError, DemBuildInput, DemInferenceData, DemInferenceSettings, DemOutputSelector,
     DemProgram, DemProgramRequest,
 };
-use pecos_core::{Angle64, Gate, MeasId, QubitId, gate_type::GateType};
 use pecos_engines::{coin_toss, sim_builder};
 use pecos_programs::{Qis, QisContent};
 use pecos_qis::{
     OperationTraceChunk, OperationTraceStore, QisEngineBuilder, SeleneRuntime,
     helios_interface_builder, qis_engine, selene_simple_runtime,
 };
-use pecos_qis_ffi_types::{
-    NamedResult, NamedResultTrace, Operation, QuantumOp, RuntimeRequest, SeleneRequest,
-};
+use pecos_qis_ffi_types::{NamedResult, NamedResultTrace};
 use pecos_quantum::{Attribute, TickCircuit, pass};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -131,258 +128,27 @@ fn capture(
 }
 
 fn validate_shot(shot: &[OperationTraceChunk]) -> Result<(), DemBuildError> {
-    let Some(first) = shot.first() else {
-        return Err(preparation("empty runtime trace"));
-    };
-    for (index, chunk) in shot.iter().enumerate() {
-        if chunk.format != "pecos_qis_operation_trace_v1"
-            || chunk.engine_trace_id != first.engine_trace_id
-            || chunk.shot_index != first.shot_index
-            || chunk.chunk_index != index
-            || chunk.num_operations != chunk.operations.len()
-            || !chunk.lowered_quantum_ops_complete
-        {
-            return Err(preparation(format!(
-                "runtime trace chunk {index} is incomplete or has inconsistent framing: format={:?}, engine={}, shot={}, chunk={}, num_operations={}, operations={}, lowered_quantum_ops_complete={}",
-                chunk.format,
-                chunk.engine_trace_id,
-                chunk.shot_index,
-                chunk.chunk_index,
-                chunk.num_operations,
-                chunk.operations.len(),
-                chunk.lowered_quantum_ops_complete
-            )));
-        }
-        if !chunk.runtime_events_complete {
-            return Err(preparation(format!(
-                "runtime trace chunk {index} captured unhandled runtime custom events; configure a runtime batch adapter"
-            )));
-        }
-        if chunk
-            .operations
+    pecos_qis::trace_replay::validate_shot(
+        &shot
             .iter()
-            .any(|op| matches!(op, Operation::Quantum(_) | Operation::RuntimeRequest { .. }))
-            && chunk.lowered_quantum_ops.is_empty()
-            && !chunk.runtime_lowering_deferred
-        {
-            return Err(preparation(format!(
-                "runtime trace chunk {index} carries lowerable quantum operations but no lowered_quantum_ops"
-            )));
-        }
-        if (chunk.stage == "trace_complete") != (index + 1 == shot.len()) {
-            return Err(preparation(
-                "runtime trace must end with exactly one trace_complete chunk",
-            ));
-        }
-    }
-    let terminal = &shot[shot.len() - 1];
-    if !terminal.operations.is_empty()
-        || !terminal.lowered_quantum_ops.is_empty()
-        || !terminal.named_result_traces.is_empty()
-        || !terminal.named_results.is_empty()
-    {
-        return Err(preparation(
-            "terminal trace chunk must contain no operations or named outputs",
-        ));
-    }
-    if shot
-        .iter()
-        .filter(|chunk| !chunk.named_results.is_empty())
-        .count()
-        > 1
-    {
-        return Err(preparation(
-            "runtime trace carries complete named results in more than one chunk",
-        ));
-    }
-    Ok(())
+            .map(pecos_qis::trace_replay::StoredTraceChunk::from)
+            .collect::<Vec<_>>(),
+    )
+    .map_err(preparation)
 }
 
 fn source_ids(shot: &[OperationTraceChunk]) -> Result<Vec<usize>, DemBuildError> {
-    let ids: Vec<_> = shot
-        .iter()
-        .flat_map(|chunk| &chunk.operations)
-        .filter_map(|operation| match operation {
-            Operation::Quantum(QuantumOp::Measure(_, id) | QuantumOp::MeasureLeaked(_, id))
-            | Operation::RuntimeRequest {
-                request: RuntimeRequest::Native(SeleneRequest::Measure { result_id: id, .. }),
-                ..
-            } => Some(*id),
-            _ => None,
-        })
-        .collect();
-    if ids.iter().collect::<BTreeSet<_>>().len() != ids.len() {
-        return Err(preparation("source trace repeats measurement IDs"));
-    }
-    Ok(ids)
+    pecos_qis::trace_replay::source_ids(
+        &shot
+            .iter()
+            .map(pecos_qis::trace_replay::StoredTraceChunk::from)
+            .collect::<Vec<_>>(),
+    )
+    .map_err(preparation)
 }
 
-/// Replay only runtime-lowered operations; never reconstruct measurement IDs
-/// from gate positions or silently fall back to the source operation stream.
-fn replay(
-    shot: &[OperationTraceChunk],
-    qubits: usize,
-    source: &[usize],
-) -> Result<TickCircuit, DemBuildError> {
-    validate_shot(shot)?;
-    let mut circuit = TickCircuit::new();
-    let mut runtime_ids = BTreeSet::new();
-    for trace in shot.iter().flat_map(|chunk| &chunk.lowered_quantum_ops) {
-        // Same gate set as the Python replay chain in pecos/_qis_trace_replay.py.
-        let kind: GateType = match trace.gate_type.as_str() {
-            "MeasureLeaked" => GateType::MZ,
-            name @ ("H"
-            | "X"
-            | "Y"
-            | "Z"
-            | "SZ"
-            | "SZdg"
-            | "T"
-            | "Tdg"
-            | "PZ"
-            | "Idle"
-            | "MZ"
-            | "MeasCrosstalkGlobalPayload"
-            | "MeasCrosstalkLocalPayload"
-            | "RX"
-            | "RY"
-            | "RZ"
-            | "RXY1Q"
-            | "R1XY"
-            | "CX"
-            | "CY"
-            | "CZ"
-            | "CH"
-            | "CRZ"
-            | "SZZ"
-            | "SZZdg"
-            | "RZZ"
-            | "RXYXY2Q"
-            | "CCX") => name.parse().map_err(preparation)?,
-            name => {
-                return Err(preparation(format!(
-                    "unsupported lowered traced gate {name:?}"
-                )));
-            }
-        };
-        if trace
-            .angles
-            .iter()
-            .chain(&trace.params)
-            .any(|x| !x.is_finite())
-            || trace.qubits.is_empty()
-            || trace.qubits.iter().any(|&q| q >= qubits)
-            || kind.quantum_arity() == 0
-            || !trace.qubits.len().is_multiple_of(kind.quantum_arity())
-        {
-            return Err(preparation(format!(
-                "lowered gate {:?} has invalid angles {:?}, parameters {:?}, or qubits {:?} (num_qubits={qubits})",
-                trace.gate_type, trace.angles, trace.params, trace.qubits
-            )));
-        }
-        let mut params = trace.params.clone();
-        if kind == GateType::Idle {
-            if params.len() != 1
-                || params[0] < 0.0
-                || !(params[0] * 1e9).is_finite()
-                || (params[0] * 1e9).round_ties_even() >= 2.0_f64.powi(64)
-            {
-                return Err(preparation(format!(
-                    "lowered Idle duration must be finite and non-negative and fit in u64 nanoseconds; params={params:?}"
-                )));
-            }
-            params[0] = if params[0] == 0.0 {
-                0.0
-            } else {
-                (params[0] * 1e9).round_ties_even().max(1.0)
-            };
-        } else if !params.is_empty() {
-            return Err(preparation(format!(
-                "unexpected non-angle parameters {params:?} on lowered gate {:?}",
-                trace.gate_type
-            )));
-        }
-        let mut gate = Gate::try_new(
-            kind,
-            trace
-                .angles
-                .iter()
-                .map(|&a| Angle64::try_from_radians(a))
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(preparation)?,
-            params,
-            trace
-                .qubits
-                .iter()
-                .copied()
-                .map(QubitId)
-                .collect::<Vec<_>>(),
-        )
-        .map_err(|error| {
-            preparation(format!(
-                "lowered gate {:?} with angles {:?}, params {:?}, qubits {:?}: {error}",
-                trace.gate_type, trace.angles, trace.params, trace.qubits
-            ))
-        })?;
-        if kind == GateType::MZ {
-            if trace.measurement_result_ids.len() != trace.qubits.len() {
-                return Err(preparation(format!(
-                    "lowered {:?} measurement carries IDs {:?} for qubits {:?}",
-                    trace.gate_type, trace.measurement_result_ids, trace.qubits
-                )));
-            }
-            for &id in &trace.measurement_result_ids {
-                if !runtime_ids.insert(id) {
-                    return Err(preparation(format!(
-                        "lowered trace repeats measurement ID {id}"
-                    )));
-                }
-            }
-            gate.meas_ids = trace
-                .measurement_result_ids
-                .iter()
-                .copied()
-                .map(MeasId::from_raw)
-                .collect();
-        } else if !trace.measurement_result_ids.is_empty() {
-            return Err(preparation("non-measurement gate carries measurement IDs"));
-        }
-        circuit
-            .tick()
-            .try_add_gate(gate)
-            .map_err(preparation)?
-            .metas(
-                trace
-                    .metadata
-                    .iter()
-                    .map(|(key, value)| (key.clone(), Attribute::String(value.clone())))
-                    .collect(),
-            );
-    }
-    if runtime_ids != source.iter().copied().collect() {
-        return Err(preparation(format!(
-            "source and runtime-lowered measurement IDs differ: source ids={source:?}, runtime ids={runtime_ids:?}"
-        )));
-    }
-    // External measurement IDs must also reserve their successors, just as the
-    // TickCircuit measurement builders do. Generic gate insertion does not
-    // allocate measurement records.
-    if let Some(highest) = runtime_ids.last() {
-        let next = highest.checked_add(1).ok_or_else(|| {
-            preparation(format!(
-                "measurement ID {highest} leaves no room for a later ID"
-            ))
-        })?;
-        circuit
-            .try_advance_meas_counter(next)
-            .map_err(preparation)?;
-    }
-    circuit.compact_ticks();
-    circuit.set_meta(
-        "qis_source_measurement_ids",
-        Attribute::String(serde_json::to_string(&source).map_err(preparation)?),
-    );
-    Ok(circuit)
+fn replay(shot: &[OperationTraceChunk], qubits: usize) -> Result<TickCircuit, DemBuildError> {
+    pecos_qis::trace_replay::replay_in_memory(shot, qubits).map_err(preparation)
 }
 
 fn check_schedule(
@@ -624,7 +390,7 @@ fn analyze_baseline<'a>(
     schedule_shots: usize,
 ) -> Result<BaselineAnalysis<'a>, DemBuildError> {
     let source = source_ids(&baseline)?;
-    let circuit = replay(&baseline, request.num_qubits, &source)?;
+    let circuit = replay(&baseline, request.num_qubits)?;
     let mut evidence = SeleneDemEvidence {
         circuit,
         probes: None,
@@ -859,7 +625,9 @@ impl DemProgram for SeleneDemProgram {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pecos_core::{MeasId, gate_type::GateType};
     use pecos_qis::LoweredQuantumGateTrace;
+    use pecos_qis_ffi_types::{Operation, QuantumOp, RuntimeRequest, SeleneRequest};
 
     fn chunk(index: usize, stage: &str) -> OperationTraceChunk {
         OperationTraceChunk {
@@ -1306,7 +1074,7 @@ mod tests {
         for name in ["MX", "QAlloc", "Channel"] {
             let mut shot = trace();
             shot[0].lowered_quantum_ops[0].gate_type = name.into();
-            let error = replay(&shot, 1, &[7]).unwrap_err().to_string();
+            let error = replay(&shot, 1).unwrap_err().to_string();
             assert!(
                 error.contains(name) && error.contains("unsupported lowered traced gate"),
                 "{error}"
@@ -1316,7 +1084,7 @@ mod tests {
 
     #[test]
     fn replay_preserves_stable_measurement_identity() {
-        let circuit = replay(&trace(), 1, &[7]).unwrap();
+        let circuit = replay(&trace(), 1).unwrap();
         let ids: Vec<_> = circuit
             .iter_gate_batches()
             .flat_map(|gate| gate.as_gate().meas_ids.clone())
@@ -1329,7 +1097,7 @@ mod tests {
     #[test]
     fn replay_accepts_deferred_lowering_with_stable_measurement_identity() {
         let shot = deferred_trace();
-        let circuit = replay(&shot, 1, &[7]).unwrap();
+        let circuit = replay(&shot, 1).unwrap();
         let gates: Vec<_> = circuit.iter_gate_batches().collect();
         assert_eq!(gates.len(), 1);
         assert_eq!(gates[0].as_gate().gate_type, GateType::MZ);
@@ -1345,7 +1113,7 @@ mod tests {
         let mut shot = deferred_trace();
         shot[0].runtime_lowering_deferred = false;
         assert!(
-            replay(&shot, 1, &[7])
+            replay(&shot, 1)
                 .unwrap_err()
                 .to_string()
                 .contains("no lowered_quantum_ops")
@@ -1353,7 +1121,7 @@ mod tests {
         let mut shot = deferred_trace();
         shot.pop();
         assert!(
-            replay(&shot, 1, &[7])
+            replay(&shot, 1)
                 .unwrap_err()
                 .to_string()
                 .contains("exactly one trace_complete")
@@ -1361,36 +1129,36 @@ mod tests {
         for index in 0..3 {
             let mut shot = deferred_trace();
             shot[index].lowered_quantum_ops_complete = false;
-            assert!(replay(&shot, 1, &[7]).is_err());
+            assert!(replay(&shot, 1).is_err());
             let mut shot = deferred_trace();
             shot[index].runtime_events_complete = false;
             assert!(
-                replay(&shot, 1, &[7])
+                replay(&shot, 1)
                     .unwrap_err()
                     .to_string()
                     .contains("unhandled runtime custom events")
             );
             let mut shot = deferred_trace();
             shot[index].chunk_index += 1;
-            assert!(replay(&shot, 1, &[7]).is_err());
+            assert!(replay(&shot, 1).is_err());
         }
         let mut shot = deferred_trace();
         shot[1].lowered_quantum_ops.clear();
-        assert!(replay(&shot, 1, &[7]).is_err());
+        assert!(replay(&shot, 1).is_err());
     }
 
     #[test]
     fn replay_rejects_partial_traces_and_missing_identity() {
         let mut shot = trace();
         shot.pop();
-        assert!(replay(&shot, 1, &[7]).is_err());
+        assert!(replay(&shot, 1).is_err());
         let mut shot = trace();
         shot[0].lowered_quantum_ops_complete = false;
-        assert!(replay(&shot, 1, &[7]).is_err());
+        assert!(replay(&shot, 1).is_err());
         let mut shot = trace();
         shot[1].runtime_events_complete = false;
         assert!(
-            replay(&shot, 1, &[7])
+            replay(&shot, 1)
                 .unwrap_err()
                 .to_string()
                 .contains("unhandled runtime custom events")
@@ -1399,13 +1167,13 @@ mod tests {
         shot[0].lowered_quantum_ops[0]
             .measurement_result_ids
             .clear();
-        assert!(replay(&shot, 1, &[7]).is_err());
+        assert!(replay(&shot, 1).is_err());
         let mut shot = trace();
         shot[0].lowered_quantum_ops[0].measurement_result_ids = vec![8];
-        assert!(replay(&shot, 1, &[7]).is_err());
+        assert!(replay(&shot, 1).is_err());
         let mut shot = trace();
         shot[1].chunk_index = 2;
-        assert!(replay(&shot, 1, &[7]).is_err());
+        assert!(replay(&shot, 1).is_err());
     }
 
     #[test]
@@ -1435,7 +1203,7 @@ mod tests {
                 metadata: BTreeMap::from([("role".into(), "waiting".into())]),
             },
         );
-        let circuit = replay(&shot, 1, &[7]).unwrap();
+        let circuit = replay(&shot, 1).unwrap();
         let idle = circuit
             .iter_gate_batches()
             .find(|g| g.as_gate().gate_type == GateType::Idle)
@@ -1471,7 +1239,7 @@ mod tests {
             let mut shot = trace();
             shot[0].lowered_quantum_ops[0].qubits = vec![qubit];
             shot[0].lowered_quantum_ops[0].angles = vec![angle];
-            assert!(replay(&shot, 1, &[7]).is_err());
+            assert!(replay(&shot, 1).is_err());
         }
     }
 }

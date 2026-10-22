@@ -588,6 +588,7 @@ class _CachedNativeSurfaceTopology:
     z_frame_gate_p1_free: bool
     pauli_frame_lookup: Any | None
     detectors_json: str
+    measurement_classes_json: str | None
     observables_json: str
     num_measurements: int
     num_detectors: int
@@ -1829,6 +1830,9 @@ def _surface_native_topology(
         # that asymmetric device assumption.
         z_frame_gate_p1_free=interaction_basis == "szz",
         pauli_frame_lookup=pauli_frame_lookup,
+        measurement_classes_json=(
+            json.dumps(definitions["measurement_classes"]) if "measurement_classes" in definitions else None
+        ),
         detectors_json=detectors_json,
         observables_json=observables_json,
         num_measurements=num_measurements,
@@ -1900,6 +1904,8 @@ def _dem_string_from_cached_surface_topology(
         builder = builder.with_exact_branch_replay_circuit(topology.dag_circuit)
 
     builder = builder.with_num_measurements(topology.num_measurements)
+    if topology.measurement_classes_json is not None:
+        builder.with_measurement_classes_json(topology.measurement_classes_json)
     dem = (
         builder.with_detectors_json(topology.detectors_json)
         .with_observables_json(

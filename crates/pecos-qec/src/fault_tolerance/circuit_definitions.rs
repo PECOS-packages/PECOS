@@ -10,6 +10,9 @@ use super::dem_builder::{
 };
 use pecos_core::{MeasId, QubitId};
 use pecos_quantum::{AnnotationKind, Attribute, DagCircuit, PauliAnnotation, TickCircuit};
+use pecos_quantum::{
+    MeasurementClass, parse_measurement_classes, validate_measurement_classes_length,
+};
 use std::collections::BTreeMap;
 
 /// The kind of a measurement-readout annotation.
@@ -90,6 +93,8 @@ pub struct ResolvedObservable {
 /// Definitions sorted by id, with positions indexing measurement emission order.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CircuitDefinitions {
+    /// Optional classes indexed by absolute emission position.
+    pub measurement_classes: Option<Vec<Option<MeasurementClass>>>,
     /// Detectors sorted by id.
     pub detectors: Vec<ResolvedDetector>,
     /// Observables sorted by id.
@@ -438,6 +443,7 @@ pub fn resolve_definitions(
         );
     }
     Ok(CircuitDefinitions {
+        measurement_classes: None,
         detectors: merge("detector", detectors, annotation_detectors)?
             .into_iter()
             .map(|(id, d)| ResolvedDetector {
@@ -515,7 +521,22 @@ fn resolve_circuit<'a>(
         .iter()
         .filter_map(AnnotationDefinition::from_annotation)
         .collect();
-    resolve_definitions(detectors, observables, &annotations, emission)
+    let mut definitions = resolve_definitions(detectors, observables, &annotations, emission)?;
+    if let Some(json) =
+        string_attribute("measurement_classes", get_attribute("measurement_classes"))?
+    {
+        let parse = || {
+            let classes = parse_measurement_classes(json)?;
+            validate_measurement_classes_length(&classes, emission.len())?;
+            Ok::<_, String>(classes)
+        };
+        definitions.measurement_classes =
+            Some(parse().map_err(|message| DefinitionError::Parse {
+                kind: "measurement_classes",
+                source: DemBuilderError::ParseError(message),
+            })?);
+    }
+    Ok(definitions)
 }
 
 /// One emitted measurement record, including its qubit and optional identity.

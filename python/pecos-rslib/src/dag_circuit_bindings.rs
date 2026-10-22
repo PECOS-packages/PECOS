@@ -2414,6 +2414,28 @@ impl PyTickCircuit {
             .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
         let result = PyDict::new(py);
         result.set_item("num_measurements", definitions.num_measurements)?;
+        let classes = definitions
+            .measurement_classes
+            .map(|classes| {
+                classes
+                    .into_iter()
+                    .map(|class| {
+                        class
+                            .map(|class| {
+                                let entry = PyDict::new(py);
+                                entry.set_item("block", class.block)?;
+                                entry.set_item("family", class.family)?;
+                                entry.set_item("round", class.round)?;
+                                Ok::<_, PyErr>(entry)
+                            })
+                            .transpose()
+                    })
+                    .collect::<PyResult<Vec<_>>>()
+            })
+            .transpose()?;
+        if let Some(classes) = classes {
+            result.set_item("measurement_classes", classes)?;
+        }
         let detectors = PyList::empty(py);
         for detector in definitions.detectors {
             let entry = PyDict::new(py);

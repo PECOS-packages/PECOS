@@ -3004,6 +3004,7 @@ pub struct PyDemBuilder {
     influence_map: RustDagFaultInfluenceMap,
     noise: NoiseConfig,
     detectors_json: Option<String>,
+    measurement_classes_json: Option<String>,
     observables_json: Option<String>,
     num_measurements: Option<usize>,
     exact_branch_circuit: Option<DagCircuit>,
@@ -3021,6 +3022,7 @@ impl PyDemBuilder {
             influence_map: influence_map.inner.clone(),
             noise: NoiseConfig::default(),
             detectors_json: None,
+            measurement_classes_json: None,
             observables_json: None,
             num_measurements: None,
             exact_branch_circuit: None,
@@ -3124,6 +3126,15 @@ impl PyDemBuilder {
         slf
     }
 
+    /// Set measurement classes in influence-map record order, not stamped-id order.
+    fn with_measurement_classes_json(
+        mut slf: PyRefMut<'_, Self>,
+        json: String,
+    ) -> PyRefMut<'_, Self> {
+        slf.measurement_classes_json = Some(json);
+        slf
+    }
+
     /// Set the observable definitions from JSON.
     ///
     /// Tracked Paulis are carried by the influence map; this helper is for
@@ -3183,6 +3194,12 @@ impl PyDemBuilder {
         if let Some(ref json) = self.detectors_json {
             builder = builder
                 .with_detectors_json(json)
+                .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        }
+
+        if let Some(ref json) = self.measurement_classes_json {
+            builder = builder
+                .with_measurement_classes_json(json)
                 .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
         }
 

@@ -13,6 +13,10 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Decoder changes
 
+- Circuits can supply typed `measurement_classes` metadata to derive detector
+  `fault_sector` labels from parity-reduced record support, with explicit-label
+  agreement checks. Rust CSS memory builders now emit these classes; manual
+  Rust and Python DEM builders accept the same JSON schema.
 - `LogicalCircuitBuilder` detector `fault_sector` labels follow the code's
   stabilizer family across a transversal H; previously post-H detectors were
   labelled with the measured family, which made graph decoders' labelled

@@ -4076,6 +4076,9 @@ def generate_dem_from_tick_circuit(
         builder = builder.with_exact_branch_replay_circuit(dag)
     builder.with_num_measurements(num_measurements)
     builder.with_detectors_json(detectors_json)
+    measurement_classes = tc.get_meta("measurement_classes")
+    if measurement_classes is not None:
+        builder.with_measurement_classes_json(measurement_classes)
     if observables_json:
         builder.with_observables_json(observables_json)
 

@@ -33,7 +33,10 @@ use crate::fault_tolerance::propagator::{
 };
 use pecos_core::BitSet;
 use pecos_core::gate_type::GateType;
-use pecos_quantum::parse_fault_sector;
+use pecos_quantum::{
+    MeasurementClass, parse_fault_sector, parse_measurement_classes,
+    validate_measurement_classes_length,
+};
 use pecos_simulators::{
     PauliProp, SymbolicMeasurementResult, SymbolicSparseStab,
     symbolic_sparse_stab::MeasurementHistory,
@@ -141,6 +144,7 @@ pub struct DemBuilder<'a> {
     per_gate: Option<PerGateTypeNoise>,
     /// Parsed detector definitions.
     detectors: Vec<ParsedDetector>,
+    measurement_classes: Option<Vec<Option<MeasurementClass>>>,
     /// Parsed observable definitions.
     observables: Vec<ParsedObservable>,
     /// Total number of measurements in the circuit.
@@ -347,6 +351,7 @@ impl<'a> DemBuilder<'a> {
             noise: NoiseConfig::default(),
             per_gate: None,
             detectors: Vec::new(),
+            measurement_classes: None,
             observables: Vec::new(),
             num_measurements: influence_map.measurements.len(),
             exact_branch_context: None,
@@ -533,6 +538,20 @@ impl<'a> DemBuilder<'a> {
         Ok(self)
     }
 
+    /// Sets per-measurement classes from JSON in the influence map's record order.
+    ///
+    /// Manual callers must supply classes in map record order, which need not
+    /// match circuit emission order or stamped `MeasId` values. Length is checked
+    /// at build time against the final measurement count.
+    ///
+    /// # Errors
+    /// Rejects malformed class JSON, naming the record ordinal.
+    pub fn with_measurement_classes_json(mut self, json: &str) -> Result<Self, DemBuilderError> {
+        self.measurement_classes =
+            Some(parse_measurement_classes(json).map_err(DemBuilderError::ParseError)?);
+        Ok(self)
+    }
+
     /// Parses and sets observable definitions from JSON.
     ///
     /// Tracked Paulis are carried by the influence map; this helper is only
@@ -607,6 +626,7 @@ impl<'a> DemBuilder<'a> {
                 })
             })
             .collect::<Result<_, DemBuilderError>>()?;
+        self.measurement_classes = definitions.measurement_classes;
         self.num_measurements = definitions.num_measurements;
         self.clear_exact_branch_cache();
         Ok(self)
@@ -786,19 +806,6 @@ impl<'a> DemBuilder<'a> {
             .collect()
     }
 
-    /// Validates metadata refs, then builds the Detector Error Model.
-    ///
-    /// This is the fail-loud entry point. Every path that ingests
-    /// detector/observable metadata derived from a circuit (the
-    /// `from_circuit` family, [`DemSampler::from_circuit`], and the public
-    /// Python `DemBuilder.build`) must go through here so an out-of-range
-    /// record offset or `meas_id` is rejected rather than silently dropped.
-    ///
-    /// [`Self::build`] is the infallible counterpart, kept for the raw,
-    /// decoupled construction case (e.g. an empty influence map where record
-    /// offsets are opaque DEM coordinates) and so existing callers do not
-    /// change behavior.
-    ///
     /// Rejects a `num_measurements` that disagrees with a non-empty influence
     /// map.
     ///
@@ -823,6 +830,19 @@ impl<'a> DemBuilder<'a> {
         reject_duplicate_stamped_meas_ids(self.influence_map)
     }
 
+    /// Validates metadata refs, then builds the Detector Error Model.
+    ///
+    /// This is the fail-loud entry point. Every path that ingests
+    /// detector/observable metadata derived from a circuit (the
+    /// `from_circuit` family, [`DemSampler::from_circuit`], and the public
+    /// Python `DemBuilder.build`) must go through here so an out-of-range
+    /// record offset or `meas_id` is rejected rather than silently dropped.
+    ///
+    /// [`Self::build`] is the infallible counterpart, kept for the raw,
+    /// decoupled construction case (e.g. an empty influence map where record
+    /// offsets are opaque DEM coordinates) and so existing callers do not
+    /// change behavior.
+    ///
     /// # Errors
     ///
     /// Returns [`DemBuilderError::ParseError`] if `num_measurements` disagrees
@@ -836,6 +856,7 @@ impl<'a> DemBuilder<'a> {
         self.validate_supported_gates()?;
         self.validate_measurement_count()?;
         self.validate_metadata_refs()?;
+        self.validate_measurement_classes_length()?;
         self.validate_noise_configuration()?;
         self.validate_measurement_crosstalk_dem_mode()?;
         self.validate_idle_noise()?;
@@ -859,7 +880,8 @@ impl<'a> DemBuilder<'a> {
     ///
     /// Use `dem.to_string()` or `dem.to_string_decomposed()` for output.
     ///
-    /// This does **not** validate metadata refs; callers ingesting
+    /// With measurement classes, this validates the count and all metadata refs.
+    /// Without classes this does **not** validate metadata refs; callers ingesting
     /// circuit-derived metadata must use [`Self::try_build`] instead.
     ///
     /// # Errors
@@ -868,10 +890,72 @@ impl<'a> DemBuilder<'a> {
     /// replacement-branch configuration, or failed signature conversion.
     pub fn build(&self) -> Result<DetectorErrorModel, DemBuilderError> {
         self.validate_supported_gates()?;
+        if self.measurement_classes.is_some() {
+            self.validate_measurement_count()?;
+            self.validate_metadata_refs()?;
+            self.validate_measurement_classes_length()?;
+        }
         self.validate_noise_configuration()?;
         self.validate_measurement_crosstalk_dem_mode()?;
         self.validate_idle_noise()?;
         self.build_inner()
+    }
+
+    fn validate_measurement_classes_length(&self) -> Result<(), DemBuilderError> {
+        match &self.measurement_classes {
+            Some(classes) => validate_measurement_classes_length(classes, self.num_measurements)
+                .map_err(DemBuilderError::ParseError),
+            None => Ok(()),
+        }
+    }
+
+    fn detector_fault_sector(
+        &self,
+        detector: &ParsedDetector,
+    ) -> Result<Option<String>, DemBuilderError> {
+        let Some(classes) = &self.measurement_classes else {
+            return Ok(detector.fault_sector.clone());
+        };
+        let mut support = std::collections::BTreeSet::new();
+        for ordinal in self.measurement_indices_from_refs(&detector.records, &detector.meas_ids)? {
+            if ordinal >= classes.len() {
+                return Err(DemBuilderError::ParseError(format!(
+                    "detector D{} references measurement {ordinal}, outside the {} measurement classes",
+                    detector.id,
+                    classes.len(),
+                )));
+            }
+            if !support.insert(ordinal) {
+                support.remove(&ordinal);
+            }
+        }
+        let family = |ordinal: usize| {
+            classes[ordinal]
+                .as_ref()
+                .and_then(|class| class.family.as_deref())
+        };
+        let derived = support
+            .first()
+            .and_then(|&ordinal| family(ordinal))
+            .filter(|expected| {
+                support
+                    .iter()
+                    .all(|&ordinal| family(ordinal) == Some(*expected))
+            })
+            .map(str::to_owned);
+        if let Some(explicit) = &detector.fault_sector
+            && derived.as_ref() != Some(explicit)
+        {
+            let derived = derived.map_or_else(
+                || "no common family".to_owned(),
+                |family| format!("{family:?}"),
+            );
+            return Err(DemBuilderError::ParseError(format!(
+                "detector D{} declares fault_sector {explicit:?} but its measurement classes give {derived}",
+                detector.id,
+            )));
+        }
+        Ok(derived)
     }
 
     fn build_inner(&self) -> Result<DetectorErrorModel, DemBuilderError> {
@@ -884,7 +968,7 @@ impl<'a> DemBuilder<'a> {
         // Add detector definitions
         for det in &self.detectors {
             let mut def = DetectorDef::new(det.id);
-            def.fault_sector.clone_from(&det.fault_sector);
+            def.fault_sector = self.detector_fault_sector(det)?;
             if let Some(coords) = det.coords {
                 def = def.with_coords(coords);
             }
@@ -3646,6 +3730,31 @@ impl std::error::Error for DemBuilderError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn empty_annotation_support_rejects_explicit_sector_with_classes() {
+        let mut circuit = pecos_quantum::TickCircuit::new();
+        circuit.detector(&[]).unwrap();
+        circuit.set_meta(
+            "measurement_classes",
+            pecos_quantum::Attribute::String("[]".into()),
+        );
+        let mut definitions =
+            crate::fault_tolerance::circuit_definitions::definitions_from_tick_circuit(&circuit)
+                .unwrap();
+        definitions.detectors[0].fault_sector = Some("X".into());
+        let map = DagFaultInfluenceMap::with_capacity(0);
+        let builder = DemBuilder::new(&map)
+            .with_circuit_definitions(definitions)
+            .unwrap();
+        for result in [builder.build(), builder.try_build()] {
+            let error = result.unwrap_err().to_string();
+            assert!(
+                error.contains("D0") && error.contains('X') && error.contains("no common family"),
+                "{error}"
+            );
+        }
+    }
 
     #[test]
     fn map_only_records_are_bounded() {

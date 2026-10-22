@@ -84,7 +84,10 @@ pub use dag_circuit::{
     AnnotationKind, AnnotationRefError, Attribute, DagCircuit, DagGateError, DagTraversalIndex,
     DagWireError, MeasRef, MeasResolveError, PauliAnnotation, TraversalWorkBuffers,
 };
-pub use fault_sector::parse_fault_sector;
+pub use fault_sector::{
+    MeasurementClass, parse_fault_sector, parse_measurement_classes,
+    validate_measurement_classes_length,
+};
 pub use tick_circuit::{
     CustomGateError, GateSignatureMismatchError, PHYSICAL_DURATION_META_KEY, QubitConflictError,
     Tick, TickAnnotationRefError, TickCircuit, TickGateError, TickHandle, TickMeasRef,

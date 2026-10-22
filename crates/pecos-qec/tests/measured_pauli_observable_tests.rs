@@ -239,7 +239,8 @@ fn css_memory_fault_sectors_follow_measurement_families() {
         let circuit = coloration_memory_circuit(&h, &h, 2, basis).unwrap();
         let definitions = definitions_from_tick_circuit(&circuit).unwrap();
         let (mut x_detectors, mut z_detectors) = (0, 0);
-        for detector in definitions.detectors {
+        let dem = DemBuilder::from_tick_circuit(&circuit, 0.0, 0.0, 0.0, 0.0).unwrap();
+        for (detector, derived) in definitions.detectors.into_iter().zip(&dem.detectors) {
             let expected = if detector.label.unwrap().starts_with('X') {
                 x_detectors += 1;
                 "X"
@@ -247,7 +248,7 @@ fn css_memory_fault_sectors_follow_measurement_families() {
                 z_detectors += 1;
                 "Z"
             };
-            assert_eq!(detector.fault_sector.as_deref(), Some(expected));
+            assert_eq!(derived.fault_sector.as_deref(), Some(expected));
         }
         assert!(x_detectors > 0 && z_detectors > 0);
     }

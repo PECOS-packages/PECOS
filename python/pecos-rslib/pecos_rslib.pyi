@@ -2304,8 +2304,10 @@ class TickCircuit:
     def circuit_definitions(self) -> dict[str, Any]:
         """Return measurement-readout definitions resolved to absolute emission positions.
 
-        Detector dictionaries always include ``fault_sector`` (an opaque non-empty string,
-        or ``None`` for an unknown fault sector).
+        Detector dictionaries always include the explicit ``fault_sector`` (an opaque
+        non-empty string, or ``None`` when absent or null). If the circuit supplies
+        ``measurement_classes``, the result includes that validated list in emission
+        order. DEM construction derives labels from it and checks explicit agreement.
         Observable dictionaries include ``reference`` (integer 0 or 1) when
         metadata supplies a noiseless value, or ``None`` when absent.
         """
@@ -2972,6 +2974,7 @@ class qec:
             **noise_options: Any,
         ) -> qec.DemBuilder: ...
         def with_detectors_json(self, json: str) -> qec.DemBuilder: ...
+        def with_measurement_classes_json(self, json: str) -> qec.DemBuilder: ...
         def with_observables_json(self, json: str) -> qec.DemBuilder: ...
         def with_num_measurements(self, num: int) -> qec.DemBuilder: ...
         def with_exact_branch_replay_circuit(self, circuit: DagCircuit) -> qec.DemBuilder: ...

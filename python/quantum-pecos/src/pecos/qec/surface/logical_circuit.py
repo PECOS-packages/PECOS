@@ -1770,6 +1770,9 @@ class LogicalCircuitBuilder:
         dem_builder = DemBuilder(influence_map)
         dem_builder = dem_builder.with_noise(p1, p2, p_meas, p_prep)
         dem_builder = dem_builder.with_detectors_json(det_json)
+        measurement_classes = tc.get_meta("measurement_classes")
+        if measurement_classes is not None:
+            dem_builder.with_measurement_classes_json(measurement_classes)
         dem_builder = dem_builder.with_observables_json(obs_json)
         dem_builder = dem_builder.with_num_measurements(num_meas)
 

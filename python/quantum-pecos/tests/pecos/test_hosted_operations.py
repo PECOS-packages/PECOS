@@ -382,13 +382,13 @@ def test_trace_hosted_validation_can_check_separation_without_order_guard() -> N
 
 
 @pytest.mark.parametrize("maximum", [-1, 2**64, 1.5])
-def test_validate_hosted_operations_rejects_invalid_limits(maximum: int | float) -> None:
+def test_validate_hosted_operations_rejects_invalid_limits(maximum: float) -> None:
     with pytest.raises(ValueError, match="boundary: max_tick_separation"):
         validate_hosted_operations(FakeTickCircuit([]), max_tick_separation=maximum, context="boundary")
 
 
 def test_validate_hosted_operations_preserves_negative_limit_message() -> None:
-    with pytest.raises(ValueError, match="^boundary: max_tick_separation must be non-negative, got -1$"):
+    with pytest.raises(ValueError, match=r"^boundary: max_tick_separation must be non-negative, got -1$"):
         validate_hosted_operations(object(), max_tick_separation=-1, context="boundary")
 
 
@@ -396,5 +396,5 @@ def test_validate_hosted_operations_preserves_negative_limit_message() -> None:
 def test_validate_hosted_operations_rejects_invalid_qubits(qubit: object) -> None:
     gate = FakeGate("H", [], meta={"local_role": "basis_prefix"})
     gate.qubits = [qubit]
-    with pytest.raises(ValueError, match="boundary: hosted gate H@t0/g0.*qubit"):
+    with pytest.raises(ValueError, match=r"boundary: hosted gate H@t0/g0.*qubit"):
         validate_hosted_operations(FakeTickCircuit([[gate]]), context="boundary")

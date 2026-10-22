@@ -1,198 +1,68 @@
-# `DetectorErrorModel.from_guppy` Handoff
+# Guppy DEM preparation and building
 
-This note is for future work on the DEM polish path. It captures the current
-local fix and the validation target for constrained-ancilla surface-code DEMs.
+The Python `GuppyDemBuilder`, `GuppyDemBuild`, and
+`infer_guppy_dem_annotations` APIs wrap one Rust implementation:
+`DemBuildBuilder` → `prepare()` → `PreparedDem` → `build_dem(noise)`.
+Preparation resolves measurement identities, validates definitions, computes
+noiseless references, and records schedule and binding evidence separately.
+Rust also owns hosted-operation validation, QIS result-tag analysis,
+helper-ABI normalization, noise-option validation, and structured idle translation.
 
-## Context
+Use `build_dem_from_guppy(...)` for typed definitions and shot evaluators, or
+`DetectorErrorModel.from_guppy(...)` for JSON definitions. See the
+[decoding walkthrough](../workflows/guppy-dem-decoding.md) for an executable example.
 
-The `dem-polish` work adds a Python-level `DetectorErrorModel.from_guppy(...)`
-entry point. The intended shape is:
+## Prepared schemas and references
 
-1. Build any Guppy program, including constrained surface-code memory circuits.
-2. Trace it through Selene/QIS into a `TickCircuit`.
-3. Attach caller-provided detector and observable metadata.
-4. Build the native PECOS DEM from that traced circuit.
+Preparation computes the exact noiseless parity of every detector and
+observable and writes it into the returned metadata as `reference`. Random
+parities and declared references that disagree are errors. Shot evaluators
+return detection events and observable flips relative to those references;
+the `*_parities` methods return raw parities.
 
-For new workflows, prefer the additive typed build API over separately tracing
-metadata and then calling `from_guppy`:
+`InferredGuppyDemAnnotations` wraps the prepared schema. Its `.circuit` is a
+detached snapshot: modifying it does not affect subsequent builds.
+`build_dem(**noise)` accepts the full `DetectorErrorModel.from_circuit` keyword
+set. In mixed builds its JSON, circuit, and DEM include the whole schema;
+inference supports and labels describe only the inferred definitions.
 
-```python,notest
-from pecos.qec import Detector, Observable, build_dem_from_guppy, rec
+Native Rust callers can reuse `PreparedDem::build_dem(noise)` with different
+noise configurations. `DemBuildBuilder::build()` requires `with_noise(...)`;
+`prepare()` needs no noise. `SeleneDemProgram::from_hugr` takes a typed
+`QSystemPlatform` and `OptimizationLevel`.
 
-build = build_dem_from_guppy(
-    program,
-    num_qubits=num_qubits,
-    detectors=[Detector(rec[-2], rec[-1])],
-    observables=[Observable(rec[-1])],
-    runtime=runtime,
-)
-dem = build.dem
-```
+Schema fingerprint version 2 includes computed references. Fingerprints differ
+from earlier releases and have no cross-version compatibility.
 
-The `GuppyDemBuild` owns the one traced circuit, resolved `MeasId` metadata,
-measurement ledger, schema fingerprint, and shot evaluators. This prevents a
-second runtime trace or a separately maintained detector conversion from
-silently permuting decoder inputs.
+## Schedule and measurement evidence
 
-The audited path is deliberately fail-closed. A runtime trace must contain a
-complete, contiguously framed lowered operation stream with stable measurement
-IDs and an explicit terminal marker; raw pre-runtime QIS order is not an
-acceptable substitute. The terminal marker is only emitted after the engine
-verifies the shot did not fail and the runtime scheduler holds no undelivered
-operations. Precisely stated, `lowered_quantum_ops_complete` attests that the
-operations the runtime returned parsed consistently (counts, metadata,
-measurement IDs); dropped measurements are additionally caught by
-measurement-mapping conservation. Completion additionally forces a terminal
-scheduler flush via a required runtime global barrier and fails the shot,
-stickily, if any operation surfaces after the final lowered batch — or if the
-plugin cannot provide the barrier at all. A runtime that internally discards a non-measurement gate while
-reporting a consistent stream remains undetectable in principle — that
-residual trust lives in the runtime plugin itself.
+Explicit Python builds require a HUGR static-schedule preflight or a trusted,
+program-bound generator layout on an eligible definition carrier. Native Rust
+builds accept the HUGR verdict, a front-end assertion, or a trusted generator
+layout. Mixed builds with named references also require static evidence.
+Pure inference and positional-only mixed builds check schedules empirically
+across probes; their audits identify this weaker schedule evidence separately
+from measurement binding.
 
-Shot completion runs three gates in order before the terminal marker: the
-sticky terminal-failure check, drain verification (which requires the plugin
-to export `selene_runtime_global_barrier` — a plugin that cannot prove a
-terminal flush fails closed), and the runtime's `shot_end` finalization hook
-with its error propagated and latched. A plugin that only detects an invalid
-final schedule at shot end therefore fails the shot rather than receiving a
-certified trace. Named shot conversion accepts compiler-certified direct
-scalar `result()` provenance from the executed lowered QIS and trusted built-in
-generator layouts whose digest binds both the HUGR and layout. Aggregate arrays
-and transformed booleans must not be treated as generic measurement identity
-until the compiler exposes an explicit element-level provenance ABI.
+The layout digest binds the layout to the compiled HUGR. It detects stale or
+accidentally reassigned layouts, but does not authenticate their producer.
+Generic direct scalar result tags are analyzed against the lowered QIS used
+for execution. Aggregate arrays require a supported generator layout or the
+inference raw-output binding.
 
-Generic Guppy branching and looping control flow is rejected. One sampled
-runtime branch cannot certify a static DEM; built-in surface generators
-`make_surface_code` and `make_surface_memory` cross that boundary only through
-their program-bound static-layout certificate.
+Replay requires a complete runtime-lowered operation stream with stable
+measurement identities. Raw compatibility replay and its fallback flag are
+removed. Malformed replay fields are rejected. Rust validation retains the
+error wording while formatting values as Rust does, including double-quoted
+strings and Rust-formatted lists.
 
-The certificate is an integrity mechanism, not an authentication mechanism.
-Its digest binds a layout to the exact compiled HUGR, so a stale, permuted,
-or accidentally re-attached layout fails closed. It does not defend against
-deliberate in-process forgery: any Python code that can set the attribute can
-also recompute the public digest (or monkeypatch the checker), and no
-in-process scheme changes that. The trust statement is "this layout was
-computed for exactly this program", nothing more.
+## Idle noise and symbolic propagation
 
-Generic scalar tags now derive their measurement ordinals from the exact lowered
-QIS text used for execution. CFG dominance and cycle checks certify measurement
-and print order across direct calls, independently of LLVM block layout. Only
-direct scalar measurement reads carry provenance; unsupported values preserve
-an unresolved occurrence, and uncertifiable schedules fail closed. The runtime
-measurement count and identities are checked against the certified program.
+Runtime idle durations use `1 TimeUnit = 1 ns`. Stripping idle gates runs before
+optional insertion after two-qubit gates. Active idle noise needs idle gates;
+explicit zero rates do not. Relaxation noise requires both `t1` and `t2`.
 
-This should support calls like:
-
-```python,notest
-from pecos.guppy_gen import get_num_qubits, make_surface_code
-from pecos.qec import DetectorErrorModel
-
-program = make_surface_code(
-    distance=9,
-    num_rounds=18,
-    basis="Z",
-    ancilla_budget=17,
-)
-
-dem = DetectorErrorModel.from_guppy(
-    program,
-    num_qubits=get_num_qubits(9, ancilla_budget=17),
-    detectors_json=detectors_json,
-    observables_json=observables_json,
-    num_measurements=num_measurements,
-    p1=p,
-    p2=p,
-    p_meas=p,
-    p_prep=p,
-)
-```
-
-## Import-Time Issue
-
-`pecos_rslib.qec.DetectorErrorModel` is not currently subclassable from Python.
-Defining:
-
-```python,notest
-class DetectorErrorModel(_RustDetectorErrorModel):
-    ...
-```
-
-causes `import pecos` to fail with:
-
-```text
-TypeError: type 'pecos_rslib.qec.DetectorErrorModel' is not an acceptable base type
-```
-
-The current local fix is to re-export the Rust class directly and attach the
-Python convenience constructor:
-
-```python,notest
-DetectorErrorModel = _RustDetectorErrorModel
-DetectorErrorModel.from_guppy = classmethod(...)
-```
-
-This keeps the public API as `pecos.qec.DetectorErrorModel.from_guppy(...)`
-while preserving the Rust class identity for objects returned by
-`from_circuit(...)` and `from_guppy(...)`.
-
-## Constrained-Ancilla Surface DEM Target
-
-The key surface-code use case is Helios-sized rotated surface code memory:
-
-- `distance=9`
-- `ancilla_budget=17`
-- `num_qubits=98`
-- both X and Z memory bases
-- DEMs built from the traced Guppy/Selene/QIS path
-
-Important checks:
-
-```bash
-uv run python -c "from pecos.guppy_gen import make_surface_code, get_num_qubits; from pecos.qec import DetectorErrorModel; print(get_num_qubits(9, ancilla_budget=17)); print(hasattr(DetectorErrorModel, 'from_guppy')); make_surface_code(distance=9, num_rounds=18, basis='Z', ancilla_budget=17); print('ok')"
-```
-
-Expected output includes:
-
-```text
-98
-True
-ok
-```
-
-In the downstream `surface-memory-helios` repo, this smoke test currently
-generates a constrained d=9 traced DEM:
-
-```bash
-uv run python -c "from surface_memory_helios import surface_memory_dem; dem = surface_memory_dem(distance=9, rounds=18, basis='Z', p=0.01, decoder='pymatching', dem_source='traced_qis', ancilla_budget=17); print(len(dem.splitlines())); print(dem.splitlines()[0])"
-```
-
-The latest local run produced 37,066 DEM lines and a detector metadata first
-line.
-
-## Follow-Up Guidance
-
-- Prefer `build_dem_from_guppy(...)` for new audited workflows. Keep
-  `DetectorErrorModel.from_guppy(...)` as the lower-level JSON compatibility
-  constructor rather than adding more surface-specific tracing plumbing.
-- Runtime plugins are intentionally generic: pass any Selene-compatible runtime
-  plugin object through `pecos.selene_engine(runtime)` or the higher-level
-  `runtime=...` arguments on traced Guppy/DEM helpers. PECOS should depend only
-  on the public shape of those plugin objects; experiment-specific runtimes and
-  package sources belong in downstream projects.
-- Runtime-produced `Idle` gates are preserved in the QIS operation trace and
-  replayed into QEC circuits as `TimeUnits` with the convention
-  `1 TimeUnit = 1 ns`. They only affect DEMs when an idle-noise parameter such
-  as an idle family, `t1`, or `t2` is set.
-- Keep fail-closed regression coverage for entirely raw traces, transformed
-  scalar results, and aggregate arrays. Generated adapters may expose direct
-  scalar sideband tags while retaining aggregate results for researcher-facing
-  analysis.
-- Keep the surface helper path compatible with constrained ancilla budgets:
-  pass `ancilla_budget` into both `make_surface_code(...)` and
-  `get_num_qubits(...)` when tracing surface Guppy.
-- Avoid reintroducing any `circuit_source="traced_qis"` rejection for
-  `ancilla_budget`; constrained Guppy programs are valid and traceable.
-- Ensure PyMatching users can get decomposed DEM text from the `from_guppy(...)`
-  result, e.g. via `to_string_decomposed()`.
-- Keep or add regression coverage for constrained d=9, `ancilla_budget=17`
-  through the Guppy/from_guppy route.
+Symbolic stabilizer propagation accounts for random partner signs after
+entangled resets, restores the X basis after MX, and treats recordless
+`MeasureLeaked` outcomes as hidden random sources. These rules prevent random
+noiseless parities from being accepted as deterministic references.

@@ -170,7 +170,13 @@ def infer_guppy_dem_annotations(
     makes the physical results independent GF(2) variables; Gaussian
     elimination recovers each emitted parity and extra rows validate it.
 
-    This prototype is suitable only when measurement values do not alter the
+    The returned object wraps a Rust preparation. Its ``circuit`` is a detached
+    snapshot; ``build_dem(**noise)`` rebuilds from the preparation with the full
+    ``DetectorErrorModel.from_circuit`` keyword set. Rust computes exact
+    noiseless references and rejects random parities or disagreeing declared
+    references. Returned metadata includes each computed ``reference``.
+
+    This workflow is suitable only when measurement values do not alter the
     quantum operation schedule.  PECOS captures one QIS path for the returned
     circuit; the affine checks certify classical parity processing, not static
     quantum control flow.  ``require_raw_provenance`` defaults to true.  Its

@@ -15,6 +15,8 @@ import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from pecos_rslib import _validate_hosted_operations
+
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
@@ -101,8 +103,6 @@ def validate_hosted_operations(
             outside the supported unsigned integer range.
         TypeError: If the supplied object is not TickCircuit-like.
     """
-    from pecos_rslib import _validate_hosted_operations
-
     max_tick_separation = _hosted_tick_separation_limit(max_tick_separation, context=context)
     records = _hosted_gate_records(
         tick_circuit,

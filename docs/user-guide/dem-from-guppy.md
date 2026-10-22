@@ -101,6 +101,16 @@ assert dem.num_observables == 1
 print(dem.to_string())
 ```
 
+Rust preparation computes each detector's and observable's exact noiseless
+parity and stores it as `reference` in the returned metadata. Random parities
+and declared references that disagree with the computed value are rejected.
+The `evaluate_runtime_record`, `evaluate_measurements`, `evaluate_results`, and
+`evaluate_result_columns` methods return detection events and observable flips
+relative to those references. Use `runtime_record_parities`,
+`measurement_parities`, `result_parities`, or `result_column_parities` when you
+need raw parities instead. A noiseless reference of one therefore produces
+zero flips, even though its raw parity is one.
+
 Each detector is the **parity** of the measurements it references:
 `D0`/`D1` fire when a syndrome measurement flips, and `D2`/`D3` compare each
 syndrome against the corresponding data-readout parity.
@@ -249,8 +259,8 @@ followed by the two bulk accessors shown above.
 
 ## Choosing the Selene Runtime
 
-`from_guppy(..., runtime=...)` forwards to `pecos.selene_engine(runtime)`,
-which accepts:
+`from_guppy(..., runtime=...)` configures the Rust Selene adapter with the
+same runtime choices as `pecos.selene_engine(runtime)`:
 
 - `None` — the default `selene_simple_runtime`
 - a built runtime name (string)
@@ -889,8 +899,9 @@ The direct backend `from_dem` constructors above remain text-only.
   `get_num_qubits(...)` for the built-in generators.
 - **Idle noise needs idle gates.** The default simple runtime does not emit
   explicit idles. Use `idle_after_2q_duration` to insert them, optionally after
-  `strip_traced_idles` removes runtime-provided `Idle` gates. Passing
-  idle-noise parameters without any final `Idle` gates raises `ValueError`; see
+  `strip_traced_idles` removes runtime-provided `Idle` gates. Requesting
+  active idle noise without any final `Idle` gates raises `ValueError`. Explicit
+  zero rates are accepted; `t1` and `t2` must be supplied together. See
   [Idle Noise](#idle-noise).
 - **Idle rates are per DEM time unit.** Runtime idles replay in nanoseconds,
   while the Selene general-noise plugin applies rates per second; see

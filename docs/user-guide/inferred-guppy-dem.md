@@ -70,7 +70,8 @@ Explicit builds have `build.inference is None`.
 
 Idle rates use the durations in the resulting circuit. With the default simple
 runtime, explicitly insert idles when requesting idle noise; the unified builder
-rejects idle-noise settings when there are no idle gates. Use
+rejects active idle noise when there are no idle gates. Explicit zero rates
+need no idle gates; relaxation noise requires both `t1` and `t2`. Use
 `.with_idle_after_2q(duration)` for a uniform post-two-qubit convention, or
 `.with_runtime(runtime)` for runtime-provided scheduling. The former inserts
 noise locations on the two operands; it does not set physical gate times.
@@ -79,6 +80,16 @@ before copying rates from a shot-simulation configuration. In particular,
 `.with_idle_after_2q(1.0)` uses unit-duration idles, while runtime-emitted idles
 are replayed in nanoseconds; `NoiseParameters.for_runtime_idle_time_units()`
 converts per-second rates and T1/T2 to those nanosecond units.
+
+Rust preparation computes each detector's and observable's exact noiseless
+parity and stores it as `reference` in the returned metadata. Random parities
+and declared references that disagree with the computed value are rejected.
+The `evaluate_runtime_record`, `evaluate_measurements`, `evaluate_results`, and
+`evaluate_result_columns` methods return detection events and observable flips
+relative to those references. Use `runtime_record_parities`,
+`measurement_parities`, `result_parities`, or `result_column_parities` when you
+need raw parities instead. A noiseless reference of one therefore produces
+zero flips, even though its raw parity is one.
 
 The low-level `infer_guppy_dem_annotations` helper remains available when you
 want to inspect the inferred annotations without building a DEM; the examples
@@ -215,7 +226,7 @@ with stable measurement-ID supports, or JSON setters.
 
 The native adapter replays the runtime-lowered trace, preserving stable
 measurement IDs, metadata, and idle durations. It requires complete traces and
-compares the quantum operation schedule across all sampled shots. **This is an
+compares the quantum operation schedule across sampled inference shots. **This is an
 empirical check, not a compiler proof that every possible execution has the
 same schedule.** Rare measurement-dependent paths may escape sampling; supply
 programs known to have a fixed quantum schedule. The circuit records this as
@@ -416,9 +427,11 @@ handles either lowering.
 
 The returned supports contain QIS `MeasId` values. PECOS writes equivalent
 `meas_ids` entries into `inferred.detectors_json` and
-`inferred.observables_json`, attaches them to `inferred.circuit`, and passes
-the annotated circuit to `DetectorErrorModel.from_circuit` when `build_dem`
-is called.
+`inferred.observables_json`, attaches them to `inferred.circuit`, as a detached snapshot. The result wraps a Rust `PreparedDem`;
+`build_dem(**noise)` rebuilds from that preparation and accepts the full
+`DetectorErrorModel.from_circuit` keyword set. Mutating the snapshot does not
+change later builds. In mixed builds, the JSON, circuit, and `build_dem` include
+the whole schema; inferred supports and labels describe only inferred definitions.
 
 For an existing program, the integration itself is only this call:
 
@@ -434,10 +447,11 @@ inferred = infer_guppy_dem_annotations(
 dem = inferred.build_dem(p1=0.001, p2=0.005, p_meas=0.005, p_prep=0.001)
 ```
 
-No separate trace-capture call is required. Python delegates coin-toss capture,
-trace validation, measurement binding, and circuit replay to the shared Rust
-Selene analysis. Python then validates hosted-operation order when requested,
-normalizes the circuit, and fits the parities with the Rust solver.
+No separate trace-capture call is required. Python is a thin facade over Rust
+preparation, which performs coin-toss capture, trace validation, measurement
+binding, replay, hosted-operation validation, helper-ABI normalization, parity
+fitting, and exact noiseless-reference validation. Rust also validates noise
+options and translates structured idle families.
 
 ## Example: rounds and aggregate arrays
 
@@ -661,14 +675,14 @@ The result is an `InferredGuppyDemAnnotations` with:
 
 | Attribute | Contents |
 | --- | --- |
-| `circuit` | Runtime-lowered `TickCircuit` with detector and observable metadata attached. |
+| `circuit` | Detached snapshot of the prepared `TickCircuit`, including computed references. |
 | `detectors_json`, `observables_json` | Serialized definitions using QIS `meas_ids`. |
 | `raw_measurement_ids` | One physical ID per raw output element, in emitted order. |
 | `detector_supports`, `observable_supports` | Inferred parity supports expressed as physical IDs. |
 | `observable_labels` | `(tag, element_index)` for each DEM observable. |
 | `raw_binding` | Identity mode from the table above. |
 | `probe_shots` | Number of parity-inference rows used. |
-| `build_dem(**noise)` | Build a PECOS `DetectorErrorModel` from the annotated circuit. |
+| `build_dem(**noise)` | Rebuild from the prepared schema using the full `from_circuit` keyword set. |
 
 `probe_shots` must provide at least one row per raw measurement, one affine
 constant column, and the requested validation rows. Left unset it is derived
@@ -703,13 +717,18 @@ cost where it previously failed fast asking for more shots.
 
 ## Soundness and leakage boundaries
 
-The prototype establishes two empirical facts:
+Inference establishes two empirical facts:
 
 1. Emitted detector and observable bits fit unique affine GF(2) parities of
    the raw physical measurements, including independent validation rows.
 2. The raw measurements bind to one runtime-lowered QIS circuit trace.
 
-It is an empirical certificate, not a compiler proof over every possible
+The noiseless references are then checked exactly with symbolic stabilizer
+propagation, including random signs from entangled resets, X-basis restoration
+after MX, and hidden random sources for recordless `MeasureLeaked` outcomes.
+This exact parity check does not prove the schedule is static.
+
+Inference is an empirical certificate, not a compiler proof over every possible
 classical-control path. The probability of accidental probe-signature
 collisions decreases exponentially with the number of probes.
 

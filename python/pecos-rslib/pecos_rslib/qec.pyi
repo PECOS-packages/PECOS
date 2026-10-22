@@ -227,6 +227,41 @@ class DemInferenceSettings:
 class DetectorErrorModel:
     """Rust-backed detector error model."""
 
+    @staticmethod
+    def from_circuit(
+        circuit: DagCircuit | TickCircuit,
+        p1: float = 0.001,
+        p2: float = 0.01,
+        p_meas: float = 0.001,
+        p_prep: float = 0.001,
+        p_idle: float | None = None,
+        t1: float | None = None,
+        t2: float | None = None,
+        idle_rz: float | None = None,
+        p_idle_linear_rate: float | None = None,
+        p_idle_quadratic_rate: float | None = None,
+        p_idle_x_linear_rate: float | None = None,
+        p_idle_y_linear_rate: float | None = None,
+        p_idle_z_linear_rate: float | None = None,
+        p_idle_x_quadratic_rate: float | None = None,
+        p_idle_y_quadratic_rate: float | None = None,
+        p_idle_z_quadratic_rate: float | None = None,
+        p_idle_quadratic_sine_rate: float | None = None,
+        p_idle_x_quadratic_sine_rate: float | None = None,
+        p_idle_y_quadratic_sine_rate: float | None = None,
+        p_idle_z_quadratic_sine_rate: float | None = None,
+        p1_weights: dict[str, float] | None = None,
+        p2_weights: dict[str, float] | None = None,
+        p2_replacement_approximation: str | None = None,
+        p_meas_crosstalk_local: float | None = None,
+        p_meas_crosstalk_global: float | None = None,
+        p_meas_crosstalk_model: dict[str, float] | None = None,
+        measurement_crosstalk_dem_mode: str | None = None,
+        p2_gate_rates: dict[str, float] | None = None,
+        p1_gate_rates: dict[str, float] | None = None,
+    ) -> DetectorErrorModel: ...
+    @property
+    def idle_noise_residuals(self) -> list[dict[str, Any]]: ...
     def detector_coordinates(self) -> list[tuple[int, list[float] | None]]: ...
     def detector_fault_sectors(self) -> list[tuple[int, str | None]]: ...
     def detector_bases(self) -> list[str]: ...
@@ -1004,7 +1039,6 @@ class _DemBuild:
     def idle_noise_residuals(self) -> list[dict[str, Any]]: ...
     def residual_summary(self, relative_threshold: float) -> list[dict[str, Any]]: ...
 
-
 class _DemEvidence(TypedDict):
     circuit: TickCircuit
     raw_measurement_ids: list[int]
@@ -1030,8 +1064,6 @@ def _capture_dem_evidence(
     require_hosted_operation_order: bool = False,
     max_hosted_tick_separation: int | None = None,
 ) -> _DemEvidence: ...
-
-
 def translate_structured_idle_noise(
     *,
     p_idle_linear: float | None = None,

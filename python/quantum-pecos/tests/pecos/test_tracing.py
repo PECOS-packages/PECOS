@@ -253,7 +253,7 @@ def test_qis_operation_trace_conversion_rejects_non_finite_gate_values(bad_value
         "params": [],
     }
 
-    with pytest.raises(ValueError, match="Out of range float|field angles|invalid angles"):
+    with pytest.raises(ValueError, match=r"Out of range float|field angles|invalid angles"):
         pecos.qis_operation_trace_to_tick_circuit(trace)
 
 
@@ -508,7 +508,7 @@ def test_stored_crz_requires_runtime_lowering() -> None:
 def test_fixed_gate_rejects_extra_payload(field, value) -> None:
     trace = _completed_trace()
     trace[0]["lowered_quantum_ops"][1][field] = value
-    with pytest.raises(ValueError, match="angles|parameters|measurement IDs"):
+    with pytest.raises(ValueError, match=r"angles|parameters|measurement IDs"):
         pecos.qis_operation_trace_to_tick_circuit(trace)
 
 
@@ -553,7 +553,7 @@ def test_replay_rejects_invalid_crosstalk_options(topology) -> None:
 def test_replay_rejects_non_json_metadata(value) -> None:
     trace = _completed_trace()
     trace[0]["lowered_quantum_ops"][0]["metadata"] = {"value": value}
-    with pytest.raises((TypeError, ValueError), match="JSON|json"):
+    with pytest.raises((TypeError, ValueError), match=r"JSON|json"):
         pecos.qis_operation_trace_to_tick_circuit(trace)
 
 
@@ -561,5 +561,5 @@ def test_replay_rejects_non_json_metadata(value) -> None:
 def test_replay_rejects_metadata_integer_overflow(value) -> None:
     trace = _completed_trace()
     trace[0]["lowered_quantum_ops"][0]["metadata"] = {"value": value}
-    with pytest.raises(ValueError, match='chunk 0: .*gate 0: .*key "value".*losslessly'):
+    with pytest.raises(ValueError, match=r'chunk 0: .*gate 0: .*key "value".*losslessly'):
         pecos.qis_operation_trace_to_tick_circuit(trace)

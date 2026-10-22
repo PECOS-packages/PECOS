@@ -2915,11 +2915,35 @@ class qec:
         @staticmethod
         def from_circuit(
             circuit: DagCircuit | TickCircuit,
-            p1: float = ...,
-            p2: float = ...,
-            p_meas: float = ...,
-            p_prep: float = ...,
-            **noise_options: Any,
+            p1: float = 0.001,
+            p2: float = 0.01,
+            p_meas: float = 0.001,
+            p_prep: float = 0.001,
+            p_idle: float | None = None,
+            t1: float | None = None,
+            t2: float | None = None,
+            idle_rz: float | None = None,
+            p_idle_linear_rate: float | None = None,
+            p_idle_quadratic_rate: float | None = None,
+            p_idle_x_linear_rate: float | None = None,
+            p_idle_y_linear_rate: float | None = None,
+            p_idle_z_linear_rate: float | None = None,
+            p_idle_x_quadratic_rate: float | None = None,
+            p_idle_y_quadratic_rate: float | None = None,
+            p_idle_z_quadratic_rate: float | None = None,
+            p_idle_quadratic_sine_rate: float | None = None,
+            p_idle_x_quadratic_sine_rate: float | None = None,
+            p_idle_y_quadratic_sine_rate: float | None = None,
+            p_idle_z_quadratic_sine_rate: float | None = None,
+            p1_weights: dict[str, float] | None = None,
+            p2_weights: dict[str, float] | None = None,
+            p2_replacement_approximation: str | None = None,
+            p_meas_crosstalk_local: float | None = None,
+            p_meas_crosstalk_global: float | None = None,
+            p_meas_crosstalk_model: dict[str, float] | None = None,
+            measurement_crosstalk_dem_mode: str | None = None,
+            p2_gate_rates: dict[str, float] | None = None,
+            p1_gate_rates: dict[str, float] | None = None,
         ) -> qec.DetectorErrorModel: ...
         @staticmethod
         def from_pecos_metadata_json(json: str) -> qec.DetectorErrorModel: ...
@@ -2934,6 +2958,8 @@ class qec:
         def num_tracked_paulis(self) -> int: ...
         @property
         def num_contributions(self) -> int: ...
+        @property
+        def idle_noise_residuals(self) -> list[dict[str, Any]]: ...
         def detector_coordinates(self) -> list[tuple[int, list[float] | None]]: ...
         def detector_fault_sectors(self) -> list[tuple[int, str | None]]: ...
         def round_schedule(
@@ -4575,14 +4601,12 @@ def validate_phir_result_reference(reference_json: str, field: str) -> tuple[str
 def validate_phir_classical_declaration(name: str, data_type: str, size: int) -> None:
     """Validate classical register type and size using native storage rules."""
 
-
 def _replay_qis_trace(
     chunks: list[dict[str, Any]],
     measurement_crosstalk_topology: str | None = None,
 ) -> TickCircuit: ...
 def _qis_named_result_traces(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]: ...
 def _qis_source_measurement_ids(chunks: list[dict[str, Any]]) -> list[int]: ...
-
 def _validate_hosted_operations(
     records: list[tuple[int, int, str, tuple[int, ...], str, str]],
     max_tick_separation: int | None,
@@ -4592,8 +4616,6 @@ def _validate_hosted_operations(
     host_id_key: str,
     context: str,
 ) -> list[tuple[int, int, int]]: ...
-def generator_certificate_digest(
-    hugr: bytes, layout: Sequence[tuple[str, int]], *, expected: str | None = None
-) -> str:
+def generator_certificate_digest(hugr: bytes, layout: Sequence[tuple[str, int]], *, expected: str | None = None) -> str:
     """Return the program-bound layout digest, checking an optional certificate."""
     ...

@@ -115,9 +115,8 @@ from pecos.qec.color import (
 )
 
 # DetectorErrorModel is re-exported from pecos.qec.dem: the Rust class with a
-# Python from_guppy convenience constructor attached. The Guppy/Selene trace
-# pipeline is Python-only, so it cannot live in the Rust extension without a
-# dependency cycle.
+# Python convenience constructors attached. Guppy DEM preparation and building
+# share the native Rust implementation.
 from pecos.qec.dem import DetectorErrorModel, GuppyDemBuilder, build_dem_from_guppy
 from pecos.qec.dem_spec import (
     Detector,

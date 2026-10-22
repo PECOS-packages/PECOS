@@ -415,7 +415,7 @@ class GuppyDemBuild:
 
     @property
     def schema_fingerprint(self) -> str:
-        """Return the prepared schema fingerprint."""
+        """Return the Rust-computed v2 fingerprint, incompatible with earlier versions."""
         return self._prepared.schema_fingerprint
 
     @property
@@ -489,7 +489,7 @@ class GuppyDemBuild:
         return self._prepared.result_parities(self._result_bits(results))
 
     def evaluate_result_columns(self, results: Mapping[str, Sequence[Any]]) -> list[tuple[list[int], int]]:
-        """Evaluate PECOS ``ShotMap.to_dict()`` column-oriented results.
+        """Evaluate reference-relative events and flips from ``ShotMap.to_dict()``.
 
         The column mapping is a trusted carrier: shot ``i`` is whatever sits at
         row ``i`` of every column. Columns spliced from different runs, or one

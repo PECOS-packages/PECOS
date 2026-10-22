@@ -53,6 +53,12 @@ PN = "PN"
 pn = "pn"
 Savin = "Savin" # author surname (GARI transform citation)
 
+[default.extend-identifiers]
+# LLVM AArch64 calling-convention identifiers.
+aarch64_sme_preservemost_from_x0 = "aarch64_sme_preservemost_from_x0"
+aarch64_sme_preservemost_from_x1 = "aarch64_sme_preservemost_from_x1"
+aarch64_sme_preservemost_from_x2 = "aarch64_sme_preservemost_from_x2"
+
 [files]
 # Base64-encoded binary test fixtures inevitably contain typo-lookalike
 # substrings; their bytes are sha256-pinned and must not be "corrected".

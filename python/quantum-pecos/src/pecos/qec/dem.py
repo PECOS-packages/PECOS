@@ -289,7 +289,11 @@ class _DetectorErrorModelMixin:
         replays the captured gate stream into a ``TickCircuit``, attaches the
         caller-supplied detector/observable definitions, and builds the DEM via
         native PECOS fault propagation. All metadata validation happens in the
-        Rust DEM builder (single source of truth).
+        Rust DEM builder (single source of truth). Preparation computes exact
+        noiseless detector and observable parities and writes ``reference`` into
+        their metadata. Random parities and disagreeing declared references
+        are rejected. Explicit builds require a HUGR static-schedule preflight
+        or a trusted generator layout on an eligible definition carrier.
 
         The three structured idle models contain relative-rate multipliers:
         each axis rate is ``family_rate * axis_multiplier``. The linear law is
@@ -339,11 +343,9 @@ class _DetectorErrorModelMixin:
                   control-flow check rejects branches and runtime loops before
                   execution. Generator-certified programs bypass that check;
                   their ``result_tags`` still require lowered-program certification.
-                  ``result_tags``
-                  also requires ``guppy`` to be a ``@guppy``-decorated
-                  function / ``GuppyFunctionDefinition`` (not an arbitrary
-                  ``pecos.sim``-acceptable wrapper); use ``records`` for the
-                  surface-code path.
+                  ``result_tags`` accepts the HUGR-certifiable input forms
+                  listed above. Use ``records`` or ``meas_ids`` when scalar
+                  tag provenance cannot be certified.
             observables_json: Observable definitions as a JSON list, e.g.
                 ``[{"id": 0, "records": [-1]}]`` (same id/records rules as
                 detectors).
@@ -462,8 +464,9 @@ class _DetectorErrorModelMixin:
                 ``strip_traced_idles`` and before result-tag resolution and
                 detector/observable metadata attachment.
             runtime: Optional Selene runtime selector/plugin. ``None`` selects
-                the default Selene runtime. Runtime plugin objects are passed
-                through to ``pecos.selene_engine(runtime)``.
+                the default Selene runtime. Runtime plugin objects configure
+                the Rust Selene adapter using the same plugin protocol as
+                ``pecos.selene_engine(runtime)``.
             seed: Seed for the ideal trace run.
             require_hosted_operation_order: If true, validate generic
                 hosted-operation metadata after trace replay. A gate with
@@ -480,12 +483,12 @@ class _DetectorErrorModelMixin:
                 measurement count, if a detector/observable is malformed or
                 references an out-of-range ``record`` or an absent
                 ``meas_id``, if ``idle_after_2q_duration`` is not a finite
-                positive number, if ``p_idle_coherent`` is nonzero, if any
-                representable idle-noise parameter is set but the final traced
-                circuit has no ``Idle`` gates, or if the traced operation stream
+                positive number, if ``p_idle_coherent`` is nonzero, if active
+                idle noise is requested but the final traced circuit has no
+                ``Idle`` gates, if only one of ``t1`` and ``t2`` is supplied, or if the traced operation stream
                 cannot be replayed. To provide targets for idle noise, pass
                 ``idle_after_2q_duration`` or use a Selene runtime that emits
-                scheduled idles.
+                scheduled idles. Explicit zero rates need no idle gates.
 
         Note:
             Runtime-lowered idles are replayed as nanosecond PECOS
@@ -1064,7 +1067,7 @@ def build_dem_from_guppy(
     require_hosted_operation_order: bool = False,
     max_hosted_tick_separation: int | None = None,
 ) -> GuppyDemBuild:
-    """Trace once and build an audited DEM from typed measurement references.
+    """Prepare and build an audited DEM from typed definitions in Rust.
 
     ``rec[-k]`` references the canonical dense Guppy result-id stream, not the
     runtime's scheduled measurement-gate order. ``result_ref(...)`` resolves
@@ -1073,7 +1076,13 @@ def build_dem_from_guppy(
     DEM construction.
 
     Measurement-dependent quantum control remains unsupported because one
-    captured execution is not a static circuit model.
+    captured execution is not a static circuit model. Explicit and named mixed
+    builds require static schedule evidence. Pure inference and positional-only
+    mixed builds check schedules empirically across probes. Rust computes exact
+    noiseless references, rejects random parities or mismatched declarations,
+    and stores ``reference`` in returned metadata. Evaluators report events and
+    flips relative to those references; the ``*_parities`` methods return raw
+    parities.
 
     The three structured idle models contain relative-rate multipliers: each
     axis rate is ``family_rate * axis_multiplier``. The linear law is additive,
@@ -1083,8 +1092,8 @@ def build_dem_from_guppy(
     sum constraint.
 
     Args:
-        guppy: A HUGR-certifiable Guppy program to trace once under the Selene
-            QIS engine.
+        guppy: A Guppy program executed under the Selene QIS engine. Explicit
+            builds require static schedule evidence; inference uses probes.
         num_qubits: Number of qubits to allocate for the trace.
         detectors: Typed detector definitions using ``rec[...]`` or
             ``result_ref(...)`` measurement references.

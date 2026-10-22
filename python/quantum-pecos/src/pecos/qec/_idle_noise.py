@@ -16,6 +16,8 @@ from __future__ import annotations
 import warnings
 from collections.abc import Mapping
 
+from pecos_rslib.qec import translate_structured_idle_noise
+
 
 def _translate_structured_idle_noise(
     *,
@@ -43,8 +45,6 @@ def _translate_structured_idle_noise(
     float | None,
 ]:
     """Convert Python objects and translate idle families using Rust."""
-    from pecos_rslib.qec import translate_structured_idle_noise
-
     families = {}
     for family, rate, model in [
         ("coherent", p_idle_coherent, p_idle_coherent_model),
@@ -56,12 +56,14 @@ def _translate_structured_idle_noise(
         if isinstance(rate, bool):
             msg = f"{rate_name} must be a finite, non-negative float"
             raise TypeError(msg)
+        converted_rate = None
         if rate is not None:
             try:
-                rate = float(rate)
+                converted_rate = float(rate)
             except (TypeError, ValueError) as exc:
                 msg = f"{rate_name} must be a finite, non-negative float"
                 raise ValueError(msg) from exc
+        converted_model = None
         if model is not None:
             if not isinstance(model, Mapping):
                 expected = "'RX', 'RY', 'RZ'" if family == "coherent" else "'L', 'X', 'Y', 'Z'"
@@ -72,15 +74,15 @@ def _translate_structured_idle_noise(
                 if not isinstance(key, str):
                     expected = "'RX', 'RY', 'RZ'" if family == "coherent" else "'L', 'X', 'Y', 'Z'"
                     msg = f"invalid {model_name} key {key!r}; expected {expected}"
-                    raise ValueError(msg)
+                    raise TypeError(msg)
                 try:
                     converted[key] = float(multiplier)
                 except (TypeError, ValueError) as exc:
                     msg = f"{model_name} multiplier for {key!r} must be a finite, non-negative float"
                     raise ValueError(msg) from exc
-            model = converted
-        families[rate_name] = rate
-        families[model_name] = model
+            converted_model = converted
+        families[rate_name] = converted_rate
+        families[model_name] = converted_model
 
     axes = translate_structured_idle_noise(
         **families,

@@ -1,0 +1,36 @@
+HUGRiHJv(@(hugr 0)
+
+(mod)
+
+(define-func private _1 (core.fn [(core.adt [[] []])] [])
+  (meta (core.title "main"))
+  (dfg [%_1] []
+    (signature (core.fn [(core.adt [[] []])] []))
+    (cfg [%_1] []
+      (signature (core.fn [(core.adt [[] []])] []))
+      (meta core.entrypoint)
+      (cfg [%_5] [%_6]
+        (signature (core.ctrl [[(core.adt [[] []])]] [[]]))
+        (meta core.entrypoint)
+        (block [%_5] [%_2 %_3]
+          (signature (core.ctrl [[(core.adt [[] []])]] [[] []]))
+          (dfg [%_4] [%_4]
+            (signature (core.fn [(core.adt [[] []])] [(core.adt [[] []])]))))
+        (block [%_2] [%_6]
+          (signature (core.ctrl [[]] [[]]))
+          (dfg [] [%_7]
+            (signature (core.fn [] [(core.adt [[]])]))
+            ((core.load_const
+                (core.adt [[]])
+                (core.const.adt [[]] [] 0 (tuple)))
+              [] [%_7]
+              (signature (core.fn [] [(core.adt [[]])])))))
+        (block [%_3] [%_6]
+          (signature (core.ctrl [[]] [[]]))
+          (dfg [] [%_9]
+            (signature (core.fn [] [(core.adt [[]])]))
+            ((core.load_const
+                (core.adt [[]])
+                (core.const.adt [[]] [] 0 (tuple)))
+              [] [%_9]
+              (signature (core.fn [] [(core.adt [[]])])))))))))

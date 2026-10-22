@@ -4,6 +4,7 @@
 //! Native HUGR lowering, isolated behind the `hugr` feature.
 
 use crate::DemBuildError;
+use compiler::hugr::{Hugr, HugrView, ops::OpType};
 use compiler::inkwell::context::Context;
 use pecos_programs::Qis;
 use pecos_qis::text::normalize_pecos_helper_symbols;
@@ -13,21 +14,40 @@ fn preparation(error: impl std::fmt::Display) -> DemBuildError {
     DemBuildError::Preparation(format!("HUGR compilation: {error}"))
 }
 
-pub(super) fn lower(
-    bytes: &[u8],
-    platform: crate::QSystemPlatform,
-    level: crate::OptimizationLevel,
-) -> Result<Qis, DemBuildError> {
+/// Inspect every node, including function bodies outside the entrypoint.
+pub(crate) fn has_nontrivial_control_flow(hugr: &Hugr) -> bool {
+    hugr.nodes().any(|node| match hugr.get_optype(node) {
+        OpType::Conditional(_)
+        | OpType::TailLoop(_)
+        | OpType::FuncDecl(_)
+        | OpType::CallIndirect(_) => true,
+        OpType::DataflowBlock(block) => block.sum_rows.len() > 1,
+        _ => false,
+    })
+}
+
+/// Return the sole module and its nontrivial-control-flow verdict before lowering.
+pub(crate) fn parse(bytes: &[u8]) -> Result<(Hugr, bool), DemBuildError> {
     let (_, package) =
         compiler::hugr::envelope::read_envelope(bytes, &compiler::REGISTRY).map_err(preparation)?;
     let mut modules = package.modules.into_iter();
-    let mut hugr = modules
+    let hugr = modules
         .next()
         .ok_or_else(|| preparation("expected one HUGR module"))?;
     if modules.next().is_some() {
         return Err(preparation("expected exactly one HUGR module"));
     }
     compiler::validate(&hugr).map_err(preparation)?;
+    let nontrivial = has_nontrivial_control_flow(&hugr);
+    Ok((hugr, nontrivial))
+}
+
+pub(super) fn lower(
+    bytes: &[u8],
+    platform: crate::QSystemPlatform,
+    level: crate::OptimizationLevel,
+) -> Result<Qis, DemBuildError> {
+    let (mut hugr, _nontrivial) = parse(bytes)?;
     let context = Context::create();
     let target = compiler::get_native_target_machine(level).map_err(preparation)?;
     let args = compiler::CompileArgs::new(&"pecos_dem", &target, level, platform, &context, false);
@@ -40,7 +60,41 @@ pub(super) fn lower(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use compiler::hugr::{envelope::EnvelopeConfig, package::Package};
     use compiler::inkwell::memory_buffer::MemoryBuffer;
+
+    #[test]
+    fn control_flow_matches_shared_corpus() {
+        let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/hugr_control_flow");
+        let verdicts: std::collections::BTreeMap<String, bool> =
+            serde_json::from_slice(&std::fs::read(directory.join("verdicts.json")).unwrap())
+                .unwrap();
+        for (file, expected) in verdicts {
+            let bytes = std::fs::read(directory.join(&file)).unwrap();
+            let (hugr, nontrivial) = parse(&bytes).unwrap();
+            assert_eq!(nontrivial, expected, "{file}");
+            assert_eq!(has_nontrivial_control_flow(&hugr), expected, "{file}");
+        }
+    }
+
+    #[test]
+    fn parse_requires_exactly_one_module() {
+        let (hugr, _) = parse(include_bytes!(
+            "../tests/fixtures/hugr_control_flow/straight_line.hugr"
+        ))
+        .unwrap();
+        for (modules, message) in [
+            (vec![], "expected one HUGR module"),
+            (vec![hugr.clone(), hugr], "expected exactly one HUGR module"),
+        ] {
+            let mut bytes = Vec::new();
+            Package::new(modules)
+                .store(&mut bytes, EnvelopeConfig::default())
+                .unwrap();
+            assert!(parse(&bytes).unwrap_err().to_string().contains(message));
+        }
+    }
 
     #[test]
     fn lowers_parities_for_both_platforms() {

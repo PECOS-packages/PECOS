@@ -919,3 +919,25 @@ def _capture_dem_evidence(
     require_hosted_operation_order: bool = False,
     max_hosted_tick_separation: int | None = None,
 ) -> _DemEvidence: ...
+
+
+def translate_structured_idle_noise(
+    *,
+    p_idle_linear: float | None = None,
+    p_idle_linear_model: dict[str, float] | None = None,
+    p_idle_sin_squared: float | None = None,
+    p_idle_sin_squared_model: dict[str, float] | None = None,
+    p_idle_coherent: float | None = None,
+    p_idle_coherent_model: dict[str, float] | None = None,
+    p_idle_linear_rate: float | None = None,
+    p_idle_quadratic_rate: float | None = None,
+    p_idle_x_linear_rate: float | None = None,
+    p_idle_y_linear_rate: float | None = None,
+    p_idle_z_linear_rate: float | None = None,
+    p_idle_quadratic_sine_rate: float | None = None,
+    p_idle_x_quadratic_sine_rate: float | None = None,
+    p_idle_y_quadratic_sine_rate: float | None = None,
+    p_idle_z_quadratic_sine_rate: float | None = None,
+) -> tuple[float | None, float | None, float | None, float | None, float | None, float | None]:
+    """Translate structured idle families to DEM axis rates."""
+    ...

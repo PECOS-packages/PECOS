@@ -82,6 +82,7 @@ mod builder;
 mod dem_sampler;
 mod equivalence;
 mod mem_builder;
+mod noise_options;
 pub(crate) mod sampler;
 mod slice;
 mod types;
@@ -98,6 +99,7 @@ pub use equivalence::{
     compare_dems_statistical, verify_dem_equivalence,
 };
 pub use mem_builder::MemBuilder;
+pub use noise_options::NoiseOptions;
 /// The batch type [`DemSampler::sample_shots`] returns, so it can be named from
 /// this crate without a separate `pecos-decoders` dependency.
 pub use pecos_decoders::batch::SampleBatch;

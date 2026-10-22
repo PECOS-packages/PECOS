@@ -671,7 +671,7 @@ def test_structured_idle_sin_squared_composes_with_coefficient_quadratic_primiti
         ({"p_idle_linear": 0.01, "p_idle_linear_model": {"A": 1.0}}, "invalid.*key"),
         (
             {"p_idle_linear": 0.01, "p_idle_linear_model": {"X": 0.5, "Z": 0.3, "L": 0.2}},
-            "'L'.*DEM fault propagation is Pauli-only.*engines simulators",
+            '"L".*DEM fault propagation is Pauli-only.*engines simulators',
         ),
         ({"p_idle_linear": 0.01, "p_idle_linear_model": {"X": 0.4, "Z": 0.4}}, "sum to 1.0"),
         (
@@ -683,13 +683,13 @@ def test_structured_idle_sin_squared_composes_with_coefficient_quadratic_primiti
         ({"p_idle_sin_squared": 0.01, "p_idle_sin_squared_model": {"A": 1.0}}, "invalid.*key"),
         (
             {"p_idle_sin_squared": 0.01, "p_idle_sin_squared_model": {"X": 0.5, "Z": 0.3, "L": 0.2}},
-            "'L'.*DEM fault propagation is Pauli-only.*engines simulators",
+            '"L".*DEM fault propagation is Pauli-only.*engines simulators',
         ),
         ({"p_idle_sin_squared": 0.01, "p_idle_sin_squared_model": {"X": -0.1}}, "non-negative"),
         ({"p_idle_sin_squared_model": {"Z": 1.0}}, "requires p_idle_sin_squared"),
         ({"p_idle_coherent": 0.0, "p_idle_coherent_model": {"A": 1.0}}, "invalid.*key"),
-        ({"p_idle_coherent": 0.0, "p_idle_coherent_model": {"L": 1.0}}, "invalid.*key.*'L'"),
-        ({"p_idle_coherent": 0.0, "p_idle_coherent_model": {"U": 0.0}}, "invalid.*key.*'U'"),
+        ({"p_idle_coherent": 0.0, "p_idle_coherent_model": {"L": 1.0}}, 'invalid.*key.*"L"'),
+        ({"p_idle_coherent": 0.0, "p_idle_coherent_model": {"U": 0.0}}, 'invalid.*key.*"U"'),
         ({"p_idle_coherent": 0.0, "p_idle_coherent_model": {"RZ": -0.1}}, "non-negative"),
         ({"p_idle_coherent_model": {"RZ": 1.0}}, "requires p_idle_coherent"),
     ],

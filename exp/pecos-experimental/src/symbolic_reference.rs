@@ -172,6 +172,7 @@ pub(crate) fn reference_distribution(gates: &[Gate]) -> Vec<f64> {
             gate.gate_type,
             GateType::PZ | GateType::PX | GateType::QAlloc
         );
+        let recorded = measured && gate.gate_type != GateType::MeasureLeaked;
         if !measured && !prepared {
             for (sim, _, _) in &mut branches {
                 reference_unitary(sim, gate);
@@ -217,13 +218,13 @@ pub(crate) fn reference_distribution(gates: &[Gate]) -> Vec<f64> {
                 }
                 next.push((
                     projected,
-                    record | if measured { outcome << records } else { 0 },
+                    record | if recorded { outcome << records } else { 0 },
                     weight * probability,
                 ));
             }
         }
         branches = next;
-        records += usize::from(measured);
+        records += usize::from(recorded);
     }
     let mut probabilities = vec![0.0; 1 << records];
     for (_, record, weight) in branches {

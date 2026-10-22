@@ -1823,3 +1823,45 @@ fn diagonal_gates_rejected_by_all_dem_families_and_fault_catalogs() {
         assert!(symbolic_measurement_history(&tick).is_err());
     }
 }
+
+#[test]
+fn recordless_measurement_without_hidden_dependencies_is_supported() {
+    let mut circuit = DagCircuit::new();
+    circuit.pz(&[0, 1]);
+    circuit.h(&[0]);
+    circuit.add_gate_auto_wire(Gate::measure_leaked(&[1]));
+    circuit.mz(&[0]);
+    assert!(
+        DagFaultAnalyzer::new(&circuit)
+            .build_influence_map()
+            .unwrap()
+            .unsupported_gate()
+            .is_none()
+    );
+    // Discarding the known zero on q1 does not affect the random readout of q0.
+    let sampler = DemSampler::from_circuit(&circuit, &NoiseConfig::default()).unwrap();
+    assert_eq!(sampler.num_detectors(), 0);
+}
+
+#[test]
+fn unrelated_hidden_randomness_does_not_prevent_dem_building() {
+    for hidden in [Gate::pz(&[0]), Gate::measure_leaked(&[0])] {
+        let mut circuit = DagCircuit::new();
+        circuit.h(&[0]);
+        circuit.cx(&[(0, 1)]);
+        circuit.add_gate_auto_wire(hidden);
+        circuit.mz(&[1]);
+        let deterministic = circuit.mz(&[2]);
+        circuit.detector(&deterministic).unwrap();
+        let map = DagFaultAnalyzer::new(&circuit)
+            .build_influence_map()
+            .unwrap();
+        assert_eq!(map.measurements.len(), 2);
+        let symbolic = InfluenceBuilder::new(&circuit).unwrap().build().unwrap();
+        assert_eq!(symbolic.detectors.len(), 1);
+        let sampler = DemSampler::from_circuit(&circuit, &NoiseConfig::default()).unwrap();
+        assert_eq!(sampler.num_detectors(), 1);
+        let dem = DemBuilder::from_circuit(&circuit, 0.0, 0.0, 0.0, 0.0).unwrap();
+        assert_eq!(dem.num_detectors(), 1);
+    }
+}

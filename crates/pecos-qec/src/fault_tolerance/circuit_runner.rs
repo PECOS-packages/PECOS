@@ -1172,6 +1172,37 @@ mod tests {
     }
 
     #[test]
+    fn mx_preserves_the_measured_x_eigenstate_in_both_dispatchers() {
+        for prep in [GateType::PZ, GateType::PX] {
+            for batched in [false, true] {
+                for seed in 0..32 {
+                    let mut sim = SparseStab::with_seed(3, seed);
+                    apply_gate(&mut sim, &pecos_core::Gate::simple(prep, vec![QubitId(0)]));
+                    let mut circuit = TickCircuit::new();
+                    let mut tick = circuit.tick();
+                    if batched {
+                        tick.h(&[1]);
+                        tick.x(&[2]);
+                    }
+                    tick.mx(&[0]);
+                    assert_eq!(circuit.get_tick(0).unwrap().len() > 2, batched);
+                    apply_tick_gates(&mut sim, circuit.get_tick(0).unwrap());
+                    let first = sim.mx(&[QubitId(0)]).pop().unwrap();
+                    assert!(first.is_deterministic);
+                    if prep == GateType::PX {
+                        assert!(!first.outcome);
+                    }
+                    apply_tick_gates(&mut sim, circuit.get_tick(0).unwrap());
+                    sim.z(&[QubitId(0)]).h(&[QubitId(0)]);
+                    let last = sim.mz(&[QubitId(0)]).pop().unwrap();
+                    assert!(last.is_deterministic);
+                    assert_ne!(first.outcome, last.outcome);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn diagonal_gates_are_rejected_by_individual_and_tick_dispatch() {
         for gt in [GateType::CS, GateType::CSdg, GateType::CCZ] {
             let gate = pecos_core::Gate::simple(

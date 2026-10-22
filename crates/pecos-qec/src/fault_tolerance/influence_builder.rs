@@ -1730,6 +1730,21 @@ mod tests {
         assert_eq!(map.detectors.as_slice(), []);
     }
 
+    #[test]
+    fn detector_extraction_accepts_hidden_dependencies() {
+        let mut dag = DagCircuit::new();
+        dag.pz(&[0]);
+        dag.h(&[0]);
+        dag.add_gate_auto_wire(pecos_quantum::Gate::measure_leaked(&[0usize]));
+        dag.mz(&[0]);
+
+        let builder = InfluenceBuilder::new(&dag).unwrap();
+        let info = builder.run_symbolic_simulation().unwrap();
+        assert!(!info.history[0].is_deterministic);
+        assert!(InfluenceBuilder::extract_detectors(&info).is_empty());
+        builder.build().unwrap();
+    }
+
     /// A mid-circuit reset must reach the simulator: skipping it treated a
     /// reused qubit as still carrying its pre-reset correlations, so the
     /// re-measurement looked like a deterministic repeat instead of fresh.

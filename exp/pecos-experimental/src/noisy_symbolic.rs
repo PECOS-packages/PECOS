@@ -689,10 +689,7 @@ impl NoisyMeasurementHistoryBuilder {
             };
 
             // Track measurement positions
-            if matches!(
-                noise,
-                NoiseClass::Measurement | NoiseClass::MeasurementAndPreparation
-            ) {
+            if gate.gate_type.consumes_measurement_record() {
                 measurement_positions.insert(gate_locations.len(), measurement_count);
                 measurement_count += 1;
             }
@@ -1369,6 +1366,52 @@ impl std::fmt::Display for NoisyMeasurementHistory {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn noisy_history_builder_accepts_hidden_sources_as_recorded_coins() {
+        use pecos_core::Gate;
+        use pecos_simulators::SymbolicSparseStab;
+        for hidden in [GateType::PZ, GateType::MeasureLeaked] {
+            let mut circuit = DagCircuit::new();
+            circuit.h(&[0]);
+            circuit.cx(&[(0, 1)]);
+            circuit.add_gate_auto_wire(Gate::simple(hidden, vec![QubitId(0)]));
+            circuit.mz(&[1]);
+            circuit.mz(&[1]);
+            let mut sim = SymbolicSparseStab::new(2);
+            crate::execute_circuit_symbolic(&mut sim, &circuit).unwrap();
+            let history = NoisyMeasurementHistoryBuilder::new()
+                .build_from_circuit(&circuit, sim.measurement_history())
+                .unwrap();
+            let results = history.measurements();
+            assert!(!results[0].is_deterministic);
+            assert!(results[1].is_deterministic);
+            assert_eq!(
+                results[0].measurement_deps.iter().collect::<Vec<_>>(),
+                vec![0]
+            );
+            assert_eq!(results[0].measurement_deps, results[1].measurement_deps);
+            assert!(!results[0].flip);
+            assert!(!results[1].flip);
+        }
+    }
+
+    #[test]
+    fn discarded_measurements_do_not_shift_noise_columns() {
+        let mut circuit = DagCircuit::new();
+        circuit.add_gate_auto_wire(pecos_core::Gate::measure_leaked(&[0]));
+        circuit.mz(&[1]);
+        let mut sim = pecos_simulators::SymbolicSparseStab::new(2);
+        crate::execute_circuit_symbolic(&mut sim, &circuit).unwrap();
+        assert_eq!(sim.measurement_history().len(), 1);
+        let noisy = NoisyMeasurementHistoryBuilder::new()
+            .with_noise_model(DepolarizingNoiseModel::new(0.0, 0.0, 0.02, 0.0))
+            .build_from_circuit(&circuit, sim.measurement_history())
+            .unwrap();
+        assert_eq!(noisy.num_measurements(), 1);
+        assert_eq!(noisy.num_faults(), 1);
+        assert_eq!(noisy.measurements()[0].fault_deps.len(), 1);
+    }
 
     #[test]
     fn test_noise_model_default() {

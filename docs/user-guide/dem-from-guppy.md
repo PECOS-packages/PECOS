@@ -560,14 +560,86 @@ else:
     raise AssertionError("idle noise without Idle gates should fail")
 ```
 
-Runtime-emitted idle durations are replayed as nanosecond `TimeUnits`.
-Inserted idles instead carry the duration passed to
-`idle_after_2q_duration`, which must be finite and positive. Linear and
-sine-law idle rates are per time unit. For example, uniform linear idle noise
-uses `(p_idle_linear / 3) * duration` per Pauli axis, clamped to the probability
-range. The low-level coefficient-style quadratic rates multiply `duration**2`
-and therefore scale as inverse time squared. T1 and T2 values must use the same
-units as the idle duration.
+### Rates, probabilities, and time units
+
+An idle rate is not a per-gate probability. The duration comes from an explicit
+`Idle` gate, either emitted by the selected runtime or inserted with
+`idle_after_2q_duration` (builder spelling: `.with_idle_after_2q(duration)`).
+Insertion adds an idle on both operands after each two-qubit gate; it does not
+configure that gate's physical duration or model spectator waiting times.
+
+For a Z-only channel, the laws are:
+
+| Family | Probability over duration `t` | Parameter units |
+| --- | --- | --- |
+| Linear | `r * t` | inverse time |
+| Sine-squared | `sin(s * t)**2` | radians per time |
+| Coefficient quadratic (low-level DEM only) | `q * t**2` | inverse time squared |
+
+The linear probability must be valid; an out-of-range channel is rejected.
+For a uniform linear model, each Pauli axis receives `r * t / 3`.
+
+**Simulation and traced DEM construction currently use different time units.**
+The Selene general-noise plugin converts runtime timestamps to seconds. Traced
+DEM circuits instead store idle durations as nanosecond `TimeUnits`. There is
+no automatic conversion of the supplied noise parameters between those APIs.
+For a physical configuration expressed in seconds, convert before building a
+DEM from runtime-emitted idles:
+
+| Physical parameter | Value for nanosecond DEM durations |
+| --- | --- |
+| Linear rate `r_per_second` | `r_per_second * 1e-9` |
+| Sine rate `s_per_second` | `s_per_second * 1e-9` |
+| Coefficient-quadratic rate `q_per_second_squared` | `q_per_second_squared * 1e-18` |
+| Relaxation/dephasing time `t_seconds` | `t_seconds * 1e9` |
+
+For example, a linear rate of 1000 per second over a 1000 ns gap gives
+probability 0.001 in both representations:
+
+<!--test-name: dem_idle_time_unit_conversion-->
+```python
+from math import isclose, sin
+
+idle_seconds = 1e-6
+idle_nanoseconds = 1000
+linear_per_second = 1000.0
+sine_per_second = 100_000.0
+quadratic_per_second_squared = 1e9
+
+assert isclose(linear_per_second * idle_seconds, 0.001)
+assert isclose(
+    linear_per_second * idle_seconds,
+    (linear_per_second * 1e-9) * idle_nanoseconds,
+)
+assert isclose(
+    sin(sine_per_second * idle_seconds) ** 2,
+    sin((sine_per_second * 1e-9) * idle_nanoseconds) ** 2,
+)
+assert isclose(
+    quadratic_per_second_squared * idle_seconds**2,
+    (quadratic_per_second_squared * 1e-18) * idle_nanoseconds**2,
+)
+```
+
+Inserted idles carry the positive duration supplied by the caller. A normalized
+convention such as `.with_idle_after_2q(1.0)` instead uses one unit per inserted
+idle. If that unit represents a physical duration `tau_seconds`, use linear
+rate `r_per_second * tau_seconds`, sine rate `s_per_second * tau_seconds`, or
+coefficient-quadratic rate `q_per_second_squared * tau_seconds**2`. T1/T2 must
+then be divided by `tau_seconds`. Do not multiply by the physical duration
+again when applying noise to those unit-duration idles.
+
+This is why a factor such as `0.03` needs a stated meaning and unit. It could
+convert a physical rate to a normalized-duration coefficient, or scale the
+noise strength; the API cannot infer which. Do not mix retained runtime idles
+in nanoseconds with inserted idles in another unit. By default, idle insertion
+strips runtime idles first.
+
+The legacy engine quadratic-to-sine migration above is a separate conversion
+from this time-unit conversion. In particular, the DEM's coefficient-quadratic
+rate cannot be converted to an exactly equivalent sine-squared law at all
+durations by multiplying by pi. Match the formula of the model being used,
+including its version-specific calibration factors, before converting units.
 
 ## Exporting the DEM as Stim Text
 

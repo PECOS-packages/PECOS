@@ -759,3 +759,136 @@ fn declared_measurement_count_is_checked_before_definition_resolution() {
         );
     }
 }
+
+fn idle_circuit(zero_rz: bool) -> TickCircuit {
+    let mut circuit = TickCircuit::new();
+    circuit.tick().pz(&[0, 1]);
+    circuit.tick().cx(&[(0, 1)]);
+    circuit.tick().idle(3, &[0]);
+    if zero_rz {
+        circuit.tick().rz(pecos_core::Angle64::ZERO, &[0]);
+    }
+    circuit.tick().mz(&[0, 1]);
+    circuit
+}
+
+#[test]
+fn native_idle_pass_policy_preserves_targets_and_zero_rz_fault_sites() {
+    use pecos_core::gate_type::GateType;
+
+    let builder = |zero_rz| {
+        DetectorErrorModel::builder()
+            .with_circuit(idle_circuit(zero_rz))
+            .with_detectors(vec![vec![0]])
+    };
+    let existing = builder(true).prepare().unwrap();
+    let inserted = builder(true).with_idle_after_2q(1.0).prepare().unwrap();
+    let kept = builder(true)
+        .with_idle_after_2q(1.0)
+        .with_strip_traced_idles(false)
+        .prepare()
+        .unwrap();
+    let stripped = builder(true)
+        .with_strip_traced_idles(true)
+        .prepare()
+        .unwrap();
+    let idle_targets = |prepared: &PreparedDem| {
+        prepared
+            .circuit()
+            .iter_gate_batches()
+            .filter(|gate| gate.as_gate().gate_type == GateType::Idle)
+            .map(|gate| gate.as_gate().qubits.len())
+            .sum::<usize>()
+    };
+    assert_eq!(idle_targets(&existing), 1);
+    assert_eq!(idle_targets(&inserted), 2);
+    assert_eq!(idle_targets(&kept), 3);
+    assert_eq!(idle_targets(&stripped), 0);
+    let idle_noise = NoiseConfig::with_idle(0.0, 0.0, 0.0, 0.0, 0.1);
+    assert!(existing.build_dem(idle_noise.clone()).is_ok());
+    assert_ne!(
+        inserted
+            .build_dem(idle_noise.clone())
+            .unwrap()
+            .dem()
+            .to_string(),
+        kept.build_dem(idle_noise.clone())
+            .unwrap()
+            .dem()
+            .to_string()
+    );
+    assert!(stripped.build_dem(idle_noise).is_err());
+    let p1 = NoiseConfig::new(0.09, 0.0, 0.0, 0.0);
+    for prepared in [&existing, &inserted, &kept, &stripped] {
+        assert_eq!(
+            prepared
+                .circuit()
+                .iter_gate_batches()
+                .filter(|gate| gate.as_gate().gate_type == GateType::RZ)
+                .count(),
+            1
+        );
+        assert!(
+            prepared
+                .build_dem(p1.clone())
+                .unwrap()
+                .dem()
+                .to_string()
+                .contains("error(")
+        );
+    }
+    let without_rz = builder(false).with_idle_after_2q(1.0).prepare().unwrap();
+    assert!(
+        !without_rz
+            .build_dem(p1)
+            .unwrap()
+            .dem()
+            .to_string()
+            .contains("error(")
+    );
+}
+
+#[test]
+fn preparation_restores_measurement_count_and_inference_method_metadata() {
+    let inferred = reference_one_prepared();
+    let explicit = DetectorErrorModel::builder()
+        .with_circuit(idle_circuit(false))
+        .with_detectors(vec![vec![0]])
+        .prepare()
+        .unwrap();
+    for prepared in [&inferred, &explicit] {
+        assert_eq!(
+            prepared.circuit().get_meta("num_measurements"),
+            Some(&Attribute::String("2".into()))
+        );
+    }
+    assert_eq!(
+        inferred.circuit().get_meta("guppy_dem_annotation_method"),
+        Some(&Attribute::String("coin_toss_affine_inference_v2".into()))
+    );
+    assert!(
+        explicit
+            .circuit()
+            .get_meta("guppy_dem_annotation_method")
+            .is_none()
+    );
+}
+
+#[test]
+fn preparation_does_not_overwrite_an_invalid_declared_circuit_count() {
+    let mut circuit = idle_circuit(false);
+    circuit.set_meta("num_measurements", Attribute::String("99".into()));
+    let error = DetectorErrorModel::builder()
+        .with_circuit(circuit)
+        .with_detectors(vec![vec![0]])
+        .prepare()
+        .err()
+        .unwrap();
+    assert!(matches!(
+        error,
+        DemBuildError::Definitions(DefinitionError::MeasurementCountMismatch {
+            declared: 99,
+            actual: 2
+        })
+    ));
+}

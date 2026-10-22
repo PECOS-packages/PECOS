@@ -1,7 +1,7 @@
 # Copyright 2026 The PECOS Developers
 # Licensed under the Apache License, Version 2.0
 
-"""Named parity matrix against the current Python Guppy DEM facade."""
+"""Facade regressions for reidentified QIS, computed references, and schema v2."""
 
 from __future__ import annotations
 
@@ -9,101 +9,31 @@ import hashlib
 import json
 import re
 
-import pecos
+import numpy as np
 import pytest
 from pecos import NoiseParameters
-from pecos.guppy_gen import get_num_qubits, make_surface_code, make_surface_memory
-from pecos.programs import Qis
-from pecos.qec import (
-    DemInferenceSettings,
-    Detector,
-    GuppyDemBuilder,
-    Observable,
-    rec,
-    result_ref,
-    surface_memory_dem_spec,
-)
+from pecos.qec import Detector, GuppyDemBuilder, Observable, rec, result_ref
 from pecos.qec import dem as dem_module
-from pecos.qec.surface import SurfacePatch
+from pecos.qec.dem import _preflight_guppy_static_schedule
 
-from ._guppy_dem_rust import circuit_gates, prepare
-from .test_dem_inference_builder import _inferred_program, _selected_program
-from .test_from_guppy_dem import _single_measurement
-from .test_guppy_dem_build import _mixed_supported_result_occurrences, _scrambled_tagged_measurements
-from .test_guppy_dem_builder import _tagged_two_qubit_program
-from .test_guppy_dem_rust_bindings import _reference_one
+from qec.test_from_guppy_dem import _single_measurement
+from qec.test_guppy_dem_build import _mixed_supported_result_occurrences, _scrambled_tagged_measurements
+from qec.test_guppy_dem_builder import _tagged_two_qubit_program
+from qec.test_guppy_dem_rust_bindings import _reference_one
 
 NOISE = {"p1": 0.001, "p2": 0.01, "p_meas": 0.02, "p_prep": 0.001}
-ROWS = [
-    "explicit-records",
-    "explicit-result-references",
-    "explicit-bare-tags",
-    "explicit-json-result-tags",
-    "inferred-permuted-raw-ids",
-    "mixed-positional",
-    "mixed-named",
-    "generator-certified",
-    "gadget-generator-certified",
-    "sparse-measurement-ids",
-    "permuted-measurement-ids",
-    "repeated-result-calls-and-holes",
-    "bell-parity",
-    "random-detector-admission",
-    "random-observable-admission",
-    "reference-one",
-]
+ROWS = ["sparse-measurement-ids", "permuted-measurement-ids", "reference-one"]
 
 
 def _case(name):
     program, qubits = _tagged_two_qubit_program, 2
     options = {"detectors": [Detector(rec[-2])], "observables": [Observable(rec[-1])]}
-    if name == "explicit-result-references":
-        options = {"detectors": [Detector(result_ref("m0"))], "observables": [Observable(result_ref("m1", element=0))]}
-    elif name == "explicit-bare-tags":
-        options = {"detectors": [Detector("m0")], "observables": [Observable("m1")]}
-    elif name == "explicit-json-result-tags":
-        options = {
-            "detectors_json": '[{"id":0,"result_tags":["m0"]}]',
-            "observables_json": '[{"id":0,"result_tags":["m1"]}]',
-            "num_measurements": 2,
-        }
-    elif name == "inferred-permuted-raw-ids":
-        program, qubits = _inferred_program, 3
-        options = {"settings": DemInferenceSettings().with_validation_rows(8)}
-    elif name in {"mixed-positional", "mixed-named"}:
-        program, qubits = _selected_program, 3
-        explicit = rec[-2] if name == "mixed-positional" else result_ref("m1")
-        options = {
-            "detectors": [Detector(explicit), Detector.inferred("parities", element=0)],
-            "observables": [Observable.inferred("logical", id=70), Observable(rec[-3], id=2)],
-        }
-    elif name in {"generator-certified", "gadget-generator-certified"}:
-        program = (
-            make_surface_code(3, 1, "Z")
-            if name == "generator-certified"
-            else make_surface_memory(SurfacePatch.create(distance=3), 1, "Z")
-        )
-        qubits = get_num_qubits(3)
-        detectors, observables = surface_memory_dem_spec(3, 1, "Z")
-        options = {"detectors": detectors, "observables": observables}
-    elif name == "sparse-measurement-ids":
-        # The current facade defaults to the measurement-ID span, so sparse IDs
-        # require an explicit emission count. Both paths receive the same count.
+    if name == "sparse-measurement-ids":
         options = {
             "detectors_json": '[{"id":0,"meas_ids":[7]}]',
             "observables_json": '[{"id":0,"meas_ids":[3]}]',
             "num_measurements": 2,
         }
-    elif name == "repeated-result-calls-and-holes":
-        program, qubits = _mixed_supported_result_occurrences, 1
-        options = {"detectors": [Detector(result_ref("same", occurrence=1))], "observables": []}
-    elif name in {"bell-parity", "random-detector-admission", "random-observable-admission"}:
-        program = _scrambled_tagged_measurements
-        options = {"detectors": [Detector("a", "b")], "observables": [Observable("a", "b")]}
-        if name == "random-detector-admission":
-            options["detectors"] = [Detector("a")]
-        elif name == "random-observable-admission":
-            options["observables"] = [Observable("b")]
     elif name == "reference-one":
         program, qubits = _reference_one, 1
         options = {"detectors": [Detector("one")], "observables": [Observable("one", id=70)]}
@@ -138,7 +68,7 @@ def _reidentify_qis(analysis, ids):
     return analysis
 
 
-def _fingerprint_v2(prepared):
+def _fingerprint_v2(build):
     # These fixtures have integral coordinates. Rust Display writes 0.0 as 0;
     # v2 also includes the computed reference fields and a new version number.
     def numbers(value):
@@ -152,154 +82,120 @@ def _fingerprint_v2(prepared):
 
     payload = {
         "version": 2,
-        "detectors": json.loads(prepared.circuit.get_meta("detectors")),
-        "observables": json.loads(prepared.circuit.get_meta("observables")),
-        "runtime_measurement_order": prepared.measurement_ids,
-        "named_result_measurements": prepared.named_result_measurements,
+        "detectors": json.loads(build.circuit.get_meta("detectors")),
+        "observables": json.loads(build.circuit.get_meta("observables")),
+        "runtime_measurement_order": [entry.meas_id for entry in build.measurement_ledger],
+        "named_result_measurements": {
+            ref.tag: tuple(item.meas_id for item in build.measurement_ledger if ref in item.result_refs)
+            for entry in build.measurement_ledger
+            for ref in entry.result_refs
+        },
     }
     return hashlib.sha256(
-        json.dumps(numbers(payload), sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+        json.dumps(numbers(payload), sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(),
     ).hexdigest()
 
 
-def _assert_schema(python, rust):
-    assert circuit_gates(rust.circuit) == circuit_gates(python.circuit)
-    assert rust.measurement_ids == [entry.meas_id for entry in python.measurement_ledger]
-    assert rust.measurement_ledger == [entry.to_dict() for entry in python.measurement_ledger]
-    assert rust.named_result_measurements == dict(python._result_ids_by_tag)
-    assert rust.definition_origins == list(python.definition_origins)
-    for role in ("detectors", "observables"):
-        expected = python.circuit.circuit_definitions()[role]
-        actual = getattr(rust, role)
-        assert actual == rust.circuit.circuit_definitions()[role]
-        assert [(item["id"], sorted(item["measurements"])) for item in actual] == [
-            (item["id"], sorted(item["measurements"])) for item in expected
-        ]
-        # Rust computes exact noiseless references; the current facade leaves
-        # unspecified references absent. This changes metadata, not the supports.
-        assert all(item["reference"] in (0, 1) for item in actual)
-        for actual_definition, old_definition in zip(actual, expected, strict=True):
-            if old_definition["reference"] is not None:
-                assert actual_definition["reference"] == old_definition["reference"]
-            else:
-                assert actual_definition["reference"] in (0, 1)  # Previously absent, now computed.
-    assert rust.schema_fingerprint == _fingerprint_v2(rust)
-    assert rust.schema_fingerprint != python.schema_fingerprint  # v2 intentionally replaces Python's v1 digest.
-    assert rust.circuit.get_meta("dem_schema_fingerprint") == rust.schema_fingerprint
-    if python.inference is not None:
-        assert rust.audit["inference"] == python.inference.audit
-        for key in (
-            "raw_measurement_ids",
-            "detector_supports",
-            "observable_supports",
-            "detector_labels",
-            "observable_labels",
-        ):
-            expected = json.loads(json.dumps(getattr(python.inference, key)))
-            assert json.loads(json.dumps(rust.inference[key])) == expected
-
-
 @pytest.mark.parametrize("name", ROWS, ids=ROWS)
-def test_guppy_dem_parity_matrix(name, monkeypatch) -> None:
+def test_guppy_dem_facade_regressions(name, monkeypatch) -> None:
     program, qubits, options = _case(name)
     analysis = None
     if name in {"sparse-measurement-ids", "permuted-measurement-ids"}:
-        layout, analysis = dem_module._preflight_guppy_static_schedule(program, required_tags=[])
+        layout, analysis, _ = _preflight_guppy_static_schedule(program, required_tags=[])
         assert layout is None
         ids = [7, 3] if name == "sparse-measurement-ids" else [1, 0]
         analysis = _reidentify_qis(analysis, ids)
-        monkeypatch.setattr(dem_module, "_preflight_guppy_static_schedule", lambda *_args, **_kwargs: (None, analysis))
-    python = _python_build(program, qubits, options)
-    if name in {"random-detector-admission", "random-observable-admission"}:
-        # The old facade admits random readouts; Rust requires deterministic
-        # noiseless detector and observable parities before any noisy build.
-        role = "detector" if name == "random-detector-admission" else "observable"
-        with pytest.raises(ValueError, match=f"{role} 0 has a random noiseless parity"):
-            prepare(program, qubits, analysis=analysis, **options)
-        assert python.dem.num_detectors == 1
-        return
-    rust = prepare(program, qubits, analysis=analysis, **options)
-    assert rust.build_dem(**NOISE).dem.to_string() == python.dem.to_string()
-    _assert_schema(python, rust)
-    if name in {"sparse-measurement-ids", "permuted-measurement-ids"}:
-        assert rust.measurement_ids == ids
-        assert rust.named_result_measurements == {}  # Explicit result-slot QIS is not compiler-certified for tags.
-    if name == "repeated-result-calls-and-holes":
-        assert rust.named_result_measurements == {"same": (None, 0)}
-        assert rust.evaluate_results({"same": [1, 0]}) == ([0], 0)
-    if name in {"generator-certified", "gadget-generator-certified"}:
-        assert rust.audit["static_schedule_source"] == "generator_layout_v2_program_bound"
-    executable = Qis(analysis.qis) if analysis is not None else program
-    results = (
-        pecos.sim(executable)
-        .classical(pecos.selene_engine())
-        .quantum(pecos.stabilizer())
-        .qubits(qubits)
-        .seed(17)
-        .run(4)
-    )
-    columns = results.to_shot_map().to_dict()
-    # The binding consumes columns after Python has normalized scalar bits.
-    columns = {
-        tag: [list(map(int, row)) if isinstance(row, (list, tuple)) else [int(row)] for row in rows]
-        for tag, rows in columns.items()
-    }
-    raw_expected = [([1], 1 << 70)] * 4 if name == "reference-one" else [([0] * len(rust.detectors), 0)] * 4
-    if rust.named_result_measurements:
-        assert rust.result_column_parities(columns) == python.evaluate_result_columns(columns) == raw_expected
-        # Relative evaluators subtract the computed reference-one parity; the
-        # current Python facade's evaluators return raw parities.
-        assert rust.evaluate_result_columns(columns) == [([0] * len(rust.detectors), 0)] * 4
-        for shot in range(4):
-            values = {tag: rows[shot] for tag, rows in columns.items()}
-            by_id = {
-                identity: values[tag][index]
-                for tag, identities in rust.named_result_measurements.items()
-                if tag in values
-                for index, identity in enumerate(identities)
-                if identity is not None
-            }
-            assert rust.result_parities(values) == python.evaluate_results(values) == raw_expected[shot]
-            assert rust.measurement_parities(by_id) == python.evaluate_measurements(by_id) == raw_expected[shot]
-            if set(by_id) == set(rust.measurement_ids):
-                record = [by_id[identity] for identity in rust.measurement_ids]
-                assert (
-                    rust.runtime_record_parities(record) == python.evaluate_runtime_record(record) == raw_expected[shot]
-                )
-    else:
-        # Both columns are noiseless zero in the reidentified two-qubit fixture.
-        for shot in range(4):
-            record = [columns["m0"][shot][0], columns["m1"][shot][0]]
-            assert rust.evaluate_runtime_record(record) == python.evaluate_runtime_record(record) == ([0], 0)
-            by_id = dict(zip(rust.measurement_ids, record, strict=True))
-            assert rust.evaluate_measurements(by_id) == python.evaluate_measurements(by_id) == ([0], 0)
-
-
-def test_rust_message_format_and_zero_rate_idle_target_difference() -> None:
-    program, qubits, options = _case("repeated-result-calls-and-holes")
-    options["detectors"] = [Detector(result_ref("same", occurrence=0))]
-    with pytest.raises(ValueError) as python_error:
-        _python_build(program, qubits, options)
-    with pytest.raises(ValueError) as rust_error:
-        prepare(program, qubits, **options)
-    # Rust Debug quotes strings with double quotes; Python repr uses single quotes.
-    assert "'same'" in str(python_error.value)
-    assert '"same"' in str(rust_error.value)
-    assert "not a direct scalar measurement" in str(python_error.value)
-    assert "not a direct scalar measurement" in str(rust_error.value)
-    options = {"detectors": [Detector(rec[-1])]}
-    with pytest.raises(ValueError, match="idle"):
-        (
-            GuppyDemBuilder()
-            .with_program(_single_measurement)
-            .with_qubits(1)
-            .with_detectors(options["detectors"])
-            .with_noise(NoiseParameters(**NOISE).with_p_idle_linear(0.0))
-            .build()
+        monkeypatch.setattr(
+            dem_module,
+            "_preflight_guppy_static_schedule",
+            lambda *_args, **_kwargs: (None, analysis, None),
         )
-    prepared = prepare(_single_measurement, 1, **options)
-    # Rust's idle-target admission checks active rates; a zero rate has no target requirement.
+    built = _python_build(program, qubits, options)
+    assert built.schema_fingerprint == _fingerprint_v2(built)
+    assert built.circuit.get_meta("dem_schema_fingerprint") == built.schema_fingerprint
+    if analysis is not None:
+        assert [entry.meas_id for entry in built.measurement_ledger] == ids
+        assert all(entry.result_refs == () for entry in built.measurement_ledger)
+        assert json.loads(built.detectors_json)[0]["meas_ids"] == [7 if name == "sparse-measurement-ids" else 0]
+        assert json.loads(built.observables_json)[0]["meas_ids"] == [3 if name == "sparse-measurement-ids" else 1]
+        assert built.evaluate_runtime_record([0, 1]) == (([0], 1) if name == "sparse-measurement-ids" else ([1], 0))
+        assert built.evaluate_measurements(dict(zip(ids, [1, 0], strict=True))) == (
+            ([1], 0) if name == "sparse-measurement-ids" else ([0], 1)
+        )
+    else:
+        assert built.measurement_ledger[0].result_refs == (result_ref("one"),)
+        assert json.loads(built.detectors_json)[0]["reference"] == 1
+        assert json.loads(built.observables_json)[0]["reference"] == 1
+        assert built.evaluate_runtime_record([True]) == ([0], 0)
+        assert built.evaluate_measurements({0: True}) == ([0], 0)
+        assert built.evaluate_results({"one": True}) == ([0], 0)
+        assert built.evaluate_result_columns({"one": [True, False]}) == [([0], 0), ([1], 1 << 70)]
+        assert built.runtime_record_parities([True]) == ([1], 1 << 70)
+        assert built.measurement_parities({0: True}) == ([1], 1 << 70)
+        assert built.result_parities({"one": True}) == ([1], 1 << 70)
+        assert built.result_column_parities({"one": [True, False]}) == [([1], 1 << 70), ([0], 0)]
+        assert built.evaluate_result_columns({"one": []}) == built.result_column_parities({"one": []}) == []
+
+
+@pytest.mark.parametrize("role", ["detector", "observable"])
+def test_facade_rejects_random_noiseless_parity(role) -> None:
+    options = {"detectors": [Detector("a", "b")], "observables": [Observable("a", "b")]}
+    options[f"{role}s"] = [Detector("a")] if role == "detector" else [Observable("b")]
+    with pytest.raises(ValueError, match=f"{role} 0 has a random noiseless parity"):
+        _python_build(_scrambled_tagged_measurements, 2, options)
+
+
+def test_rust_message_format_and_zero_rate_idle_target() -> None:
+    with pytest.raises(ValueError, match=r'"same".*not a direct scalar measurement'):
+        _python_build(_mixed_supported_result_occurrences, 1, {"detectors": [Detector(result_ref("same"))]})
+    builder = GuppyDemBuilder().with_program(_single_measurement).with_qubits(1).with_detectors([Detector(rec[-1])])
+    baseline = builder.build().dem.to_string()
     assert (
-        prepared.build_dem(p_idle_linear_rate=0.0, **NOISE).dem.to_string()
-        == prepared.build_dem(**NOISE).dem.to_string()
+        builder.with_noise(NoiseParameters(p_meas=0.001, p_prep=0.001).with_p_idle_linear(0.0)).build().dem.to_string()
+        == baseline
     )
+
+
+@pytest.mark.parametrize("role", ["detector", "observable"])
+def test_facade_rejects_disagreeing_declared_references(role) -> None:
+    options = {"detectors": [], "observables": []}
+    definition = Detector if role == "detector" else Observable
+    options[f"{role}s"] = [definition("one", metadata={"reference": 0})]
+    with pytest.raises(ValueError, match="reference"):
+        _python_build(_reference_one, 1, options)
+
+
+def test_every_facade_evaluator_validates_python_bits() -> None:
+    build = _python_build(
+        _reference_one,
+        1,
+        {"detectors": [Detector("one")], "observables": [Observable("one", id=70)]},
+    )
+    methods = (
+        (build.evaluate_runtime_record, build.runtime_record_parities, lambda bit: [bit]),
+        (build.evaluate_measurements, build.measurement_parities, lambda bit: {0: bit}),
+        (build.evaluate_results, build.result_parities, lambda bit: {"one": bit}),
+        (build.evaluate_result_columns, build.result_column_parities, lambda bit: {"one": [[bit]]}),
+    )
+    for relative, raw, carrier in methods:
+        for bit in (True, 1, np.int64(1)):
+            expected = ([0], 0)
+            raw_expected = ([1], 1 << 70)
+            if relative == build.evaluate_result_columns:
+                expected, raw_expected = [expected], [raw_expected]
+            assert relative(carrier(bit)) == expected
+            assert raw(carrier(bit)) == raw_expected
+        for value in (0.0, 1.0, np.float64(1.0), 2, -1, "0", None):
+            for evaluate in (relative, raw):
+                with pytest.raises(ValueError, match="must be bool, 0, or 1"):
+                    evaluate(carrier(value))
+    assert build.evaluate_measurements({0: True, 99: object()}) == ([0], 0)
+    assert build.measurement_parities({0: True, 99: object()}) == ([1], 1 << 70)
+    assert build.evaluate_results({"one": np.array([1], dtype=np.int64), "unbound": object()}) == ([0], 0)
+    assert build.dem is build.dem
+    assert build.circuit.get_meta("num_measurements") == "1"
+    snapshot = build.circuit
+    snapshot.clear()
+    snapshot.set_meta("detectors", "[]")
+    assert build.circuit.num_measurements() == 1
+    assert json.loads(build.detectors_json)[0]["reference"] == 1

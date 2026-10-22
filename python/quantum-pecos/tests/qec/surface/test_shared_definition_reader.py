@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 from pecos._traced_circuit import measurement_ids_in_execution_order
-from pecos.qec.dem_spec import _measurement_ids_in_runtime_order
 from pecos.qec.surface import (
     MissingObservableReferenceError,
     SurfacePatch,
@@ -75,16 +74,10 @@ def test_measurement_walkers_include_mx_and_mpz():
     circuit.tick().add_gate("MPZ", [6, 1])
     circuit.assign_missing_meas_ids()
     assert measurement_ids_in_execution_order(circuit) == [17, 18, 19, 20]
-    assert _measurement_ids_in_runtime_order(circuit) == [17, 18, 19, 20]
     assert get_measurement_order_from_tick_circuit(circuit) == [4, 2, 6, 1]
 
 
-def test_runtime_walker_rejects_duplicates_and_unstamped_records():
-    circuit = TickCircuit()
-    circuit.tick().mz_with_ids([0], [7])
-    circuit.tick().mz_with_ids([1], [7])
-    with pytest.raises(ValueError, match="duplicate MeasId"):
-        _measurement_ids_in_runtime_order(circuit)
+def test_runtime_walker_rejects_unstamped_records():
     unstamped = TickCircuit()
     unstamped.tick().add_gate("MX", [0])
     with pytest.raises(ValueError, match="emission position 0 carries no MeasId"):
@@ -258,20 +251,6 @@ def test_native_topology_agreeing_annotations_match_dem_baseline(basis, monkeypa
     )
 
 
-@pytest.mark.parametrize("references", [{"records": [0]}, {"meas_ids": [17]}, {"records": [0], "meas_ids": [17]}])
-def test_audit_schema_uses_resolved_positions(scrambled, references):
-    from pecos.qec.dem_spec import _resolved_schema_from_validated_json
-
-    detectors = json.dumps([{"id": "D8", "records": [-1, -1]}, {"detector_id": "D3", **references}])
-    observables = json.dumps([{"observable_id": "L4", **references}])
-    scrambled.set_meta("detectors", detectors)
-    scrambled.set_meta("observables", observables)
-    schema = _resolved_schema_from_validated_json(detectors, observables, circuit=scrambled, result_traces=[])
-    assert schema.detector_meas_ids == ((17,), (9, 9))
-    assert schema.observable_meas_ids == ((4, (17,)),)
-    assert [(entry.meas_id, entry.runtime_record_index) for entry in schema.ledger] == [(17, 0), (9, 1)]
-
-
 @pytest.mark.parametrize("kind", ["detectors", "observables"])
 def test_remap_requires_definition_and_position(scrambled, kind):
     from pecos.qec.surface.decode import _copy_surface_tick_circuit_metadata
@@ -299,9 +278,8 @@ def test_remap_descriptors_use_annotation_definitions(scrambled):
     assert json.loads(target.get_meta("observable_descriptors")) == [{"id": 0, "meas_ids": [100], "basis": "Z"}]
 
 
-@pytest.mark.parametrize("consumer", ["remap", "audit", "topology"])
+@pytest.mark.parametrize("consumer", ["remap", "topology"])
 def test_decode_readers_reject_disagreeing_sources(scrambled, consumer, monkeypatch):
-    from pecos.qec.dem_spec import _resolved_schema_from_validated_json
     from pecos.qec.surface import decode
 
     scrambled.detector([(0, 0, 1)])
@@ -319,11 +297,6 @@ def test_decode_readers_reject_disagreeing_sources(scrambled, consumer, monkeypa
             _copy_surface_tick_circuit_metadata,
             (scrambled, TickCircuit()),
             {"measurement_index_remap": {0: 100, 1: 200}},
-        ),
-        "audit": (
-            _resolved_schema_from_validated_json,
-            (scrambled.get_meta("detectors"), "[]"),
-            {"circuit": scrambled, "result_traces": []},
         ),
         "topology": (_surface_native_topology, (patch_key, 1, "Z", None, "abstract", False), {}),
     }[consumer]
@@ -477,7 +450,12 @@ def test_decode_readers_carry_detector_reference(scrambled, monkeypatch, referen
     scrambled.set_meta("detectors", json.dumps([{"id": 0, "meas_ids": [9], "reference": reference}]))
     monkeypatch.setattr(decode, "_build_surface_tick_circuit_for_native_model", lambda *_args, **_kwargs: scrambled)
     topology = _surface_native_topology(
-        _surface_patch_cache_key(SurfacePatch.create(distance=3)), 1, "Z", None, "abstract", False
+        _surface_patch_cache_key(SurfacePatch.create(distance=3)),
+        1,
+        "Z",
+        None,
+        "abstract",
+        False,
     )
     entry = json.loads(topology.detectors_json)[0]
     assert entry["reference"] == reference

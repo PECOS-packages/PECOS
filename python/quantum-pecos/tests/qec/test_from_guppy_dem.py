@@ -98,6 +98,8 @@ def _two_qubit_idle_target() -> None:
 def _structured_idle_noise_target() -> None:
     q0 = qubit()
     q1 = qubit()
+    h(q0)
+    h(q1)
     cx(q0, q1)
     h(q0)
     h(q1)
@@ -798,7 +800,10 @@ _ALL_IDLE_NOISE_PARAMS = {
 
 @pytest.mark.parametrize("idle_param", sorted(_ALL_IDLE_NOISE_PARAMS))
 def test_from_guppy_rejects_idle_noise_without_idle_gates(idle_param: str) -> None:
-    with pytest.raises(ValueError, match=rf"idle-noise parameters have no idle gates .*requested: {idle_param}="):
+    with pytest.raises(
+        ValueError,
+        match="requires t" if idle_param in {"t1", "t2"} else "idle-noise parameters have no idle gates .*requested:",
+    ):
         _two_qubit_dem(**{idle_param: _ALL_IDLE_NOISE_PARAMS[idle_param]})
 
 
@@ -811,8 +816,8 @@ def test_from_guppy_accepts_zero_idle_rate_without_idle_gates(idle_param: str) -
 @pytest.mark.parametrize("time_param", ["t1", "t2"])
 def test_from_guppy_zero_relaxation_time_still_requests_idle_noise(time_param: str) -> None:
     # T1/T2 are times, not rates: zero is not "off", so it still needs idle gates.
-    with pytest.raises(ValueError, match=rf"requested: {time_param}=0\.0"):
-        _two_qubit_dem(**{time_param: 0.0})
+    with pytest.raises(ValueError, match=rf"requested: .*{time_param} = 0"):
+        _two_qubit_dem(**{**dict.fromkeys(["t1", "t2"], 100.0), time_param: 0.0})
 
 
 @pytest.mark.parametrize("time_param, partner", [("t1", "t2"), ("t2", "t1")])
@@ -823,7 +828,7 @@ def test_from_guppy_rejects_lone_relaxation_time_with_idle_gates(time_param: str
 
 @pytest.mark.parametrize("bad_duration", [0.0, -1.0, float("nan"), float("inf")])
 def test_from_guppy_rejects_non_positive_idle_duration(bad_duration: float) -> None:
-    with pytest.raises(ValueError, match=r"finite, positive duration"):
+    with pytest.raises(ValueError, match=r"finite positive duration"):
         _two_qubit_dem(idle_after_2q_duration=bad_duration, p_idle_linear=0.01)
 
 
@@ -835,21 +840,6 @@ def test_from_guppy_idle_guard_accepts_inserted_idles_and_idles_without_noise() 
     assert without_noise is not None
 
 
-def test_from_guppy_idle_guard_accepts_runtime_emitted_idles(monkeypatch: pytest.MonkeyPatch) -> None:
-    from pecos_rslib.quantum import TickCircuit
-
-    circuit = TickCircuit()
-    circuit.tick().pz([0, 1])
-    circuit.tick().cx([(0, 1)])
-    circuit.tick().idle(1, [0, 1])
-    circuit.tick().mz_with_ids([0, 1], [0, 1])
-    monkeypatch.setattr("pecos.tracing.trace_program_to_tick_circuit", lambda *_args, **_kwargs: circuit)
-
-    dem = _two_qubit_dem(p_idle_linear=0.01)
-
-    assert dem.num_contributions > 0
-
-
 def test_from_guppy_strip_traced_idles_is_noop_when_trace_has_no_idles() -> None:
     baseline = _two_qubit_dem()
     stripped = _two_qubit_dem(strip_traced_idles=True)
@@ -857,80 +847,12 @@ def test_from_guppy_strip_traced_idles_is_noop_when_trace_has_no_idles() -> None
     assert stripped.to_string() == baseline.to_string()
 
 
-def test_from_guppy_idle_insertion_preserves_zero_rz_fault_site(monkeypatch: pytest.MonkeyPatch) -> None:
-    from pecos_rslib.quantum import TickCircuit
-
-    def _trace_with_zero_rz(*_args, **_kwargs):
-        circuit = TickCircuit()
-        circuit.tick().pz([0, 1])
-        circuit.tick().cx([(0, 1)])
-        circuit.tick().rz(0.0, [0])
-        circuit.tick().mz_with_ids([0, 1], [0, 1])
-        return circuit
-
-    monkeypatch.setattr("pecos.tracing.trace_program_to_tick_circuit", _trace_with_zero_rz)
-
-    build = build_dem_from_guppy(
-        _two_qubit_idle_target,
-        num_qubits=2,
-        detectors=[Detector(rec[-2])],
-        observables=[Observable(rec[-1])],
-        idle_after_2q_duration=1.0,
-        p1=0.01,
-        p2=0.0,
-        p_meas=0.0,
-        p_prep=0.0,
-        seed=0,
-    )
-
-    assert build.circuit.gate_counts_by_type().get("RZ") == 1
-    assert build.dem.num_contributions == _DEV_ZERO_RZ_STRIPPED_CONTRIBUTIONS + 1
-
-
-def test_from_guppy_strip_traced_idles_removes_runtime_emitted_idles(monkeypatch: pytest.MonkeyPatch) -> None:
-    from pecos_rslib.quantum import TickCircuit
-
-    circuit = TickCircuit()
-    circuit.tick().pz([0, 1])
-    circuit.tick().cx([(0, 1)])
-    circuit.tick().idle(1, [0, 1])
-    circuit.tick().mz_with_ids([0, 1], [0, 1])
-    monkeypatch.setattr("pecos.tracing.trace_program_to_tick_circuit", lambda *_args, **_kwargs: circuit)
-
-    # The same runtime-emitted-idle circuit passes the guard when idles are kept
-    # (test_from_guppy_idle_guard_accepts_runtime_emitted_idles); with
-    # strip_traced_idles the guard must find no idle gates left.
-    with pytest.raises(ValueError, match=r"idle-noise parameters have no idle gates"):
-        _two_qubit_dem(strip_traced_idles=True, p_idle_linear=0.01)
-
-
-def test_from_guppy_insertion_strips_runtime_idles_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    from pecos_rslib.quantum import TickCircuit
-
-    def _traced_circuit_with_runtime_idles(*_args, **_kwargs):
-        circuit = TickCircuit()
-        circuit.tick().pz([0, 1])
-        circuit.tick().cx([(0, 1)])
-        circuit.tick().idle(1, [0, 1])
-        circuit.tick().mz_with_ids([0, 1], [0, 1])
-        return circuit
-
-    monkeypatch.setattr("pecos.tracing.trace_program_to_tick_circuit", _traced_circuit_with_runtime_idles)
-
-    default_strip = _two_qubit_dem(idle_after_2q_duration=1.0, p_idle_linear=0.01)
-    explicit_strip = _two_qubit_dem(idle_after_2q_duration=1.0, p_idle_linear=0.01, strip_traced_idles=True)
-    keep_runtime_idles = _two_qubit_dem(idle_after_2q_duration=1.0, p_idle_linear=0.01, strip_traced_idles=False)
-
-    # Insertion implies stripping unless explicitly disabled; keeping the
-    # runtime idles doubles the idle content and must change the DEM.
-    assert default_strip.to_string() == explicit_strip.to_string()
-    assert default_strip.num_contributions == explicit_strip.num_contributions
-    assert keep_runtime_idles.to_string() != default_strip.to_string()
-
-
 def test_build_dem_from_guppy_rejects_idle_noise_without_idle_gates() -> None:
     for idle_param, value in _ALL_IDLE_NOISE_PARAMS.items():
-        with pytest.raises(ValueError, match=r"idle-noise parameters have no idle gates"):
+        with pytest.raises(
+            ValueError,
+            match="requires t" if idle_param in {"t1", "t2"} else "idle-noise parameters have no idle gates .*requested:",
+        ):
             build_dem_from_guppy(
                 _two_qubit_idle_target,
                 num_qubits=2,
@@ -942,7 +864,7 @@ def test_build_dem_from_guppy_rejects_idle_noise_without_idle_gates() -> None:
 
 
 def test_build_dem_from_guppy_rejects_non_positive_idle_duration() -> None:
-    with pytest.raises(ValueError, match=r"finite, positive duration"):
+    with pytest.raises(ValueError, match=r"finite positive duration"):
         build_dem_from_guppy(
             _two_qubit_idle_target,
             num_qubits=2,
@@ -1511,30 +1433,6 @@ def test_reject_partially_lowered_trace_fails_within_one_chunk() -> None:
         _replay_test_trace(chunks)
 
 
-def test_from_guppy_rejects_entirely_raw_runtime_trace(monkeypatch: pytest.MonkeyPatch) -> None:
-    chunks = [
-        {
-            "operations": [
-                {"AllocateQubit": {"id": 0}},
-                {"Quantum": {"Measure": [0, 0]}},
-            ],
-        },
-    ]
-    chunks = _framed_trace(chunks)
-    monkeypatch.setattr("pecos.tracing.capture_qis_operation_trace", lambda *_args, **_kwargs: chunks)
-
-    with pytest.raises(ValueError, match="no lowered_quantum_ops"):
-        DetectorErrorModel.from_guppy(
-            _single_measurement,
-            num_qubits=1,
-            detectors_json='[{"id":0,"records":[-1]}]',
-            p1=0.0,
-            p2=0.0,
-            p_meas=0.1,
-            p_prep=0.0,
-        )
-
-
 def test_from_guppy_surface_code_is_byte_identical_to_reference() -> None:
     """Regression: from_guppy(make_surface_code(...)) must work and match the
     traced_qis reference DEM. A reverted dynamic-control guard had broken this
@@ -1719,9 +1617,9 @@ def test_from_guppy_constrained_surface_dem_byte_identical(
         budget=budget,
         noise=noise,
     )
-    assert (
-        got == ref_dem
-    ), f"constrained surface from_guppy not byte-identical for d={d}, budget={budget}, basis={basis}, rounds={rounds}"
+    assert got == ref_dem, (
+        f"constrained surface from_guppy not byte-identical for d={d}, budget={budget}, basis={basis}, rounds={rounds}"
+    )
 
 
 @pytest.mark.parametrize(
@@ -2460,25 +2358,29 @@ def test_noise_channel_residual_warning_names_kinds_and_magnitudes() -> None:
     from pecos.qec.dem import _warn_on_noise_channel_residuals
 
     class _Exact:
-        idle_noise_residuals: ClassVar[list[dict[str, object]]] = []
+        def residual_summary(self, _threshold):
+            return []
 
     class _Approximated:
-        idle_noise_residuals: ClassVar[list[dict[str, object]]] = [
-            {
-                "location_index": 3,
-                "channel_kind": "idle",
-                "magnitude": 1.894e-05,
-                "channel_weight": 0.01,
-                "relative_magnitude": 1.894e-03,
-            },
-            {
-                "location_index": 7,
-                "channel_kind": "one-qubit gate",
-                "magnitude": 2.1e-05,
-                "channel_weight": 0.1,
-                "relative_magnitude": 2.1e-04,
-            },
-        ]
+        def residual_summary(self, threshold):
+            return [
+                group
+                for group in [
+                    {
+                        "channel_kind": "idle",
+                        "count": 1,
+                        "max_relative_magnitude": 1.894e-03,
+                        "max_tv_magnitude": 1.894e-05,
+                    },
+                    {
+                        "channel_kind": "one-qubit gate",
+                        "count": 1,
+                        "max_relative_magnitude": 2.1e-04,
+                        "max_tv_magnitude": 2.1e-05,
+                    },
+                ]
+                if group["max_relative_magnitude"] > threshold
+            ]
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")

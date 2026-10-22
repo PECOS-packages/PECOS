@@ -100,8 +100,8 @@ def test_infers_computed_detector_and_observable_parities_and_builds_dem() -> No
     assert inferred.observable_labels == (("obs", 0),)
     assert inferred.raw_binding == "assumed_canonical_result_order"
     assert json.loads(inferred.detectors_json) == [
-        {"id": 0, "meas_ids": [0, 1], "inferred_from_result_tag": "DETECTOR"},
-        {"id": 1, "meas_ids": [1, 2], "inferred_from_result_tag": "DETECTOR"},
+        {"id": 0, "meas_ids": [0, 1], "inferred_from_result_tag": "DETECTOR", "reference": 0},
+        {"id": 1, "meas_ids": [1, 2], "inferred_from_result_tag": "DETECTOR", "reference": 0},
     ]
 
     dem = inferred.build_dem(p1=0.0, p2=0.0, p_meas=0.1, p_prep=0.0)
@@ -286,3 +286,42 @@ def test_list_shaped_and_one_shot_output_selectors(shape: Callable[[list[list[ob
     assert inferred.observable_labels == (("bits", 1),)
     assert inferred.schedule_validation == "empirical_trace_comparison"
     assert inferred.circuit.get_meta("dem_schedule_validation") == "empirical_trace_comparison"
+
+
+@pytest.mark.parametrize("carrier", ["bytes", "bytearray", "hugr", "guppy"])
+def test_pure_inference_compiles_every_hugr_carrier(carrier: str) -> None:
+    from pecos import Guppy, Hugr
+
+    wrapper = Guppy(_computed_parity_outputs)
+    envelope = wrapper.hugr_bytes
+    program = {"bytes": envelope, "bytearray": bytearray(envelope), "hugr": Hugr(envelope), "guppy": wrapper}[carrier]
+    inferred = infer_guppy_dem_annotations(program, num_qubits=3, seed=7)
+    assert inferred.detector_supports == ((0, 1), (1, 2))
+    assert inferred.observable_supports == ((0, 2),)
+    assert inferred.build_dem().num_detectors == 2
+
+
+def test_inference_rebuilds_share_schema_and_ignore_snapshot_mutation() -> None:
+    import inspect
+
+    from pecos.qec import DetectorErrorModel
+
+    inferred = infer_guppy_dem_annotations(_computed_parity_outputs, num_qubits=3, seed=7)
+    snapshot = inferred.circuit
+    fingerprint = snapshot.get_meta("dem_schema_fingerprint")
+    metadata = inferred.detectors_json, inferred.observables_json
+    options = {
+        name: parameter.default
+        for name, parameter in inspect.signature(DetectorErrorModel.from_circuit).parameters.items()
+        if name != "circuit"
+    }
+    options.update(p_meas=0.02, p1_gate_rates={}, p2_gate_rates={}, p_meas_crosstalk_local=0.0)
+    expected = DetectorErrorModel.from_circuit(snapshot, **options).to_string()
+    first = inferred.build_dem(**options).to_string()
+    assert first == expected
+    snapshot.clear()
+    snapshot.set_meta("detectors", "[]")
+    assert inferred.build_dem(**options).to_string() == first
+    assert inferred.build_dem(**(options | {"p_meas": 0.2})).to_string() != first
+    assert inferred.circuit.get_meta("dem_schema_fingerprint") == fingerprint
+    assert (inferred.detectors_json, inferred.observables_json) == metadata

@@ -14,9 +14,9 @@ from pecos._traced_circuit import normalize_traced_tick_circuit
 from pecos.qec import DemInferenceSettings, Detector, Observable, rec, result_ref
 from pecos_rslib.qec import DetectorErrorModel
 
-from ._guppy_dem_rust import circuit_gates, prepare
-from .test_dem_inference_builder import _inferred_program
-from .test_from_guppy_dem import _single_measurement
+from qec._guppy_dem_rust import circuit_gates, prepare
+from qec.test_dem_inference_builder import _inferred_program
+from qec.test_from_guppy_dem import _single_measurement
 
 
 @guppy
@@ -102,7 +102,11 @@ def test_circuit_snapshots_are_detached_and_failure_does_not_poison_preparation(
 )
 def test_noise_forwarding_matches_from_circuit(noise) -> None:
     prepared = prepare(
-        _idle_phase_readout, 2, detectors=[Detector(rec[-2])], observables=[Observable(rec[-1])], idle_after_2q=1.0
+        _idle_phase_readout,
+        2,
+        detectors=[Detector(rec[-2])],
+        observables=[Observable(rec[-1])],
+        idle_after_2q=1.0,
     )
     if "p1_gate_rates" in noise:
         counts = prepared.circuit.gate_counts_by_type()
@@ -112,7 +116,8 @@ def test_noise_forwarding_matches_from_circuit(noise) -> None:
             if gate.gate_type.name in {"H", "SZ", "SZdg", "SX", "SXdg", "SY", "SYdg", "X", "Y", "Z"}
         )
         two = next(gate.gate_type.name for _, gate in prepared.circuit.gate_batches() if gate.is_two_qubit())
-        assert one in counts and two in counts
+        assert one in counts
+        assert two in counts
         noise = {"p1_gate_rates": {one: 0.02}, "p2_gate_rates": {two: 0.03}}
     actual = prepared.build_dem(**noise)
     expected = DetectorErrorModel.from_circuit(prepared.circuit, **noise)
@@ -142,7 +147,10 @@ def test_noise_forwarding_matches_from_circuit(noise) -> None:
 
 def test_reference_one_through_every_evaluator_and_raw_variant() -> None:
     prepared = prepare(
-        _reference_one, 1, detectors=[Detector(result_ref("one"))], observables=[Observable("one", id=70)]
+        _reference_one,
+        1,
+        detectors=[Detector(result_ref("one"))],
+        observables=[Observable("one", id=70)],
     )
     assert prepared.detectors[0]["reference"] == prepared.observables[0]["reference"] == 1
     for schema in (prepared, prepared.build_dem().prepared):
@@ -189,7 +197,8 @@ def test_num_measurements_constraints() -> None:
 
 def test_normalization_preserves_context_and_forwards_the_pass_option() -> None:
     with pytest.raises(
-        TypeError, match=r"binding test: expected a TickCircuit with callable normalize_traced_tick_circuit\(\)"
+        TypeError,
+        match=r"binding test: expected a TickCircuit with callable normalize_traced_tick_circuit\(\)",
     ):
         normalize_traced_tick_circuit(object(), context="binding test")
     from pecos_rslib.quantum import TickCircuit
@@ -211,10 +220,10 @@ def test_converted_measurement_id_records_preserve_metadata() -> None:
     from pecos_rslib import Qis
     from pecos_rslib.qec import _prepare_guppy_dem, _SeleneRuntimeSpec
 
-    _, analysis = _preflight_guppy_static_schedule(_single_measurement, required_tags=[])
+    _, analysis, _ = _preflight_guppy_static_schedule(_single_measurement, required_tags=[])
     runtime = _configure_selene_runtime(_SeleneRuntimeSpec(), None)
     arguments = (Qis(analysis.qis), 1, 0, runtime)
-    detector = (None, [0], None, None, [1.0, 2.0, 3.0], '{"label":"readout","note":"α"}')
+    detector = (None, [0], None, None, [1.0, 2.0, 3.0], '{"label":"readout","note":"\u03b1"}')
     observable = (70, [0], None, None, None, "{}")
     prepared = _prepare_guppy_dem(
         *arguments,
@@ -233,7 +242,9 @@ def test_converted_measurement_id_records_preserve_metadata() -> None:
         },
     ]
     assert prepared.observables == [{"id": 70, "measurements": [0], "reference": 0, "label": None}]
-    assert json.loads(prepared.circuit.get_meta("detectors"))[0]["note"] == "α"
+    assert prepared.detectors_json == prepared.circuit.get_meta("detectors")
+    assert prepared.observables_json == prepared.circuit.get_meta("observables")
+    assert json.loads(prepared.detectors_json)[0]["note"] == "\u03b1"
     with pytest.raises(ValueError, match="exactly one source"):
         _prepare_guppy_dem(*arguments, detectors=[(None, [0], [1], None, None, "{}")])
     with pytest.raises(ValueError, match="may only be supplied once"):

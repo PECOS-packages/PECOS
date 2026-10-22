@@ -567,3 +567,35 @@ fn custom_adapter_missing_static_evidence_has_source_neutral_guidance() {
         "DEM program requires static schedule evidence; the adapter must report a nonempty static schedule source before execution"
     );
 }
+
+#[test]
+fn json_result_tags_count_guard_runs_through_preparation() {
+    for count in [1, 2, 3] {
+        let mut input = input(true);
+        // No runtime tags: optional compiler enrichment skips its count check.
+        // JSON result_tags must still enforce the independent resolution guard.
+        input.result_traces.clear();
+        input
+            .result_tag_analysis
+            .as_mut()
+            .unwrap()
+            .as_mut()
+            .unwrap()
+            .1 = count;
+        let (builder, calls) = builder(input);
+        let result = builder
+            .with_detectors_json(r#"[{"id":0,"result_tags":["m"]}]"#)
+            .prepare();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        if count == 2 {
+            assert!(result.is_ok());
+        } else {
+            assert_eq!(
+                result.err().unwrap().to_string(),
+                format!(
+                    "DEM builder parse error: Cannot bind result_tags: the certified lowered program has {count} measurement(s) but the traced program emitted 2 measurement(s)."
+                )
+            );
+        }
+    }
+}

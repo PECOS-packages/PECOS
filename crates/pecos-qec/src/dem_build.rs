@@ -943,6 +943,16 @@ impl DemBuildBuilder {
             DefinitionError::Parse { .. } => DemBuildError::Configuration(error.to_string()),
             _ => DemBuildError::Definitions(error),
         })?;
+        circuit.set_meta(
+            "num_measurements",
+            Attribute::String(measurement_ids.len().to_string()),
+        );
+        if needs_inference {
+            circuit.set_meta(
+                "guppy_dem_annotation_method",
+                Attribute::String("coin_toss_affine_inference_v2".into()),
+            );
+        }
         let detector_ids: Vec<_> = definitions
             .detectors
             .iter()

@@ -216,6 +216,22 @@ crate::dem_noise_bindings::dem_noise_methods! {
         }
 
         #[getter]
+        fn detectors_json(&self) -> Option<&str> {
+            match self.inner.circuit().get_meta("detectors") {
+                Some(pecos_quantum::Attribute::String(value)) => Some(value.as_str()),
+                _ => None,
+            }
+        }
+
+        #[getter]
+        fn observables_json(&self) -> Option<&str> {
+            match self.inner.circuit().get_meta("observables") {
+                Some(pecos_quantum::Attribute::String(value)) => Some(value.as_str()),
+                _ => None,
+            }
+        }
+
+        #[getter]
         fn detectors(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
             definition_values(py, self.inner.definitions(), "detectors")
         }

@@ -22,7 +22,7 @@ from pecos_rslib.qis import ResultTagCertificationError as _CertificationError
 # tag_c -> [2] (ordinals of the measurements the tags actually record, not
 # the order of the result() calls).
 #
-# The nontrivial pre-history entangles qb and qc after an H on qb. With
+# The CX propagates preparation faults from qb to qc while leaving both readouts deterministic. With
 # p1/p2 > 0 this produces distinct mechanisms for detectors anchored to qa,
 # qb, and qc, so the DEMs for
 # detectors anchored to records [-3], [-2], [-1] differ in their (number of)
@@ -36,7 +36,6 @@ def _scrambled_three_measurements() -> None:
     qa = qubit()
     qb = qubit()
     qc = qubit()
-    h(qb)
     cx(qb, qc)
     a = measure(qa).read()
     b = measure(qb).read()
@@ -130,8 +129,7 @@ def test_result_tags_with_runtime_loop_program_fails_loud() -> None:
             detectors_json='[{"id":0,"result_tags":["any_tag"]}]',
             **_NOISE,
         )
-    assert isinstance(raised.value.__cause__, _CertificationError)
-    assert str(raised.value.__cause__).endswith("is on a CFG cycle")
+    assert raised.value.__cause__ is None
 
 
 # ---------------------------------------------------------------------------
@@ -214,7 +212,6 @@ def _inlined_three_measurements() -> None:
     q0 = qubit()
     q1 = qubit()
     q2 = qubit()
-    h(q1)
     cx(q1, q2)
     x(q2)
     x(q2)

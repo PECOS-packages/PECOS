@@ -67,12 +67,12 @@ def test_zero_local_faults_preserve_seeded_idle_output(tmp_path, scheduled_suppo
     assert actual.run(32).to_dict() == expected.run(32).to_dict()
 
 
-@pytest.mark.parametrize("parameter", ["p1", "p2", "prep", "meas0", "meas1", "prep_leak_ratio"])
+@pytest.mark.parametrize("parameter", ["p1", "p2", "prep", "meas0", "meas1", "prep_leak_ratio", "prep_crosstalk"])
 @pytest.mark.parametrize("value", [-0.1, 1.1, math.inf, math.nan])
 def test_invalid_probability(parameter, value):
     import pecos_rslib as pr
 
-    with pytest.raises(ValueError, match=r"probabilities|leakage ratio"):
+    with pytest.raises(ValueError, match=r"probabilities|leakage ratio|crosstalk probability"):
         pr.scheduled_local_noise(pr.scheduled_idle_noise(1), **{parameter: value})
 
 
@@ -479,3 +479,67 @@ def test_invalid_emission_distribution_is_rejected_when_disabled(parameter, dist
 
     with pytest.raises(ValueError, match="Sampler"):
         pr.scheduled_local_noise(pr.scheduled_idle_noise(2), **{parameter: distribution})
+
+
+@pytest.mark.parametrize("events", [False, True])
+@pytest.mark.parametrize("coalesce", [False, True])
+@pytest.mark.parametrize("probability", [0.0, 1.0])
+def test_preparation_crosstalk_dephases_spectator_and_preserves_live_feedback(
+    tmp_path,
+    scheduled_support,
+    events,
+    coalesce,
+    probability,
+):
+    import pecos_rslib as pr
+
+    library, _ = scheduled_support.build_runtime(tmp_path, 0, coalesce_queued=coalesce)
+    program = """
+declare i64 @___qalloc()
+declare void @___qfree(i64)
+declare i64 @___lazy_measure(i64)
+declare void @___reset(i64)
+declare i1 @___read_future_bool(i64)
+declare void @___rxy(i64, double, double)
+declare void @setup(i64)
+declare i64 @teardown()
+define i64 @qmain(i64 %arg) #0 {
+  call void @setup(i64 %arg)
+  %q = call i64 @___qalloc()
+  %a = call i64 @___qalloc()
+  call void @___reset(i64 %q)
+  call void @___rxy(i64 %q, double 0x3FF921FB54442D18, double 0.0)
+  call void @___reset(i64 %a)
+  call void @___rxy(i64 %q, double 0xBFF921FB54442D18, double 0.0)
+  %first = call i64 @___lazy_measure(i64 %q)
+  %value = call i1 @___read_future_bool(i64 %first)
+  br i1 %value, label %flip, label %done
+flip:
+  call void @___rxy(i64 %q, double 0x400921FB54442D18, double 0.0)
+  br label %done
+done:
+  %second = call i64 @___lazy_measure(i64 %q)
+  %target = call i64 @___lazy_measure(i64 %a)
+  call void @___qfree(i64 %q)
+  call void @___qfree(i64 %a)
+  %end = call i64 @teardown()
+  ret i64 %end
+}
+attributes #0 = { "EntryPoint" }
+"""
+    profile = pr.scheduled_local_noise(pr.scheduled_idle_noise(2), prep_crosstalk=probability)
+    # Converting the local profile into an explicit-exposure profile must retain
+    # preparation crosstalk even though no measurement exposures are requested.
+    profile = pr.scheduled_measurement_crosstalk(
+        profile,
+        {"0->1": 1.0, "1->0": 1.0},
+        local_probability=0.0,
+        global_probability=0.0,
+    )
+    built = simulation(library, program, profile, events, idle_only=True, qubits=2).build()
+    for _ in range(2):
+        data = built.run(64).to_dict()
+        assert set(data) == {"measurement_0", "measurement_1", "measurement_2"}
+        assert set(data["measurement_0"]) == ({0} if probability == 0.0 else {0, 1})
+        assert data["measurement_1"] == [0] * 64  # The live branch corrects the first readout.
+        assert data["measurement_2"] == [0] * 64  # Preparation target stays reset.

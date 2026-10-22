@@ -725,3 +725,33 @@ fn failed_shot_end_poisons_the_explicit_owner() {
     );
     assert!(model.shot_start(1, 1).is_err());
 }
+
+#[test]
+fn explicit_measurement_placements_do_not_disable_preparation_crosstalk() {
+    for (probability, expected_spectators) in [(0.0, 0), (1.0, 1)] {
+        let cfg = config(&format!(
+            r#"{{"preparation":{{"crosstalk_probability":{probability}}}}}"#
+        ));
+        let (mut model, mut simulator) = setup(&cfg);
+        simulator.received.clear();
+        let result = model
+            .handle_operations(
+                runtime_batch(vec![Operation::Reset { qubit_id: 0 }, measure(0, 97)], 1, 1),
+                &[], // No measurement exposures; preparation noise still applies.
+                &mut simulator,
+            )
+            .unwrap();
+        assert_eq!(result.bool_results.len(), 1);
+        assert_eq!(result.bool_results[0].result_id, 97);
+        assert!(!result.bool_results[0].value);
+        assert!(result.u64_results.is_empty());
+        let spectators = simulator
+            .received
+            .iter()
+            .flatten()
+            .filter(|op| matches!(op, Operation::Measure { qubit_id: 1, .. }))
+            .count();
+        assert_eq!(spectators, expected_spectators);
+        model.shot_end().unwrap();
+    }
+}

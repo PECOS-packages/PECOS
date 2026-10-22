@@ -4461,6 +4461,7 @@ def scheduled_local_noise(
     meas0: float = 0.0,
     meas1: float = 0.0,
     prep_leak_ratio: float = 0.0,
+    prep_crosstalk: float = 0.0,
     p2_pauli_model: dict[str, float] | None = None,
     p2_angle_params: tuple[float, float, float, float] | None = None,
     p2_angle_power: float | None = None,
@@ -4473,6 +4474,9 @@ def scheduled_local_noise(
 ) -> ScheduledLocalNoise:
     """Configure preparation leakage and optional ordered two-qubit Pauli weights.
 
+    prep_crosstalk collapses each other prepared qubit in Z on preparation,
+    independently of prep. Internal results are discarded, and spectators retain
+    their original whole idle intervals. Defaults to zero.
     prep_leak_ratio is conditional on a preparation fault. p2_pauli_model maps
     nonidentity I/X/Y/Z pairs to finite nonnegative weights summing to one.
     Optional angle coefficients (a, b, c, d) and a positive exponent scale p2

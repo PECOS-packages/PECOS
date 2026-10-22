@@ -54,7 +54,8 @@ pub struct CrosstalkPlacement {
 ///
 /// A downstream plugin interprets its runtime events and calls this owner once per
 /// original batch, preserving timing, operation order and measurement IDs. An empty
-/// exposure list explicitly means no exposure. This type deliberately does not
+/// exposure list explicitly means no measurement-crosstalk exposure; preparation
+/// crosstalk still follows the configured general model. This type deliberately does not
 /// implement `ErrorModelInterface`: a wrapper must supply placements rather than
 /// accidentally using automatic crosstalk. Parameters use the ordinary
 /// `GeneralNoiseConfig`; local groups and custom-event interpretation are absent.

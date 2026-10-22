@@ -140,7 +140,7 @@ The v7 [event adapter](scheduled-event-adapters.md) can use the same profile via
 ## Local gate, preparation and readout faults
 
 `scheduled_local_noise(idle, *, p1=0, p2=0, prep=0, meas0=0, meas1=0,
-prep_leak_ratio=0, p2_pauli_model=None, p2_angle_params=None, p2_angle_power=None,
+prep_leak_ratio=0, prep_crosstalk=0, p2_pauli_model=None, p2_angle_params=None, p2_angle_power=None,
 p1_emission_ratio=0, p1_emission_model=None, p1_seepage_prob=0,
 p2_emission_ratio=0, p2_emission_model=None, p2_seepage_prob=0)`
 adds a checked subset of
@@ -211,7 +211,21 @@ must expose that operation to model its fault. No hidden preparation is inserted
 
 All probabilities and ratios must be finite and in [0, 1], even when their
 associated fault probability is zero. These are event probabilities, not average gate infidelities.
-Other custom fault maps, transition hooks, preparation crosstalk, repumping and
+
+`prep_crosstalk` is the probability that a preparation collapses each other
+prepared qubit in Z, using the existing `GeneralNoiseModel` behavior. It is
+independent of `prep` and defaults to zero. The internal measurements are consumed
+by the noise/quantum exchange and never become program readouts. This channel
+preserves leakage flags; it does not apply the measurement-crosstalk transition
+map. Only qubits prepared in the current shot are eligible.
+
+A spectator's collapse does not make it physically busy or close its idle gap.
+The next physical operation still receives the whole runtime-supplied gap,
+including nonlinear idle channels. To observe this effect, prepare the spectator
+in a superposition and measure its coherence after resetting another qubit;
+computational-basis inputs alone cannot reveal the dephasing.
+
+Other custom fault maps, transition hooks, repumping and
 automatic post-two-qubit idle injection are not configurable. Measurement
 crosstalk requires the explicit v7
 [profile wrapper and typed exposures](scheduled-event-adapters.md#measurement-crosstalk-exposures). Unsupported Python keywords raise rather than being silently ignored.
@@ -229,6 +243,7 @@ local = pr.scheduled_local_noise(
     p2_pauli_model={"IX": 0.25, "XI": 0.75},
     prep=0.03,
     prep_leak_ratio=0.5,
+    prep_crosstalk=0.02,
     meas0=0.04,
     meas1=0.05,
 )
@@ -243,10 +258,11 @@ Use `local` as `.noise(local)` with v6, or
 invented examples. Rust exposes `ScheduledLocalNoise::new(idle, p1, p2, prep,
 meas0, meas1)` and `ScheduledEventNoise::new(local, factory)`. Unlike Python, the
 Rust constructor accepts a carrier that already contains local faults: it replaces
-all five local probabilities, resets the preparation leakage ratio to zero and
+all five local probabilities, resets preparation leakage and crosstalk to zero, and
 restores uniform two-qubit faults and constant angle scaling while preserving
 idle configuration.
-Opt into preparation leakage with `.with_prep_leak_ratio(ratio)?` and select an
+Opt into preparation crosstalk with `.with_prep_crosstalk(probability)?`,
+preparation leakage with `.with_prep_leak_ratio(ratio)?`, and select an
 ordered Pauli map with `.with_p2_pauli_model(distribution)?`. Each setter replaces
 only its own setting. Rust also exposes `.with_p2_angle_params(a, b, c, d)?`
 and `.with_p2_angle_power(power)?`. Conversion to `ScheduledNoise` preserves all

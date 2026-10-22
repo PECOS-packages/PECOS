@@ -94,6 +94,7 @@ struct LocalFaults {
     p2: f64,
     prep: f64,
     prep_leak_ratio: f64,
+    prep_crosstalk: f64,
     p2_pauli_model: Option<BTreeMap<String, f64>>,
     p2_angle_params: Option<(f64, f64, f64, f64)>,
     p2_angle_power: Option<f64>,
@@ -109,8 +110,8 @@ struct LocalFaults {
 impl ScheduledLocalNoise {
     /// Set local fault probabilities while preserving the supplied idle channels.
     /// Replaces all existing local fault probabilities if the profile already has them,
-    /// including resetting preparation leakage to zero, two-qubit faults to uniform,
-    /// two-qubit angle scaling to its constant-rate defaults, and all gate emission
+    /// including resetting preparation leakage and crosstalk to zero, two-qubit faults
+    /// to uniform, two-qubit angle scaling to its constant-rate defaults, and all gate emission
     /// and seepage settings to their disabled/default values.
     /// # Errors
     /// Every probability must be finite and in [0, 1].
@@ -137,6 +138,7 @@ impl ScheduledLocalNoise {
                 p2,
                 prep,
                 prep_leak_ratio: 0.0,
+                prep_crosstalk: 0.0,
                 p2_pauli_model: None,
                 p2_angle_params: None,
                 p2_angle_power: None,
@@ -150,6 +152,21 @@ impl ScheduledLocalNoise {
                 meas1,
             },
         })
+    }
+    /// Set the probability that each other prepared qubit is collapsed in Z on PZ.
+    /// Uses the general model's preparation crosstalk, independently of `prep`.
+    /// Internal measurement results are discarded. This does not give spectators
+    /// physical occupancy or split their pending idle intervals.
+    /// # Errors
+    /// Rejects nonfinite probabilities or values outside [0, 1], even when prep is zero.
+    pub fn with_prep_crosstalk(mut self, probability: f64) -> Result<Self, PecosError> {
+        if !probability.is_finite() || !(0.0..=1.0).contains(&probability) {
+            return Err(error(
+                "scheduled preparation crosstalk probability must be finite and in [0, 1]",
+            ));
+        }
+        self.local.prep_crosstalk = probability;
+        Ok(self)
     }
     /// Set the fraction of single-qubit faults that select spontaneous emission.
     /// Emission replaces the ideal gate. For an already leaked operand, it attempts
@@ -304,6 +321,7 @@ impl LocalFaults {
             .with_p2(self.p2)
             .with_p_prep(self.prep)
             .with_prep_leak_ratio(self.prep_leak_ratio)
+            .with_p_prep_crosstalk(self.prep_crosstalk)
             .with_p_meas_0(self.meas0)
             .with_p_meas_1(self.meas1)
             .with_p1_emission_ratio(self.p1_emission_ratio)

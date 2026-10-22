@@ -326,6 +326,8 @@ fn production_matches_general_controller_for_ordered_exposures() {
     for seed in 0..64 {
         let local =
             ScheduledLocalNoise::new(ScheduledNoise::new(2).unwrap(), 0.2, 0.0, 0.15, 0.3, 0.4)
+                .unwrap()
+                .with_prep_crosstalk(0.4)
                 .unwrap();
         let config = ScheduledNoise::from(local)
             .with_measurement_crosstalk(0.6, 0.6, flips())
@@ -334,6 +336,7 @@ fn production_matches_general_controller_for_ordered_exposures() {
         let model = GeneralNoiseModel::builder()
             .with_p1(0.2)
             .with_p_prep(0.15)
+            .with_p_prep_crosstalk(0.4)
             .with_p_meas_0(0.3)
             .with_p_meas_1(0.4)
             .with_p_meas_crosstalk(0.6)

@@ -412,6 +412,7 @@ fn fluent_circuit_builder_returns_labelled_dem_and_definitions() {
         Attribute::String(r#"[{"id":0,"records":[0]}]"#.into()),
     );
     let build = pecos_qec::DetectorErrorModel::builder()
+        .with_noise(pecos_qec::NoiseConfig::new(0.001, 0.01, 0.001, 0.001))
         .with_circuit(circuit)
         .build()
         .unwrap();

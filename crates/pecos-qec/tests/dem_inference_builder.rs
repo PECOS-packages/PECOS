@@ -90,6 +90,7 @@ fn conflicts_and_bad_ids_fail_before_building() {
     data.raw_measurement_ids[0] = 9;
     assert!(
         DetectorErrorModel::builder()
+            .with_noise(NoiseConfig::new(0.001, 0.01, 0.001, 0.001))
             .with_circuit(circuit())
             .with_inference(DemInferenceSettings::default().with_validation_rows(2))
             .with_inference_data(data)
@@ -116,6 +117,7 @@ impl DemProgram for PreparedProgram {
 #[test]
 fn program_adapter_receives_shared_execution_and_inference_settings() {
     let build = DetectorErrorModel::builder()
+        .with_noise(NoiseConfig::new(0.001, 0.01, 0.001, 0.001))
         .with_program(PreparedProgram)
         .with_qubits(2)
         .with_seed(7)
@@ -129,6 +131,7 @@ fn program_adapter_receives_shared_execution_and_inference_settings() {
 #[test]
 fn result_evaluation_preserves_wide_observable_ids() {
     let build = DetectorErrorModel::builder()
+        .with_noise(NoiseConfig::new(0.001, 0.01, 0.001, 0.001))
         .with_circuit(circuit())
         .with_detectors(vec![vec![0]])
         .with_observables_json(r#"[{"id":70,"meas_ids":[1]}]"#)
@@ -143,6 +146,7 @@ fn mixed_definitions_share_one_schema_and_ignore_unused_probe_roles() {
     // Explicit observables must not inspect or fit these unused values.
     data.observable_rows = vec![vec![99]];
     let build = DetectorErrorModel::builder()
+        .with_noise(NoiseConfig::new(0.001, 0.01, 0.001, 0.001))
         .with_circuit(circuit())
         .with_detector_definitions(vec![
             DemDefinition::explicit(0, vec![0]),
@@ -154,6 +158,7 @@ fn mixed_definitions_share_one_schema_and_ignore_unused_probe_roles() {
         .build()
         .unwrap();
     let explicit = DetectorErrorModel::builder()
+        .with_noise(NoiseConfig::new(0.001, 0.01, 0.001, 0.001))
         .with_circuit(circuit())
         .with_detectors(vec![vec![0], vec![0, 1]])
         .with_observables_json(r#"[{"id":70,"meas_ids":[1]}]"#)
@@ -192,6 +197,7 @@ impl DemProgram for ExplicitProgram {
 #[test]
 fn explicit_program_skips_inference_even_with_settings() {
     let build = DetectorErrorModel::builder()
+        .with_noise(NoiseConfig::new(0.001, 0.01, 0.001, 0.001))
         .with_program(ExplicitProgram)
         .with_qubits(2)
         .with_inference(DemInferenceSettings::default())
@@ -234,6 +240,7 @@ impl DemProgram for SelectiveProgram {
 #[test]
 fn adapter_receives_selected_outputs_and_default_settings() {
     let build = DetectorErrorModel::builder()
+        .with_noise(NoiseConfig::new(0.001, 0.01, 0.001, 0.001))
         .with_program(SelectiveProgram)
         .with_qubits(2)
         .with_detector_definitions(vec![DemDefinition::inferred(0, "selected", 3)])
@@ -247,6 +254,7 @@ fn adapter_receives_selected_outputs_and_default_settings() {
 fn invalid_mixed_definition_ids_fail_before_runtime() {
     assert!(
         DetectorErrorModel::builder()
+            .with_noise(NoiseConfig::new(0.001, 0.01, 0.001, 0.001))
             .with_program(ExplicitProgram)
             .with_qubits(2)
             .with_detector_definitions(vec![
@@ -263,6 +271,7 @@ fn explicit_detector_role_and_inferred_observables_use_only_observable_probes() 
     let mut data = probes();
     data.detector_rows.clear();
     let build = DetectorErrorModel::builder()
+        .with_noise(NoiseConfig::new(0.001, 0.01, 0.001, 0.001))
         .with_circuit(circuit())
         .with_inference(DemInferenceSettings::default().with_validation_rows(2))
         .with_detectors(vec![vec![1]])
@@ -282,6 +291,7 @@ fn explicit_detector_role_and_inferred_observables_use_only_observable_probes() 
 fn selected_probe_widths_and_repeated_role_setters_are_rejected() {
     assert!(
         DetectorErrorModel::builder()
+            .with_noise(NoiseConfig::new(0.001, 0.01, 0.001, 0.001))
             .with_circuit(circuit())
             .with_detectors(vec![vec![0]])
             .with_detector_definitions(vec![DemDefinition::inferred(0, "tag", 0)])
@@ -292,6 +302,7 @@ fn selected_probe_widths_and_repeated_role_setters_are_rejected() {
     data.detector_rows[0].push(1);
     assert!(
         DetectorErrorModel::builder()
+            .with_noise(NoiseConfig::new(0.001, 0.01, 0.001, 0.001))
             .with_circuit(circuit())
             .with_detector_definitions(vec![DemDefinition::inferred(0, "tag", 0)])
             .with_inference(DemInferenceSettings::default().with_validation_rows(2))
@@ -425,6 +436,7 @@ fn invalid_typed_metadata_fails_before_runtime() {
         ] {
             for detectors in [false, true] {
                 let builder = DetectorErrorModel::builder()
+                    .with_noise(NoiseConfig::new(0.001, 0.01, 0.001, 0.001))
                     .with_program(UnexpectedProgram)
                     .with_qubits(2);
                 let definitions = vec![definition.clone().with_metadata(key, 0)];
@@ -442,6 +454,7 @@ fn invalid_typed_metadata_fails_before_runtime() {
         }
         for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
             let result = DetectorErrorModel::builder()
+                .with_noise(NoiseConfig::new(0.001, 0.01, 0.001, 0.001))
                 .with_program(UnexpectedProgram)
                 .with_qubits(2)
                 .with_detector_definitions(vec![definition.clone().with_coords([0.0, value, 0.0])])
@@ -451,6 +464,7 @@ fn invalid_typed_metadata_fails_before_runtime() {
             );
         }
         let result = DetectorErrorModel::builder()
+            .with_noise(NoiseConfig::new(0.001, 0.01, 0.001, 0.001))
             .with_program(UnexpectedProgram)
             .with_qubits(2)
             .with_observable_definitions(vec![definition.with_coords([0.0, 0.0, 0.0])])
@@ -579,7 +593,9 @@ fn sparse_detector_ids_rejected_from_json_and_circuit_metadata() {
         if from_circuit {
             input.set_meta("detectors", pecos_quantum::Attribute::String(json.into()));
         }
-        let builder = DetectorErrorModel::builder().with_circuit(input);
+        let builder = DetectorErrorModel::builder()
+            .with_noise(NoiseConfig::new(0.001, 0.01, 0.001, 0.001))
+            .with_circuit(input);
         let builder = if from_circuit {
             builder
         } else {
@@ -624,7 +640,9 @@ fn existing_definitions_reject_any_builder_role_or_inference() {
             }
         };
         for role in 0..3 {
-            let builder = DetectorErrorModel::builder().with_circuit(input.clone());
+            let builder = DetectorErrorModel::builder()
+                .with_noise(NoiseConfig::new(0.001, 0.01, 0.001, 0.001))
+                .with_circuit(input.clone());
             let builder = match role {
                 0 => builder.with_detectors(vec![vec![0]]),
                 1 => builder.with_observables(vec![vec![0]]),
@@ -637,6 +655,7 @@ fn existing_definitions_reject_any_builder_role_or_inference() {
         }
         assert!(
             DetectorErrorModel::builder()
+                .with_noise(NoiseConfig::new(0.001, 0.01, 0.001, 0.001))
                 .with_circuit(input)
                 .build()
                 .is_ok()
@@ -649,7 +668,9 @@ fn tracked_pauli_is_legal_with_explicit_and_inferred_definitions() {
     for inferred in [false, true] {
         let mut input = circuit();
         input.tracked_pauli("Z".parse::<pecos_core::PauliString>().unwrap());
-        let builder = DetectorErrorModel::builder().with_circuit(input);
+        let builder = DetectorErrorModel::builder()
+            .with_noise(NoiseConfig::new(0.001, 0.01, 0.001, 0.001))
+            .with_circuit(input);
         let builder = if inferred {
             builder
                 .with_inference(DemInferenceSettings::default().with_validation_rows(2))
@@ -690,6 +711,7 @@ fn resolved_selector_counts_must_match_supports() {
     for role in ["detector", "observable"] {
         for count in [0, 2] {
             let error = DetectorErrorModel::builder()
+                .with_noise(NoiseConfig::new(0.001, 0.01, 0.001, 0.001))
                 .with_program(MismatchedSelectors { role, count })
                 .with_qubits(2)
                 .with_inference(DemInferenceSettings::default().with_validation_rows(2))
@@ -710,6 +732,7 @@ fn resolved_selector_counts_must_match_supports() {
 #[test]
 fn supplied_probes_retain_default_column_origins() {
     let build = DetectorErrorModel::builder()
+        .with_noise(NoiseConfig::new(0.001, 0.01, 0.001, 0.001))
         .with_circuit(circuit())
         .with_inference(DemInferenceSettings::default().with_validation_rows(2))
         .with_inference_data(probes())
@@ -721,4 +744,63 @@ fn supplied_probes_retain_default_column_origins() {
             pecos_qec::DemAnnotationOrigin::InferredDefaults { column: 0, .. }
         ));
     }
+}
+
+#[test]
+fn missing_noise_fails_before_preparing_program() {
+    let result = DetectorErrorModel::builder()
+        .with_program(UnexpectedProgram)
+        .with_qubits(2)
+        .build();
+    assert!(matches!(result, Err(DemBuildError::Configuration(message))
+        if message == "supply a noise configuration with with_noise"));
+}
+
+#[test]
+fn origins_are_ordered_by_role_then_id_for_json_and_typed_definitions() {
+    use pecos_qec::DemAnnotationOrigin::Explicit;
+
+    for typed in [false, true] {
+        let builder = DetectorErrorModel::builder()
+            .with_noise(NoiseConfig::new(0.001, 0.01, 0.001, 0.001))
+            .with_circuit(circuit())
+            .with_observable_definitions(vec![
+                DemDefinition::explicit(70, vec![1]),
+                DemDefinition::explicit(2, vec![0]),
+            ]);
+        let builder = if typed {
+            builder.with_detector_definitions(vec![
+                DemDefinition::explicit(1, vec![1]),
+                DemDefinition::explicit(0, vec![0]),
+            ])
+        } else {
+            builder.with_detectors_json(r#"[{"id":1,"meas_ids":[1]},{"id":0,"meas_ids":[0]}]"#)
+        };
+        let build = builder.build().unwrap();
+        let origins: Vec<_> = build
+            .definition_origins
+            .iter()
+            .map(|origin| (origin.role, origin.id, origin.source.clone()))
+            .collect();
+        assert_eq!(
+            origins,
+            vec![
+                ("detector", 0, Explicit),
+                ("detector", 1, Explicit),
+                ("observable", 2, Explicit),
+                ("observable", 70, Explicit),
+            ]
+        );
+    }
+}
+
+#[test]
+fn malformed_json_is_a_configuration_error() {
+    let result = DetectorErrorModel::builder()
+        .with_noise(NoiseConfig::new(0.001, 0.01, 0.001, 0.001))
+        .with_circuit(circuit())
+        .with_detectors_json("not JSON")
+        .with_observables(vec![])
+        .build();
+    assert!(matches!(result, Err(DemBuildError::Configuration(_))));
 }

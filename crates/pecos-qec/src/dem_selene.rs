@@ -30,7 +30,7 @@ use std::sync::Arc;
 enum ProgramSource {
     Qis(Qis),
     #[cfg(feature = "hugr")]
-    Hugr(Vec<u8>),
+    Hugr(Vec<u8>, crate::QSystemPlatform, crate::OptimizationLevel),
 }
 
 /// Built-in runtime adapter for QIS, and (with `hugr`) HUGR envelopes.
@@ -57,12 +57,16 @@ impl SeleneDemProgram {
         }
     }
 
-    /// Compile a HUGR envelope natively, with no Python interpreter.
+    /// Compile a HUGR envelope natively for the chosen platform and optimization level.
     #[cfg(feature = "hugr")]
     #[must_use]
-    pub fn from_hugr(bytes: impl Into<Vec<u8>>) -> Self {
+    pub fn from_hugr(
+        bytes: impl Into<Vec<u8>>,
+        platform: crate::QSystemPlatform,
+        opt_level: crate::OptimizationLevel,
+    ) -> Self {
         Self {
-            source: ProgramSource::Hugr(bytes.into()),
+            source: ProgramSource::Hugr(bytes.into(), platform, opt_level),
             runtime: None,
             schedule_shots: 32,
         }
@@ -579,7 +583,9 @@ impl SeleneDemProgram {
         let program = match &self.source {
             ProgramSource::Qis(program) => program.clone(),
             #[cfg(feature = "hugr")]
-            ProgramSource::Hugr(bytes) => super::dem_hugr::lower(bytes)?,
+            ProgramSource::Hugr(bytes, platform, opt_level) => {
+                super::dem_hugr::lower(bytes, *platform, *opt_level)?
+            }
         };
         let QisContent::Ir(source_ir) = program.content else {
             return Err(preparation(
@@ -986,6 +992,18 @@ mod tests {
         match result {
             Err(error) => assert!(error.to_string().contains(expected), "{error}"),
             Ok(_) => panic!("analysis accepted corrupt evidence; expected {expected}"),
+        }
+    }
+
+    #[test]
+    fn baseline_rejects_short_probe_count_before_capture() {
+        let settings = analysis_settings().with_probe_shots(3);
+        let request = analysis_request(&settings);
+        for direct in [false, true] {
+            let result = analyze_baseline(inference_trace(direct, [false, false]), &request, 32);
+            assert!(matches!(result,
+                Err(DemBuildError::Inference(crate::DemInferenceError::InvalidSettings(message)))
+                if message == "explicit probe_shots 3 for raw width 2 requires at least 4 rows"));
         }
     }
 

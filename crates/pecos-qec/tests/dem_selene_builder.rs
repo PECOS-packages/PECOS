@@ -63,6 +63,7 @@ fn qis_inference_matches_explicit_definitions() {
 #[test]
 fn mixed_definitions_fit_only_requested_outputs() {
     let build = DetectorErrorModel::builder()
+        .with_noise(NoiseConfig::new(0.001, 0.01, 0.001, 0.001))
         .with_program(program(PARITIES))
         .with_qubits(3)
         .with_detector_definitions(vec![
@@ -84,6 +85,7 @@ fn mixed_definitions_fit_only_requested_outputs() {
 #[test]
 fn requested_nonlinear_output_is_rejected() {
     let error = DetectorErrorModel::builder()
+        .with_noise(NoiseConfig::new(0.001, 0.01, 0.001, 0.001))
         .with_program(program(PARITIES))
         .with_qubits(3)
         .with_detector_definitions(vec![DemDefinition::inferred(0, "unused", 0)])
@@ -102,6 +104,7 @@ fn requested_nonlinear_output_is_rejected() {
 #[test]
 fn explicit_program_does_not_require_inference_outputs() {
     let build = DetectorErrorModel::builder()
+        .with_noise(NoiseConfig::new(0.001, 0.01, 0.001, 0.001))
         .with_program(program(include_str!(
             "fixtures/dem_programs/explicit_only.ll"
         )))
@@ -136,6 +139,7 @@ fn public_runtimes_support_explicit_and_inferred_lazy_measurement_dems() {
             let program = SeleneDemProgram::new(Qis::from_string(source))
                 .with_runtime(runtime().expect("Selene public runtime is required"));
             let builder = DetectorErrorModel::builder()
+                .with_noise(NoiseConfig::new(0.001, 0.01, 0.001, 0.001))
                 .with_program(program)
                 .with_qubits(if inferred { 3 } else { 1 });
             let build = if inferred {
@@ -168,6 +172,7 @@ fn public_runtimes_support_explicit_and_inferred_lazy_measurement_dems() {
 #[test]
 fn explicit_program_requires_positive_schedule_validation_shots() {
     let error = DetectorErrorModel::builder()
+        .with_noise(NoiseConfig::new(0.001, 0.01, 0.001, 0.001))
         .with_program(
             program(include_str!("fixtures/dem_programs/explicit_only.ll"))
                 .with_schedule_validation_shots(0),
@@ -189,6 +194,7 @@ fn explicit_program_requires_positive_schedule_validation_shots() {
 fn measurement_dependent_schedule_is_rejected() {
     for inferred in [false, true] {
         let builder = DetectorErrorModel::builder()
+            .with_noise(NoiseConfig::new(0.001, 0.01, 0.001, 0.001))
             .with_program(program(include_str!(
                 "fixtures/dem_programs/changing_schedule.ll"
             )))
@@ -209,9 +215,12 @@ fn measurement_dependent_schedule_is_rejected() {
 #[cfg(feature = "hugr")]
 fn hugr_compiles_and_infers_without_python() {
     let build = DetectorErrorModel::builder()
+        .with_noise(NoiseConfig::new(0.001, 0.01, 0.001, 0.001))
         .with_program(
             SeleneDemProgram::from_hugr(
                 include_bytes!("fixtures/dem_programs/parities.hugr").to_vec(),
+                pecos_qec::QSystemPlatform::Helios,
+                pecos_qec::OptimizationLevel::Default,
             )
             .with_runtime(runtime()),
         )
@@ -228,6 +237,7 @@ fn hugr_compiles_and_infers_without_python() {
 #[test]
 fn direct_result_ids_skip_correlation_and_preserve_multiple_output_tags() {
     let build = DetectorErrorModel::builder()
+        .with_noise(NoiseConfig::new(0.001, 0.01, 0.001, 0.001))
         .with_program(
             program(include_str!("fixtures/dem_programs/direct_outputs.ll"))
                 .with_schedule_validation_shots(0),
@@ -311,6 +321,7 @@ fn integer_output_positions_follow_complete_stream() {
         ("counts", 1, 2),
     ] {
         let build = DetectorErrorModel::builder()
+            .with_noise(NoiseConfig::new(0.001, 0.01, 0.001, 0.001))
             .with_program(program(INTEGER_OUTPUTS))
             .with_qubits(3)
             .with_detector_definitions(vec![DemDefinition::inferred(0, tag, element)])
@@ -325,6 +336,7 @@ fn integer_output_positions_follow_complete_stream() {
         );
     }
     let error = DetectorErrorModel::builder()
+        .with_noise(NoiseConfig::new(0.001, 0.01, 0.001, 0.001))
         .with_program(program(INTEGER_OUTPUTS))
         .with_qubits(3)
         .with_detector_definitions(vec![DemDefinition::inferred(0, "counts", 0)])
@@ -337,6 +349,7 @@ fn integer_output_positions_follow_complete_stream() {
         "{error}"
     );
     let build = DetectorErrorModel::builder()
+        .with_noise(NoiseConfig::new(0.001, 0.01, 0.001, 0.001))
         .with_program(program(INTEGER_OUTPUTS))
         .with_qubits(3)
         .with_inference(DemInferenceSettings::default().with_detector_tag("checks"))
@@ -399,6 +412,7 @@ fn integer_outputs_bind_raw_ids_by_probe_correlation() {
     // The program reads every future before emitting raw outputs, so the
     // runtime cannot attach direct IDs; correlation recovers them.
     let build = DetectorErrorModel::builder()
+        .with_noise(NoiseConfig::new(0.001, 0.01, 0.001, 0.001))
         .with_program(program(include_str!(
             "fixtures/dem_programs/integer_outputs.ll"
         )))

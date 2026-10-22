@@ -462,3 +462,11 @@ def test_mixed_build_does_not_bind_nonraw_arrays(monkeypatch: pytest.MonkeyPatch
     assert build.evaluate_results({"raw measurements": [1, 0]}) == ([0, 1], 0)
     with pytest.raises(ValueError, match="missing referenced"):
         build.evaluate_results({"other": [1, 0]})
+
+
+def test_explicit_probe_count_checks_solver_minimum() -> None:
+    settings = DemInferenceSettings().with_validation_rows(2)
+    with pytest.raises(ValueError, match="explicit probe_shots 5 for raw width 3 requires at least 6 rows"):
+        settings.with_probe_shots(5).resolved_probe_shots(3)
+    assert settings.with_probe_shots(6).resolved_probe_shots(3) == 6
+    assert settings.resolved_probe_shots(3) == 38

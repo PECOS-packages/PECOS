@@ -182,10 +182,16 @@ runtime libraries and LLVM tools. All Rust paths run without Python.
 
 <!--skip: API template requires caller-supplied HUGR bytes and native runtime; covered by dem_selene_builder.rs.-->
 ```rust
-use pecos_qec::{DemInferenceSettings, DetectorErrorModel, SeleneDemProgram};
+use pecos_qec::{
+    DemInferenceSettings, DetectorErrorModel, NoiseConfig, OptimizationLevel,
+    QSystemPlatform, SeleneDemProgram,
+};
 
 let build = DetectorErrorModel::builder()
-    .with_program(SeleneDemProgram::from_hugr(hugr_bytes))
+    .with_noise(NoiseConfig::new(0.001, 0.005, 0.001, 0.001))
+    .with_program(SeleneDemProgram::from_hugr(
+        hugr_bytes, QSystemPlatform::Helios, OptimizationLevel::Default,
+    ))
     .with_qubits(7)
     .with_seed(42)
     .with_inference(DemInferenceSettings::default().with_validation_rows(32))
@@ -223,9 +229,10 @@ Rust supports mixed lists through typed sources:
 
 <!--skip: API template requires caller-supplied adapter; covered by dem_inference_builder.rs.-->
 ```rust
-use pecos_qec::DemDefinition;
+use pecos_qec::{DemDefinition, NoiseConfig};
 
 let build = DetectorErrorModel::builder()
+    .with_noise(NoiseConfig::new(0.001, 0.005, 0.001, 0.001))
     .with_program(adapter)
     .with_qubits(7)
     .with_detector_definitions(vec![

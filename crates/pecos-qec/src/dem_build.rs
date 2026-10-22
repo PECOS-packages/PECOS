@@ -166,6 +166,7 @@ pub struct DemBuild {
     /// Stable measurement IDs in runtime emission order.
     pub measurement_ids: Vec<usize>,
     pub inference: Option<DemInferenceReport>,
+    /// Detectors first, then observables, with ascending IDs within each role.
     pub definition_origins: Vec<DemDefinitionOrigin>,
     raw_tag: Option<String>,
 }
@@ -381,6 +382,7 @@ impl DemBuildBuilder {
         self.observable_definitions = Some(definitions);
         self
     }
+    /// Supply the noise configuration required by `build`.
     #[must_use]
     pub fn with_noise(mut self, noise: NoiseConfig) -> Self {
         self.noise = Some(noise);
@@ -408,6 +410,9 @@ impl DemBuildBuilder {
         if let Some(error) = self.configuration_error {
             return Err(DemBuildError::Configuration(error));
         }
+        let noise = self.noise.take().ok_or_else(|| {
+            DemBuildError::Configuration("supply a noise configuration with with_noise".into())
+        })?;
         let detector_outputs = requested_outputs(
             self.detector_definitions.as_deref(),
             self.detectors.is_some(),
@@ -605,10 +610,10 @@ impl DemBuildBuilder {
         if let Some(duration) = self.idle_after_2q {
             circuit.insert_idle_after_two_qubit_gates(duration);
         }
-        let noise = self
-            .noise
-            .unwrap_or_else(|| NoiseConfig::new(0.001, 0.01, 0.001, 0.001));
-        let definitions = definitions_from_tick_circuit(&circuit)?;
+        let definitions = definitions_from_tick_circuit(&circuit).map_err(|error| match error {
+            DefinitionError::Parse { .. } => DemBuildError::Configuration(error.to_string()),
+            _ => DemBuildError::Definitions(error),
+        })?;
         let detector_ids: Vec<_> = definitions
             .detectors
             .iter()
@@ -620,6 +625,10 @@ impl DemBuildBuilder {
                 "detector IDs {detector_ids:?} must be unique and dense from zero; renumber the definitions"
             )));
         }
+        let mut recorded: BTreeSet<_> = definition_origins
+            .iter()
+            .map(|origin| (origin.role, origin.id))
+            .collect();
         for (role, ids) in [
             (
                 "detector",
@@ -639,10 +648,7 @@ impl DemBuildBuilder {
             ),
         ] {
             for id in ids {
-                if !definition_origins
-                    .iter()
-                    .any(|origin| origin.role == role && origin.id == id)
-                {
+                if recorded.insert((role, id)) {
                     definition_origins.push(DemDefinitionOrigin {
                         role,
                         id,
@@ -651,6 +657,7 @@ impl DemBuildBuilder {
                 }
             }
         }
+        definition_origins.sort_by_key(|origin| (origin.role != "detector", origin.id));
         let dem = DemBuilder::try_from_tick_circuit_with_noise_config(&circuit, noise)?;
         Ok(DemBuild {
             dem,
@@ -843,18 +850,6 @@ fn resolve_definitions(
         return Ok(Some(supports_json(supports)));
     }
     if let Some(json) = json {
-        let entries: Vec<serde_json::Value> =
-            serde_json::from_str(json).map_err(|e| DemBuildError::Configuration(e.to_string()))?;
-        for entry in entries {
-            if let Some(id) = entry.get("id").and_then(serde_json::Value::as_u64) {
-                origins.push(DemDefinitionOrigin {
-                    role,
-                    id: usize::try_from(id)
-                        .map_err(|e| DemBuildError::Configuration(e.to_string()))?,
-                    source: DemAnnotationOrigin::Explicit,
-                });
-            }
-        }
         return Ok(Some(json.to_string()));
     }
     Ok(None)

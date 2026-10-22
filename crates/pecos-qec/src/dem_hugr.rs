@@ -12,7 +12,11 @@ fn preparation(error: impl std::fmt::Display) -> DemBuildError {
     DemBuildError::Preparation(format!("HUGR compilation: {error}"))
 }
 
-pub(super) fn lower(bytes: &[u8]) -> Result<Qis, DemBuildError> {
+pub(super) fn lower(
+    bytes: &[u8],
+    platform: crate::QSystemPlatform,
+    level: crate::OptimizationLevel,
+) -> Result<Qis, DemBuildError> {
     let (_, package) =
         compiler::hugr::envelope::read_envelope(bytes, &compiler::REGISTRY).map_err(preparation)?;
     let mut modules = package.modules.into_iter();
@@ -24,9 +28,7 @@ pub(super) fn lower(bytes: &[u8]) -> Result<Qis, DemBuildError> {
     }
     compiler::validate(&hugr).map_err(preparation)?;
     let context = Context::create();
-    let level = compiler::get_opt_level(2).map_err(preparation)?;
     let target = compiler::get_native_target_machine(level).map_err(preparation)?;
-    let platform = compiler::get_platform("helios").map_err(preparation)?;
     let args = compiler::CompileArgs::new(&"pecos_dem", &target, level, platform, &context, false);
     let module = compiler::compile(&args, &context, &mut hugr).map_err(preparation)?;
     normalize_helpers(&module, &context)?;
@@ -112,6 +114,22 @@ fn normalize_helpers(module: &Module<'_>, context: &Context) -> Result<(), DemBu
 mod tests {
     use super::*;
     use compiler::inkwell::memory_buffer::MemoryBuffer;
+
+    #[test]
+    fn lowers_parities_for_both_platforms() {
+        for platform in [crate::QSystemPlatform::Helios, crate::QSystemPlatform::Sol] {
+            let qis = lower(
+                include_bytes!("../tests/fixtures/dem_programs/parities.hugr"),
+                platform,
+                crate::OptimizationLevel::Default,
+            )
+            .unwrap();
+            let pecos_programs::QisContent::Ir(ir) = qis.content else {
+                panic!("HUGR lowering must produce QIS IR");
+            };
+            assert!(ir.contains("define"));
+        }
+    }
 
     #[test]
     fn helper_normalization_changes_symbols_and_preserves_strings() {

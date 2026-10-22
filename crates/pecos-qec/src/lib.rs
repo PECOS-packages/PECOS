@@ -169,3 +169,8 @@ mod dem_selene;
 pub use dem_selene::{SeleneDemEvidence, SeleneDemProgram};
 #[cfg(feature = "hugr")]
 mod dem_hugr;
+
+#[cfg(feature = "hugr")]
+pub use selene_hugr_qis_compiler::inkwell::OptimizationLevel;
+#[cfg(feature = "hugr")]
+pub use selene_hugr_qis_compiler::tket_qsystem::extension::qsystem::QSystemPlatform;

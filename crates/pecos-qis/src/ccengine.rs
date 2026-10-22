@@ -2532,7 +2532,8 @@ impl QisEngine {
                 return Ok(commands);
             }
         }
-        self.trace_named_result_traces_from_dynamic_handle()?;
+        self.trace_named_result_traces_from_dynamic_handle()
+            .map_err(|e| self.latch_terminal_error(e.to_string()))?;
         self.trace_complete_chunk();
         if let Some(ref mut state) = self.dynamic_state {
             state.finalized = true;
@@ -3259,6 +3260,7 @@ mod tests {
     }
 
     struct PoisonedImport {
+        named_failure: Option<bool>,
         imports: Arc<std::sync::atomic::AtomicUsize>,
     }
 
@@ -3285,10 +3287,70 @@ mod tests {
         fn get_named_results(
             &self,
         ) -> Result<BTreeMap<String, pecos_qis_ffi_types::NamedResult>, InterfaceError> {
+            if self.named_failure == Some(false) {
+                return Err(InterfaceError::ExecutionError(
+                    "named results failure".into(),
+                ));
+            }
             Ok(BTreeMap::new())
         }
         fn get_named_result_traces(&self) -> Result<Vec<NamedResultTrace>, InterfaceError> {
+            if self.named_failure == Some(true) {
+                return Err(InterfaceError::ExecutionError(
+                    "named traces failure".into(),
+                ));
+            }
             Ok(vec![])
+        }
+    }
+
+    #[test]
+    fn named_result_fetch_errors_are_terminal_and_disabled_tracing_skips_fetches() {
+        for traces in [false, true] {
+            let mut engine = QisEngine::with_runtime(Box::new(DummyRuntime::default()));
+            engine.runtime_end_delivered = true;
+            engine.dynamic_state = Some(DynamicExecutionState {
+                sync_handle: Some(Box::new(PoisonedImport {
+                    named_failure: Some(traces),
+                    imports: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+                })),
+                execution_complete: true,
+                terminal_error: None,
+                finalized: false,
+                terminal_lowering_flushed: false,
+            });
+            engine
+                .trace_named_result_traces_from_dynamic_handle()
+                .unwrap();
+            engine.set_operation_trace_collector(OperationTraceStore::default());
+            let error = engine
+                .finalize_shot_for_certification()
+                .err()
+                .unwrap()
+                .to_string();
+            let expected = if traces {
+                "Failed to get named result traces:"
+            } else {
+                "Failed to get named results:"
+            };
+            assert!(error.contains(expected), "{error}");
+            assert!(
+                error.contains(if traces {
+                    "named traces failure"
+                } else {
+                    "named results failure"
+                }),
+                "{error}"
+            );
+            assert_eq!(
+                engine
+                    .finalize_shot_for_certification()
+                    .err()
+                    .unwrap()
+                    .to_string(),
+                error
+            );
+            assert!(!engine.dynamic_state.as_ref().unwrap().finalized);
         }
     }
 
@@ -3298,6 +3360,7 @@ mod tests {
         let mut engine = QisEngine::with_runtime(Box::new(DummyRuntime::default()));
         engine.dynamic_state = Some(DynamicExecutionState {
             sync_handle: Some(Box::new(PoisonedImport {
+                named_failure: None,
                 imports: imports.clone(),
             })),
             execution_complete: false,

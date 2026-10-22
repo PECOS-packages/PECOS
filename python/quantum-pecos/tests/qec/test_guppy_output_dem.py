@@ -6,12 +6,16 @@
 from __future__ import annotations
 
 import json
+from typing import TYPE_CHECKING
 
 import pytest
 from guppylang import guppy
 from guppylang.std.builtins import array, output
 from guppylang.std.quantum import collect_measurements, measure, measure_array, qubit
 from pecos.qec import infer_guppy_dem_annotations
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable
 
 
 @guppy
@@ -155,37 +159,6 @@ def test_direct_array_outputs_preserve_runtime_result_id_order() -> None:
     assert inferred.raw_binding == "runtime_result_ids"
 
 
-def test_direct_array_outputs_reject_permuted_runtime_result_ids(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A complete direct-ID list is valid only in certified source order."""
-    from pecos.qec import guppy_output_dem
-
-    original = guppy_output_dem._named_trace_items  # noqa: SLF001
-
-    def permuted_named_trace_items(trace: object) -> list[dict[str, object]]:
-        items = original(trace)
-        rewritten: list[dict[str, object]] = []
-        for item in items:
-            if item.get("name") == "physical" and item.get("result_ids") == [0, 1, 2]:
-                rewritten.append({**item, "result_ids": [1, 0, 2]})
-            else:
-                rewritten.append(item)
-        return rewritten
-
-    monkeypatch.setattr(guppy_output_dem, "_named_trace_items", permuted_named_trace_items)
-    with pytest.raises(ValueError, match="certified source order"):
-        infer_guppy_dem_annotations(
-            _direct_array_outputs,
-            num_qubits=3,
-            raw_tag="physical",
-            detector_tag="events",
-            observable_tags=("logical_z", "logical_x"),
-            probe_shots=32,
-            provenance_shots=16,
-            validation_rows=8,
-            seed=19,
-        )
-
-
 def test_scalar_measurements_emitted_as_array_reject_reversed_runtime_ids() -> None:
     """Keep the known Guppy-v1 array provenance reversal fail-loud."""
     with pytest.raises(ValueError, match="certified source order"):
@@ -211,3 +184,105 @@ def test_raw_tag_must_cover_canonical_qis_measurement_order() -> None:
             validation_rows=8,
             seed=3,
         )
+
+
+def test_direct_binding_reuses_fit_shots_for_schedule_validation() -> None:
+    inferred = infer_guppy_dem_annotations(
+        _direct_array_outputs,
+        num_qubits=3,
+        raw_tag="physical",
+        detector_tag="events",
+        observable_tags=("logical_z", "logical_x"),
+        probe_shots=40,
+        provenance_shots=100,
+        validation_rows=8,
+    )
+    assert inferred.probe_shots == 40
+    assert inferred.audit["provenance_shots"] == 0
+    assert inferred.audit["schedule_validation_shots"] == 40
+    assert inferred.detector_supports == ((0, 1),)
+
+
+@guppy
+def _integer_outputs() -> None:
+    m0 = measure(qubit()).read()
+    m1 = measure(qubit()).read()
+    m2 = measure(qubit()).read()
+    output("raw measurements", m0)
+    output("raw measurements", m1)
+    output("raw measurements", m2)
+    output("checks", array(int(m0)))
+    output("checks", int(m1))
+    output("bits", array(int(m1), int(m2)))
+    output("counts", 2)
+    output("counts", int(m2))
+
+
+@pytest.mark.parametrize(
+    ("tag", "element", "support"),
+    [("checks", 0, (0,)), ("checks", 1, (1,)), ("bits", 0, (1,)), ("bits", 1, (2,)), ("counts", 1, (2,))],
+)
+def test_integer_output_positions_follow_complete_stream(tag: str, element: int, support: tuple[int, ...]) -> None:
+    inferred = infer_guppy_dem_annotations(
+        _integer_outputs,
+        num_qubits=3,
+        detector_outputs=[(tag, element)],
+        observable_outputs=[],
+    )
+    assert inferred.detector_supports == (support,)
+    assert inferred.raw_measurement_ids == (0, 1, 2)
+
+
+def test_integer_default_selection_and_nonbit_error() -> None:
+    inferred = infer_guppy_dem_annotations(_integer_outputs, num_qubits=3, detector_tag="checks", observable_outputs=[])
+    assert inferred.detector_supports == ((0,), (1,))
+    with pytest.raises(ValueError, match=r"counts.*element 0.*2"):
+        infer_guppy_dem_annotations(
+            _integer_outputs,
+            num_qubits=3,
+            detector_outputs=[("counts", 0)],
+            observable_outputs=[],
+        )
+
+
+def test_complete_named_results_reset_between_captured_shots() -> None:
+    from pecos.tracing import _capture_qis_operation_traces
+
+    chunks = _capture_qis_operation_traces(_integer_outputs, 3, shots=4, seed=42, runtime=None)
+    outputs = [chunk for chunk in chunks if chunk["stage"] == "named_results"]
+    assert len(outputs) == 4
+    for chunk in outputs:
+        assert len(chunk["named_results"]["checks"]["values"]) == 2
+        assert len(chunk["named_results"]["bits"]["values"]) == 2
+        assert len(chunk["named_results"]["raw measurements"]["values"]) == 3
+        assert len(chunk["named_results"]["counts"]["values"]) == 2
+        assert chunk["named_results"]["counts"]["values"][0] == 2
+    assert all(not chunk["named_results"] for chunk in chunks if chunk["stage"] != "named_results")
+
+
+def test_integer_outputs_bind_raw_ids_by_probe_correlation() -> None:
+    # The program reads every future before emitting raw outputs, so the
+    # runtime cannot attach direct IDs; correlation recovers them.
+    inferred = infer_guppy_dem_annotations(
+        _integer_outputs,
+        num_qubits=3,
+        detector_outputs=[("checks", 0)],
+        observable_outputs=[],
+    )
+    assert inferred.raw_binding == "probe_correlated_result_ids"
+
+
+@pytest.mark.parametrize("shape", [list, iter])
+def test_list_shaped_and_one_shot_output_selectors(shape: Callable[[list[list[object]]], Iterable[object]]) -> None:
+    inferred = infer_guppy_dem_annotations(
+        _integer_outputs,
+        num_qubits=3,
+        detector_outputs=shape([["checks", 0]]),
+        observable_outputs=shape([["bits", 1]]),
+    )
+    assert inferred.detector_supports == ((0,),)
+    assert inferred.observable_supports == ((2,),)
+    assert inferred.detector_labels == (("checks", 0),)
+    assert inferred.observable_labels == (("bits", 1),)
+    assert inferred.schedule_validation == "empirical_trace_comparison"
+    assert inferred.circuit.get_meta("dem_schedule_validation") == "empirical_trace_comparison"

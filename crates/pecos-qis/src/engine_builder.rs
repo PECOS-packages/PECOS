@@ -69,6 +69,18 @@ impl QisEngineBuilder {
         self
     }
 
+    /// Store LLVM IR for dynamic execution without eagerly collecting operations.
+    ///
+    /// The selected `.interface(...)` compiles this source when the engine is
+    /// built. This avoids an unused preliminary execution for trace consumers.
+    /// A runtime and a dynamic-capable interface builder must also be supplied.
+    #[must_use]
+    pub fn program_ir(mut self, source: impl Into<String>) -> Self {
+        self.program_source = Some(source.into());
+        self.interface = None;
+        self
+    }
+
     /// Set a pre-built interface (for testing)
     #[must_use]
     pub fn with_interface(mut self, interface: OperationCollector) -> Self {
@@ -460,6 +472,16 @@ mod tests {
             assert_eq!(builder.scheduled_transport, expected);
             assert_eq!(builder.clone().scheduled_transport, expected);
         }
+    }
+
+    #[test]
+    fn program_ir_is_lazy_and_survives_cloning() {
+        let builder = qis_engine().program_ir("not yet compiled");
+        assert!(builder.interface.is_none());
+        assert_eq!(
+            builder.clone().program_source.as_deref(),
+            Some("not yet compiled")
+        );
     }
 
     // Note: Full builder tests with runtime and interface are in integration tests

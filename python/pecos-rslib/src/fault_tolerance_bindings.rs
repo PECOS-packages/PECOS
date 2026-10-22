@@ -8274,6 +8274,7 @@ fn transform_two_patch_pauli(pauli: u8, gate: &str) -> PyResult<u8> {
 /// Register the QEC fault tolerance module.
 pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let qec = PyModule::new(m.py(), "qec")?;
+    crate::dem_inference_bindings::register(&qec)?;
     qec.add(
         "DEM_SLICE_ROUND_ATTRIBUTE",
         pecos_qec::fault_tolerance::dem_builder::DEM_SLICE_ROUND_ATTRIBUTE,

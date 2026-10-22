@@ -174,6 +174,17 @@ assert dem.num_observables == 1
 print(f"detectors: {dem.num_detectors}, mechanisms: {dem.to_string().count('error(')}")
 ```
 
+If your program already emits computed detector and observable parities, plus
+all raw measurements, replace the two explicit-definition setters with
+`.with_inference(DemInferenceSettings())`. Import `DemInferenceSettings` from
+`pecos.qec`; use its chained `with_*` methods for custom tags and probe settings.
+The remaining noise, idle, sampling, and decoding stages are the same, including
+`dem_build.evaluate_result_columns(...)`, which uses the inferred raw-output
+binding. See [Inferring a DEM from Guppy Outputs](../user-guide/inferred-guppy-dem.md)
+for the program contract and inference audit. The program above uses scalar
+measurement tags and must first emit the required raw and computed outputs to
+use that route.
+
 Pass the DEM object to built-in decoder specs. BP+OSD and PECOS's built-in
 Tesseract consume raw hyperedges; graph specs such as PyMatching project them
 during preparation, retaining the object's fault-sector labels. Results expose
@@ -216,9 +227,13 @@ for text, filename in (
 
 </div>
 
-The program-to-DEM steps (stages 1–3) and program simulation (stage 4b) are
-Python-only for now. The Rust tabs start from the DEM text stage 3 produces,
-shipped with this page as `docs/assets/test-data/guppy_dem_decoding.dem`.
+This page uses Python for Guppy authoring, program-to-DEM construction
+(stages 1–3), and program simulation (stage 4b). Rust can also build DEMs directly
+from QIS or compiled HUGR with the optional `SeleneDemProgram` adapter, including
+explicit, inferred, and mixed definitions; see the
+[native Rust API](../user-guide/inferred-guppy-dem.md#rust-settings-and-circuitprobe-builds).
+The Rust tabs below start from the DEM text stage 3 produces, shipped with this
+page as `docs/assets/test-data/guppy_dem_decoding.dem`.
 
 ## 4a. Sample the DEM
 
@@ -617,3 +632,12 @@ about whether pruning affected the answer.
 - [Decoders](../user-guide/decoders.md) describes the available decoder APIs.
 - [Runtime QIS Tracing](../user-guide/runtime-qis-tracing.md) explains how PECOS
   captures the runtime-lowered gate stream used to build this DEM.
+
+
+The builder also accepts mixed lists such as
+`[Detector(rec[-2], rec[-1]), Detector.inferred("checks", element=0)]`.
+`Observable.inferred(...)` selects logical outputs in the same way. Only selected
+outputs are inferred; supplied explicit definitions and empty lists take
+precedence over `.with_inference(...)` defaults. If every definition is explicit,
+no inference probes or solver run. See [mixed definitions](../user-guide/inferred-guppy-dem.md#mix-explicit-and-inferred-definitions)
+for Python and Rust examples and the per-definition audit.

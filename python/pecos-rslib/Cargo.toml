@@ -83,7 +83,7 @@ pecos-decoders = { workspace = true, features = [
 ] }
 
 # QEC (fault tolerance)
-pecos-qec.workspace = true
+pecos-qec = { workspace = true, features = ["selene"] }
 
 # Build tools (LLVM/CUDA detection)
 pecos-build.workspace = true

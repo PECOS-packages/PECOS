@@ -86,6 +86,8 @@ pub struct OperationTraceChunk {
     pub lowered_quantum_ops: Vec<LoweredQuantumGateTrace>,
     pub lowered_quantum_ops_complete: bool,
     pub named_result_traces: Vec<NamedResultTrace>,
+    /// Complete typed outputs for this shot, on the `named_results` chunk only.
+    pub named_results: BTreeMap<String, pecos_qis_ffi_types::NamedResult>,
     /// Physical measurement outcomes keyed by stable QIS result id.
     ///
     /// This is populated only on the terminal ``trace_complete`` chunk. It
@@ -1489,6 +1491,7 @@ impl QisEngine {
             lowered_quantum_ops: lowered_trace,
             lowered_quantum_ops_complete,
             named_result_traces: Vec::new(),
+            named_results: BTreeMap::new(),
             measurement_results: if stage == "trace_complete" {
                 self.measurement_results.clone()
             } else {
@@ -1533,8 +1536,12 @@ impl QisEngine {
         }
     }
 
-    fn trace_named_result_traces_chunk(&mut self, named_result_traces: &[NamedResultTrace]) {
-        if named_result_traces.is_empty()
+    fn trace_named_result_traces_chunk(
+        &mut self,
+        named_result_traces: &[NamedResultTrace],
+        named_results: BTreeMap<String, pecos_qis_ffi_types::NamedResult>,
+    ) {
+        if (named_result_traces.is_empty() && named_results.is_empty())
             || (self.operation_trace_dir.is_none() && self.operation_trace_collector.is_none())
         {
             return;
@@ -1564,6 +1571,7 @@ impl QisEngine {
             lowered_quantum_ops: Vec::new(),
             lowered_quantum_ops_complete: true,
             named_result_traces: named_result_traces.to_vec(),
+            named_results,
             measurement_results: BTreeMap::new(),
         };
 
@@ -1622,20 +1630,22 @@ impl QisEngine {
     }
 
     fn trace_named_result_traces_from_dynamic_handle(&mut self) {
-        let named_result_traces = if let Some(state) = &self.dynamic_state
+        let (named_result_traces, named_results) = if let Some(state) = &self.dynamic_state
             && let Some(handle) = &state.sync_handle
         {
-            match handle.get_named_result_traces() {
-                Ok(named_result_traces) => named_result_traces,
-                Err(e) => {
-                    debug!("QisEngine: Failed to get named result traces: {e}");
-                    Vec::new()
-                }
-            }
+            let traces = handle.get_named_result_traces().unwrap_or_else(|e| {
+                debug!("QisEngine: Failed to get named result traces: {e}");
+                Vec::new()
+            });
+            let results = handle.get_named_results().unwrap_or_else(|e| {
+                debug!("QisEngine: Failed to get named results: {e}");
+                BTreeMap::new()
+            });
+            (traces, results)
         } else {
-            Vec::new()
+            (Vec::new(), BTreeMap::new())
         };
-        self.trace_named_result_traces_chunk(&named_result_traces);
+        self.trace_named_result_traces_chunk(&named_result_traces, named_results);
     }
 
     /// Start the LLVM program execution in a worker thread
@@ -3649,6 +3659,29 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert_eq!(gates, [PZ, RZ]);
+    }
+
+    #[test]
+    fn complete_results_emit_a_chunk_without_bool_traces() {
+        let mut engine = QisEngine::with_runtime(Box::new(DummyRuntime::default()));
+        let collector = OperationTraceStore::default();
+        engine.set_operation_trace_collector(collector.clone());
+        engine.begin_trace_shot().unwrap();
+        let results = BTreeMap::from([(
+            "counts".into(),
+            pecos_qis_ffi_types::NamedResult::I64(vec![2, 3]),
+        )]);
+        engine.trace_named_result_traces_chunk(&[], results.clone());
+        let chunks = collector.lock().unwrap();
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].stage, "named_results");
+        assert_eq!(chunks[0].named_result_traces.len(), 0);
+        assert_eq!(chunks[0].named_results, results);
+        let json = serde_json::to_value(&chunks[0]).unwrap();
+        assert_eq!(
+            json["named_results"]["counts"]["values"],
+            serde_json::json!([2, 3])
+        );
     }
 
     #[test]

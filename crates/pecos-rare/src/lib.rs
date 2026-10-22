@@ -6,3 +6,5 @@
 pub mod flipper;
 pub mod utils;
 pub mod brute_force;
+pub mod bv;
+pub mod metropolis;

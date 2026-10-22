@@ -147,7 +147,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let max_histories = 1_000_000; // Maximum number of fault histories to simulate
     let seed = 0; // Random seed for reproducibility
     let error_threshold = 0.05; // Convergence error threshold
-    let check_frequency = 100; // Frequency of checking progress
+    let check_frequency = 10; // Frequency of checking progress
 
     // Set up the surface code
     let distance = 3;

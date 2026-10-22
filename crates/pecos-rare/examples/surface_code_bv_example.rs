@@ -3,7 +3,7 @@
 
 use pecos_qec::SurfaceCode;
 use pecos_quantum::{AnnotationKind, Attribute, TickCircuit, TickMeasRef};
-use pecos_rare::bv::find_logical_failure_rate;
+use pecos_rare::bv::{find_logical_failure_rate, gen_sequence};
 
 /// Build a rotated, square surface-code Z-memory experiment.
 ///
@@ -141,42 +141,35 @@ pub fn surface_code_z_memory(
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Specify the range of physical error rates
     let p0 = 0.1;
-    let pf = 0.00001;
-    let npts = 100;
+    let pf = 0.001;
+    let npts = 50;
     let seed = 0;
+    let distance = 3;
     let max_brute_force_histories = 1_000_000;
     let nbootstraps_brute_force = 5000;
-    let check_frequency_brute_force = 1000;
-    let error_target = 0.05;
+    let check_frequency_brute_force = 1_000;
+    let error_target = 0.01;
     let flipper_type = "basic";
-    let region_probability = 1 / ( distance / 2 ) as f64;
+    let region_probability = 1.0 / ( distance / 2 ) as f64;
     let max_metropolis_iterations = 1_000_000;
     let burn_in = 1_000;
     let max_ratio_iterations = 1_000;
 
     // Set up the surface code
-    let distance = 3;
     let rounds = distance;
     let circuit = surface_code_z_memory(distance, rounds)?;
 
     // Get a sequence of physical error rates
-    let prob_sequence = gen_sequence(p0, pf, npts, distance);
-
-
-    let max_histories = 1_000_000; // Maximum number of fault histories to simulate
-    let seed = 0; // Random seed for reproducibility
-    let error_threshold = 0.05; // Convergence error threshold
-    let check_frequency = 100; // Frequency of checking progress
-
+    let prob_sequence = gen_sequence(p0, pf, npts);
+    print!("{:?}", prob_sequence);
 
     // Specify the decoder
     let results = find_logical_failure_rate(
         &circuit,
-        prob_sequence,
+        prob_sequence.clone(),
         seed,
         max_brute_force_histories,
         nbootstraps_brute_force,
@@ -190,6 +183,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     // Save the results
-    results.write_json(&format!("distance{}_surface_code_bv_results.json", distance), 2)?;
+    results.write_json(&format!("distance{}_surface_code_bv_results.json", distance), 0, Some(&prob_sequence))?;
     Ok(())
 }

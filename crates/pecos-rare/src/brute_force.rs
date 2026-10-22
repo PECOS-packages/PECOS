@@ -8,17 +8,16 @@ use pecos_quantum::TickCircuit;
 use pecos_random::{PecosRng, RngExt};
 
 // Simple structure to hold the results of the brute force calculation
+#[derive(Clone)]
 pub struct BruteForceResults {
     seed: u64,
-    nfail: usize,
-    ntot: usize,
-    pfails: Vec<f64>,
-    ptots: Vec<f64>,
+    pub nfail: usize,
+    pub ntot: usize,
     results: Vec<u8>,
     rng: PecosRng,
     save_failures: String,
-    failures: Vec<FaultHistory>,
-    smallest_failure_weight: usize,
+    pub failures: Vec<FaultHistory>,
+    pub smallest_failure_weight: usize,
     nbootstraps: usize,
 }
 
@@ -28,8 +27,6 @@ impl BruteForceResults {
             seed,
             nfail: 0,
             ntot: 0,
-            pfails: Vec::new(),
-            ptots: Vec::new(),
             results: Vec::new(),
             rng: PecosRng::seed_from_u64(seed),
             save_failures,
@@ -39,16 +36,14 @@ impl BruteForceResults {
         }
     }
 
-    pub fn record_failure(&mut self, phist: f64, history: &FaultHistory) {
+    pub fn record_failure(&mut self, history: &FaultHistory) {
         self.nfail += 1;
         self.ntot += 1;
-        self.pfails.push(phist);
-        self.ptots.push(phist);
         self.results.push(1);
         if self.save_failures.to_lowercase() == "true" {
             self.failures.push(history.clone());
         }
-        else if self.save_failures.to_lowercase() != "last" {
+        else if self.save_failures.to_lowercase() == "last" {
             self.failures.clear();
             self.failures.push(history.clone());
         }
@@ -61,9 +56,8 @@ impl BruteForceResults {
         }
     }
 
-    pub fn record_pass(&mut self, phist: f64) {
+    pub fn record_pass(&mut self) {
         self.ntot += 1;
-        self.ptots.push(phist);
         self.results.push(0);
     }
 
@@ -129,6 +123,14 @@ impl BruteForceResults {
     // Write the results to a json file
     pub fn write_json(&self, path: &str, level: usize) -> Result<(), PecosError> {
         use std::fs::File;
+
+        let data = self.json_data(level)?;
+        let file = File::create(path)?;
+        serde_json::to_writer_pretty(file, &data)
+            .map_err(|error| PecosError::with_context(error, "Unable to write JSON to file"))
+    }
+
+    pub(crate) fn json_data(&self, level: usize) -> Result<serde_json::Value, PecosError> {
         use serde_json::json;
 
         let data = match level {
@@ -162,16 +164,12 @@ impl BruteForceResults {
                     "failure_rate_ci99": self.failure_rate_ci99(),
                     "failure_rate": self.failure_rate(),
                     "smallest_failure_weight": self.smallest_failure_weight,
-                    "failure_probabilities": self.pfails,
-                    "all_probabilities": self.ptots,
                     "results": self.results,
                 })
             }
             _ => return Err(PecosError::Input("JSON level must be 0, 1, or 2".into())),
         };
-        let file = File::create(path)?;
-        serde_json::to_writer(file, &data)
-            .map_err(|error| PecosError::with_context(error, "Unable to write JSON to file"))
+        Ok(data)
     }
 }
 
@@ -223,7 +221,10 @@ pub fn find_logical_failure_rate(
     let mut results = BruteForceResults::new(seed, save_failures, nbootstraps);
 
     // start the progress bar
-    let (pb, game_thread) = start_rps_loading(max_histories as u64);
+    let (pb, game_thread) = start_rps_loading(100);
+    pb.set_style(indicatif::ProgressStyle::with_template(
+        "Convergence [{wide_bar:.cyan/blue}] {percent}% {msg}",
+    ).unwrap().progress_chars("=]."));
 
     for _ in 0..max_histories {
 
@@ -232,12 +233,15 @@ pub fn find_logical_failure_rate(
 
         // Accumulate failure statistics
         if failed {
-            results.record_failure(phist, &fault_history);
+            results.record_failure(&fault_history);
             if verbose && results.nfail % check_frequency == 0 {
 
                 let avg = results.failure_rate();
                 let std = results.failure_rate_std();
                 let error = std / avg;
+                if error > 0.0 {
+                    pb.set_position(((100.0 * (error_threshold / error).powi(2)) as u64).min(99));
+                }
                 if error < error_threshold {
                     pb.println(format!(
                         "Failed {} / {} histories, pfail = {:.3e} +/- {:.3e}, Percent error {:.3}% below threshold {:.3}%",
@@ -248,6 +252,7 @@ pub fn find_logical_failure_rate(
                         error*100.0,
                         error_threshold*100.0,
                     ));
+                    pb.finish_with_message("Converged");
                     break
                 }
                 else {
@@ -263,14 +268,13 @@ pub fn find_logical_failure_rate(
                 }
             }
         } else {
-            results.record_pass(phist);
+            results.record_pass();
         }
-
-        // Increment the progress bar
-        pb.inc(1);
     }
 
-    pb.finish_with_message("Done!");
+    if !pb.is_finished() {
+        pb.abandon_with_message("Sample limit reached");
+    }
     game_thread
         .join()
         .map_err(|_| PecosError::Processing("Progress animation thread panicked".into()))?;
@@ -299,6 +303,25 @@ pub fn find_logical_failure(
         }
     }
     Err(PecosError::LogicalFailureNotFound)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failure_retention_modes_preserve_the_seed_history() {
+        let history = FaultHistory::Depolarizing(Vec::new());
+        for (mode, expected_count) in [("false", 0), ("last", 1), ("true", 2)] {
+            let mut results = BruteForceResults::new(0, mode.into(), 100);
+            results.record_failure(&history);
+            results.record_pass();
+            results.record_failure(&history);
+            assert_eq!(results.failures.len(), expected_count);
+            assert_eq!(results.ntot, 3);
+            assert_eq!(results.failure_rate(), 2.0 / 3.0);
+        }
+    }
 }
 
 pub fn find_logical_failures(

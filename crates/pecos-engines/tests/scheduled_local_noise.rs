@@ -1617,17 +1617,21 @@ fn preparation_crosstalk_collapses_spectator_and_discards_internal_results() {
                 );
                 expected.set_seed(seed);
                 let got = run(&mut actual, &[batch(0, 0, 0, gates.clone())], events);
-                let mut input = ByteMessage::quantum_operations_builder();
-                for g in &gates {
-                    input.add_gate_command(g);
-                }
-                let want = expected.process(input.build()).unwrap().outcomes().unwrap();
+                let want = expected
+                    .process(
+                        ByteMessage::quantum_operations_builder()
+                            .add_gate_commands(&gates)
+                            .build(),
+                    )
+                    .unwrap()
+                    .outcomes()
+                    .unwrap();
                 assert_eq!(got, want);
                 assert_eq!(got.len(), 2, "internal collapse is not a user result");
                 assert_eq!(got[1], 0);
                 assert_eq!(
-                    actual.noise_model().rng().clone().next_u64(),
-                    expected.noise_model().rng().clone().next_u64()
+                    actual.controller().rng().clone().next_u64(),
+                    expected.controller().rng().clone().next_u64()
                 );
                 ones += got[0];
             }
@@ -1645,18 +1649,18 @@ fn preparation_crosstalk_preserves_whole_spectator_idle_gap() {
     let angle = pecos_core::radians!(std::f64::consts::FRAC_PI_2);
     for events in [false, true] {
         for rate in [0.0, 0.7, 1.0] {
+            let idle = ScheduledIdleNoise::new(2)
+                .unwrap()
+                .with_sine(0.31, model(&[("X", 1.0)]))
+                .unwrap()
+                .with_coherent(0.27, model(&[("RY", 1.0)]))
+                .unwrap();
+            let config = ScheduledLocalNoise::new(idle, 0.0, 0.0, 0.0, 0.0, 0.0)
+                .unwrap()
+                .with_prep_crosstalk(rate)
+                .unwrap();
             for seed in 0..32 {
-                let idle = ScheduledIdleNoise::new(2)
-                    .unwrap()
-                    .with_sine(0.31, model(&[("X", 1.0)]))
-                    .unwrap()
-                    .with_coherent(0.27, model(&[("RY", 1.0)]))
-                    .unwrap();
-                let config = ScheduledLocalNoise::new(idle, 0.0, 0.0, 0.0, 0.0, 0.0)
-                    .unwrap()
-                    .with_prep_crosstalk(rate)
-                    .unwrap();
-                let mut actual = system(config.into(), events, seed);
+                let mut actual = system(config.clone().into(), events, seed);
                 let mut expected = QuantumSystem::new(
                     Box::new(
                         GeneralNoiseModelBuilder::new()
@@ -1712,8 +1716,8 @@ fn preparation_crosstalk_preserves_whole_spectator_idle_gap() {
                     .unwrap();
                 assert_eq!(got, want);
                 assert_eq!(
-                    actual.noise_model().rng().clone().next_u64(),
-                    expected.noise_model().rng().clone().next_u64()
+                    actual.controller().rng().clone().next_u64(),
+                    expected.controller().rng().clone().next_u64()
                 );
             }
         }
@@ -1845,8 +1849,8 @@ fn preparation_crosstalk_zero_default_and_local_replacement_preserve_rng() {
                 let mut host = system(config.into(), events, seed);
                 assert_eq!(run(&mut host, &batches, events), expected);
                 assert_eq!(
-                    host.noise_model().rng().clone().next_u64(),
-                    original.noise_model().rng().clone().next_u64()
+                    host.controller().rng().clone().next_u64(),
+                    original.controller().rng().clone().next_u64()
                 );
             }
         }

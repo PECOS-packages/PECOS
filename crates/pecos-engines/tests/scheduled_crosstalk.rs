@@ -101,10 +101,16 @@ fn host(profile: ScheduledNoise) -> QuantumSystem {
     host_with(profile, 2)
 }
 fn host_with(profile: ScheduledNoise, qubits: usize) -> QuantumSystem {
+    host_with_engine(profile, Box::new(StateVecEngine::new(qubits)))
+}
+fn host_with_engine(
+    profile: ScheduledNoise,
+    engine: Box<dyn pecos_engines::QuantumEngine>,
+) -> QuantumSystem {
     let model = ScheduledEventNoise::new(profile, |_| Ok(Box::new(Adapter)))
         .into_noise_model()
         .unwrap();
-    let mut host = QuantumSystem::new(model, Box::new(StateVecEngine::new(qubits)));
+    let mut host = QuantumSystem::new(model, engine);
     host.begin_shot(ShotContext {
         run: 1,
         worker: 0,
@@ -532,7 +538,7 @@ fn writer_rejects_oversized_lists_and_full_batches_at_push() {
         }
     }
     let mut system = host(profile(1.0));
-    let ids: Vec<u8> = (0..17).collect();
+    let ids = vec![0; 513];
     let error = system
         .process(encode_event_batches(&[batch(0, 0, 0, vec![e(0, &ids)])]).unwrap())
         .err()
@@ -766,4 +772,29 @@ fn exposure_leakage_suppresses_deferred_z_idle_rng_draws() {
             }
         }
     }
+}
+
+#[test]
+fn stabilizer_full_capacity_spectators_resume_without_exposing_internal_results() {
+    let profile = ScheduledNoise::new(512)
+        .unwrap()
+        .with_measurement_crosstalk(1.0, 1.0, flips())
+        .unwrap();
+    let mut system = host_with_engine(profile, Box::new(pecos_engines::StabilizerEngine::new(512)));
+    let mut operations: Vec<_> = (0..512).map(|q| g(Gate::pz(&[q]))).collect();
+    // All prepared spectators are measured and flipped internally.
+    operations.push(e(1, &[]));
+    operations.extend((0..512).map(|q| g(Gate::mz(&[q]))));
+    assert_eq!(
+        run(&mut system, &[batch(0, 0, 0, operations)]),
+        vec![1; 512]
+    );
+    // A later input retains high-index state; another global exposure flips it back.
+    assert_eq!(
+        run(
+            &mut system,
+            &[batch(1, 0, 0, vec![e(1, &[]), g(Gate::mz(&[511]))])]
+        ),
+        vec![0]
+    );
 }

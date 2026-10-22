@@ -6,6 +6,12 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- Live scheduled simulation now admits `StabilizerEngine` (`pr.stabilizer()`) with
+  checked stochastic noise and up to 512 physical qubits. Coherent idle rates and
+  unsupported rotations reject before current-input execution. StateVec
+  retains its 16-qubit resource policy. Preparation-crosstalk expansion budgets
+  scale with the admitted capacity.
+
 - DEM, DEM-sampler, MEM, and lookup-decoder builders now reject nonzero idle
   noise when the circuit has no `Idle` locations, including `from_circuit`,
   the low-level inferred-annotation helper, the surface tick-circuit helper,

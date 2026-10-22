@@ -364,7 +364,7 @@ fn all_idle_families_match_explicit_general_noise_outcomes_and_rng() {
 #[test]
 fn checked_profile_rejects_invalid_models_without_panicking() {
     assert!(ScheduledIdleNoise::new(0).is_err());
-    assert!(ScheduledIdleNoise::new(17).is_err());
+    assert!(ScheduledIdleNoise::new(513).is_err());
     let p = ScheduledIdleNoise::new(1).unwrap();
     for rate in [-1.0, f64::NAN, f64::INFINITY] {
         assert!(p.clone().with_linear(rate, model(&[("L", 1.0)])).is_err());

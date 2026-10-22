@@ -122,7 +122,10 @@ def test_callback_errors_are_reported(event_runtime, stage):
     [
         ("iterator", "scheduled adapter output:"),
         ("wrong_type", "scheduled adapter output gate:"),
-        ("too_many", "scheduled adapter expansion limit"),
+        (
+            "too_many",
+            r"scheduled adapter expansion limit: \d+ records need at least \d+ bytes, with \d+ remaining",
+        ),
         ("remove_measurement", "adapter changed measurement order, kind or targets"),
         ("unsupported_gate", "scheduled adapter output gate:.*unsupported scheduled gate"),
     ],
@@ -140,7 +143,10 @@ def test_output_contract_rejects(event_runtime, output, message):
             if output == "wrong_type":
                 return [None]
             if output == "too_many" and gates:
-                return [gates[0]] * 4097
+                # Header + batch framing leave this many fixed-size records.
+                count = (64 * 1024 * 1024 - 16 - 40) // 40 + 1
+                # The invalid first item proves rejection precedes element conversion.
+                return [None] + [gates[0]] * (count - 1)
             if output == "remove_measurement" and batch.measurements:
                 return []
             return gates
@@ -148,6 +154,20 @@ def test_output_contract_rejects(event_runtime, output, message):
     error = ValueError if output in {"too_many", "remove_measurement", "unsupported_gate"} else RuntimeError
     with pytest.raises(error, match=message):
         simulation(event_runtime, lambda _: Invalid()).run(1)
+
+
+def test_adapter_output_above_old_count_is_accepted(event_runtime):
+    class Expand(PhaseAdapter):
+        def translate(self, batch):
+            from pecos_rslib.quantum import Gate, GateType
+
+            gates = super().translate(batch)
+            if batch.batch_index == 0:
+                identity = Gate(GateType.RZ, [0.0], [0])
+                return [identity] * 4097 + gates
+            return gates
+
+    assert simulation(event_runtime, lambda _: Expand()).run(1).to_dict()["measurement_0"] == [1]
 
 
 def test_validate_requires_none(event_runtime):

@@ -47,10 +47,32 @@ pub(crate) fn encode_mode(
     }
 }
 /// Collection uses a lower bound across transports; V7 admission uses its exact layout.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) enum BudgetLayout {
     Minimum,
     V7,
+}
+
+impl BudgetLayout {
+    pub(crate) fn framing_bytes(self, measurements: usize) -> usize {
+        match self {
+            Self::Minimum => 40,
+            Self::V7 => 80usize.saturating_add(self.measurement_bytes(measurements)),
+        }
+    }
+
+    fn measurement_bytes(self, measurements: usize) -> usize {
+        match self {
+            Self::Minimum => 0,
+            Self::V7 => measurements.saturating_mul(24),
+        }
+    }
+
+    // None is a gate-shaped record; Some(len) is a custom record's payload length.
+    pub(crate) fn operation_bytes(self, data_len: Option<usize>, measurement: bool) -> usize {
+        let record = data_len.map_or(40, |len| 24usize.saturating_add(len));
+        record.saturating_add(self.measurement_bytes(usize::from(measurement)))
+    }
 }
 
 /// Incremental accounting shared by scheduled collection and transport admission.
@@ -68,22 +90,29 @@ impl EventBudget {
         Self { size: 16, layout }
     }
 
+    pub(crate) fn batch_allowance(&self) -> (BudgetLayout, usize) {
+        let remaining = pecos_engines::scheduled_frame::MAX_SCHEDULE_BYTES
+            .saturating_sub(self.size)
+            .saturating_sub(self.layout.framing_bytes(0));
+        (self.layout, remaining)
+    }
+
     pub(crate) fn charge(
         &mut self,
         operations: &[Op],
         measurements: usize,
     ) -> Result<(), PecosError> {
-        use pecos_engines::scheduled_events::{MAX_BATCH_OPERATIONS, MAX_BATCH_PAYLOAD};
-        if operations.len() > MAX_BATCH_OPERATIONS || measurements > operations.len() {
-            return Err(error("scheduled event operation count limit"));
+        use pecos_engines::scheduled_events::MAX_BATCH_PAYLOAD;
+        if measurements > operations.len() {
+            return Err(error(&format!(
+                "scheduled measurement count {measurements} exceeds operation count {}; correct the measurement mappings",
+                operations.len()
+            )));
         }
         let mut payload = 0usize;
         // V6 carries only batch framing and gates. Custom records have only a
         // V7 representation; including their cost still gives a lower bound.
-        let framing = match self.layout {
-            BudgetLayout::Minimum => 40,
-            BudgetLayout::V7 => 80 + measurements * 24,
-        };
+        let framing = self.layout.framing_bytes(measurements);
         self.size = self
             .size
             .checked_add(framing)
@@ -96,9 +125,9 @@ impl EventBudget {
                 if payload > MAX_BATCH_PAYLOAD {
                     return Err(error("event payload limit"));
                 }
-                24 + data.len()
+                self.layout.operation_bytes(Some(data.len()), false)
             } else {
-                40
+                self.layout.operation_bytes(None, false)
             };
             self.size = self
                 .size
@@ -310,14 +339,13 @@ mod tests {
 
     #[test]
     fn minimum_budget_accepts_exact_transport_bound() {
-        use pecos_engines::scheduled_events::MAX_BATCH_OPERATIONS;
         use pecos_engines::scheduled_frame::MAX_SCHEDULE_BYTES;
         let operations = vec![
             Op::Measure {
                 qubit_id: 0,
                 result_id: 0
             };
-            MAX_BATCH_OPERATIONS
+            4097
         ];
         let bytes_per_batch = 40 + 40 * operations.len();
         let count = (MAX_SCHEDULE_BYTES - 16) / bytes_per_batch;
@@ -378,7 +406,7 @@ mod tests {
 
     #[test]
     fn scheduled_v7_bounds_precede_gate_conversion() {
-        use pecos_engines::scheduled_events::{MAX_BATCH_OPERATIONS, MAX_BATCH_PAYLOAD};
+        use pecos_engines::scheduled_events::MAX_BATCH_PAYLOAD;
         let mut b = measured();
         b.measurements.clear();
         b.operations = vec![
@@ -398,19 +426,23 @@ mod tests {
                 .to_string()
                 .contains("event payload limit")
         );
+        // V7 header + framing leave room for 1,677,719 gates; the next must
+        // reject before angle conversion, even though every angle is invalid.
         b.operations = vec![
             Op::Rz {
                 qubit_id: 0,
                 theta: f64::NAN
             };
-            MAX_BATCH_OPERATIONS + 1
+            EventBudget::new(BudgetLayout::V7).batch_allowance().1
+                / BudgetLayout::V7.operation_bytes(None, false)
+                + 1
         ];
         assert!(
             encode_v7(vec![b], 7)
                 .err()
                 .unwrap()
                 .to_string()
-                .contains("operation count limit")
+                .contains("event transport limit")
         );
         let mut b = measured();
         b.measurements.push(b.measurements[0].clone());
@@ -419,7 +451,7 @@ mod tests {
                 .err()
                 .unwrap()
                 .to_string()
-                .contains("operation count limit")
+                .contains("measurement count 2 exceeds operation count 1")
         );
     }
     #[test]

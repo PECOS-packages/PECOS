@@ -48,21 +48,22 @@ struct ScheduledExecutionLimits {
 
 impl ScheduledExecutionLimits {
     fn for_batch(gates: &[crate::Gate], qubits: usize) -> Result<Self, PecosError> {
-        // Admission already bounds records, aggregate fanout and capacity.
+        // Admission bounds record bytes and validates spectator IDs against capacity.
+        let overflow = || runtime_frame::error("scheduled expansion overflow");
         let mut exposures = 0usize;
         let mut targets = 0usize;
         for gate in gates {
             if gate.gate_type.is_crosstalk_payload() {
                 exposures += 1;
-                targets += if gate.gate_type == crate::GateType::MeasCrosstalkGlobalPayload {
+                let candidates = if gate.gate_type == crate::GateType::MeasCrosstalkGlobalPayload {
                     qubits
                 } else {
                     gate.qubits.len()
                 };
+                targets = targets.checked_add(candidates).ok_or_else(overflow)?;
             }
         }
         let ordinary = gates.len() - exposures;
-        let overflow = || runtime_frame::error("scheduled expansion overflow");
         // Each preparation can collapse every other prepared qubit. The
         // general model emits one internal MZ command per affected target.
         let preparations = gates

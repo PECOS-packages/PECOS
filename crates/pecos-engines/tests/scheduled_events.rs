@@ -268,15 +268,13 @@ fn malformed_wire_rejects_before_factory_and_never_reaches_legacy_consumers() {
     );
     begin(&mut v6);
     assert!(v6.process(good).is_err());
-    let mut too_large = batch(
+    let too_large = batch(
         0,
         vec![ScheduledEventOp::Custom {
             tag: 42,
             payload: vec![0; MAX_BATCH_PAYLOAD + 1],
         }],
     );
-    assert!(encode_event_batches(&[too_large.clone()]).is_err());
-    too_large.operations = vec![event(0); MAX_BATCH_OPERATIONS + 1];
     assert!(encode_event_batches(&[too_large]).is_err());
 }
 #[test]
@@ -663,7 +661,7 @@ fn changed_measurement_target_or_kind_rejects_and_poisons() {
 }
 
 #[test]
-fn output_operation_bound_accepts_4096_and_rejects_4097_with_measurements_preserved() {
+fn output_above_old_operation_bound_preserves_measurements() {
     struct Expand(usize);
     impl ScheduledBatchAdapter for Expand {
         fn validate(&self, _: &ScheduledEventBatch) -> Result<(), PecosError> {
@@ -686,30 +684,19 @@ fn output_operation_bound_accepts_4096_and_rejects_4097_with_measurements_preser
             Ok(())
         }
     }
-    for count in [MAX_BATCH_OPERATIONS, MAX_BATCH_OPERATIONS + 1] {
-        let mut q = QuantumSystem::new(
-            ScheduledEventIdleZ::new(ScheduledIdleZ::new(1, 0.0, 0.0, 0.0).unwrap(), move |_| {
-                Ok(Box::new(Expand(count)))
-            })
-            .into_noise_model()
-            .unwrap(),
-            Box::new(StateVecEngine::new(1)),
-        );
-        begin(&mut q);
-        let result =
-            q.process(encode_event_batches(&[batch(0, vec![gate(Gate::mz(&[0]))])]).unwrap());
-        if count == MAX_BATCH_OPERATIONS {
-            assert_eq!(result.unwrap().outcomes().unwrap(), vec![0]);
-        } else {
-            assert!(
-                result
-                    .err()
-                    .expect("expected rejection")
-                    .to_string()
-                    .contains("event expansion limit")
-            );
-        }
-    }
+    // One record above the former 4096-record limit.
+    let count = 4097;
+    let mut q = QuantumSystem::new(
+        ScheduledEventIdleZ::new(ScheduledIdleZ::new(1, 0.0, 0.0, 0.0).unwrap(), move |_| {
+            Ok(Box::new(Expand(count)))
+        })
+        .into_noise_model()
+        .unwrap(),
+        Box::new(StateVecEngine::new(1)),
+    );
+    begin(&mut q);
+    let result = q.process(encode_event_batches(&[batch(0, vec![gate(Gate::mz(&[0]))])]).unwrap());
+    assert_eq!(result.unwrap().outcomes().unwrap(), vec![0]);
 }
 
 #[test]
@@ -775,24 +762,25 @@ fn wire_counts_and_event_positions_reject_before_record_allocation() {
     patch(
         bytes,
         16,
-        (56 + MAX_BATCH_OPERATIONS * 40 + 1) as u64,
-        "gate count limit",
+        bytes.len() as u64,
+        "truncated scheduled event transport",
     );
     patch(
         bytes,
         events,
-        (MAX_BATCH_OPERATIONS + 1) as u64,
-        "operation count limit",
+        ((bytes.len() - events - 8) / 24 + 1) as u64,
+        "exceeds remaining transport bytes",
     );
+    patch(bytes, events, u64::MAX, "exceeds remaining transport bytes");
     patch(bytes, events + 8 + 25, 3, "invalid event position");
     patch(bytes, events + 8 + 25, 0, "invalid event position");
     patch(bytes, bytes.len() - 32, 4, "measurement count limit");
-    let max_ops = batch(0, vec![event(0); MAX_BATCH_OPERATIONS]);
+    let many_ops = batch(0, vec![event(0); 4097]);
     assert_eq!(
-        decode_event_batches(&encode_event_batches(&[max_ops]).unwrap()).unwrap()[0]
+        decode_event_batches(&encode_event_batches(&[many_ops]).unwrap()).unwrap()[0]
             .operations
             .len(),
-        MAX_BATCH_OPERATIONS
+        4097
     );
     let max_payload = batch(
         0,

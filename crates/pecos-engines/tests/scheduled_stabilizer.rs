@@ -508,3 +508,29 @@ fn oversized_profile_rejects_before_any_capacity_sized_allocation() {
         );
     }
 }
+
+#[test]
+fn full_width_5000_operation_batches_run_in_both_transports() {
+    const QUBITS: usize = 5000;
+    for events in [false, true] {
+        let mut system = host(
+            ScheduledIdleNoise::new(QUBITS).unwrap(),
+            events,
+            Box::new(StabilizerEngine::new(QUBITS)),
+            0,
+        );
+        let batches = [
+            batch(0, 0, 0, (0..QUBITS).map(|q| Gate::pz(&[q])).collect()),
+            batch(
+                1,
+                0,
+                0,
+                (0..QUBITS)
+                    .map(|q| Gate::rxy1q(Angle64::HALF_TURN, Angle64::ZERO, &[q]))
+                    .collect(),
+            ),
+            batch(2, 0, 0, (0..QUBITS).map(|q| Gate::mz(&[q])).collect()),
+        ];
+        assert_eq!(run(&mut system, &batches, events), vec![1; QUBITS]);
+    }
+}

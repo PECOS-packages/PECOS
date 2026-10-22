@@ -195,8 +195,11 @@ to ignored metadata for seeded RNG comparisons.
 No exposures are inserted automatically. The runtime adapter is responsible for
 interpreting its event schema and selecting victims or exclusions. Ordinary gate
 output cannot smuggle in exposure payloads; use the typed writer. The v7 source
-wire remains unchanged, and v6 cannot encode these effects. Preparation crosstalk,
-transition hooks and arbitrary execution-time callbacks remain unsupported.
+wire remains unchanged, and v6 cannot encode these effects. Preparation crosstalk
+needs no exposures; it is configured on the
+[local profile](scheduled-idle-simulation.md#local-gate-preparation-and-readout-faults)
+and follows the same idle ordering described below. Transition hooks and arbitrary
+execution-time callbacks remain unsupported.
 
 An exposure is ordered noise metadata: it creates no physical occupancy, closes
 no idle gap and does not advance a qubit's busy endpoint. Thus a later physical

@@ -326,6 +326,8 @@ fn production_matches_general_controller_for_ordered_exposures() {
     for seed in 0..64 {
         let local =
             ScheduledLocalNoise::new(ScheduledNoise::new(2).unwrap(), 0.2, 0.0, 0.15, 0.3, 0.4)
+                .unwrap()
+                .with_prep_crosstalk(0.4)
                 .unwrap();
         let config = ScheduledNoise::from(local)
             .with_measurement_crosstalk(0.6, 0.6, flips())
@@ -334,6 +336,7 @@ fn production_matches_general_controller_for_ordered_exposures() {
         let model = GeneralNoiseModel::builder()
             .with_p1(0.2)
             .with_p_prep(0.15)
+            .with_p_prep_crosstalk(0.4)
             .with_p_meas_0(0.3)
             .with_p_meas_1(0.4)
             .with_p_meas_crosstalk(0.6)
@@ -342,14 +345,18 @@ fn production_matches_general_controller_for_ordered_exposures() {
         let mut expected = QuantumSystem::new(Box::new(model), Box::new(StateVecEngine::new(2)));
         actual.set_seed(seed);
         expected.set_seed(seed);
+        // Qubit 0 is in superposition when qubit 1 is prepared, so preparation
+        // crosstalk is observable; a computational-basis spectator would hide it.
+        let half = pecos_core::radians!(std::f64::consts::FRAC_PI_2);
         let input = batch(
             0,
             0,
             0,
             vec![
                 g(Gate::pz(&[0])),
+                g(Gate::rxy1q(half, Angle64::ZERO, &[0])),
                 g(Gate::pz(&[1])),
-                g(x(0)),
+                g(Gate::rxy1q(half, Angle64::ZERO, &[0])),
                 e(0, &[1, 0]),
                 g(Gate::mz(&[0])),
                 e(1, &[]),
@@ -359,12 +366,9 @@ fn production_matches_general_controller_for_ordered_exposures() {
         );
         let reference = ByteMessage::quantum_operations_builder()
             .pz(&[0])
+            .rxy1q(half, Angle64::ZERO, &[0])
             .pz(&[1])
-            .rxy1q(
-                pecos_core::radians!(std::f64::consts::PI),
-                Angle64::ZERO,
-                &[0],
-            )
+            .rxy1q(half, Angle64::ZERO, &[0])
             .meas_crosstalk_local_payload(&[1, 0])
             .mz(&[0])
             .meas_crosstalk_global_payload(&[])

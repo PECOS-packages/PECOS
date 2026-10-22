@@ -1570,3 +1570,285 @@ fn seepage_requires_both_a_gate_fault_and_its_emission_branch() {
         }
     }
 }
+
+#[test]
+fn preparation_crosstalk_rejects_invalid_probabilities_even_without_prep_faults() {
+    for bad in [-0.1, 1.1, f64::INFINITY, f64::NEG_INFINITY, f64::NAN] {
+        assert!(
+            ScheduledLocalNoise::new(ScheduledIdleNoise::new(2).unwrap(), 0.0, 0.0, 0.0, 0.0, 0.0)
+                .unwrap()
+                .with_prep_crosstalk(bad)
+                .is_err()
+        );
+    }
+}
+
+fn prep_crosstalk_profile(probability: f64) -> ScheduledIdleNoise {
+    ScheduledLocalNoise::new(ScheduledIdleNoise::new(2).unwrap(), 0.0, 0.0, 0.0, 0.0, 0.0)
+        .unwrap()
+        .with_prep_crosstalk(probability)
+        .unwrap()
+        .into()
+}
+
+#[test]
+fn preparation_crosstalk_collapses_spectator_and_discards_internal_results() {
+    let angle = pecos_core::radians!(std::f64::consts::FRAC_PI_2);
+    let gates = vec![
+        Gate::pz(&[0]),
+        Gate::rxy1q(angle, Angle64::ZERO, &[0]),
+        Gate::pz(&[1]),
+        Gate::rxy1q(-angle, Angle64::ZERO, &[0]),
+        Gate::mz(&[0]),
+        Gate::mz(&[1]),
+    ];
+    for events in [false, true] {
+        for rate in [0.0, 0.37, 1.0] {
+            let mut ones = 0;
+            for seed in 0..128 {
+                let mut actual = system(prep_crosstalk_profile(rate), events, seed);
+                let mut expected = QuantumSystem::new(
+                    Box::new(
+                        GeneralNoiseModelBuilder::new()
+                            .with_p_prep_crosstalk(rate)
+                            .build(),
+                    ),
+                    Box::new(StateVecEngine::new(2)),
+                );
+                expected.set_seed(seed);
+                let got = run(&mut actual, &[batch(0, 0, 0, gates.clone())], events);
+                let mut input = ByteMessage::quantum_operations_builder();
+                for g in &gates {
+                    input.add_gate_command(g);
+                }
+                let want = expected.process(input.build()).unwrap().outcomes().unwrap();
+                assert_eq!(got, want);
+                assert_eq!(got.len(), 2, "internal collapse is not a user result");
+                assert_eq!(got[1], 0);
+                assert_eq!(
+                    actual.noise_model().rng().clone().next_u64(),
+                    expected.noise_model().rng().clone().next_u64()
+                );
+                ones += got[0];
+            }
+            if rate == 0.0 {
+                assert_eq!(ones, 0);
+            } else {
+                assert!(ones > 0 && ones < 128, "coherence loss must be observable");
+            }
+        }
+    }
+}
+
+#[test]
+fn preparation_crosstalk_preserves_whole_spectator_idle_gap() {
+    let angle = pecos_core::radians!(std::f64::consts::FRAC_PI_2);
+    for events in [false, true] {
+        for rate in [0.0, 0.7, 1.0] {
+            for seed in 0..32 {
+                let idle = ScheduledIdleNoise::new(2)
+                    .unwrap()
+                    .with_sine(0.31, model(&[("X", 1.0)]))
+                    .unwrap()
+                    .with_coherent(0.27, model(&[("RY", 1.0)]))
+                    .unwrap();
+                let config = ScheduledLocalNoise::new(idle, 0.0, 0.0, 0.0, 0.0, 0.0)
+                    .unwrap()
+                    .with_prep_crosstalk(rate)
+                    .unwrap();
+                let mut actual = system(config.into(), events, seed);
+                let mut expected = QuantumSystem::new(
+                    Box::new(
+                        GeneralNoiseModelBuilder::new()
+                            .with_p_prep_crosstalk(rate)
+                            .with_p_idle_sin_squared(0.31, &model(&[("X", 1.0)]))
+                            .with_p_idle_coherent(0.27, &model(&[("RY", 1.0)]))
+                            .build(),
+                    ),
+                    Box::new(StateVecEngine::new(2)),
+                );
+                expected.set_seed(seed);
+                let got = run(
+                    &mut actual,
+                    &[
+                        batch(
+                            0,
+                            0,
+                            0,
+                            vec![Gate::pz(&[0]), Gate::rxy1q(angle, Angle64::ZERO, &[0])],
+                        ),
+                        // Busy time belongs only to qubit 1, not its spectator.
+                        batch(1, 1_000_000_000, 99_000_000_000, vec![Gate::pz(&[1])]),
+                        batch(
+                            2,
+                            4_000_000_000,
+                            0,
+                            vec![Gate::rxy1q(-angle, Angle64::ZERO, &[0]), Gate::mz(&[0])],
+                        ),
+                    ],
+                    events,
+                );
+                expected
+                    .process(
+                        ByteMessage::quantum_operations_builder()
+                            .pz(&[0])
+                            .rxy1q(angle, Angle64::ZERO, &[0])
+                            .build(),
+                    )
+                    .unwrap();
+                expected
+                    .process(ByteMessage::quantum_operations_builder().pz(&[1]).build())
+                    .unwrap();
+                let want = expected
+                    .process(
+                        ByteMessage::quantum_operations_builder()
+                            .idle(4.0, &[0])
+                            .rxy1q(-angle, Angle64::ZERO, &[0])
+                            .mz(&[0])
+                            .build(),
+                    )
+                    .unwrap()
+                    .outcomes()
+                    .unwrap();
+                assert_eq!(got, want);
+                assert_eq!(
+                    actual.noise_model().rng().clone().next_u64(),
+                    expected.noise_model().rng().clone().next_u64()
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn preparation_crosstalk_prepared_pool_is_cleared_on_host_reset_and_clone() {
+    let angle = pecos_core::radians!(std::f64::consts::FRAC_PI_2);
+    for events in [false, true] {
+        // A stale pool collapses qubit 0 into a fair coin, so one seed can pass
+        // by chance; every seed must read 0.
+        for seed in 0..32 {
+            let mut active = system(prep_crosstalk_profile(1.0), events, seed);
+            run(&mut active, &[batch(0, 0, 0, vec![Gate::pz(&[0])])], events);
+            let mut cloned = active.clone();
+            for host in [&mut active, &mut cloned] {
+                host.reset().unwrap();
+                host.begin_shot(context(1)).unwrap();
+                // Qubit 0 has a state but was not prepared in this shot. The other
+                // qubit's reset must not collapse it via a stale prepared pool.
+                assert_eq!(
+                    run(
+                        host,
+                        &[batch(
+                            0,
+                            0,
+                            0,
+                            vec![
+                                Gate::rxy1q(angle, Angle64::ZERO, &[0]),
+                                Gate::pz(&[1]),
+                                Gate::rxy1q(-angle, Angle64::ZERO, &[0]),
+                                Gate::mz(&[0]),
+                            ]
+                        )],
+                        events
+                    ),
+                    vec![0],
+                    "seed {seed}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn preparation_crosstalk_preserves_leakage_flags_across_repeated_preparations() {
+    for events in [false, true] {
+        let config =
+            ScheduledLocalNoise::new(ScheduledIdleNoise::new(2).unwrap(), 0.0, 0.0, 1.0, 0.0, 0.0)
+                .unwrap()
+                .with_prep_leak_ratio(1.0)
+                .unwrap()
+                .with_prep_crosstalk(1.0)
+                .unwrap();
+        let mut host = system(config.into(), events, 42);
+        assert_eq!(
+            run(
+                &mut host,
+                &[batch(
+                    0,
+                    0,
+                    0,
+                    vec![
+                        Gate::pz(&[0]),
+                        Gate::measure_leaked(&[0]),
+                        Gate::pz(&[1]),
+                        Gate::measure_leaked(&[0]),
+                        Gate::pz(&[1]),
+                        Gate::measure_leaked(&[0]),
+                        Gate::measure_leaked(&[1]),
+                    ]
+                )],
+                events
+            ),
+            vec![2, 2, 2, 2]
+        );
+    }
+}
+
+#[test]
+fn preparation_crosstalk_zero_default_and_local_replacement_preserve_rng() {
+    let angle = pecos_core::radians!(std::f64::consts::FRAC_PI_2);
+    for events in [false, true] {
+        let plain = ScheduledLocalNoise::new(
+            ScheduledIdleNoise::new(2)
+                .unwrap()
+                .with_linear(0.2, None)
+                .unwrap(),
+            0.1,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+        )
+        .unwrap();
+        let explicit = plain.clone().with_prep_crosstalk(0.0).unwrap();
+        let replaced = ScheduledLocalNoise::new(
+            plain.clone().with_prep_crosstalk(1.0).unwrap().into(),
+            0.1,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+        )
+        .unwrap();
+        for seed in 0..32 {
+            let batches = [
+                batch(
+                    0,
+                    0,
+                    0,
+                    vec![
+                        Gate::pz(&[0]),
+                        Gate::rxy1q(angle, Angle64::ZERO, &[0]),
+                        Gate::pz(&[1]),
+                    ],
+                ),
+                batch(
+                    1,
+                    1_000_000_000,
+                    0,
+                    vec![Gate::rxy1q(-angle, Angle64::ZERO, &[0]), Gate::mz(&[0])],
+                ),
+            ];
+            let mut original = system(plain.clone().into(), events, seed);
+            let expected = run(&mut original, &batches, events);
+            for config in [explicit.clone(), replaced.clone()] {
+                let mut host = system(config.into(), events, seed);
+                assert_eq!(run(&mut host, &batches, events), expected);
+                assert_eq!(
+                    host.noise_model().rng().clone().next_u64(),
+                    original.noise_model().rng().clone().next_u64()
+                );
+            }
+        }
+    }
+}

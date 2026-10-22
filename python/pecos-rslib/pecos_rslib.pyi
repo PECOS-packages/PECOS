@@ -4582,7 +4582,6 @@ def _replay_qis_trace(
 def _qis_named_result_traces(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]: ...
 def _qis_source_measurement_ids(chunks: list[dict[str, Any]]) -> list[int]: ...
 
-
 def _validate_hosted_operations(
     records: list[tuple[int, int, str, tuple[int, ...], str, str]],
     max_tick_separation: int | None,
@@ -4592,3 +4591,8 @@ def _validate_hosted_operations(
     host_id_key: str,
     context: str,
 ) -> list[tuple[int, int, int]]: ...
+def generator_certificate_digest(
+    hugr: bytes, layout: Sequence[tuple[str, int]], *, expected: str | None = None
+) -> str:
+    """Return the program-bound layout digest, checking an optional certificate."""
+    ...

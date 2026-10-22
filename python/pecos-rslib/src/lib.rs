@@ -209,6 +209,10 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     m.add_function(wrap_pyfunction!(_set_qis_library_dir, m)?)?;
     qis_text_bindings::register(m)?;
+    m.add_function(wrap_pyfunction!(
+        dem_inference_bindings::generator_certificate_digest,
+        m
+    )?)?;
 
     m.add_class::<PyStabVec>()?;
     m.add_class::<PySparseStab>()?;

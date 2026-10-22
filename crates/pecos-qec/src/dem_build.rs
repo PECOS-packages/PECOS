@@ -7,6 +7,12 @@
 //! The QEC layer owns annotation inference, circuit preparation, fault
 //! propagation and measurement evaluation, without depending on a runtime.
 
+pub mod bindings;
+mod certificate;
+pub mod specifications;
+
+pub use certificate::{check_generator_certificate_digest, generator_certificate_digest};
+
 use crate::dem_inference::{
     DemInferenceData, DemInferenceError, DemInferenceReport, DemInferenceSettings,
 };
@@ -19,6 +25,8 @@ use pecos_quantum::{Attribute, TickCircuit, pass};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// A selected element in a tag's flattened per-shot output.
+/// Python checks string tags and non-boolean, non-negative integer elements
+/// before converting its selectors to this value type.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DemOutputSelector {
     pub tag: String,
@@ -26,6 +34,8 @@ pub struct DemOutputSelector {
 }
 
 /// How a single detector or observable obtains its measurement parity.
+/// Python checks reference object shapes and non-boolean, non-negative integer
+/// measurement IDs before conversion; inferred selectors have their own checks.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DemDefinitionSource {
     Measurements(Vec<usize>),
@@ -33,12 +43,14 @@ pub enum DemDefinitionSource {
 }
 
 /// A definition with an explicit ID, independent of its preparation method.
+/// Python checks non-boolean, non-negative integer IDs, coordinate numeric
+/// conversion and metadata JSON-serializability before constructing this value.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DemDefinition {
     pub id: usize,
     pub source: DemDefinitionSource,
-    /// Optional detector coordinates (x, y, t). Rejected for observables.
-    pub coords: Option<[f64; 3]>,
+    /// Optional detector coordinates. Rejected for observables.
+    pub coords: Option<Vec<f64>>,
     /// Additional JSON fields preserved in the circuit schema.
     pub metadata: serde_json::Map<String, serde_json::Value>,
 }
@@ -66,10 +78,10 @@ impl DemDefinition {
         }
     }
 
-    /// Set detector coordinates (x, y, t); all values must be finite.
+    /// Set detector coordinates; all values must be finite.
     #[must_use]
-    pub fn with_coords(mut self, coords: [f64; 3]) -> Self {
-        self.coords = Some(coords);
+    pub fn with_coords(mut self, coords: impl Into<Vec<f64>>) -> Self {
+        self.coords = Some(coords.into());
         self
     }
 
@@ -706,11 +718,11 @@ fn requested_outputs(
     }
     let mut outputs = Vec::new();
     for definition in definitions {
-        if let Some(coords) = definition.coords
+        if let Some(coords) = &definition.coords
             && (!detectors || coords.iter().any(|value| !value.is_finite()))
         {
             return Err(DemBuildError::Configuration(
-                "coordinates require a detector and three finite values".into(),
+                "coordinates require a detector and finite values".into(),
             ));
         }
         for key in [
@@ -789,7 +801,7 @@ fn resolve_definitions(
             let mut entry = definition.metadata.clone();
             entry.insert("id".into(), serde_json::json!(definition.id));
             entry.insert("meas_ids".into(), serde_json::json!(ids));
-            if let Some(coords) = definition.coords {
+            if let Some(coords) = &definition.coords {
                 entry.insert("coords".into(), serde_json::json!(coords));
             }
             if let Some(output) = &output {

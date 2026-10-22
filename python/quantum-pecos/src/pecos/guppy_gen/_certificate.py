@@ -5,9 +5,9 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from typing import TYPE_CHECKING
+
+from pecos_rslib import generator_certificate_digest
 
 from pecos.qec.measurement_layout import abstract_result_refs
 
@@ -42,8 +42,7 @@ def certify_measurement_layout(
             _, tag, element = ref
             layout.append((f"{tag}:meas:{element}", 0))
     certified_layout = tuple(layout)
-    layout_json = json.dumps(certified_layout, separators=(",", ":"))
-    digest = hashlib.sha256(guppy_to_hugr(program) + b"\0" + layout_json.encode()).hexdigest()
+    digest = generator_certificate_digest(guppy_to_hugr(program), certified_layout)
     object.__setattr__(
         program,
         "__pecos_named_measurement_layout_v2__",

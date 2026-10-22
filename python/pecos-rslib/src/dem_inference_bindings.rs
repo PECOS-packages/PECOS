@@ -15,6 +15,22 @@ use pyo3::types::PyDict;
 /// Detector supports followed by observable supports, using stable measurement IDs.
 type InferredSupports = (Vec<Vec<usize>>, Vec<Vec<usize>>);
 
+/// Shared program-bound generator certificate encoding.
+#[pyfunction]
+#[pyo3(signature = (hugr, layout, *, expected=None))]
+pub(crate) fn generator_certificate_digest(
+    hugr: &[u8],
+    layout: Vec<(String, usize)>,
+    expected: Option<&str>,
+) -> PyResult<String> {
+    let digest = pecos_qec::dem_build::generator_certificate_digest(hugr, &layout);
+    if let Some(expected) = expected {
+        pecos_qec::dem_build::check_generator_certificate_digest(&digest, expected)
+            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+    }
+    Ok(digest)
+}
+
 /// Fluent configuration for empirical detector/observable annotation inference.
 /// Setters return a new settings value; defaults use automatic probe sizing and
 /// require measurement provenance. Seed/runtime belong to the DEM builder.

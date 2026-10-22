@@ -44,7 +44,6 @@ directly to ``from_circuit`` / ``DemSampler.from_circuit`` /
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 import warnings
@@ -263,11 +262,9 @@ def _generator_certified_layout(guppy: Any, hugr_bytes: bytes | None = None) -> 
         from pecos._compilation import guppy_to_hugr
 
         hugr_bytes = guppy_to_hugr(guppy)
-    layout_json = json.dumps(layout, separators=(",", ":"))
-    expected = hashlib.sha256(hugr_bytes + b"\0" + layout_json.encode()).hexdigest()
-    if digest != expected:
-        msg = "Guppy generator measurement-layout certificate does not match the program and layout"
-        raise ValueError(msg)
+    from pecos_rslib import generator_certificate_digest
+
+    generator_certificate_digest(hugr_bytes, layout, expected=digest)
     return layout
 
 

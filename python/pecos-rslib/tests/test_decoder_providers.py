@@ -46,7 +46,7 @@ def test_provider_validation_and_execution_traits():
     with pytest.raises(TypeError, match="decoder must"):
         batch.decode(DEM, object())
     provider = Provider()
-    provider._pecos_decoder_api_version = 2
+    provider._pecos_decoder_api_version = 99
     with pytest.raises(TypeError, match="version-1"):
         batch.decode(DEM, provider)
     provider._pecos_decoder_api_version = 1
@@ -391,3 +391,28 @@ def test_labelled_embedded_corpus_refuses_provider(tmp_path):
         match="embedded model carries fault-sector labels.*passing loaded.dem text decodes without them",
     ):
         SampleBatch.load(path).decode(None, Provider())
+
+
+@pytest.mark.parametrize(
+    ("words", "fallback", "consistent", "deltas"),
+    [
+        (None, True, True, [1]),
+        ([0], False, True, [1]),
+        ([0], False, None, [2, 1]),
+        ([0], False, None, [float("nan")]),
+        ([0, 128], True, True, [1]),
+    ],
+)
+def test_v2_provider_rejects_invalid_outcomes(words, fallback, consistent, deltas):
+    class OutcomeWorker(Worker):
+        def _pecos_decode_outcome(self, syndrome):
+            return words, fallback, consistent, deltas
+
+    class OutcomeProvider(Provider):
+        _pecos_decoder_api_version = 2
+
+        def _pecos_build_decoder(self, dem):
+            return OutcomeWorker()
+
+    with pytest.raises(RuntimeError, match="shot 0"):
+        SampleBatch([[0]], [0]).decode(DEM, OutcomeProvider(), workers=1)

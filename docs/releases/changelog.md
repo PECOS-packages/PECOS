@@ -38,10 +38,17 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Decoder changes
 
-- Experimental `FrontierDecoder` single-shot and batch methods accept
-  `on_no_path="report"` to retain `FrontierNoPath` outcomes alongside decoded
-  results. Reports contain work counters and no prediction. The default remains
-  `"raise"`; specification-based batch decoding remains strict.
+- Frontier has matching opt-in recovery in Rust and Python calls:
+  strict errors, no-path reports, or explicit fallback predictions. `delta_max`
+  enables capped doubling retries without changing K. Rust exposes
+  `FrontierRecoveryDecoder`; Python uses `FrontierDecoder` method options.
+  The `feasible_then_zero` fallback returns a verified DEM explanation when one
+  exists, otherwise a flagged zero prediction. `DemFeasibility` in decoder-core
+  provides reusable preparation independently of Frontier. The `frontier(...)`
+  batch specification accepts the same controls for `SampleBatch.decode` and
+  `DemSampler.decode`. Batch results retain recovery and logical-error records;
+  fallback predictions are scored against truth, and undecoded shots remain
+  explicit holes. Defaults remain strict.
 
 - `LogicalCircuitBuilder` detector `fault_sector` labels follow the code's
   stabilizer family across a transversal H; previously post-H detectors were

@@ -119,6 +119,7 @@ fn pecos_rslib_exp(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<frontier_bindings::PyFrontierCommitteeDecoder>()?;
     m.add_class::<frontier_bindings::PyFrontierResult>()?;
     m.add_class::<frontier_bindings::PyFrontierNoPath>()?;
+    m.add_class::<frontier_bindings::PyFrontierFallback>()?;
     m.add_class::<frontier_bindings::PyFrontierCommitteeResult>()?;
     m.add_class::<frontier_bindings::PyFrontierObservableFlips>()?;
     m.add_class::<stab_mps_bindings::PyStabMps>()?;

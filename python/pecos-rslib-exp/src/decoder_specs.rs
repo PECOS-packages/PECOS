@@ -1,13 +1,20 @@
 //! Optional experimental decoder factories and native workers for batch decoding.
 use crate::bp_trellis_bindings::{TrellisOrderArgument, parse_ordering, resolve_escalation};
 use crate::frontier_bindings::{ColumnOrderArgument, parse_column_order, parse_metric_mode};
+use crate::frontier_bindings::{parse_fallback, parse_no_path_action};
 use pecos_decoder_core::{DecoderError, ObservableDecoder};
+use pecos_frontier::recovery::{
+    FallbackPolicy, FrontierRecoveryDecoder, NoPathAction, RecoveryOptions,
+};
 use pecos_frontier::{FrontierConfig, SparseDem, TrellisOrdering};
 use pecos_trellis::bp_trellis::BpTrellisConfig;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 use std::sync::Mutex;
+
+// Version-2 provider wire format; only plain Python values cross extensions.
+type ProviderOutcome = (Option<Vec<u64>>, bool, Option<bool>, Vec<f64>);
 
 pub(crate) fn decoder_error_to_py(error: &DecoderError) -> PyErr {
     decoder_error_with_message(error, error.to_string())
@@ -45,7 +52,12 @@ fn decoder_error_with_message(error: &DecoderError, message: String) -> PyErr {
 
 #[derive(Clone, Debug, PartialEq)]
 enum ExperimentalSpec {
-    Frontier(FrontierConfig, TrellisOrdering),
+    Frontier(
+        FrontierConfig,
+        TrellisOrdering,
+        RecoveryOptions,
+        Option<FallbackPolicy>,
+    ),
     BpTrellis(BpTrellisConfig),
 }
 
@@ -83,11 +95,20 @@ impl PyExperimentalDecoderSpec {
     }
     #[getter]
     fn _pecos_decoder_api_version(&self) -> u32 {
-        1
+        match &self.inner {
+            ExperimentalSpec::Frontier(_, _, options, fallback)
+                if *options != RecoveryOptions::default() || fallback.is_some() =>
+            {
+                2
+            }
+            _ => 1,
+        }
     }
     fn __repr__(&self) -> String {
         match &self.inner {
-            ExperimentalSpec::Frontier(c, ordering) => frontier_repr(c, ordering),
+            ExperimentalSpec::Frontier(c, ordering, options, fallback) => {
+                frontier_repr(c, ordering, *options, *fallback)
+            }
             ExperimentalSpec::BpTrellis(c) => bp_trellis_repr(c),
         }
     }
@@ -116,12 +137,19 @@ impl PyExperimentalDecoderSpec {
             // The engine and the reported dimensions come from the same parse.
             let dem = SparseDem::from_dem_str(dem)?;
             let inner: Box<dyn ObservableDecoder + Send> = match &self.inner {
-                ExperimentalSpec::Frontier(c, ordering) => {
+                ExperimentalSpec::Frontier(c, ordering, options, fallback) => {
                     let mut config = c.clone();
                     config.column_order = ordering.resolve(&dem)?;
-                    Box::new(pecos_frontier::FrontierDecoder::from_sparse_dem(
-                        &dem, config,
-                    )?)
+                    if *options == RecoveryOptions::default() && fallback.is_none() {
+                        Box::new(pecos_frontier::FrontierDecoder::from_sparse_dem(
+                            &dem, config,
+                        )?)
+                    } else {
+                        Box::new(
+                            FrontierRecoveryDecoder::from_sparse_dem(&dem, config, *fallback)?
+                                .with_options(*options)?,
+                        )
+                    }
                 }
                 ExperimentalSpec::BpTrellis(c) => Box::new(
                     pecos_trellis::bp_trellis::BpTrellisDecoder::from_sparse_dem(&dem, c.clone())?,
@@ -147,6 +175,28 @@ struct PyExperimentalWorker {
 }
 #[pymethods]
 impl PyExperimentalWorker {
+    /// Internal v2 outcome: words or None, fallback flag, consistency, deltas.
+    fn _pecos_decode_outcome(
+        &self,
+        py: Python<'_>,
+        syndrome: Vec<u8>,
+    ) -> PyResult<ProviderOutcome> {
+        py.detach(|| {
+            let mut decoder = self
+                .inner
+                .lock()
+                .map_err(|_| PyRuntimeError::new_err("decoder lock poisoned"))?;
+            let outcome = decoder
+                .decode_outcome(&syndrome)
+                .map_err(|error| decoder_error_to_py(&error))?;
+            Ok((
+                outcome.prediction.map(|mask| mask.words().to_vec()),
+                outcome.fallback_used,
+                outcome.syndrome_consistent,
+                outcome.deltas_tried,
+            ))
+        })
+    }
     /// Decode without the GIL and return little-endian observable words.
     fn _pecos_decode_obs(&self, py: Python<'_>, syndrome: Vec<u8>) -> PyResult<Vec<u64>> {
         py.detach(|| {
@@ -177,8 +227,8 @@ pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
 /// Batch decoding supports independent Rust workers. Pruning can make predictions
 /// approximate; use pecos_rslib_exp.FrontierDecoder for per-shot confidence data.
 #[pyfunction]
-#[pyo3(signature = (*, k=64, delta=50.0, score_alpha=0.8, bp_score_iterations=0, column_order=ColumnOrderArgument::default(), merge_indistinguishable=false, metric_mode="logsumexp_float", int_metric_scale=1024),
-    text_signature = "(*, k=64, delta=50.0, score_alpha=0.8, bp_score_iterations=0, column_order='deadline_reorder', merge_indistinguishable=False, metric_mode='logsumexp_float', int_metric_scale=1024)")]
+#[pyo3(signature = (*, k=64, delta=50.0, score_alpha=0.8, bp_score_iterations=0, column_order=ColumnOrderArgument::default(), merge_indistinguishable=false, metric_mode="logsumexp_float", int_metric_scale=1024, delta_max=None, on_no_path="raise", fallback=None),
+    text_signature = "(*, k=64, delta=50.0, score_alpha=0.8, bp_score_iterations=0, column_order='deadline_reorder', merge_indistinguishable=False, metric_mode='logsumexp_float', int_metric_scale=1024, delta_max=None, on_no_path='raise', fallback=None)")]
 fn frontier(
     k: usize,
     delta: f64,
@@ -188,6 +238,9 @@ fn frontier(
     merge_indistinguishable: bool,
     metric_mode: &str,
     int_metric_scale: i32,
+    delta_max: Option<f64>,
+    on_no_path: &str,
+    fallback: Option<&str>,
 ) -> PyResult<PyExperimentalDecoderSpec> {
     let config = FrontierConfig {
         k,
@@ -202,13 +255,35 @@ fn frontier(
     config
         .validate()
         .map_err(|error| PyValueError::new_err(error.to_string()))?;
+    let fallback = parse_fallback(fallback)?;
+    let options = RecoveryOptions {
+        delta_max,
+        on_no_path: parse_no_path_action(on_no_path)?,
+    };
+    if delta_max.is_some_and(|max| !max.is_finite() || max < delta) {
+        return Err(PyValueError::new_err(
+            "delta_max must be finite and at least the base delta",
+        ));
+    }
+    if options.on_no_path == NoPathAction::Fallback && fallback.is_none() {
+        return Err(PyValueError::new_err(
+            "on_no_path='fallback' requires a configured fallback",
+        ));
+    }
     Ok(PyExperimentalDecoderSpec::new(ExperimentalSpec::Frontier(
         config,
         parse_column_order(column_order)?,
+        options,
+        fallback,
     )))
 }
 
-fn frontier_repr(config: &FrontierConfig, ordering: &TrellisOrdering) -> String {
+fn frontier_repr(
+    config: &FrontierConfig,
+    ordering: &TrellisOrdering,
+    options: RecoveryOptions,
+    fallback: Option<FallbackPolicy>,
+) -> String {
     let default = FrontierConfig::default();
     let mut args = Vec::new();
     if config.k != default.k {
@@ -246,6 +321,19 @@ fn frontier_repr(config: &FrontierConfig, ordering: &TrellisOrdering) -> String 
     }
     if config.int_metric_scale != default.int_metric_scale {
         args.push(format!("int_metric_scale={}", config.int_metric_scale));
+    }
+    if let Some(max) = options.delta_max {
+        args.push(format!("delta_max={max:?}"));
+    }
+    match options.on_no_path {
+        NoPathAction::Raise => {}
+        NoPathAction::Report => args.push("on_no_path='report'".into()),
+        NoPathAction::Fallback => args.push("on_no_path='fallback'".into()),
+    }
+    match fallback {
+        None => {}
+        Some(FallbackPolicy::Zero) => args.push("fallback='zero'".into()),
+        Some(FallbackPolicy::FeasibleThenZero) => args.push("fallback='feasible_then_zero'".into()),
     }
     finish_repr("frontier", args)
 }

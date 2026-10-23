@@ -14,6 +14,8 @@ pub(super) struct BatchExecutionOutput {
     pub(super) projection: Option<pecos_decoder_core::graphlike_projection::ProjectionReport>,
     pub(super) num_errors: usize,
     pub(super) predictions: Option<Vec<ObsMask>>,
+    pub(super) partial_predictions: Option<Vec<Option<ObsMask>>>,
+    pub(super) recovery: Vec<pecos_decoder_core::outcome::ShotRecovery>,
     pub(super) per_shot_seconds: Option<Vec<f64>>,
     pub(super) wall_elapsed: f64,
 }
@@ -46,6 +48,41 @@ impl BatchExecutionError {
     }
 }
 
+/// Per-shot diagnostics for retries, undecoded shots, and fallbacks.
+#[pyclass(
+    name = "DecodeRecovery",
+    module = "pecos_rslib.qec",
+    frozen,
+    from_py_object
+)]
+#[derive(Clone)]
+pub struct PyDecodeRecovery {
+    #[pyo3(get)]
+    shot_index: usize,
+    #[pyo3(get)]
+    undecoded: bool,
+    #[pyo3(get)]
+    logical_error: Option<bool>,
+    #[pyo3(get)]
+    fallback_used: bool,
+    #[pyo3(get)]
+    syndrome_consistent: Option<bool>,
+    #[pyo3(get)]
+    deltas_tried: Vec<f64>,
+}
+impl From<pecos_decoder_core::outcome::ShotRecovery> for PyDecodeRecovery {
+    fn from(value: pecos_decoder_core::outcome::ShotRecovery) -> Self {
+        Self {
+            shot_index: value.shot_index,
+            undecoded: value.undecoded,
+            logical_error: value.logical_error,
+            fallback_used: value.fallback_used,
+            syndrome_consistent: value.syndrome_consistent,
+            deltas_tried: value.deltas_tried,
+        }
+    }
+}
+
 /// Result of decoding and scoring one `SampleBatch`.
 #[pyclass(name = "DecodeResult", module = "pecos_rslib.qec", skip_from_py_object)]
 pub struct PyDecodeResult {
@@ -57,6 +94,14 @@ pub struct PyDecodeResult {
     num_shots: usize,
     #[pyo3(get)]
     num_errors: usize,
+    #[pyo3(get)]
+    num_undecoded: usize,
+    #[pyo3(get)]
+    num_fallback: usize,
+    #[pyo3(get)]
+    num_scored: usize,
+    #[pyo3(get)]
+    recovery: Vec<PyDecodeRecovery>,
     #[pyo3(get)]
     logical_error_rate: f64,
     #[pyo3(get)]
@@ -85,6 +130,8 @@ impl PyDecodeResult {
                 projection: result.projection,
                 num_errors: result.num_errors,
                 predictions: result.predictions,
+                partial_predictions: result.partial_predictions,
+                recovery: result.recovery,
                 per_shot_seconds: result.per_shot_seconds,
                 wall_elapsed: result.wall_elapsed,
             },
@@ -109,14 +156,27 @@ impl PyDecodeResult {
         output: BatchExecutionOutput,
         sampling_seed_used: Option<u64>,
     ) -> PyResult<Self> {
-        let logical_error_rate =
-            pecos_decoders::batch::logical_error_rate(output.num_errors, num_shots);
+        let num_undecoded = output.recovery.iter().filter(|r| r.undecoded).count();
+        let num_fallback = output.recovery.iter().filter(|r| r.fallback_used).count();
+        let logical_error_rate = if num_undecoded > 0 {
+            f64::NAN
+        } else {
+            pecos_decoders::batch::logical_error_rate(output.num_errors, num_shots)
+        };
         let predictions = output
-            .predictions
+            .partial_predictions
+            .or_else(|| {
+                output
+                    .predictions
+                    .map(|masks| masks.into_iter().map(Some).collect())
+            })
             .map(|masks| {
                 masks
                     .iter()
-                    .map(|mask| crate::observable_flips_bindings::obsmask_to_py(py, mask))
+                    .map(|mask| match mask {
+                        Some(mask) => crate::observable_flips_bindings::obsmask_to_py(py, mask),
+                        None => Ok(py.None()),
+                    })
                     .collect()
             })
             .transpose()?;
@@ -124,22 +184,25 @@ impl PyDecodeResult {
             .per_shot_seconds
             .map(|times| {
                 let summed_decode_elapsed = times.iter().sum();
-                Py::new(
-                    py,
-                    PyDecodeStats::from_times_with_elapsed(
-                        num_shots,
-                        output.num_errors,
-                        times,
-                        output.wall_elapsed,
-                        summed_decode_elapsed,
-                    ),
-                )
+                let mut stats = PyDecodeStats::from_times_with_elapsed(
+                    num_shots,
+                    output.num_errors,
+                    times,
+                    output.wall_elapsed,
+                    summed_decode_elapsed,
+                );
+                stats.logical_error_rate = logical_error_rate;
+                Py::new(py, stats)
             })
             .transpose()?;
         Ok(Self {
             projection: output.projection.map(Into::into),
             num_shots,
             num_errors: output.num_errors,
+            num_undecoded,
+            num_fallback,
+            num_scored: num_shots - num_undecoded,
+            recovery: output.recovery.into_iter().map(Into::into).collect(),
             logical_error_rate,
             execution_path: plan.path.as_str().to_string(),
             workers_used: plan.workers_used,
@@ -174,6 +237,11 @@ impl PyDecodeResult {
     /// mean `(k + 0.5) / (n + 1)`, distinct from this result's empirical `k / n`.
     #[pyo3(signature = (alpha=0.05))]
     fn interval(&self, alpha: f64) -> PyResult<(f64, f64)> {
+        if self.num_undecoded > 0 {
+            return Err(PyValueError::new_err(
+                "logical-error interval is undefined with undecoded shots",
+            ));
+        }
         pecos_decoders::batch::validate_decode_interval(self.num_shots, alpha)
             .map_err(PyValueError::new_err)?;
         let interval = pecos_num::stats::jeffreys_interval(

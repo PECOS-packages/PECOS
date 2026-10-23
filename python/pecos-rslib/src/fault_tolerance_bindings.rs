@@ -8300,6 +8300,7 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     qec.add_class::<PyDemBuilder>()?;
     qec.add_class::<PySampleBatch>()?;
     qec.add_class::<batch_decode::PyDecodeResult>()?;
+    qec.add_class::<batch_decode::PyDecodeRecovery>()?;
     qec.add_class::<PyProjectionReport>()?;
     qec.add_class::<PyDecoderComparisonResult>()?;
     qec.add_class::<PyCssUfDecoder>()?;

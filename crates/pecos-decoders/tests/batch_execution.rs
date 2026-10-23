@@ -779,3 +779,88 @@ fn structured_batch_preserves_sectors_and_execution() {
     assert_eq!(result.num_errors, 0);
     assert_eq!(result.execution_path, ExecutionPath::Sequential);
 }
+
+struct RecoveryFactory;
+struct RecoveryDecoder;
+impl DecoderFactory for RecoveryFactory {
+    type BuildError = DecoderError;
+    fn execution_traits(&self) -> ExecutionTraits {
+        ExecutionTraits::default()
+    }
+    fn native_batch_capable(&self) -> bool {
+        false
+    }
+    fn build(&self, _: &DecodeModel) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
+        Ok(Box::new(RecoveryDecoder))
+    }
+}
+impl ObservableDecoder for RecoveryDecoder {
+    fn num_detectors(&self) -> Option<usize> {
+        Some(2)
+    }
+    fn decode_obs(&mut self, _: &[u8]) -> Result<ObsMask, DecoderError> {
+        panic!("shared batch must preserve recovery outcomes")
+    }
+    fn decode_outcome(
+        &mut self,
+        syndrome: &[u8],
+    ) -> Result<pecos_decoder_core::outcome::ObservableDecodeOutcome, DecoderError> {
+        let fallback = syndrome[0] != 0;
+        let mut mask = ObsMask::new();
+        mask.set(70);
+        Ok(pecos_decoder_core::outcome::ObservableDecodeOutcome {
+            prediction: (syndrome[1] == 0).then_some(mask),
+            fallback_used: fallback,
+            syndrome_consistent: fallback.then_some(true),
+            deltas_tried: vec![1.0, 2.0, 3.0],
+        })
+    }
+}
+#[test]
+fn shared_batch_scores_fallbacks_and_preserves_reported_holes() {
+    let mut truth = ObsMask::new();
+    truth.set(70);
+    for workers in [1, 4] {
+        for retain in [false, true] {
+            let rows = [vec![1, 0], vec![1, 0], vec![0, 1], vec![0, 0]]
+                .into_iter()
+                .cycle()
+                .take(260)
+                .collect::<Vec<_>>();
+            let truths = [truth.clone(), ObsMask::new(), ObsMask::new(), truth.clone()]
+                .into_iter()
+                .cycle()
+                .take(260)
+                .collect::<Vec<_>>();
+            let batch = SampleBatch::from_row_major(&rows, &truths, 71).unwrap();
+            let result = batch
+                .decode_with(
+                    "",
+                    &RecoveryFactory,
+                    &DecodeOptions::default()
+                        .workers(workers)
+                        .predictions(retain),
+                )
+                .unwrap();
+            assert_eq!(result.num_errors, 65);
+            assert_eq!(result.num_undecoded(), 65);
+            assert_eq!(result.num_fallback(), 130);
+            assert!(result.logical_error_rate().is_nan());
+            assert!(result.predictions.is_none());
+            assert_eq!(result.partial_predictions.is_some(), retain);
+            if let Some(predictions) = &result.partial_predictions {
+                for (i, prediction) in predictions.iter().enumerate() {
+                    assert_eq!(prediction, &((i % 4 != 2).then_some(truth.clone())));
+                }
+            }
+            assert_eq!(result.recovery.len(), rows.len());
+            for (i, recovery) in result.recovery.iter().enumerate() {
+                assert_eq!(recovery.shot_index, i);
+                assert_eq!(
+                    recovery.logical_error,
+                    if i % 4 == 2 { None } else { Some(i % 4 == 1) }
+                );
+            }
+        }
+    }
+}

@@ -444,3 +444,40 @@ fn residual_precheck_skips_bp_refresh() {
         );
     }
 }
+
+#[test]
+fn prediction_only_attempt_matches_full() {
+    for integer in [false, true] {
+        for (name, shot) in [
+            ("three_route_collision", vec![]),
+            ("overpruning_ladder", vec![0; 4]),
+        ] {
+            let mut decoder = fixture(name, config(integer));
+            decoder.prepare(&shot).unwrap();
+            for params in [decoder.prune_params(), PruneParams { k: 1, delta: 0.0 }] {
+                let TrellisDecodeAttempt::Success(full) = decoder.attempt(params) else {
+                    panic!("fixture must decode");
+                };
+                let TrellisDecodeAttempt::Success(prediction) =
+                    decoder.attempt_prediction_only(params)
+                else {
+                    panic!("prediction-only attempt must decode");
+                };
+                assert_eq!(prediction.predicted, full.predicted);
+                assert!(prediction.dropped_log_mass.is_nan());
+                assert!(!full.dropped_log_mass.is_nan());
+            }
+            invalid(
+                decoder.attempt_prediction_only(PruneParams { k: 0, delta: 1.0 }),
+                "k",
+            );
+        }
+    }
+}
+
+#[test]
+#[should_panic(expected = "attempt requires a Ready prepare")]
+fn prediction_only_attempt_requires_ready() {
+    let mut decoder = fixture("overpruning_ladder", config(false));
+    let _ = decoder.attempt_prediction_only(decoder.prune_params());
+}

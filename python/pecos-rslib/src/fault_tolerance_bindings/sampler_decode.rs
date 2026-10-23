@@ -95,18 +95,17 @@ impl<'a> ShotSampler<'a> {
     ) -> Result<(), ShotDecodeError> {
         let truth = self.sample_shot(rng, syndrome, shot_index)?;
         let decode_start = options.timing.then(std::time::Instant::now);
-        let decoded = decoder.decode_obs(syndrome);
+        let decoded = decoder.decode_outcome(syndrome);
         if let Some(decode_start) = decode_start {
             result
                 .per_shot_seconds
                 .push(decode_start.elapsed().as_secs_f64());
         }
         let mut prediction = decoded.map_err(|source| ShotDecodeError::new(shot_index, source))?;
-        prediction &= &self.observable_mask;
-        result.mismatches += usize::from(prediction != truth);
-        if options.predictions {
-            result.predictions.push(prediction);
+        if let Some(mask) = &mut prediction.prediction {
+            *mask &= &self.observable_mask;
         }
+        result.record_outcome(shot_index, prediction, &truth, options.predictions);
         Ok(())
     }
 }
@@ -133,6 +132,7 @@ fn preflight_dimensions(
 fn empty_result(num_shots: usize, options: DecodeOptions) -> DecodeRangeResult {
     DecodeRangeResult {
         mismatches: 0,
+        recovery: Vec::new(),
         predictions: if options.predictions {
             Vec::with_capacity(num_shots)
         } else {
@@ -259,6 +259,7 @@ fn combine_chunk_results(
     let mut combined = empty_result(num_shots, options);
     for mut result in successes {
         combined.mismatches += result.mismatches;
+        combined.recovery.append(&mut result.recovery);
         combined.predictions.append(&mut result.predictions);
         combined
             .per_shot_seconds
@@ -413,7 +414,7 @@ fn native_batch(
             prediction &= &shot_sampler.observable_mask;
             result.mismatches += usize::from(prediction != truth);
             if predictions {
-                result.predictions.push(prediction);
+                result.predictions.push(Some(prediction));
             }
         }
     }
@@ -475,10 +476,14 @@ pub(super) fn execute(
             )?
         }
     };
+    let (predictions, partial_predictions) =
+        pecos_decoders::batch::split_predictions(options.predictions.then_some(scored.predictions));
     Ok(BatchExecutionOutput {
         projection: prepared.projection,
         num_errors: scored.mismatches,
-        predictions: options.predictions.then_some(scored.predictions),
+        predictions,
+        partial_predictions,
+        recovery: scored.recovery,
         per_shot_seconds: options.timing.then_some(scored.per_shot_seconds),
         wall_elapsed: wall_start.elapsed().as_secs_f64(),
     })

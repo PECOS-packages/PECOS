@@ -3,7 +3,15 @@
 Mandatory v7 transport preserves opaque native events for a shot-local adapter.
 The adapter normalizes complete batches into checked gates and optional typed
 crosstalk exposures **before quantum execution**. The noise controller resolves
-those exposures during execution. Profiles retain the 1–16-qubit StateVec limit;
+those exposures during execution. Profiles run on StateVec or StabilizerEngine
+(Python: `pr.stabilizer()`) with no profile-imposed qubit limit; the per-batch
+operation and spectator-target limits still apply. The stabilizer path requires
+zero coherent idle rate and supported Clifford rotations; it rejects unsupported
+normalized gates before starting the noise controller for the current input.
+Each subsequent live input is admitted separately. Noise-generated continuation
+commands are checked before simulator execution, and execution failures require reset.
+See [scheduled simulation](scheduled-idle-simulation.md) for the model restrictions.
+
 Python supports an opt-in adapter factory on the QIS/HUGR engines route. This is
 not a general execution-time event API.
 

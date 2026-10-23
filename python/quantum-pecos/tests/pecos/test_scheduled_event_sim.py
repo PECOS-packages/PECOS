@@ -13,7 +13,7 @@ def event_runtime(tmp_path: Path, scheduled_support):
     return scheduled_support.build_runtime(tmp_path, 0, events=True)[0], scheduled_support.ramsey
 
 
-def simulation(runtime, factory, program=None):
+def simulation(runtime, factory, program=None, *, backend="state_vector"):
     library, default_program = runtime
     program = default_program if program is None else program
     import pecos
@@ -34,7 +34,7 @@ def simulation(runtime, factory, program=None):
         pecos.sim(pecos.Qis(program) if isinstance(program, str) else program)
         .classical(classical)
         .qubits(1)
-        .quantum(pr.state_vector())
+        .quantum(getattr(pr, backend)())
         .noise(pr.scheduled_event_idle_z(1, factory))
         .seed(42)
         .workers(2)
@@ -165,7 +165,7 @@ def test_factory_configuration():
     with pytest.raises(TypeError, match="must be callable"):
         pr.scheduled_event_idle_z(1, None)
     with pytest.raises(ValueError, match="capacity"):
-        pr.scheduled_event_idle_z(17, lambda _: PhaseAdapter())
+        pr.scheduled_event_idle_z(0, lambda _: PhaseAdapter())
 
 
 def run_isolated(runtime, body):
@@ -462,7 +462,8 @@ def test_repeated_program_result_ids_reach_python_adapter(tmp_path, scheduled_su
 
 @pytest.mark.parametrize("global_exposure", [False, True])
 @pytest.mark.parametrize("probability", [0.0, 1.0])
-def test_spectator_exchange_through_monte_carlo(event_runtime, global_exposure, probability):
+@pytest.mark.parametrize("backend", ["state_vector", "stabilizer"])
+def test_spectator_exchange_through_monte_carlo(event_runtime, global_exposure, probability, backend):
     """Live runtime -> HybridEngine -> QuantumSystem, including worker reuse."""
     import pecos_rslib as pr
 
@@ -495,7 +496,11 @@ def test_spectator_exchange_through_monte_carlo(event_runtime, global_exposure, 
         local_probability=probability,
         global_probability=probability,
     )
-    built = simulation(event_runtime, factory).noise(pr.scheduled_event_idle_noise(profile, factory)).build()
+    built = (
+        simulation(event_runtime, factory, backend=backend)
+        .noise(pr.scheduled_event_idle_noise(profile, factory))
+        .build()
+    )
     for _ in range(2):
         result = built.run(8).to_dict()
         assert result["measurement_0"] == [int(probability)] * 8
@@ -525,12 +530,12 @@ def test_spectator_requires_profile_opt_in_and_capacity(event_runtime):
         ).run(1)
 
 
-@pytest.mark.parametrize("ids", [[0, 0], [16], list(range(17))])
-def test_spectator_ids_are_checked(ids):
+@pytest.mark.parametrize(("ids", "duplicate"), [([0, 0], 0), ([1, 4096, 1], 1)])
+def test_spectator_ids_are_checked(ids, duplicate):
     import pecos_rslib as pr
 
     for constructor in [pr.ScheduledCrosstalk.local, pr.ScheduledCrosstalk.global_excluding]:
-        with pytest.raises(ValueError, match="distinct"):
+        with pytest.raises(ValueError, match=f"spectator ID {duplicate} appears more than once"):
             constructor(ids)
 
 
@@ -549,7 +554,8 @@ def test_spectator_parameters_validate_and_preserve_profile_type():
 
 
 @pytest.mark.parametrize("probability", [0.0, 1.0])
-def test_guppy_feedback_after_spectator_measurement(event_runtime, probability):
+@pytest.mark.parametrize("backend", ["state_vector", "stabilizer"])
+def test_guppy_feedback_after_spectator_measurement(event_runtime, probability, backend):
     import pecos_rslib as pr
     from guppylang import guppy
     from guppylang.std.angles import angle
@@ -587,7 +593,7 @@ def test_guppy_feedback_after_spectator_measurement(event_runtime, probability):
         return ExposureAdapter()
 
     values = (
-        simulation(event_runtime, factory, feedback)
+        simulation(event_runtime, factory, feedback, backend=backend)
         .noise(pr.scheduled_event_idle_noise(profile, factory))
         .run(4)
         .to_dict()

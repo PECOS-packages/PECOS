@@ -251,7 +251,7 @@ impl QisEngineBuilder {
     }
 
     /// Preserve original native batches in mandatory transport. Requires the
-    /// matching scheduled noise capability and a state-vector simulator.
+    /// matching scheduled noise capability and an admitted state-vector or stabilizer simulator.
     /// Enabling preserves v7 if selected; disabling turns all scheduled transport off.
     #[must_use]
     pub fn scheduled_batches(mut self, enabled: bool) -> Self {

@@ -486,6 +486,37 @@ fn malformed_continuation_stops_before_dispatch_or_further_reply() {
 }
 
 #[test]
+fn non_clifford_continuation_rejects_before_stabilizer_mutation() {
+    // The stabilizer would apply X before failing on RZ, leaving a partial batch.
+    let mut continuation = ByteMessage::quantum_operations_builder();
+    continuation
+        .x(&[0])
+        .rz(pecos_core::Angle64::QUARTER_TURN / 2u64, &[0]);
+    let mut system = QuantumSystem::new(
+        Box::new(Script::new(vec![continuation.build()], false)),
+        Box::new(crate::StabilizerEngine::new(1)),
+    );
+    let stage = system
+        .noise_model
+        .start(ByteMessage::quantum_operations_builder().x(&[0]).build())
+        .unwrap();
+    let error = system
+        .drive_scheduled(
+            stage,
+            ScheduledExecutionLimits {
+                operations: 16,
+                bytes: 4096,
+                simulator_calls: 8,
+            },
+        )
+        .err()
+        .expect("expected rejection");
+    assert!(error.to_string().contains("Clifford"), "{error}");
+    assert_eq!(script(&system).replies, 1);
+    assert_eq!(measure(&mut system), vec![1]);
+}
+
+#[test]
 fn byte_limit_precedes_malformed_continuation_parsing() {
     let malformed = ByteMessage::new(&[0xff; 16]);
     let x = ByteMessage::quantum_operations_builder().x(&[0]).build();

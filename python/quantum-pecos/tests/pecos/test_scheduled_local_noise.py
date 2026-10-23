@@ -13,7 +13,17 @@ class PassThrough:
         return batch.operations
 
 
-def simulation(library, program, profile, events, *, idle_only=False, adapter_factory=None, qubits=1):
+def simulation(
+    library,
+    program,
+    profile,
+    events,
+    *,
+    idle_only=False,
+    adapter_factory=None,
+    qubits=1,
+    backend="state_vector",
+):
     import pecos
     import pecos_rslib as pr
     from selene_simple_runtime_plugin import SimpleRuntimePlugin
@@ -29,7 +39,7 @@ def simulation(library, program, profile, events, *, idle_only=False, adapter_fa
         pecos.sim(pecos.Qis(program))
         .classical(classical.interface(pr.qis_helios_interface()))
         .qubits(qubits)
-        .quantum(pr.state_vector())
+        .quantum(getattr(pr, backend)())
         .noise(profile)
         .seed(42)
         .workers(2)
@@ -85,7 +95,8 @@ def test_factory_signature_rejects_unsupported_keywords(parameter):
 
 
 @pytest.mark.parametrize("events", [False, True])
-def test_noisy_measurement_drives_runtime_feedback(tmp_path, scheduled_support, events):
+@pytest.mark.parametrize("backend", ["state_vector", "stabilizer"])
+def test_noisy_measurement_drives_runtime_feedback(tmp_path, scheduled_support, events, backend):
     import pecos_rslib as pr
 
     library, _ = scheduled_support.build_runtime(tmp_path, 0)
@@ -113,7 +124,7 @@ done:
     # The first measurement is 1 only because of the preparation fault. Its
     # returned value must resume the program and select the physical X branch.
     profile = pr.scheduled_local_noise(pr.scheduled_idle_noise(1), prep=1.0)
-    result = simulation(library, program, profile, events).run(6).to_dict()
+    result = simulation(library, program, profile, events, backend=backend).run(6).to_dict()
     assert result["measurement_0"] == [1] * 6
     assert result["measurement_1"] == [0] * 6
 
@@ -383,10 +394,12 @@ def test_invalid_angle_configuration_fails_at_construction(keywords):
 @pytest.mark.parametrize("events", [False, True])
 @pytest.mark.parametrize("two_qubit", [False, True])
 @pytest.mark.parametrize("seepage", [0.0, 1.0])
+@pytest.mark.parametrize("backend", ["state_vector", "stabilizer"])
 def test_emission_and_seepage_resume_live_integer_feedback(
     tmp_path,
     scheduled_support,
     events,
+    backend,
     two_qubit,
     seepage,
 ):
@@ -438,7 +451,7 @@ attributes #0 = { "EntryPoint" }
         else {"p1": 1.0, "p1_emission_ratio": 1.0, "p1_emission_model": {"L": 1.0}, "p1_seepage_prob": seepage}
     )
     profile = pr.scheduled_local_noise(pr.scheduled_idle_noise(2), **faults)
-    built = simulation(library, program, profile, events, qubits=2).build()
+    built = simulation(library, program, profile, events, backend=backend, qubits=2).build()
     for shots in (8, 12):
         result = built.run(shots).to_dict()
         assert result["measurement_0"] == [0] * shots
@@ -484,10 +497,12 @@ def test_invalid_emission_distribution_is_rejected_when_disabled(parameter, dist
 @pytest.mark.parametrize("events", [False, True])
 @pytest.mark.parametrize("coalesce", [False, True])
 @pytest.mark.parametrize("probability", [0.0, 1.0])
+@pytest.mark.parametrize("backend", ["state_vector", "stabilizer"])
 def test_preparation_crosstalk_dephases_spectator_and_preserves_live_feedback(
     tmp_path,
     scheduled_support,
     events,
+    backend,
     coalesce,
     probability,
 ):
@@ -536,10 +551,42 @@ attributes #0 = { "EntryPoint" }
         local_probability=0.0,
         global_probability=0.0,
     )
-    built = simulation(library, program, profile, events, idle_only=True, qubits=2).build()
+    built = simulation(library, program, profile, events, backend=backend, idle_only=True, qubits=2).build()
     for _ in range(2):
         data = built.run(64).to_dict()
         assert set(data) == {"measurement_0", "measurement_1", "measurement_2"}
         assert set(data["measurement_0"]) == ({0} if probability == 0.0 else {0, 1})
         assert data["measurement_1"] == [0] * 64  # The live branch corrects the first readout.
         assert data["measurement_2"] == [0] * 64  # Preparation target stays reset.
+
+
+@pytest.mark.parametrize("events", [False, True])
+@pytest.mark.parametrize(("backend", "spares"), [("stabilizer", 64), ("state_vector", 16)])
+def test_high_qubit_idle_and_repeated_workers(tmp_path, scheduled_support, events, backend, spares):
+    import pecos_rslib as pr
+
+    library, _ = scheduled_support.build_runtime(tmp_path, 1_000_000_000)
+    allocations = "\n".join(f"  %spare{i} = call i64 @___qalloc()" for i in range(spares))
+    frees = "\n".join(f"  call void @___qfree(i64 %spare{i})" for i in range(spares))
+    program = scheduled_support.ramsey.replace(
+        "  %q = call i64 @___qalloc()",
+        allocations + "\n  %q = call i64 @___qalloc()",
+    ).replace("  %end = call i64 @teardown()", frees + "\n  %end = call i64 @teardown()")
+    profile = pr.scheduled_idle_noise(spares + 1, sine=math.pi / 2)
+    built = simulation(library, program, profile, events, idle_only=True, qubits=spares + 1, backend=backend).build()
+    for shots in (4, 6):
+        assert built.run(shots).to_dict()["measurement_0"] == [1] * shots
+
+
+@pytest.mark.parametrize("events", [False, True])
+@pytest.mark.parametrize("invalid", ["coherent", "rotation"])
+def test_stabilizer_rejects_unsupported_noise_and_rotations(tmp_path, scheduled_support, events, invalid):
+    import pecos_rslib as pr
+
+    library, _ = scheduled_support.build_runtime(tmp_path, 0)
+    profile = pr.scheduled_idle_noise(1, coherent=0.1 if invalid == "coherent" else 0.0)
+    program = scheduled_support.ramsey
+    if invalid == "rotation":
+        program = program.replace("0x3FF921FB54442D18", "0x3FE921FB54442D18", 1)
+    with pytest.raises(Exception, match="coherent idle rate zero" if invalid == "coherent" else "Clifford"):
+        simulation(library, program, profile, events, idle_only=True, backend="stabilizer").run(1)

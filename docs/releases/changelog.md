@@ -382,6 +382,31 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Rust breaking changes
 
+- pecos-neo decompositions are instantiated once per operand group, sized by
+  the gate's registered qubit arity. Only a gate with no `GateSpec`, or one
+  registered with arity zero, is still decomposed over its whole operand slice;
+  `GateSpec::new` defaults to an arity of 1, so a user gate registered without
+  `with_quantum_arity` whose decomposition uses operand index 1 or higher now
+  needs an explicit arity. A decomposition whose operand indices exceed the
+  registered arity, or a gate whose operand count is not a nonzero multiple of a
+  positive registered arity, now returns
+  `ExecutionError::DecompositionIndexOutOfRange` /
+  `ExecutionError::DecompositionQubitArity` (or
+  `ResolutionError::IndexOutOfRange` / `ResolutionError::QubitArity`) instead
+  of running on a truncated or whole slice. `DecompOp::qubit_indices` is now
+  exactly the indices given; constructors no longer pad it with zeros, so a
+  manually built `DecompOp` must not include padding. `CircuitResolver` groups
+  by `GateDefinitions` arities (core gates by default, user gates via the new
+  `with_definitions`), reports decomposition cycles as
+  `ResolutionError::CircularDependency`, and bounds nesting with the new
+  `ResolutionError::MaxDepthExceeded` (the same default depth limit
+  as `CircuitRunner`). `GateDefinitions` now has core specs
+  for `ISWAP`, `CCZ`, and `CSWAP`, so category noise applies to them and these
+  names are reserved: a user gate registered under one of them is no longer
+  found reliably by name.
+  `StabilizerMeasurementAdaptor` and `StabilizerPreparationAdaptor` now require
+  exactly one qubit pair instead of ignoring additional pairs.
+
 - pecos-neo `NoiseResponse::SkipGate` now carries `SmallVec<[QubitId; 4]>`:
   operand groups containing a listed qubit are suppressed; list all operands to
   skip a whole command. `should_skip_gate()` is replaced by `skipped_qubits()`,
@@ -575,6 +600,16 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   with ties away from zero on the signed principal representative.
 
 ### Rust bug fixes
+
+- pecos-neo decompositions apply to every operand group of a batched gate. This
+  covers registered decompositions in `CircuitRunner`, `CircuitResolver`
+  (including the built-in SWAP and iSWAP decompositions), and the CCX
+  rotation-executor path, which previously acted on the first group only.
+  `DecompOp` keeps every qubit index, so a two-qubit operation whose second
+  index is 0, such as the `CX(1, 0)` step of the SWAP and iSWAP decompositions,
+  no longer loses its second qubit. A self-referential decomposition in
+  `CircuitRunner::execute_gate` now stops at the decomposition depth limit
+  instead of overflowing the stack.
 
 - pecos-neo gate suppression applies per operand group in batched commands,
   including adapted circuits and importance sampling. `LeakageChannel` injects

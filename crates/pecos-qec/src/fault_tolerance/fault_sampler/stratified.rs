@@ -167,6 +167,18 @@ impl ExactFaultStratum {
     pub fn failure_probability(&self) -> f64 {
         self.log_failure_probability.exp()
     }
+
+    /// Natural logarithm of [`Self::survival_probability`], finite where it underflows.
+    #[must_use]
+    pub fn log_survival_probability(&self) -> f64 {
+        self.log_survival_probability
+    }
+
+    /// Natural logarithm of [`Self::failure_probability`], finite where it underflows.
+    #[must_use]
+    pub fn log_failure_probability(&self) -> f64 {
+        self.log_failure_probability
+    }
 }
 
 /// Probability estimates over exact and sampled strata and plug-in standard errors.
@@ -180,7 +192,7 @@ impl ExactFaultStratum {
 /// Probabilities and variances are accumulated in log space. Returned
 /// probabilities and standard errors may underflow to zero, but ratios use the
 /// log probabilities and remain defined whenever any sampled shot survives or
-/// any exact stratum has positive survival probability. Exact contributions add
+/// any exact stratum has a finite log survival probability. Exact contributions add
 /// to A, B, and R, but contribute zero variance.
 ///
 /// V1 limitation: a stratum whose observed failure count is zero by chance

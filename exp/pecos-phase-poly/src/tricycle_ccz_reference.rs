@@ -158,6 +158,9 @@ fn xor_into(target: &mut BTreeSet<usize>, values: &[usize]) {
 }
 
 /// Unconditional contribution of one fault-count stratum.
+///
+/// Contributions are linear diagnostics and can underflow to zero for extreme
+/// catalogs; the combined [`StratifiedEstimate`] works in log space throughout.
 #[derive(Clone, Debug)]
 pub struct StratumEstimate {
     /// Number of firing mechanisms.

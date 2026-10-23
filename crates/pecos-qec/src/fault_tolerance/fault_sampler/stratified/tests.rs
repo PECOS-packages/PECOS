@@ -1197,12 +1197,12 @@ fn exact_strata_keep_mass_at_extreme_probabilities() {
             let context = format!("locations={locations}, p={p:e}, k={k}, exact={exact:?}");
             // Log probabilities to 1e-10 absolute, i.e. probabilities to 1e-10 relative.
             assert!(
-                (exact.log_survival_probability - log_mass).abs() < 1e-10,
+                (exact.log_survival_probability() - log_mass).abs() < 1e-10,
                 "{context}"
             );
             if k % 2 == 1 {
                 assert!(
-                    (exact.log_failure_probability - log_mass).abs() < 1e-10,
+                    (exact.log_failure_probability() - log_mass).abs() < 1e-10,
                     "{context}"
                 );
                 let estimate =
@@ -1210,7 +1210,7 @@ fn exact_strata_keep_mass_at_extreme_probabilities() {
                 close(estimate.failure_given_survival.unwrap(), 1.0, 1e-10);
             } else {
                 assert_eq!(
-                    exact.log_failure_probability,
+                    exact.log_failure_probability(),
                     f64::NEG_INFINITY,
                     "{context}"
                 );

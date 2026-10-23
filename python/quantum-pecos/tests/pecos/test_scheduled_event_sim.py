@@ -530,12 +530,12 @@ def test_spectator_requires_profile_opt_in_and_capacity(event_runtime):
         ).run(1)
 
 
-@pytest.mark.parametrize("ids", [[0, 0], [1, 4096, 1]])
-def test_spectator_ids_are_checked(ids):
+@pytest.mark.parametrize(("ids", "duplicate"), [([0, 0], 0), ([1, 4096, 1], 1)])
+def test_spectator_ids_are_checked(ids, duplicate):
     import pecos_rslib as pr
 
     for constructor in [pr.ScheduledCrosstalk.local, pr.ScheduledCrosstalk.global_excluding]:
-        with pytest.raises(ValueError, match="distinct"):
+        with pytest.raises(ValueError, match=f"spectator ID {duplicate} appears more than once"):
             constructor(ids)
 
 

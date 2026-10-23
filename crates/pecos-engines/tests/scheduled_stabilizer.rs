@@ -477,3 +477,34 @@ fn sim_builder_checks_backend_before_allocation() {
             .contains("parallel/dense")
     );
 }
+
+#[test]
+fn oversized_profile_rejects_before_any_capacity_sized_allocation() {
+    use pecos_engines::{sim, stabilizer};
+    // A per-qubit allocation at this capacity overflows, so only a check made
+    // before the profile allocates can return the capacity error.
+    let capacity = usize::MAX / 8 + 1;
+    let idle = sim(EmptyClassical)
+        .qubits(1)
+        .quantum(stabilizer())
+        .noise(ScheduledIdleNoise::new(capacity).unwrap())
+        .build();
+    let events = sim(EmptyClassical)
+        .qubits(1)
+        .quantum(stabilizer())
+        .noise(ScheduledEventIdleNoise::new(
+            ScheduledIdleNoise::new(capacity).unwrap(),
+            |_| Ok(Box::new(PassThrough)),
+        ))
+        .build();
+    for built in [idle, events] {
+        let message = built
+            .err()
+            .expect("oversized profile must be rejected")
+            .to_string();
+        assert!(
+            message.contains("simulator capacity below scheduled profile"),
+            "{message}"
+        );
+    }
+}

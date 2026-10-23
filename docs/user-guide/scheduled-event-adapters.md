@@ -4,7 +4,8 @@ Mandatory v7 transport preserves opaque native events for a shot-local adapter.
 The adapter normalizes complete batches into checked gates and optional typed
 crosstalk exposures **before quantum execution**. The noise controller resolves
 those exposures during execution. Profiles run on StateVec or StabilizerEngine
-(Python: `pr.stabilizer()`) with no profile-imposed qubit limit. The stabilizer path requires
+(Python: `pr.stabilizer()`) with no profile-imposed qubit limit; the per-batch
+operation and spectator-target limits still apply. The stabilizer path requires
 zero coherent idle rate and supported Clifford rotations; it rejects unsupported
 normalized gates before starting the noise controller for the current input.
 Each subsequent live input is admitted separately. Noise-generated continuation

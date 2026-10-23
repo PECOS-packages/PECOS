@@ -9,8 +9,9 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 - Live scheduled simulation now admits `StabilizerEngine` (`pr.stabilizer()`) with
   checked stochastic noise. Coherent idle rates and unsupported rotations reject
   before current-input execution. Scheduled profiles no longer cap the qubit
-  count (previously 1..=16); StateVec and stabilizer runs are bounded only by
-  the simulator. Spectator IDs passed to `ScheduledCrosstalk` are checked
+  count (previously 1..=16 for StateVec). Per-batch limits still apply: at most
+  4096 operations per native batch and 16,384 spectator targets per batch, where
+  a global crosstalk exposure counts the whole profile capacity. Spectator IDs passed to `ScheduledCrosstalk` are checked
   against the profile capacity at admission rather than a fixed bound.
   Preparation-crosstalk expansion budgets scale with the admitted capacity.
 

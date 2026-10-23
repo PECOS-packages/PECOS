@@ -20,10 +20,10 @@ pub struct PyScheduledCrosstalk {
 }
 fn check_spectator_ids(ids: &[usize]) -> PyResult<()> {
     let mut seen = std::collections::BTreeSet::new();
-    if ids.iter().any(|q| !seen.insert(*q)) {
-        return Err(PyValueError::new_err(
-            "spectator IDs must be distinct; the profile capacity is checked at admission",
-        ));
+    if let Some(duplicate) = ids.iter().find(|q| !seen.insert(**q)) {
+        return Err(PyValueError::new_err(format!(
+            "spectator ID {duplicate} appears more than once; list each spectator once (the profile capacity is checked at admission)"
+        )));
     }
     Ok(())
 }

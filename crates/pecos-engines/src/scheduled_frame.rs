@@ -4,7 +4,10 @@ use crate::runtime_frame::{error, processing_error};
 use crate::{ByteMessage, ControlEngine, EngineStage, Gate, GateType};
 use pecos_core::{Angle64, RngManageable, errors::PecosError};
 use pecos_random::PecosRng;
-use std::{any::Any, collections::BTreeMap};
+use std::{
+    any::Any,
+    collections::{BTreeMap, BTreeSet},
+};
 
 /// Maximum complete transport size. Extraction itself remains uncapped.
 pub const MAX_SCHEDULE_BYTES: usize = 64 * 1024 * 1024;
@@ -57,7 +60,7 @@ pub type ScheduledIdleNoise = ScheduledNoise;
 /// idle setters configure local memory noise, and [`ScheduledLocalNoise`] adds
 /// gate, preparation and readout faults by lossless conversion.
 /// Uses the existing general-noise sampling and leakage semantics. Capacity must
-/// be at least 1 and is bounded only by the simulator.
+/// be at least 1; the profile sets no upper bound.
 #[derive(Clone, Debug)]
 pub struct ScheduledNoise {
     qubits: usize,
@@ -539,7 +542,7 @@ impl ScheduledNoise {
         }
         let inner = builder.build();
         ScheduledIdleModel {
-            timeline: ScheduleTimeline::new(self.qubits),
+            timeline: ScheduleTimeline::new(),
             config: self,
             inner,
         }
@@ -756,7 +759,9 @@ pub(crate) struct ScheduledIdleModel {
 pub(crate) struct ScheduleTimeline {
     native_shot: Option<u64>,
     next_batch: u64,
-    ends: Vec<u64>,
+    /// Busy end time of each qubit used so far; absent qubits are idle from zero.
+    /// Sized by use, not capacity, so building a profile allocates nothing per qubit.
+    ends: BTreeMap<usize, u64>,
 }
 pub(crate) struct PreparedSchedule {
     pub(crate) messages: Vec<ByteMessage>,
@@ -803,11 +808,11 @@ impl ScheduleTimeline {
     pub(crate) fn has_native_shot(&self) -> bool {
         self.native_shot.is_some()
     }
-    pub(crate) fn new(qubits: usize) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             native_shot: None,
             next_batch: 0,
-            ends: vec![0; qubits],
+            ends: BTreeMap::new(),
         }
     }
     pub(crate) fn prepare(
@@ -841,7 +846,7 @@ impl ScheduleTimeline {
             if batch.gates.len() > crate::scheduled_events::MAX_BATCH_OPERATIONS {
                 return Err(error("scheduled batch operation limit"));
             }
-            let mut touched = vec![false; config.qubits];
+            let mut touched = BTreeSet::new();
             let mut builder = ByteMessage::quantum_operations_builder();
             for gate in batch.gates {
                 if gate.gate_type.is_crosstalk_payload() {
@@ -854,11 +859,12 @@ impl ScheduleTimeline {
                 }
                 for q in &gate.qubits {
                     let q = q.0;
-                    if q >= touched.len() || batch.start_nanos < prepared.timeline.ends[q] {
+                    let busy_until = prepared.timeline.ends.get(&q).copied().unwrap_or(0);
+                    if q >= config.qubits || batch.start_nanos < busy_until {
                         return Err(error("scheduled capacity or timing overlap"));
                     }
-                    if !touched[q] {
-                        let gap = batch.start_nanos - prepared.timeline.ends[q];
+                    if touched.insert(q) {
+                        let gap = batch.start_nanos - busy_until;
                         let seconds = std::time::Duration::from_nanos(gap).as_secs_f64();
                         config.validate_idle(seconds)?;
                         // All admitted idle channels are local. PZ erases
@@ -867,15 +873,12 @@ impl ScheduleTimeline {
                         if gap != 0 && gate.gate_type != GateType::PZ {
                             builder.idle(seconds, &[q]);
                         }
-                        touched[q] = true;
                     }
                 }
                 builder.add_gate_command(&gate);
             }
-            for (q, touched) in touched.into_iter().enumerate() {
-                if touched {
-                    prepared.timeline.ends[q] = end;
-                }
+            for q in touched {
+                prepared.timeline.ends.insert(q, end);
             }
             let msg = builder.build();
             if !msg.is_empty()? {
@@ -906,7 +909,7 @@ impl ControlEngine for ScheduledIdleModel {
     }
     fn reset(&mut self) -> Result<(), PecosError> {
         self.inner.reset()?;
-        self.timeline = ScheduleTimeline::new(self.config.qubits);
+        self.timeline = ScheduleTimeline::new();
         Ok(())
     }
 }
@@ -976,7 +979,7 @@ mod timing_tests {
     }
     #[test]
     fn preparation_omission_is_per_qubit_and_preserves_busy_duration() {
-        let prepared = ScheduleTimeline::new(2)
+        let prepared = ScheduleTimeline::new()
             .prepare(
                 &config(),
                 vec![
@@ -998,7 +1001,7 @@ mod timing_tests {
             if !prep_first {
                 gates.reverse();
             }
-            let prepared = ScheduleTimeline::new(2)
+            let prepared = ScheduleTimeline::new()
                 .prepare(&config(), vec![batch(0, 2, 1, gates)])
                 .unwrap();
             assert_eq!(

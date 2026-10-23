@@ -491,7 +491,7 @@ impl IntoNoiseModel for ScheduledEventNoise {
     fn into_noise_model(self) -> Result<Box<dyn NoiseModel>, PecosError> {
         let inner = self.profile.build_model();
         Ok(Box::new(ScheduledEventModel {
-            source_timeline: ScheduleTimeline::new(inner.qubits()),
+            source_timeline: ScheduleTimeline::new(),
             inner,
             factory: self.factory,
             adapter: None,
@@ -642,7 +642,7 @@ impl ControlEngine for ScheduledEventModel {
     fn reset(&mut self) -> Result<(), PecosError> {
         self.adapter = None;
         self.inner.reset()?;
-        self.source_timeline = ScheduleTimeline::new(self.inner.qubits());
+        self.source_timeline = ScheduleTimeline::new();
         Ok(())
     }
 }

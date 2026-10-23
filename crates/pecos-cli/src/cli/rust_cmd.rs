@@ -517,6 +517,8 @@ fn run_test(profile: super::BuildProfile, include_ffi: bool) -> Result<()> {
         "--exclude",
         "pecos-decoders",
         "--exclude",
+        "pecos-zx", // Test separately with --all-features so the stabilizer module runs
+        "--exclude",
         "pecos-gpu-sims", // Test separately: full suite with a GPU, gpu_free subset otherwise
     ]);
 
@@ -609,6 +611,13 @@ fn run_test(profile: super::BuildProfile, include_ffi: bool) -> Result<()> {
         return Err(Error::Config(
             "cargo test (pecos-decoders) failed".to_string(),
         ));
+    }
+
+    println!("Testing pecos-zx...");
+    let mut args = vec!["test", "-p", "pecos-zx", "--all-features"];
+    args.extend(profile_args);
+    if !run(&args) {
+        return Err(Error::Config("cargo test (pecos-zx) failed".to_string()));
     }
 
     if include_ffi {

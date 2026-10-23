@@ -26,7 +26,7 @@
 //!   (W-convention has no sign update for CX)
 //! - Measurement: needs additional `n_Y` accounting via `signs_i`
 
-use crate::{CliffordGateable, GensGeneric, MeasurementResult, QuantumSimulator};
+use crate::{CliffordGateable, GensGeneric, MeasurementResult, PauliConvention, QuantumSimulator};
 use core::fmt::Debug;
 use core::mem;
 use pecos_core::{BitSet, IndexSet, QubitId, RngManageable, SortedVecSet, VecSet};
@@ -124,8 +124,8 @@ where
     pub fn with_rng(num_qubits: usize, rng: R) -> Self {
         let mut stab = Self {
             num_qubits,
-            stabs: GensGeneric::<S>::new(num_qubits),
-            destabs: GensGeneric::<S>::new(num_qubits),
+            stabs: GensGeneric::<S>::with_convention(num_qubits, PauliConvention::Y),
+            destabs: GensGeneric::<S>::with_convention(num_qubits, PauliConvention::Y),
             rng,
             track_destab_signs: false,
         };

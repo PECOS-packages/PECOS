@@ -93,9 +93,21 @@ def refactor(
     new_stab = None
 
     if found:
+        # Compute the full product phase before removing the chosen generator
+        # or mutating any source rows, using the logical_sign cumulative-X rule.
+        num_i = len(gens & stabs.signs_i)
+        num_minus = len(gens & stabs.signs_minus)
+        cumulative_x = set()
+        for g in gens:
+            num_minus += len(stabs.row_z[g] & cumulative_x)
+            cumulative_x ^= stabs.row_x[g]
+
+        if num_i % 4 > 1:  # i^2 = -1, i^3 = -i
+            num_minus += 1
+
         # Now update the generators so the supplied stabilizer is a stabilizer generator.
 
-        available = gens - protected if protected else gens
+        available = gens - (protected or set())
 
         # Pick a stabilizer generator to become the requested stabilizer generator.
         if choose is None and prefer is None:
@@ -148,21 +160,14 @@ def refactor(
             destabs.row_x[g] ^= destabs.row_x[new_stab]
             destabs.row_z[g] ^= destabs.row_z[new_stab]
 
-        # Sign update
-        gen_i = gens & stabs.signs_i
-        gen_minus = gens & stabs.signs_minus
-
-        num_minus = len(gen_minus)
-        if len(gen_i) % 4 > 1:  # i.e. -1 or -i
-            num_minus += 1
-
-        if len(gen_i) % 2:  # i.e i or -i
-            if new_stab in stabs.signs_i:
-                num_minus += 1
-
-            stabs.signs_i ^= {new_stab}
-
+        # Assign the product phase in the tableau's XZ convention.
+        if num_i % 2:
+            stabs.signs_i.add(new_stab)
+        else:
+            stabs.signs_i.discard(new_stab)
         if num_minus % 2:
-            stabs.signs_minus ^= {new_stab}
+            stabs.signs_minus.add(new_stab)
+        else:
+            stabs.signs_minus.discard(new_stab)
 
     return found, new_stab

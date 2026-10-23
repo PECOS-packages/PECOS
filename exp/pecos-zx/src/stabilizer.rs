@@ -17,8 +17,7 @@
 //! Provides conversions between stabilizer states (from `pecos-simulators`)
 //! and ZX graph states.
 
-use pecos_core::pauli::Pauli;
-use pecos_core::{PauliString, QuarterPhase, QubitId};
+use pecos_core::PauliString;
 use pecos_simulators::{Gens, SparseStab};
 
 use crate::ZxGraph;
@@ -35,40 +34,12 @@ pub fn graph_state_from_adjacency(adj: &[bool], n: usize) -> ZxGraph {
 /// Convert stabilizer generators to Pauli string representations.
 ///
 /// Reads the `Gens` data structure (row_x, row_z, signs) and produces
-/// human-readable `PauliString` representations for each generator.
+/// `PauliString` representations, phases included, for each generator.
 #[must_use]
 pub fn gens_to_pauli_strings(gens: &Gens, num_qubits: usize) -> Vec<PauliString> {
-    let mut result = Vec::with_capacity(num_qubits);
-
-    for gen_idx in 0..num_qubits {
-        let mut paulis = Vec::new();
-
-        for qubit in 0..num_qubits {
-            let has_x = gens.row_x[gen_idx].contains(qubit);
-            let has_z = gens.row_z[gen_idx].contains(qubit);
-
-            let pauli = match (has_x, has_z) {
-                (false, false) => continue,
-                (true, false) => Pauli::X,
-                (false, true) => Pauli::Z,
-                (true, true) => Pauli::Y,
-            };
-            paulis.push((pauli, QubitId::new(qubit)));
-        }
-
-        let phase = if gens.signs_minus.contains(gen_idx) {
-            QuarterPhase::MinusOne
-        } else {
-            QuarterPhase::PlusOne
-        };
-
-        result.push(
-            PauliString::with_phase_and_paulis(phase, paulis)
-                .expect("tableau conversion emits one Pauli per enumerated qubit"),
-        );
-    }
-
-    result
+    (0..num_qubits)
+        .map(|gen_idx| gens.generator(gen_idx))
+        .collect()
 }
 
 /// Extract the graph state representation from a stabilizer state.
@@ -158,6 +129,8 @@ pub fn extract_graph_state(stab: &SparseStab) -> (Vec<bool>, Vec<String>) {
 mod tests {
     use super::*;
     use pecos_core::PauliOperator;
+    use pecos_core::pauli::Pauli;
+    use pecos_core::{QuarterPhase, QubitId};
     use pecos_simulators::CliffordGateable;
     use quizx::graph::GraphLike;
 
@@ -176,6 +149,23 @@ mod tests {
         for s in &strings {
             assert_eq!(s.weight(), 2);
         }
+    }
+
+    #[test]
+    fn test_gens_to_pauli_strings_keeps_phase_with_two_ys() {
+        // S on both halves of a Bell state maps +XX to +YY and keeps +ZZ.
+        let mut stab = SparseStab::new(2);
+        stab.h(&[qid(0)]);
+        stab.cx(&[(qid(0), qid(1))]);
+        stab.sz(&[qid(0), qid(1)]);
+
+        let strings = gens_to_pauli_strings(stab.stabs(), 2);
+        let plus_yy = PauliString::with_phase_and_paulis(
+            QuarterPhase::PlusOne,
+            vec![(Pauli::Y, qid(0)), (Pauli::Y, qid(1))],
+        )
+        .expect("one Pauli per qubit");
+        assert!(strings.contains(&plus_yy), "{strings:?}");
     }
 
     #[test]

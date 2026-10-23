@@ -554,7 +554,7 @@ impl ComposableNoiseModel {
             | NoiseResponse::FlipOutcomes(_)
             | NoiseResponse::ForceOutcomes(_)
             | NoiseResponse::LeakedMeasurement(_)
-            | NoiseResponse::SkipGate => {}
+            | NoiseResponse::SkipGate(_) => {}
         }
 
         observer_responses
@@ -1057,9 +1057,10 @@ mod tests {
             Multiple, None, SkipGate,
         };
         match (actual, expected) {
-            (None, None) | (SkipGate, SkipGate) => {}
+            (None, None) => {}
             (InjectGates(a), InjectGates(b)) => assert_eq!(a, b),
-            (FlipOutcomes(a), FlipOutcomes(b))
+            (SkipGate(a), SkipGate(b))
+            | (FlipOutcomes(a), FlipOutcomes(b))
             | (MarkLeaked(a), MarkLeaked(b))
             | (MarkUnleaked(a), MarkUnleaked(b))
             | (LeakedMeasurement(a), LeakedMeasurement(b)) => assert_eq!(a, b),
@@ -1123,12 +1124,12 @@ mod tests {
 
         fn apply(
             &self,
-            _event: &NoiseEvent<'_>,
+            event: &NoiseEvent<'_>,
             _ctx: &mut NoiseContext,
             rng: &mut PecosRng,
         ) -> NoiseResponse {
             if rng.next_u64() > u64::MAX / 2 {
-                NoiseResponse::SkipGate
+                NoiseResponse::SkipGate(event.qubits().iter().copied().collect())
             } else {
                 NoiseResponse::None
             }

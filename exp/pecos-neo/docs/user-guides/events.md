@@ -46,7 +46,7 @@ Handlers return `NoiseResponse` to modify execution -- not just observe it:
 // Skip identity gates entirely
 EventHandlers::new().on_before_gate(|ctx| {
     if ctx.gate_type == GateType::I {
-        NoiseResponse::SkipGate
+        NoiseResponse::SkipGate(ctx.qubits.iter().copied().collect())
     } else {
         NoiseResponse::None
     }

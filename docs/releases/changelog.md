@@ -348,6 +348,11 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Rust breaking changes
 
+- pecos-neo `NoiseResponse::SkipGate` now carries `SmallVec<[QubitId; 4]>`:
+  operand groups containing a listed qubit are suppressed; list all operands to
+  skip a whole command. `should_skip_gate()` is replaced by `skipped_qubits()`,
+  which returns the union of skipped qubits across combined responses.
+
 - `Environment::copy_variable` preserves destination widths (narrowing when
   required) and rejects quantum destinations. Whole signed Result/copy_variable
   copies sign-extend to i64 as specified by PHIR, matching assignment. Native
@@ -536,6 +541,12 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   with ties away from zero on the signed principal representative.
 
 ### Rust bug fixes
+
+- pecos-neo gate suppression applies per operand group in batched commands,
+  including adapted circuits and importance sampling. `LeakageChannel` injects
+  partner Pauli noise only within pairs containing exactly one leaked qubit.
+  Adapted gate execution now emits one after-gate event with the full operand
+  slice even when some or all groups are skipped, matching queue execution.
 
 - Gate commands with more than 255 qubits no longer panic. PHIR-JSON broadcasts
   use one command per operation, retaining individual preparation/measurement

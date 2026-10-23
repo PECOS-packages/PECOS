@@ -257,6 +257,14 @@ pub enum NoiseEvent<'a> {
 
     /// Emitted after a gate is applied.
     ///
+    /// Carries executed groups and groups suppressed while containing a leaked
+    /// qubit, in original operand order. Leakage is checked immediately after
+    /// before-gate dispatch. Other suppressed groups are absent; if that removes
+    /// every operand from a non-empty command, no after-gate event is emitted.
+    /// Absent groups receive no idle-after-two-qubit-gate noise and are not
+    /// crosstalk sources. Originally empty operand slices retain their normal
+    /// event behavior.
+    ///
     /// Channels can respond with `InjectGates` to add Pauli errors.
     AfterGate {
         gate_type: GateType,
@@ -638,6 +646,13 @@ pub enum NoiseResponse {
     ///
     /// Qubits outside the current gate's operands have no effect. To suppress
     /// the whole command, list all of its operands.
+    ///
+    /// A suppressed group that contains no leaked qubit at the skip decision
+    /// is treated as a gate that did not run: it receives no after-gate effects at all, including
+    /// gate error, idle-after-two-qubit-gate noise, and acting as a crosstalk
+    /// source. Its qubits can still be crosstalk targets of the groups that
+    /// ran. A channel that skips a group and wants other noise on it must
+    /// apply that noise itself.
     SkipGate(SmallVec<[QubitId; 4]>),
 
     /// Flip measurement outcomes for specific qubits.
@@ -783,6 +798,36 @@ pub(crate) fn surviving_gate_qubits<'a>(
             .copied()
             .collect(),
     )
+}
+
+/// Partition operand groups for execution and after-gate dispatch, in order.
+/// Suppressed groups are retained only for after-gate dispatch when they contain
+/// a leaked qubit at this decision point. The group size must be positive.
+/// When no operands are skipped, both slices are borrowed.
+pub(crate) fn partition_gate_qubits<'a>(
+    qubits: &'a [QubitId],
+    group_size: usize,
+    skipped: &[QubitId],
+    mut is_leaked: impl FnMut(QubitId) -> bool,
+) -> (Cow<'a, [QubitId]>, Cow<'a, [QubitId]>) {
+    debug_assert!(
+        group_size > 0,
+        "callers must pass a positive operand-group size"
+    );
+    if skipped.is_empty() || !qubits.iter().any(|q| skipped.contains(q)) {
+        return (Cow::Borrowed(qubits), Cow::Borrowed(qubits));
+    }
+    let mut executed = Vec::new();
+    let mut after_gate = Vec::new();
+    for group in qubits.chunks(group_size) {
+        if !group.iter().any(|q| skipped.contains(q)) {
+            executed.extend_from_slice(group);
+            after_gate.extend_from_slice(group);
+        } else if group.iter().copied().any(&mut is_leaked) {
+            after_gate.extend_from_slice(group);
+        }
+    }
+    (Cow::Owned(executed), Cow::Owned(after_gate))
 }
 
 /// Trait for noise channels that respond to events.
@@ -1685,6 +1730,61 @@ mod tests {
         assert!(
             surviving_gate_qubits(&qubits, 2, &[QubitId(0), QubitId(2), QubitId(5)]).is_empty()
         );
+    }
+
+    #[test]
+    fn test_partition_gate_qubits() {
+        let qubits: Vec<_> = (0..6).map(QubitId).collect();
+        for skipped in [&[][..], &[QubitId(99)][..]] {
+            let (executed, after) = partition_gate_qubits(&qubits, 2, skipped, |_| {
+                panic!("no leakage lookup needed without suppressed groups")
+            });
+            for result in [executed, after] {
+                assert!(matches!(result, Cow::Borrowed(_)));
+                assert_eq!(result.as_ptr(), qubits.as_ptr());
+            }
+        }
+        for (group_size, skipped, leaked, expected_executed, expected_after) in [
+            (2, vec![2, 99], vec![], vec![0, 1, 4, 5], vec![0, 1, 4, 5]),
+            (
+                2,
+                vec![2],
+                vec![3],
+                vec![0, 1, 4, 5],
+                vec![0, 1, 2, 3, 4, 5],
+            ),
+            (2, vec![0, 2], vec![1], vec![4, 5], vec![0, 1, 4, 5]),
+            (
+                2,
+                vec![2],
+                vec![2],
+                vec![0, 1, 4, 5],
+                vec![0, 1, 2, 3, 4, 5],
+            ),
+            (2, vec![0, 2, 5], vec![], vec![], vec![]),
+            (1, vec![2], vec![], vec![0, 1, 3, 4, 5], vec![0, 1, 3, 4, 5]),
+            (3, vec![2], vec![], vec![3, 4, 5], vec![3, 4, 5]),
+        ] {
+            let skipped: Vec<_> = skipped.into_iter().map(QubitId).collect();
+            let (executed, after) =
+                partition_gate_qubits(&qubits, group_size, &skipped, |q| leaked.contains(&q.0));
+            assert_eq!(
+                executed.as_ref(),
+                expected_executed
+                    .into_iter()
+                    .map(QubitId)
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(
+                after.as_ref(),
+                expected_after.into_iter().map(QubitId).collect::<Vec<_>>()
+            );
+        }
+        let (executed, after) = partition_gate_qubits(&[], 1, &[QubitId(0)], |_| true);
+        for result in [executed, after] {
+            assert!(matches!(result, Cow::Borrowed(_)));
+            assert!(result.is_empty());
+        }
     }
 
     #[test]

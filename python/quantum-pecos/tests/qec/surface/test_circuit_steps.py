@@ -3,6 +3,8 @@
 
 """Shared step identity and renderer handling of every step operation."""
 
+from enum import Enum, auto
+
 import pytest
 from pecos import qec
 from pecos.qec import surface
@@ -41,3 +43,16 @@ def test_tick_renderer_renders_steps_stim_rejects(op_type: OpType) -> None:
     renderer = TickCircuitRenderer(add_detectors=False)
     circuit = renderer.render(_single_qubit_steps(op_type), default_allocation(patch), patch, 0, "Z")
     assert circuit.gate_count() == 3
+
+
+class _UnhandledOp(Enum):
+    """Stands in for an operation added to OpType without a renderer case."""
+
+    NEW = auto()
+
+
+def test_tick_renderer_rejects_an_operation_without_a_case() -> None:
+    patch = surface.SurfacePatch.create(distance=3)
+    steps = [CircuitStep(OpType.ALLOC, [0]), CircuitStep(_UnhandledOp.NEW, [0])]
+    with pytest.raises(ValueError, match=r"^Unsupported TickCircuit operation: NEW$"):
+        TickCircuitRenderer(add_detectors=False).render(steps, default_allocation(patch), patch, 0, "Z")

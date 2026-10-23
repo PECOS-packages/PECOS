@@ -48,7 +48,11 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   batch specification accepts the same controls for `SampleBatch.decode` and
   `DemSampler.decode`. Batch results retain recovery and logical-error records;
   fallback predictions are scored against truth, and undecoded shots remain
-  explicit holes. Defaults remain strict.
+  explicit holes. Recovery-configured specs use provider protocol v2 to prepare
+  the trellis and optional feasibility basis once per decode call, sharing them
+  across workers with independent scratch. Their batch adapter uses prediction-only
+  attempts; detailed direct calls retain full results. Defaults and provider
+  protocol v1 remain unchanged.
 
 - `LogicalCircuitBuilder` detector `fault_sector` labels follow the code's
   stabilizer family across a transversal H; previously post-H detectors were

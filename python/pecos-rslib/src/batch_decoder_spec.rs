@@ -28,7 +28,16 @@
 //!   ever called from the one thread that built it, one shot at a time. An
 //!   exception it raises is reported as a decode failure naming the shot.
 //!
-//! Version 2 replaces the worker method with `_pecos_decode_outcome(bytes)`,
+//! Version 2 replaces the spec method with `_pecos_prepare_decoder(dem: str)`,
+//! returning a prepared object with `_pecos_build_decoder() -> worker`. The call's
+//! one DEM is prepared once per decode call and shared by every worker build,
+//! including concurrent builds. A failed preparation is cached the same way, so
+//! every build reports that one exception unchanged. The prepared object is
+//! released after the decode call. Preparation may run on any worker thread and
+//! blocks the other builds until it finishes, so it must not re-enter PECOS batch
+//! decoding.
+//!
+//! Version 2 also replaces the worker method with `_pecos_decode_outcome(bytes)`,
 //! returning `(words_or_none, fallback_used, syndrome_consistent_or_none, deltas)`.
 //! None words mean an undecoded shot, never a zero correction. A fallback must
 //! supply words; consistency can only be specified for a fallback. Deltas are
@@ -41,8 +50,9 @@ use crate::decoder_spec_bindings::PyDecoderSpec;
 use pecos_decoder_core::{DecoderError, ObservableDecoder, obs_mask::ObsMask};
 use pecos_decoders::batch::{DecoderFactory, PreparedModel};
 use pecos_decoders::{DecodeModel, DecoderSpec, spec::ExecutionTraits};
-use pyo3::exceptions::{PyAttributeError, PyTypeError};
+use pyo3::exceptions::{PyAttributeError, PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
+use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyBytes, PyString};
 
 pub(crate) enum BatchDecoderSpec {
@@ -51,6 +61,8 @@ pub(crate) enum BatchDecoderSpec {
         spec: Py<PyAny>,
         traits: ExecutionTraits,
         version: u32,
+        /// The one DEM of this decode call and the outcome of preparing it.
+        prepared: PyOnceLock<(String, PyResult<Py<PyAny>>)>,
     },
 }
 
@@ -99,11 +111,15 @@ impl BatchDecoderSpec {
         if !matches!(version, Some(1 | 2)) {
             return Err(not_a_provider());
         }
+        let version = version.expect("validated protocol version");
+        let method = if version == 2 {
+            "_pecos_prepare_decoder"
+        } else {
+            "_pecos_build_decoder"
+        };
         let members = || -> PyResult<ExecutionTraits> {
-            if !decoder.getattr("_pecos_build_decoder")?.is_callable() {
-                return Err(PyTypeError::new_err(
-                    "_pecos_build_decoder must be callable",
-                ));
+            if !decoder.getattr(method)?.is_callable() {
+                return Err(PyTypeError::new_err(format!("{method} must be callable")));
             }
             Ok(ExecutionTraits {
                 history_dependent: decoder.getattr("history_dependent")?.extract()?,
@@ -118,16 +134,17 @@ impl BatchDecoderSpec {
             {
                 return cause;
             }
-            let error = PyTypeError::new_err(
-                "version-1 decoder providers require callable _pecos_build_decoder and boolean history_dependent and wall_clock_dependent members",
-            );
+            let error = PyTypeError::new_err(format!(
+                "version-{version} decoder providers require callable {method} and boolean history_dependent and wall_clock_dependent members",
+            ));
             error.set_cause(py, Some(cause));
             error
         })?;
         Ok(Self::Provider {
             spec: decoder.clone().unbind(),
             traits,
-            version: version.expect("validated protocol version"),
+            version,
+            prepared: PyOnceLock::new(),
         })
     }
 }
@@ -174,7 +191,12 @@ impl DecoderFactory for BatchDecoderSpec {
             Self::Builtin(spec) => {
                 DecoderFactory::build(spec, model).map_err(DecoderBuildError::Decoder)
             }
-            Self::Provider { spec, version, .. } => {
+            Self::Provider {
+                spec,
+                version,
+                prepared,
+                ..
+            } => {
                 let DecodeModel::SingleDem(dem) = model else {
                     return Err(DecoderBuildError::Decoder(
                         DecoderError::InvalidConfiguration(
@@ -183,7 +205,26 @@ impl DecoderFactory for BatchDecoderSpec {
                     ));
                 };
                 Python::attach(|py| -> PyResult<Box<dyn ObservableDecoder>> {
-                    let worker = spec.bind(py).call_method1("_pecos_build_decoder", (dem,))?;
+                    let worker = if *version == 2 {
+                        // A failure is cached too, so concurrent builders report the
+                        // one exception instead of each repeating the preparation.
+                        let (prepared_dem, prepared) = prepared.get_or_init(py, || {
+                            let prepared = spec
+                                .bind(py)
+                                .call_method1("_pecos_prepare_decoder", (dem,))
+                                .map(Bound::unbind);
+                            (dem.clone(), prepared)
+                        });
+                        if prepared_dem != dem {
+                            return Err(PyRuntimeError::new_err(
+                                "internal error: a decoder provider preparation was reused for a different DEM",
+                            ));
+                        }
+                        let prepared = prepared.as_ref().map_err(|error| error.clone_ref(py))?;
+                        prepared.bind(py).call_method0("_pecos_build_decoder")?
+                    } else {
+                        spec.bind(py).call_method1("_pecos_build_decoder", (dem,))?
+                    };
                     let num_detectors = worker.getattr("num_detectors")?.extract::<usize>()?;
                     let num_observables = worker.getattr("num_observables")?.extract::<usize>()?;
                     let method = if *version == 2 {
@@ -256,16 +297,31 @@ impl ObservableDecoder for ProviderDecoder {
                 .extract::<(Option<Vec<u64>>, bool, Option<bool>, Vec<f64>)>()
         })
         .map_err(|e| DecoderError::DecodingFailed(e.to_string()))?;
-        if (fallback_used && words.is_none())
-            || (syndrome_consistent.is_some() && !fallback_used)
-            || deltas_tried
-                .iter()
-                .any(|delta| delta.is_nan() || *delta < 0.0)
-            || deltas_tried.windows(2).any(|pair| pair[0] >= pair[1])
-        {
+        if fallback_used && words.is_none() {
             return Err(DecoderError::DecodingFailed(
-                "invalid decoder provider recovery outcome".into(),
+                "decoder provider fallback_used=True requires prediction words, got None".into(),
             ));
+        }
+        if let Some(consistent) = syndrome_consistent
+            && !fallback_used
+        {
+            let consistent = if consistent { "True" } else { "False" };
+            return Err(DecoderError::DecodingFailed(format!(
+                "decoder provider syndrome_consistent={consistent} requires fallback_used=True, got False"
+            )));
+        }
+        if let Some(delta) = deltas_tried
+            .iter()
+            .find(|delta| delta.is_nan() || **delta < 0.0)
+        {
+            return Err(DecoderError::DecodingFailed(format!(
+                "decoder provider delta {delta:?} must be nonnegative and not NaN"
+            )));
+        }
+        if let Some([previous, next]) = deltas_tried.windows(2).find(|pair| pair[0] >= pair[1]) {
+            return Err(DecoderError::DecodingFailed(format!(
+                "decoder provider deltas must be strictly increasing, got {previous:?} then {next:?}"
+            )));
         }
         let prediction = words.map(|words| ObsMask::from_words(&words));
         if let Some(mask) = &prediction {
@@ -317,6 +373,7 @@ mod tests {
                 spec: py.None(),
                 traits: ExecutionTraits::default(),
                 version: 1,
+                prepared: PyOnceLock::new(),
             };
             let dem =
                 pecos_decoder_core::window::StructuredDem::from_dem_str("error(0.1) D0").unwrap();

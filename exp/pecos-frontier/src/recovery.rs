@@ -77,6 +77,32 @@ pub struct RecoveryOptions {
     pub on_no_path: NoPathAction,
 }
 
+impl RecoveryOptions {
+    /// Validate against the configured base delta and fallback policy.
+    ///
+    /// # Errors
+    /// Rejects a non-finite or below-base maximum and an unconfigured fallback.
+    pub fn validate(
+        self,
+        base_delta: f64,
+        fallback: Option<FallbackPolicy>,
+    ) -> Result<(), DecoderError> {
+        if let Some(max) = self.delta_max
+            && (!max.is_finite() || max < base_delta)
+        {
+            return Err(DecoderError::InvalidConfiguration(format!(
+                "delta_max {max:?} must be finite and at least the base delta {base_delta:?}"
+            )));
+        }
+        if self.on_no_path == NoPathAction::Fallback && fallback.is_none() {
+            return Err(DecoderError::InvalidConfiguration(
+                "on_no_path='fallback' requires a configured fallback".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// Diagnostics retained after all attempts fail.
 #[derive(Clone, Debug)]
 pub struct FrontierNoPath {
@@ -205,19 +231,7 @@ impl FrontierRecoveryDecoder {
     /// Rejects a non-finite maximum, a maximum below the base delta, or a
     /// requested fallback that was not configured at construction.
     pub fn validate_options(&self, options: RecoveryOptions) -> Result<(), DecoderError> {
-        if let Some(max) = options.delta_max
-            && (!max.is_finite() || max < self.inner.prune_params().delta)
-        {
-            return Err(DecoderError::InvalidConfiguration(
-                "delta_max must be finite and at least the base delta".into(),
-            ));
-        }
-        if options.on_no_path == NoPathAction::Fallback && self.fallback.is_none() {
-            return Err(DecoderError::InvalidConfiguration(
-                "on_no_path='fallback' requires a configured fallback".into(),
-            ));
-        }
-        Ok(())
+        options.validate(self.inner.prune_params().delta, self.fallback)
     }
 
     /// Decode a single shot with one BP preparation and fresh DP attempts.
@@ -231,6 +245,15 @@ impl FrontierRecoveryDecoder {
         &mut self,
         syndrome: &[u8],
         options: RecoveryOptions,
+    ) -> Result<FrontierRecoveryOutcome, DecoderError> {
+        self.decode_with_attempt(syndrome, options, FrontierDecoder::attempt)
+    }
+
+    fn decode_with_attempt(
+        &mut self,
+        syndrome: &[u8],
+        options: RecoveryOptions,
+        mut attempt: impl FnMut(&mut FrontierDecoder, PruneParams) -> TrellisDecodeAttempt,
     ) -> Result<FrontierRecoveryOutcome, DecoderError> {
         self.validate_options(options)?;
         let mut report = FrontierNoPath {
@@ -253,7 +276,7 @@ impl FrontierRecoveryDecoder {
         let mut params = self.inner.prune_params();
         loop {
             report.deltas_tried.push(params.delta);
-            match self.inner.attempt(params) {
+            match attempt(&mut self.inner, params) {
                 TrellisDecodeAttempt::Success(mut result) => {
                     result.transitions += report.transitions;
                     result.bp_seconds = report.bp_seconds;
@@ -335,6 +358,17 @@ impl FrontierRecoveryDecoder {
         }
     }
 
+    /// Share immutable Frontier and feasibility models with fresh worker scratch.
+    #[must_use]
+    pub fn fresh_worker(&self) -> Self {
+        Self {
+            inner: self.inner.fresh_worker(),
+            num_detectors: self.num_detectors,
+            fallback: self.fallback,
+            feasibility: self.feasibility.clone(),
+        }
+    }
+
     /// Decode in input order with independent scratch and shared prepared models.
     /// Per-shot errors are retained; global option/pool errors abort the call.
     ///
@@ -350,12 +384,7 @@ impl FrontierRecoveryDecoder {
         pecos_trellis::batch::decode_batch(
             shots,
             workers,
-            || Self {
-                inner: self.inner.fresh_worker(),
-                num_detectors: self.num_detectors,
-                fallback: self.fallback,
-                feasibility: self.feasibility.clone(),
-            },
+            || self.fresh_worker(),
             |decoder, shot| decoder.decode(shot, options),
         )
     }
@@ -368,6 +397,29 @@ impl FrontierRecoveryDecoder {
 pub struct ConfiguredFrontierDecoder {
     decoder: FrontierRecoveryDecoder,
     options: RecoveryOptions,
+}
+impl ConfiguredFrontierDecoder {
+    /// Share prepared models and options with fresh worker scratch.
+    #[must_use]
+    pub fn fresh_worker(&self) -> Self {
+        Self {
+            decoder: self.decoder.fresh_worker(),
+            options: self.options,
+        }
+    }
+
+    // Observable callers consume only the predicted mask, so the attempts skip
+    // dropped-mass accounting; recovery decisions are identical to full attempts.
+    fn decode_prediction(
+        &mut self,
+        syndrome: &[u8],
+    ) -> Result<FrontierRecoveryOutcome, DecoderError> {
+        self.decoder.decode_with_attempt(
+            syndrome,
+            self.options,
+            FrontierDecoder::attempt_prediction_only,
+        )
+    }
 }
 impl pecos_decoder_core::ObservableDecoder for ConfiguredFrontierDecoder {
     fn num_detectors(&self) -> Option<usize> {
@@ -385,7 +437,7 @@ impl pecos_decoder_core::ObservableDecoder for ConfiguredFrontierDecoder {
         syndrome: &[u8],
     ) -> Result<pecos_decoder_core::outcome::ObservableDecodeOutcome, DecoderError> {
         use pecos_decoder_core::outcome::ObservableDecodeOutcome;
-        Ok(match self.decoder.decode(syndrome, self.options)? {
+        Ok(match self.decode_prediction(syndrome)? {
             FrontierRecoveryOutcome::Decoded {
                 result,
                 deltas_tried,
@@ -413,5 +465,113 @@ impl pecos_decoder_core::ObservableDecoder for ConfiguredFrontierDecoder {
                 deltas_tried: no_path.deltas_tried,
             },
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const DEM: &str = "error(0.4) D0\nerror(0.4) D1\nerror(0.1) D0 D1 D2 L70";
+
+    #[test]
+    fn bp_refreshes_once_across_retries() {
+        let dem = SparseDem::from_dem_str(DEM).unwrap();
+        let mut decoder = FrontierRecoveryDecoder::from_sparse_dem(
+            &dem,
+            FrontierConfig {
+                k: 8,
+                delta: 0.0,
+                score_alpha: 0.0,
+                column_order: Some(vec![0, 1, 2]),
+                bp_score_iterations: 2,
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+        for _ in 0..2 {
+            let before = decoder.inner.bp_refreshes();
+            let FrontierRecoveryOutcome::Decoded { deltas_tried, .. } = decoder
+                .decode(
+                    &[0, 0, 1],
+                    RecoveryOptions {
+                        delta_max: Some(32.0),
+                        on_no_path: NoPathAction::Raise,
+                    },
+                )
+                .unwrap()
+            else {
+                panic!("retry must succeed");
+            };
+            assert!(deltas_tried.len() > 1);
+            assert_eq!(decoder.inner.bp_refreshes() - before, 1);
+        }
+    }
+
+    #[test]
+    fn observable_adapter_decodes_prediction_only() {
+        let dem = SparseDem::from_dem_str(DEM).unwrap();
+        let config = FrontierConfig {
+            k: 8,
+            delta: 0.0,
+            score_alpha: 0.0,
+            column_order: Some(vec![0, 1, 2]),
+            ..Default::default()
+        };
+        let options = RecoveryOptions {
+            delta_max: Some(32.0),
+            on_no_path: NoPathAction::Raise,
+        };
+        let mut full = FrontierRecoveryDecoder::from_sparse_dem(&dem, config, None).unwrap();
+        let mut adapter = full.fresh_worker().with_options(options).unwrap();
+        for shot in [[0, 0, 0], [0, 0, 1]] {
+            let FrontierRecoveryOutcome::Decoded { result: full, .. } =
+                full.decode(&shot, options).unwrap()
+            else {
+                panic!("full decode must succeed");
+            };
+            let FrontierRecoveryOutcome::Decoded { result, .. } =
+                adapter.decode_prediction(&shot).unwrap()
+            else {
+                panic!("adapter decode must succeed");
+            };
+            // Prediction-only success marks the skipped accounting as NaN.
+            assert!(!full.dropped_log_mass.is_nan());
+            assert!(result.dropped_log_mass.is_nan());
+            assert_eq!(result.predicted, full.predicted);
+        }
+    }
+
+    #[test]
+    fn fresh_worker_shares_feasibility_and_decodes_identically() {
+        let dem = SparseDem::from_dem_str(DEM).unwrap();
+        let mut decoder = FrontierRecoveryDecoder::from_sparse_dem(
+            &dem,
+            FrontierConfig {
+                k: 1,
+                delta: 0.0,
+                score_alpha: 0.0,
+                column_order: Some(vec![0, 1, 2]),
+                ..Default::default()
+            },
+            Some(FallbackPolicy::FeasibleThenZero),
+        )
+        .unwrap();
+        let mut worker = decoder.fresh_worker();
+        assert!(Arc::ptr_eq(
+            decoder.feasibility.as_ref().unwrap(),
+            worker.feasibility.as_ref().unwrap(),
+        ));
+        let options = RecoveryOptions {
+            delta_max: Some(3.0),
+            on_no_path: NoPathAction::Fallback,
+        };
+        for shot in [[0, 0, 0], [0, 0, 1]] {
+            let expected = decoder.decode(&shot, options).unwrap();
+            let actual = worker.decode(&shot, options).unwrap();
+            // BP is disabled, so these results contain no nondeterministic timing.
+            assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
+        }
     }
 }

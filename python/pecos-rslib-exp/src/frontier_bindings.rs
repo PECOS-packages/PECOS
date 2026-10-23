@@ -271,9 +271,9 @@ pub(crate) fn parse_fallback(fallback: Option<&str>) -> PyResult<Option<Fallback
         None => Ok(None),
         Some("zero") => Ok(Some(FallbackPolicy::Zero)),
         Some("feasible_then_zero") => Ok(Some(FallbackPolicy::FeasibleThenZero)),
-        _ => Err(PyValueError::new_err(
-            "fallback must be None, 'zero', or 'feasible_then_zero'",
-        )),
+        Some(other) => Err(PyValueError::new_err(format!(
+            "fallback must be None, 'zero', or 'feasible_then_zero', got '{other}'"
+        ))),
     }
 }
 
@@ -298,10 +298,10 @@ pub(crate) fn parse_no_path_action(on_no_path: &str) -> PyResult<NoPathAction> {
         "raise" => NoPathAction::Raise,
         "report" => NoPathAction::Report,
         "fallback" => NoPathAction::Fallback,
-        _ => {
-            return Err(PyValueError::new_err(
-                "on_no_path must be 'raise', 'report', or 'fallback'",
-            ));
+        other => {
+            return Err(PyValueError::new_err(format!(
+                "on_no_path must be 'raise', 'report', or 'fallback', got '{other}'"
+            )));
         }
     })
 }

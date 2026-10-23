@@ -372,13 +372,15 @@ assert result.num_errors == 0
 
 Frontier accepts raw DEMs, including hyperedges. `workers=None` selects the
 worker count automatically; `workers=1` runs sequentially. Parallel execution
-releases the Python GIL and preserves shot order. At most one Rust decoder per
-worker is alive at a time, so more workers and larger `k` increase memory use.
+releases the Python GIL and preserves shot order. Each active worker owns
+independent decoder scratch, so more workers and larger `k` increase memory use.
 `SampleBatch.decode(...)` builds exactly one decoder per worker;
 `DemSampler.decode(...)` builds one up front to check dimensions and then one per
 scheduled group of sampling chunks, which can be several times the worker count
-on a long run, so a model that is slow to construct pays that cost more than
-once per worker there.
+on a long run. Plain specifications rebuild the model for each decoder.
+Recovery-configured Frontier specifications prepare the trellis model and optional
+feasibility basis once per decode call, sharing them across all workers with
+independent scratch. This prepared state is released when the call finishes.
 
 Options match `pecos_rslib_exp.FrontierDecoder.from_dem`: `k`, `delta`,
 `score_alpha`, `bp_score_iterations`, `column_order`, `merge_indistinguishable`,
@@ -456,7 +458,9 @@ verifies the resulting fault explanation against the syndrome. A successful
 fallback has `status="fallback:feasible"`, `syndrome_consistent=True`, and
 `mechanism_indices` referring to the original DEM. This is a deterministic
 heuristic, not a maximum-likelihood or minimum-weight decoder. Preprocessing
-uses additional memory for the basis and witnesses, shared across batch workers;
+uses additional memory for the basis and witnesses. Direct `decode_batch` workers
+share this state; recovery-configured specifications also share it across all
+workers within each `SampleBatch.decode` or `DemSampler.decode` call.
 `build_seconds` reports Frontier construction only, excluding that preparation.
 
 If the DEM has no explanation, this policy returns zero observable flips with
@@ -515,7 +519,11 @@ The `frontier(...)` specification accepts the same recovery controls for both
 
 ```python
 from pecos_rslib_exp import frontier
+from pecos_rslib.qec import SampleBatch
 
+dem = "error(0.1) D0 D1 D2 L0\n"
+# The middle syndrome is incompatible with this DEM and uses the zero fallback.
+batch = SampleBatch([[1, 1, 1], [1, 0, 0], [0, 0, 0]], [1, 1, 0])
 spec = frontier(
     k=256,
     delta=16,
@@ -526,6 +534,10 @@ spec = frontier(
 result = batch.decode(dem, spec, workers=4, predictions=True)
 print(result.num_errors, result.num_fallback, result.num_undecoded)
 fallback_errors = sum(r.logical_error for r in result.recovery if r.fallback_used)
+assert result.num_fallback == 1
+assert result.num_undecoded == 0
+assert result.num_errors == 1
+assert fallback_errors == 1
 ```
 
 Every supplied prediction, including fallback, is compared against the shot's

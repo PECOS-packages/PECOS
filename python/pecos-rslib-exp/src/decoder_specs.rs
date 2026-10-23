@@ -4,11 +4,12 @@ use crate::frontier_bindings::{ColumnOrderArgument, parse_column_order, parse_me
 use crate::frontier_bindings::{parse_fallback, parse_no_path_action};
 use pecos_decoder_core::{DecoderError, ObservableDecoder};
 use pecos_frontier::recovery::{
-    FallbackPolicy, FrontierRecoveryDecoder, NoPathAction, RecoveryOptions,
+    ConfiguredFrontierDecoder, FallbackPolicy, FrontierRecoveryDecoder, NoPathAction,
+    RecoveryOptions,
 };
 use pecos_frontier::{FrontierConfig, SparseDem, TrellisOrdering};
 use pecos_trellis::bp_trellis::BpTrellisConfig;
-use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 use std::sync::Mutex;
@@ -37,9 +38,9 @@ pub(crate) fn report_no_path(on_no_path: &str) -> PyResult<bool> {
     match on_no_path {
         "raise" => Ok(false),
         "report" => Ok(true),
-        _ => Err(PyValueError::new_err(
-            "on_no_path must be 'raise' or 'report'",
-        )),
+        other => Err(PyValueError::new_err(format!(
+            "on_no_path must be 'raise' or 'report', got '{other}'"
+        ))),
     }
 }
 
@@ -60,6 +61,13 @@ enum ExperimentalSpec {
     ),
     BpTrellis(BpTrellisConfig),
 }
+impl ExperimentalSpec {
+    /// Recovery-configured Frontier uses provider protocol v2; everything else v1.
+    fn is_recovery_configured(&self) -> bool {
+        matches!(self, Self::Frontier(_, _, options, fallback)
+            if *options != RecoveryOptions::default() || fallback.is_some())
+    }
+}
 
 #[pyclass(
     name = "ExperimentalDecoderSpec",
@@ -74,6 +82,29 @@ struct PyExperimentalDecoderSpec {
 impl PyExperimentalDecoderSpec {
     fn new(inner: ExperimentalSpec) -> Self {
         Self { inner }
+    }
+    fn prepare(&self, py: Python<'_>, dem: &str) -> PyResult<PyPreparedFrontierDecoder> {
+        if !self.inner.is_recovery_configured() {
+            return Err(PyTypeError::new_err(format!(
+                "_pecos_prepare_decoder requires a recovery-configured frontier(...) specification, got {}",
+                self.__repr__()
+            )));
+        }
+        let ExperimentalSpec::Frontier(c, ordering, options, fallback) = &self.inner else {
+            unreachable!("recovery-configured specifications are Frontier specifications");
+        };
+        py.detach(|| {
+            let dem = SparseDem::from_dem_str(dem)?;
+            let mut config = c.clone();
+            config.column_order = ordering.resolve(&dem)?;
+            Ok::<_, DecoderError>(PyPreparedFrontierDecoder {
+                prototype: FrontierRecoveryDecoder::from_sparse_dem(&dem, config, *fallback)?
+                    .with_options(*options)?,
+                num_detectors: dem.num_detectors,
+                num_observables: dem.num_observables,
+            })
+        })
+        .map_err(|error| decoder_error_to_py(&error))
     }
 }
 #[pymethods]
@@ -95,13 +126,10 @@ impl PyExperimentalDecoderSpec {
     }
     #[getter]
     fn _pecos_decoder_api_version(&self) -> u32 {
-        match &self.inner {
-            ExperimentalSpec::Frontier(_, _, options, fallback)
-                if *options != RecoveryOptions::default() || fallback.is_some() =>
-            {
-                2
-            }
-            _ => 1,
+        if self.inner.is_recovery_configured() {
+            2
+        } else {
+            1
         }
     }
     fn __repr__(&self) -> String {
@@ -131,25 +159,30 @@ impl PyExperimentalDecoderSpec {
         self.family().hash(&mut hasher);
         hasher.finish()
     }
+    /// Internal v2 protocol: prepare shared recovery models once per decode call.
+    fn _pecos_prepare_decoder(
+        &self,
+        py: Python<'_>,
+        dem: &str,
+    ) -> PyResult<PyPreparedFrontierDecoder> {
+        self.prepare(py, dem)
+    }
     /// Internal batch protocol: construct an independent native worker.
     fn _pecos_build_decoder(&self, py: Python<'_>, dem: &str) -> PyResult<PyExperimentalWorker> {
+        // One construction path for recovery workers: the v2 preparation.
+        if self.inner.is_recovery_configured() {
+            return Ok(self.prepare(py, dem)?.build_worker(py));
+        }
         py.detach(|| {
             // The engine and the reported dimensions come from the same parse.
             let dem = SparseDem::from_dem_str(dem)?;
             let inner: Box<dyn ObservableDecoder + Send> = match &self.inner {
-                ExperimentalSpec::Frontier(c, ordering, options, fallback) => {
+                ExperimentalSpec::Frontier(c, ordering, ..) => {
                     let mut config = c.clone();
                     config.column_order = ordering.resolve(&dem)?;
-                    if *options == RecoveryOptions::default() && fallback.is_none() {
-                        Box::new(pecos_frontier::FrontierDecoder::from_sparse_dem(
-                            &dem, config,
-                        )?)
-                    } else {
-                        Box::new(
-                            FrontierRecoveryDecoder::from_sparse_dem(&dem, config, *fallback)?
-                                .with_options(*options)?,
-                        )
-                    }
+                    Box::new(pecos_frontier::FrontierDecoder::from_sparse_dem(
+                        &dem, config,
+                    )?)
                 }
                 ExperimentalSpec::BpTrellis(c) => Box::new(
                     pecos_trellis::bp_trellis::BpTrellisDecoder::from_sparse_dem(&dem, c.clone())?,
@@ -162,6 +195,29 @@ impl PyExperimentalDecoderSpec {
             })
         })
         .map_err(|error| decoder_error_to_py(&error))
+    }
+}
+
+#[pyclass(name = "PreparedFrontierDecoder", module = "pecos_rslib_exp", frozen)]
+struct PyPreparedFrontierDecoder {
+    prototype: ConfiguredFrontierDecoder,
+    num_detectors: usize,
+    num_observables: usize,
+}
+impl PyPreparedFrontierDecoder {
+    fn build_worker(&self, py: Python<'_>) -> PyExperimentalWorker {
+        py.detach(|| PyExperimentalWorker {
+            inner: Mutex::new(Box::new(self.prototype.fresh_worker())),
+            num_detectors: self.num_detectors,
+            num_observables: self.num_observables,
+        })
+    }
+}
+#[pymethods]
+impl PyPreparedFrontierDecoder {
+    /// Internal v2 protocol: a worker sharing the prepared models with fresh scratch.
+    fn _pecos_build_decoder(&self, py: Python<'_>) -> PyExperimentalWorker {
+        self.build_worker(py)
     }
 }
 
@@ -218,6 +274,7 @@ fn finish_repr(family: &str, args: Vec<String>) -> String {
 pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyExperimentalDecoderSpec>()?;
     module.add_class::<PyExperimentalWorker>()?;
+    module.add_class::<PyPreparedFrontierDecoder>()?;
     module.add_function(wrap_pyfunction!(frontier, module)?)?;
     module.add_function(wrap_pyfunction!(bp_trellis, module)?)?;
     Ok(())
@@ -260,16 +317,9 @@ fn frontier(
         delta_max,
         on_no_path: parse_no_path_action(on_no_path)?,
     };
-    if delta_max.is_some_and(|max| !max.is_finite() || max < delta) {
-        return Err(PyValueError::new_err(
-            "delta_max must be finite and at least the base delta",
-        ));
-    }
-    if options.on_no_path == NoPathAction::Fallback && fallback.is_none() {
-        return Err(PyValueError::new_err(
-            "on_no_path='fallback' requires a configured fallback",
-        ));
-    }
+    options
+        .validate(delta, fallback)
+        .map_err(|error| PyValueError::new_err(error.to_string()))?;
     Ok(PyExperimentalDecoderSpec::new(ExperimentalSpec::Frontier(
         config,
         parse_column_order(column_order)?,

@@ -2,6 +2,7 @@
 
 import subprocess
 import sys
+import weakref
 
 import pytest
 from pecos_rslib.qec import DemSampler, SampleBatch
@@ -293,12 +294,16 @@ def test_fused_provider_build_exception_after_preflight():
     assert traceback.extract_tb(caught.value.__traceback__)[-1].name == "_pecos_build_decoder"
 
 
-@pytest.mark.parametrize("member", ["_pecos_build_decoder", "history_dependent", "wall_clock_dependent"])
+@pytest.mark.parametrize("version", [1, 2])
+@pytest.mark.parametrize("member", ["factory", "history_dependent", "wall_clock_dependent"])
 @pytest.mark.parametrize("missing", [False, True])
-def test_required_version_one_members(member, missing):
+def test_required_provider_members(version, member, missing):
+    method = "_pecos_build_decoder" if version == 1 else "_pecos_prepare_decoder"
+    if member == "factory":
+        member = method
     members = {
-        "_pecos_decoder_api_version": 1,
-        "_pecos_build_decoder": lambda self, dem: Worker(),
+        "_pecos_decoder_api_version": version,
+        method: lambda self, dem: Worker(),
         "history_dependent": False,
         "wall_clock_dependent": False,
     }
@@ -307,7 +312,10 @@ def test_required_version_one_members(member, missing):
     else:
         members[member] = "wrong type"
     provider = type("InvalidProvider", (), members)()
-    with pytest.raises(TypeError) as caught:
+    with pytest.raises(
+        TypeError,
+        match=f"version-{version}.*{method}.*history_dependent.*wall_clock_dependent",
+    ) as caught:
         SampleBatch([[0]], [0]).decode(DEM, provider)
     assert isinstance(caught.value.__cause__, AttributeError if missing else TypeError)
 
@@ -393,26 +401,136 @@ def test_labelled_embedded_corpus_refuses_provider(tmp_path):
         SampleBatch.load(path).decode(None, Provider())
 
 
+class OutcomeWorker(Worker):
+    def _pecos_decode_outcome(self, syndrome):
+        return self._pecos_decode_obs(syndrome), False, None, [1]
+
+
+class PreparedProvider:
+    _pecos_decoder_api_version = 2
+    history_dependent = False
+    wall_clock_dependent = False
+
+    def __init__(self):
+        self.prepares = 0
+        self.builds = 0
+        self.prepared = []
+
+    def _pecos_prepare_decoder(self, dem):
+        import time
+
+        assert dem == DEM
+        self.prepares += 1
+        # Release the GIL while other workers reach the preparation cache.
+        time.sleep(0.01)
+        provider = self
+
+        class Prepared:
+            def _pecos_build_decoder(self):
+                provider.builds += 1
+                return OutcomeWorker()
+
+        prepared = Prepared()
+        self.prepared.append(weakref.ref(prepared))
+        return prepared
+
+
+@pytest.mark.parametrize("sampler", [False, True])
+def test_v2_prepares_once_per_decode_call(sampler):
+    import gc
+
+    provider = PreparedProvider()
+    if sampler:
+        # Enough shots that the fused sampler schedules several build jobs.
+        source = DemSampler.from_dem_string(DEM)
+        args = (DEM, 65_539, provider)
+    else:
+        source = SampleBatch([[0]] * 64, [0] * 64)
+        args = (DEM, provider)
+    for calls in [1, 2]:
+        before = provider.builds
+        result = source.decode(*args, workers=4)
+        assert result.workers_used == 4
+        assert result.num_errors == 0
+        assert provider.prepares == calls
+        assert provider.builds - before > 1
+        gc.collect()
+        assert provider.prepared[-1]() is None, "the preparation outlived its decode call"
+
+
+@pytest.mark.parametrize("sampler", [False, True])
+def test_v2_prepare_exception_propagates(sampler):
+    import traceback
+
+    error = KeyError("prepare boom")
+
+    class FailingProvider(PreparedProvider):
+        def _pecos_prepare_decoder(self, dem):
+            import time
+
+            self.prepares += 1
+            # On the SampleBatch path the other workers queue on this preparation, so
+            # a single call proves the failure is cached. The fused sampler's preflight
+            # build fails on the calling thread first; there this checks propagation.
+            time.sleep(0.01)
+            raise error
+
+    provider = FailingProvider()
+    if sampler:
+        source = DemSampler.from_dem_string(DEM)
+        args = (DEM, 65_539, provider)
+    else:
+        source = SampleBatch([[0]] * 65, [0] * 65)
+        args = (DEM, provider)
+    with pytest.raises(KeyError, match="prepare boom") as caught:
+        source.decode(*args, workers=4)
+    assert caught.value is error
+    assert traceback.extract_tb(caught.value.__traceback__)[-1].name == "_pecos_prepare_decoder"
+    assert provider.prepares == 1
+
+
 @pytest.mark.parametrize(
-    ("words", "fallback", "consistent", "deltas"),
+    ("words", "fallback", "consistent", "deltas", "message"),
     [
-        (None, True, True, [1]),
-        ([0], False, True, [1]),
-        ([0], False, None, [2, 1]),
-        ([0], False, None, [float("nan")]),
-        ([0, 128], True, True, [1]),
+        (
+            None,
+            True,
+            True,
+            [1],
+            "fallback_used=True requires prediction words, got None",
+        ),
+        (
+            [0],
+            False,
+            True,
+            [1],
+            "syndrome_consistent=True requires fallback_used=True, got False",
+        ),
+        ([0], False, None, [2, 1], "deltas must be strictly increasing, got 2.0 then 1.0"),
+        ([0], False, None, [1, 1], "deltas must be strictly increasing, got 1.0 then 1.0"),
+        ([0], False, None, [float("nan")], "delta NaN must be nonnegative and not NaN"),
+        ([0], False, None, [-1], "delta -1.0 must be nonnegative and not NaN"),
+        (
+            [0, 128],
+            True,
+            True,
+            [1],
+            "predicted observable 71, but its model has 71 observables",
+        ),
     ],
 )
-def test_v2_provider_rejects_invalid_outcomes(words, fallback, consistent, deltas):
-    class OutcomeWorker(Worker):
+def test_v2_provider_rejects_invalid_outcomes(words, fallback, consistent, deltas, message):
+    class InvalidOutcomeWorker(Worker):
         def _pecos_decode_outcome(self, syndrome):
             return words, fallback, consistent, deltas
 
-    class OutcomeProvider(Provider):
-        _pecos_decoder_api_version = 2
+    class Prepared:
+        def _pecos_build_decoder(self):
+            return InvalidOutcomeWorker()
 
-        def _pecos_build_decoder(self, dem):
-            return OutcomeWorker()
+    class OutcomeProvider(PreparedProvider):
+        def _pecos_prepare_decoder(self, dem):
+            return Prepared()
 
-    with pytest.raises(RuntimeError, match="shot 0"):
+    with pytest.raises(RuntimeError, match=f"shot 0:.*{message}"):
         SampleBatch([[0]], [0]).decode(DEM, OutcomeProvider(), workers=1)

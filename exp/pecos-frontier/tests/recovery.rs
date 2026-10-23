@@ -211,11 +211,12 @@ fn policies_validate_even_for_empty_batches_and_never_hide_bad_input() {
         FrontierRecoveryDecoder::from_sparse_dem(&dem, config(1, 2.0), Some(FallbackPolicy::Zero))
             .unwrap();
     for max in [f64::NAN, f64::INFINITY, -1.0, 1.0] {
-        assert!(
-            decoder
-                .decode_batch(&[], 1, options(NoPathAction::Report, Some(max)))
-                .is_err()
-        );
+        let error = decoder
+            .decode_batch(&[], 1, options(NoPathAction::Report, Some(max)))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(&format!("delta_max {max:?}")));
+        assert!(error.contains("base delta 2.0"));
     }
     assert!(
         decoder
@@ -273,4 +274,81 @@ fn configured_observable_adapter_preserves_fallback_and_reporting() {
         }
         assert!(adapter.decode_outcome(&[]).is_err());
     }
+}
+
+#[test]
+fn prediction_adapter_matches_full_recovery() {
+    use pecos_decoder_core::ObservableDecoder;
+
+    let (mut saw_retry_success, mut saw_no_path, mut saw_fallback) = (false, false, false);
+    for mode in [MetricMode::LogSumExpFloat, MetricMode::MaxLogInt] {
+        for (dem, shots) in [
+            (DEM, vec![vec![0, 0, 0], vec![0, 0, 1], vec![1, 1, 1]]),
+            ("error(0.1) D0 D1 L70", vec![vec![1, 0], vec![1, 1]]),
+            ("error(1) D0 L70", vec![vec![0], vec![1]]),
+        ] {
+            let dem = SparseDem::from_dem_str(dem).unwrap();
+            for k in [1, 8] {
+                for action in [NoPathAction::Report, NoPathAction::Fallback] {
+                    let cfg = FrontierConfig {
+                        k,
+                        delta: 0.0,
+                        score_alpha: 0.0,
+                        metric_mode: mode,
+                        ..Default::default()
+                    };
+                    let mut full = FrontierRecoveryDecoder::from_sparse_dem(
+                        &dem,
+                        cfg,
+                        Some(FallbackPolicy::FeasibleThenZero),
+                    )
+                    .unwrap();
+                    let opts = options(action, Some(32.0));
+                    let mut adapter = full.fresh_worker().with_options(opts).unwrap();
+                    for shot in &shots {
+                        let (prediction, fallback, consistent, deltas) =
+                            match full.decode(shot, opts).unwrap() {
+                                FrontierRecoveryOutcome::Decoded {
+                                    result,
+                                    deltas_tried,
+                                } => {
+                                    assert!(!result.dropped_log_mass.is_nan());
+                                    saw_retry_success |= deltas_tried.len() > 1;
+                                    (Some(result.predicted), false, None, deltas_tried)
+                                }
+                                FrontierRecoveryOutcome::NoPath(report) => {
+                                    saw_no_path = true;
+                                    (None, false, None, report.deltas_tried)
+                                }
+                                FrontierRecoveryOutcome::Fallback {
+                                    predicted,
+                                    syndrome_consistent,
+                                    no_path,
+                                    ..
+                                } => {
+                                    saw_fallback = true;
+                                    (
+                                        Some(predicted),
+                                        true,
+                                        syndrome_consistent,
+                                        no_path.deltas_tried,
+                                    )
+                                }
+                            };
+                        let actual = adapter.decode_outcome(shot).unwrap();
+                        assert_eq!(actual.prediction, prediction);
+                        assert_eq!(actual.fallback_used, fallback);
+                        assert_eq!(actual.syndrome_consistent, consistent);
+                        assert_eq!(actual.deltas_tried, deltas);
+                        if let Some(prediction) = prediction {
+                            assert_eq!(adapter.decode_obs(shot).unwrap(), prediction);
+                        } else {
+                            assert!(adapter.decode_obs(shot).is_err());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(saw_retry_success && saw_no_path && saw_fallback);
 }

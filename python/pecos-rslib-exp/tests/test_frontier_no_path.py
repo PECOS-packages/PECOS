@@ -107,7 +107,7 @@ def test_policy_validation_includes_empty_batches():
         (decoder.decode_from_defects, []),
         (decoder.decode_batch, []),
     ):
-        with pytest.raises(ValueError, match="on_no_path must be"):
+        with pytest.raises(ValueError, match=r"on_no_path must be.*got 'identity'"):
             method(argument, on_no_path="identity")
     assert decoder.decode_batch([], workers=4, on_no_path="report") == []
     with pytest.raises(ValueError, match="workers must be"):

@@ -106,9 +106,9 @@ def test_invalid_recovery_options_rejected_for_empty_batches(maximum):
 def test_explicit_fallback_configuration_and_categorical_limits():
     with pytest.raises(ValueError, match="configured fallback"):
         decoder().decode_batch([], on_no_path="fallback")
-    with pytest.raises(ValueError, match="fallback must be"):
+    with pytest.raises(ValueError, match=r"fallback must be.*got 'guess'"):
         decoder(fallback="guess")
-    with pytest.raises(ValueError, match="delta_max"):
+    with pytest.raises(ValueError, match=r"delta_max 8\.0 must be finite and at least the base delta 16\.0"):
         exp.FrontierDecoder.from_dem(DEM, delta=16).decode_batch([], delta_max=8)
     factors = [[(0.5, [], []), (0.3, [0, 1], [0]), (0.2, [0, 1], [])]]
     with pytest.raises(RuntimeError, match="independent binary DEM"):
@@ -182,14 +182,16 @@ def test_fused_sampler_recovery_is_worker_independent(on_no_path):
     sampler = DemSampler.from_dem_string(DEM)
     spec = recovery_spec(delta_max=3, on_no_path=on_no_path, fallback="feasible_then_zero")
     # Fused sampling uses sampling ABI v1, a different stream from sample_batch.
-    expected = sampler.decode(DEM, 2051, spec, workers=1, seed=43, predictions=True)
+    expected = sampler.decode(DEM, 65_539, spec, workers=1, seed=43, predictions=True)
     assert expected.recovery
     for workers in [1, 4]:
-        result = sampler.decode(DEM, 2051, spec, workers=workers, seed=43, predictions=True)
+        result = sampler.decode(DEM, 65_539, spec, workers=workers, seed=43, predictions=True)
         assert result.predictions == expected.predictions
         assert result.num_errors == expected.num_errors
         assert result.num_undecoded == expected.num_undecoded
         assert result.num_fallback == expected.num_fallback
+        assert result.num_scored == expected.num_scored
+        assert [r.logical_error for r in result.recovery] == [r.logical_error for r in expected.recovery]
         assert recovery_rows(result) == recovery_rows(expected)
 
 

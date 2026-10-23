@@ -440,6 +440,12 @@ impl GateDefinitions {
                 .with_category(GateCategory::TwoQubitUnitary),
         );
         self.set_core_spec(
+            gates::ISWAP,
+            GateSpec::new("ISWAP")
+                .with_quantum_arity(2)
+                .with_category(GateCategory::TwoQubitUnitary),
+        );
+        self.set_core_spec(
             gates::SXX,
             GateSpec::new("SXX")
                 .with_quantum_arity(2)
@@ -511,6 +517,18 @@ impl GateDefinitions {
         self.set_core_spec(
             gates::CCX,
             GateSpec::new("CCX")
+                .with_quantum_arity(3)
+                .with_category(GateCategory::MultiQubitUnitary),
+        );
+        self.set_core_spec(
+            gates::CCZ,
+            GateSpec::new("CCZ")
+                .with_quantum_arity(3)
+                .with_category(GateCategory::MultiQubitUnitary),
+        );
+        self.set_core_spec(
+            gates::CSWAP,
+            GateSpec::new("CSWAP")
                 .with_quantum_arity(3)
                 .with_category(GateCategory::MultiQubitUnitary),
         );
@@ -757,6 +775,14 @@ impl GateExecutor for NoNativeGates {
 #[allow(clippy::float_cmp)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_core_multi_qubit_gates_have_arity() {
+        let defs = GateDefinitions::new();
+        assert_eq!(defs.quantum_arity(gates::ISWAP), Some(2));
+        assert_eq!(defs.quantum_arity(gates::CCZ), Some(3));
+        assert_eq!(defs.quantum_arity(gates::CSWAP), Some(3));
+    }
 
     #[test]
     fn test_new_has_core_gates() {

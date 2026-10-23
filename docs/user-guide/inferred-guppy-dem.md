@@ -68,6 +68,18 @@ and reordered outputs. Pass columns from one simulation run. Its audit includes
 `inference`, with probe counts, the raw measurement binding, and schedule evidence.
 Explicit builds have `build.inference is None`.
 
+Idle rates use the durations in the resulting circuit. With the default simple
+runtime, explicitly insert idles when requesting idle noise; the unified builder
+rejects idle-noise settings when there are no idle gates. Use
+`.with_idle_after_2q(duration)` for a uniform post-two-qubit convention, or
+`.with_runtime(runtime)` for runtime-provided scheduling. The former inserts
+noise locations on the two operands; it does not set physical gate times.
+See [rates, probabilities, and time units](dem-from-guppy.md#rates-probabilities-and-time-units)
+before copying rates from a shot-simulation configuration. In particular,
+`.with_idle_after_2q(1.0)` uses unit-duration idles, while runtime-emitted idles
+are replayed in nanoseconds; `NoiseParameters.for_runtime_idle_time_units()`
+converts per-second rates and T1/T2 to those nanosecond units.
+
 The low-level `infer_guppy_dem_annotations` helper remains available when you
 want to inspect the inferred annotations without building a DEM; the examples
 below demonstrate that interface.

@@ -38,6 +38,11 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Decoder changes
 
+- Experimental `FrontierDecoder` single-shot and batch methods accept
+  `on_no_path="report"` to retain `FrontierNoPath` outcomes alongside decoded
+  results. Reports contain work counters and no prediction. The default remains
+  `"raise"`; specification-based batch decoding remains strict.
+
 - `LogicalCircuitBuilder` detector `fault_sector` labels follow the code's
   stabilizer family across a transversal H; previously post-H detectors were
   labelled with the measured family, which made graph decoders' labelled

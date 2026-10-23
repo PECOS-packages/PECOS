@@ -11,7 +11,7 @@
 // the License.
 
 use crate::decoder_specs::{
-    decoder_error_to_py, indexed_decoder_error_to_py, validate_batch_workers,
+    decoder_error_to_py, indexed_decoder_error_to_py, report_no_path, validate_batch_workers,
 };
 use pecos_frontier::{
     CommitteeDirection, CommitteeMember, CommitteeStatus, Factor, FactorModel,
@@ -262,6 +262,93 @@ fn frontier_status(status: FrontierStatus) -> &'static str {
     }
 }
 
+/// A retained-path failure, with no prediction or fabricated confidence.
+#[pyclass(name = "FrontierNoPath", module = "pecos_rslib_exp", frozen)]
+pub struct PyFrontierNoPath {
+    transitions: u64,
+    dropped_states: u64,
+    bp_seconds: f64,
+}
+
+#[pymethods]
+impl PyFrontierNoPath {
+    /// Always true; no logical prediction was produced.
+    #[getter]
+    fn no_path(&self) -> bool {
+        true
+    }
+
+    /// No retained path. This alone does not prove model incompatibility.
+    #[getter]
+    fn status(&self) -> &'static str {
+        "no_path"
+    }
+
+    /// Candidate branch evaluations before the attempt failed.
+    #[getter]
+    fn transitions(&self) -> u64 {
+        self.transitions
+    }
+
+    /// States discarded before the attempt failed.
+    #[getter]
+    fn dropped_states(&self) -> u64 {
+        self.dropped_states
+    }
+
+    /// Wall-clock seconds preparing BP-informed scores for this shot.
+    #[getter]
+    fn bp_seconds(&self) -> f64 {
+        self.bp_seconds
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "FrontierNoPath(transitions={}, dropped_states={})",
+            self.transitions, self.dropped_states
+        )
+    }
+}
+
+fn attempt_to_py(
+    py: Python<'_>,
+    attempt: FrontierDecodeAttempt,
+    num_observables: usize,
+    report: bool,
+    shot_index: Option<usize>,
+) -> PyResult<Py<PyAny>> {
+    match attempt {
+        FrontierDecodeAttempt::Success(inner) => Ok(Py::new(
+            py,
+            PyFrontierResult {
+                inner,
+                num_observables,
+            },
+        )?
+        .into_any()),
+        FrontierDecodeAttempt::NoPath {
+            transitions,
+            dropped_states,
+            bp_seconds,
+            ..
+        } if report => Ok(Py::new(
+            py,
+            PyFrontierNoPath {
+                transitions,
+                dropped_states,
+                bp_seconds,
+            },
+        )?
+        .into_any()),
+        FrontierDecodeAttempt::NoPath { error, .. } | FrontierDecodeAttempt::Error(error) => {
+            Err(shot_index.map_or_else(
+                || decoder_error_to_py(&error),
+                |index| indexed_decoder_error_to_py(index, &error),
+            ))
+        }
+    }
+}
+
 /// Result returned by the native experimental Frontier decoder.
 #[pyclass(name = "FrontierResult", module = "pecos_rslib_exp")]
 pub struct PyFrontierResult {
@@ -271,6 +358,12 @@ pub struct PyFrontierResult {
 
 #[pymethods]
 impl PyFrontierResult {
+    /// Always false; this result contains a logical prediction.
+    #[getter]
+    fn no_path(&self) -> bool {
+        false
+    }
+
     /// Predicted logical-observable flips with their intrinsic width.
     #[getter]
     fn observable_flips(&self) -> PyFrontierObservableFlips {
@@ -569,34 +662,55 @@ impl PyFrontierDecoder {
         self.inner.build_seconds()
     }
 
-    /// Decode sparse fired-detector indices.
-    fn decode_from_defects(&mut self, defects: Vec<u64>) -> PyResult<PyFrontierResult> {
+    /// Decode sparse fired-detector indices. on_no_path="report" returns
+    /// FrontierNoPath on search failure; the default "raise" preserves errors.
+    #[pyo3(signature = (defects, *, on_no_path="raise"))]
+    fn decode_from_defects(
+        &mut self,
+        py: Python<'_>,
+        defects: Vec<u64>,
+        on_no_path: &str,
+    ) -> PyResult<Py<PyAny>> {
+        report_no_path(on_no_path)?;
         let syndrome = sparse_to_dense(&defects, self.num_detectors)?;
-        self.decode_syndrome(syndrome)
+        self.decode_syndrome(py, syndrome, on_no_path)
     }
 
-    /// Decode one dense detector syndrome.
-    fn decode_syndrome(&mut self, syndrome: Vec<u8>) -> PyResult<PyFrontierResult> {
-        self.inner
-            .decode(&syndrome)
-            .map(|inner| PyFrontierResult {
-                inner,
-                num_observables: self.num_observables,
-            })
-            .map_err(|error| decoder_error_to_py(&error))
+    /// Decode one dense detector syndrome. on_no_path="report" returns
+    /// FrontierNoPath without a prediction on search failure. Other errors
+    /// still raise. The default "raise" preserves strict behavior.
+    #[pyo3(signature = (syndrome, *, on_no_path="raise"))]
+    fn decode_syndrome(
+        &mut self,
+        py: Python<'_>,
+        syndrome: Vec<u8>,
+        on_no_path: &str,
+    ) -> PyResult<Py<PyAny>> {
+        let report = report_no_path(on_no_path)?;
+        attempt_to_py(
+            py,
+            self.inner.decode_attempt(&syndrome),
+            self.num_observables,
+            report,
+            None,
+        )
     }
 
     /// Decode dense detector syndromes in input order. Defaults to sequential
     /// execution; workers > 1 shares the model across workers and releases the GIL.
     /// workers must be positive and is capped at one per shot (one for an empty batch).
     /// Each worker owns independent decoding scratch.
-    #[pyo3(signature = (shots, *, workers=1))]
+    /// on_no_path="report" retains FrontierNoPath outcomes alongside successful
+    /// FrontierResult objects. Other errors still raise with the shot index.
+    #[pyo3(signature = (shots, *, workers=1, on_no_path="raise"))]
     fn decode_batch(
         &self,
         py: Python<'_>,
         shots: Vec<Vec<u8>>,
         workers: i64,
-    ) -> PyResult<Vec<PyFrontierResult>> {
+        on_no_path: &str,
+    ) -> PyResult<Vec<Py<PyAny>>> {
+        let report = report_no_path(on_no_path)?;
         let workers = validate_batch_workers(workers)?;
         let decode = || self.inner.decode_batch(&shots, workers);
         let results = if workers > 1 {
@@ -608,18 +722,8 @@ impl PyFrontierDecoder {
         results
             .into_iter()
             .enumerate()
-            .map(|(shot_index, result)| {
-                let result = match result {
-                    FrontierDecodeAttempt::Success(inner) => Ok(inner),
-                    FrontierDecodeAttempt::NoPath { error, .. }
-                    | FrontierDecodeAttempt::Error(error) => Err(error),
-                };
-                result
-                    .map(|inner| PyFrontierResult {
-                        inner,
-                        num_observables: self.num_observables,
-                    })
-                    .map_err(|error| indexed_decoder_error_to_py(shot_index, &error))
+            .map(|(index, attempt)| {
+                attempt_to_py(py, attempt, self.num_observables, report, Some(index))
             })
             .collect()
     }

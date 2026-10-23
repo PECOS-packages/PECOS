@@ -388,6 +388,41 @@ column permutations are also accepted. Frontier remains experimental, and
 pruning can make predictions approximate. For per-shot logical masses, pruning
 status, and complementary gaps, use the direct experimental binding.
 
+### Preserve direct Frontier no-path outcomes
+
+The direct `FrontierDecoder.decode_syndrome`, `decode_from_defects`, and
+`decode_batch` methods accept `on_no_path="raise"` (default) or `"report"`.
+Report mode retains successful `FrontierResult` objects and returns a
+`FrontierNoPath` for each shot with no retained path, preserving input order
+across worker counts:
+
+```python
+from pecos_rslib_exp import FrontierDecoder
+
+decoder = FrontierDecoder.from_dem("error(0.1) D0 D1 L0\n")
+outcomes = decoder.decode_batch([[0, 0], [1, 0], [1, 1]], workers=2, on_no_path="report")
+assert [outcome.no_path for outcome in outcomes] == [False, True, False]
+assert outcomes[2].observable_flips.mask == 1
+assert outcomes[1].status == "no_path"
+```
+
+Both outcome types expose `no_path`, `status`, `transitions`, `dropped_states`,
+and `bp_seconds`. A no-path report has no `observable_flips`, logical masses,
+or confidence estimate. It supplies no fallback prediction. Keep undecoded
+shots separate from logical mismatches and report their rate; silently dropping
+them from the denominator can make a decoder appear more accurate.
+
+No-path can arise from pruning or an incompatible syndrome; the status alone
+does not distinguish them. In this example the model can only flip both
+detectors together, so `[1, 0]` is incompatible. Report mode does not change the
+ordering, widen pruning, or retry. Dimension errors and other non-no-path errors
+still raise, with a shot index for batch calls. Unknown policies raise
+`ValueError`, including for empty batches.
+
+This option applies to the direct `FrontierDecoder` methods. The
+`frontier(...)` specification used with `SampleBatch.decode` and
+`DemSampler.decode`, and the `FrontierCommitteeDecoder` methods, remain strict.
+
 ## Rust-backed BP-Trellis batch decoding
 
 ```python

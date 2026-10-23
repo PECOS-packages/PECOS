@@ -26,6 +26,16 @@ pub(crate) fn validate_batch_workers(workers: i64) -> PyResult<usize> {
         .map_err(|_| PyValueError::new_err("workers is too large for this platform"))
 }
 
+pub(crate) fn report_no_path(on_no_path: &str) -> PyResult<bool> {
+    match on_no_path {
+        "raise" => Ok(false),
+        "report" => Ok(true),
+        _ => Err(PyValueError::new_err(
+            "on_no_path must be 'raise' or 'report'",
+        )),
+    }
+}
+
 fn decoder_error_with_message(error: &DecoderError, message: String) -> PyErr {
     match error {
         DecoderError::InvalidDemSyntax(_) => PyValueError::new_err(message),

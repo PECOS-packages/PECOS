@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import re
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pecos as pc
@@ -42,6 +43,9 @@ from pecos.qec.surface.decode import (
     generate_circuit_level_dem_from_builder,
 )
 from pecos.quantum import PHYSICAL_DURATION_META_KEY
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 def _to_numpy_complex(matrix: object) -> np.ndarray:
@@ -1260,11 +1264,31 @@ def test_szz_forward_flow_folds_every_single_qubit_clifford(gate: OpType) -> Non
     assert _analyze_szz_forward_flow(steps).abstract_single_qubit_ops == 1
 
 
+@pytest.mark.parametrize("gate", [OpType.F, OpType.FDG], ids=lambda gate: gate.name)
+def test_szz_lowering_emits_a_folded_face_clifford_as_its_hosts_prefix(gate: OpType) -> None:
+    steps = [
+        SurfaceCircuitStep(OpType.ALLOC, [0]),
+        SurfaceCircuitStep(gate, [0]),
+        SurfaceCircuitStep(OpType.MEASURE, [0], "m"),
+    ]
+    lowered = [(step.op_type, step.label) for step in _lower_szz_forward_flow_ops(steps)]
+    assert lowered == [
+        (OpType.ALLOC, ""),
+        (OpType.TICK, ""),
+        (gate, f"szz_physical_prefix:{gate.name}:m:q0"),
+        (OpType.TICK, ""),
+        (OpType.MEASURE, "m"),
+    ]
+
+
 @pytest.mark.parametrize(
     ("consumer", "name"),
     [(_analyze_szz_forward_flow, "analysis"), (_lower_szz_forward_flow_ops, "lowering")],
 )
-def test_szz_forward_flow_rejects_operations_without_a_case(consumer: object, name: str) -> None:
-    steps = [SurfaceCircuitStep(OpType.ALLOC, [0]), SurfaceCircuitStep(OpType.T, [0])]
-    with pytest.raises(ValueError, match=rf"^SZZ forward-flow {name} does not support T steps$"):
+def test_szz_forward_flow_rejects_operations_without_a_case(
+    consumer: Callable[[list[SurfaceCircuitStep]], object],
+    name: str,
+) -> None:
+    steps = [SurfaceCircuitStep(OpType.ALLOC, [0]), SurfaceCircuitStep(OpType.T, [0], "t0")]
+    with pytest.raises(ValueError, match=rf"^SZZ forward-flow {name} does not support T steps: q=\[0\], label='t0'; "):
         consumer(steps)

@@ -727,7 +727,10 @@ def _analyze_szz_forward_flow(ops: list[SurfaceCircuitStep]) -> SzzForwardFlowSu
             measurements += 1
             discharge_for_measurement(op.qubits[0], host_index, op)
             continue
-        msg = f"SZZ forward-flow analysis does not support {op.op_type.name} steps"
+        msg = (
+            f"SZZ forward-flow analysis does not support {op.op_type.name} steps: "
+            f"q={op.qubits}, label={op.label!r}; it handles only Clifford, SZZ/SZZdg, preparation and measurement steps"
+        )
         raise ValueError(msg)
 
     remaining = {q: pending for q, pending in pending_by_qubit.items() if pending != _SZZ_FLOW_IDENTITY}
@@ -865,7 +868,10 @@ def _lower_szz_forward_flow_ops(ops: list[SurfaceCircuitStep]) -> list[SurfaceCi
             )
             lowered.append(op)
             continue
-        msg = f"SZZ forward-flow lowering does not support {op.op_type.name} steps"
+        msg = (
+            f"SZZ forward-flow lowering does not support {op.op_type.name} steps: "
+            f"q={op.qubits}, label={op.label!r}; it handles only Clifford, SZZ/SZZdg, preparation and measurement steps"
+        )
         raise ValueError(msg)
 
     remaining = {q: pending for q, pending in pending_by_qubit.items() if pending != _SZZ_FLOW_IDENTITY}

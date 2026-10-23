@@ -527,18 +527,12 @@ _SZZ_FLOW_GATE_ACTIONS: dict[OpType, dict[int, int]] = {
 
 
 def _szz_flow_apply_gate_to_pauli(op_type: OpType, pauli: int) -> int:
-    if op_type == OpType.RELABEL:
-        msg = "_szz_flow_apply_gate_to_pauli does not support RELABEL steps"
-        raise ValueError(msg)
     sign = -1 if pauli < 0 else 1
     return sign * _SZZ_FLOW_GATE_ACTIONS[op_type][abs(pauli)]
 
 
 def _szz_flow_compose_pending_gate(pending: tuple[int, int], op_type: OpType) -> tuple[int, int]:
     """Append one 1q Clifford to a pending signed-Pauli-image register."""
-    if op_type == OpType.RELABEL:
-        msg = "_szz_flow_compose_pending_gate does not support RELABEL steps"
-        raise ValueError(msg)
     return (
         _szz_flow_apply_gate_to_pauli(op_type, pending[0]),
         _szz_flow_apply_gate_to_pauli(op_type, pending[1]),
@@ -667,9 +661,6 @@ def _analyze_szz_forward_flow(ops: list[CircuitStep]) -> SzzForwardFlowSummary:
         pending_by_qubit[q] = _SZZ_FLOW_IDENTITY
 
     for host_index, op in enumerate(ops):
-        if op.op_type == OpType.RELABEL:
-            msg = "_analyze_szz_forward_flow does not support RELABEL steps"
-            raise ValueError(msg)
         if op.op_type in {OpType.COMMENT, OpType.TICK, OpType.TRACKED_PAULI}:
             continue
         if op.op_type in {OpType.ALLOC, OpType.PREP}:
@@ -795,9 +786,6 @@ def _lower_szz_forward_flow_ops(ops: list[CircuitStep]) -> list[CircuitStep]:
             lowered.append(CircuitStep(OpType.TICK))
 
     for op in ops:
-        if op.op_type == OpType.RELABEL:
-            msg = "_lower_szz_forward_flow_ops does not support RELABEL steps"
-            raise ValueError(msg)
         if op.op_type in {OpType.COMMENT, OpType.TICK, OpType.TRACKED_PAULI}:
             lowered.append(op)
             continue
@@ -1736,9 +1724,6 @@ class StimRenderer(CircuitRenderer):
         basis: str,
     ) -> str:
         """Render to Stim circuit string."""
-        if any(op.op_type == OpType.RELABEL for op in ops):
-            msg = "StimRenderer does not support RELABEL steps"
-            raise ValueError(msg)
         if any(op.op_type in {OpType.T, OpType.TDG} for op in ops):
             msg = "Stim cannot represent non-Clifford T/TDG injection; use Guppy or TickCircuit"
             raise ValueError(msg)
@@ -1845,6 +1830,10 @@ class StimRenderer(CircuitRenderer):
                     "use TickCircuit / PauliFrameLookup path for twirled DEMs"
                 )
                 raise NotImplementedError(msg)
+
+            else:
+                msg = f"StimRenderer does not support {op.op_type.name} steps; use TickCircuitRenderer"
+                raise ValueError(msg)
 
         # Add detector annotations if requested
         if self.add_detectors:
@@ -1971,9 +1960,6 @@ class GuppyRenderer(CircuitRenderer):
         - Logical operator functions
         - Memory experiment factories (make_memory_z, make_memory_x)
         """
-        if any(op.op_type == OpType.RELABEL for op in _ops):
-            msg = "GuppyRenderer does not support RELABEL steps"
-            raise ValueError(msg)
         from pecos.guppy_gen.gadget_render import render_surface_gadget_module
         from pecos.guppy_gen.surface import generate_guppy_source
 
@@ -2004,9 +1990,6 @@ class DagCircuitRenderer(CircuitRenderer):
         _basis: str,
     ) -> DagCircuit:
         """Render to PECOS DagCircuit."""
-        if any(op.op_type == OpType.RELABEL for op in ops):
-            msg = "DagCircuitRenderer does not support RELABEL steps"
-            raise ValueError(msg)
         from pecos_rslib import DagCircuit
 
         circuit = DagCircuit()
@@ -2162,9 +2145,6 @@ class TickCircuitRenderer(CircuitRenderer):
         - Tick-level: 'phase', 'syndrome_round', 'cx_round'
         - Gate-level: 'label', 'role'
         """
-        if any(op.op_type == OpType.RELABEL for op in ops):
-            msg = "TickCircuitRenderer does not support RELABEL steps"
-            raise ValueError(msg)
         if self.add_detectors and any(op.op_type in {OpType.T, OpType.TDG} for op in ops):
             msg = "TickCircuitRenderer: memory detector annotations are invalid for magic-state injection"
             raise ValueError(msg)
@@ -2607,6 +2587,10 @@ class TickCircuitRenderer(CircuitRenderer):
                     pauli_ctor(q),
                     label=f"twirl_{site_suffix}_q{q}_{kind}",
                 )
+
+            else:
+                msg = f"Unsupported TickCircuit operation: {op.op_type.name}"
+                raise ValueError(msg)
 
         # Apply tick-level metadata in place. Gate metadata is attached as each
         # gate is emitted so batching decisions can account for it immediately.

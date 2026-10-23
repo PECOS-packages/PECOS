@@ -49,11 +49,6 @@ class OpType(Enum):
     # carries the Pauli kind and site as ``"{X|Y|Z}@s<site_idx>"``.
     TRACKED_PAULI = auto()
 
-    # qubits == [a, b] exchanges the roles of positions a and b for all later
-    # steps. A virtual swap with no physical operation and no noise location;
-    # requires exactly two distinct qubits.
-    RELABEL = auto()
-
 
 @dataclass
 class CircuitStep:

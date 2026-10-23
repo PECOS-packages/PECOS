@@ -55,9 +55,6 @@ def _allocation_epochs(
     epochs = {}
     results: dict[str, list[tuple[int, str]]] = {"X": [], "Z": []}
     for step_index, step in enumerate(gadget.steps):
-        if step.op_type == OpType.RELABEL:
-            msg = "_allocation_epochs does not support RELABEL steps"
-            raise ValueError(msg)
         if not step.qubits or step.qubits[0] in data_names:
             continue
         qubit = step.qubits[0]
@@ -91,9 +88,6 @@ def _allocation_epochs(
 
 def render_gadget_function(gadget: Gadget, *, tag_scope: str | None = None, sidebands: bool = True) -> list[str]:
     """Interpret one gadget's physical steps through its register allocation."""
-    if any(step.op_type == OpType.RELABEL for step in gadget.steps):
-        msg = "render_gadget_function does not support RELABEL steps"
-        raise ValueError(msg)
     if tag_scope is not None and not tag_scope.isidentifier():
         msg = f"Invalid gadget tag scope: {tag_scope!r}"
         raise ValueError(msg)

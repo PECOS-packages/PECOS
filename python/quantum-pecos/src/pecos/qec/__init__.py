@@ -8,6 +8,7 @@ with no SLR or runtime dependencies.
 
 Submodules:
     analysis: Result analysis and post-processing utilities
+    circuit_steps: Circuit step vocabulary shared by code-family gadget builders
     generic: Generic stabilizer check framework
     protocols: Protocol geometry (MSD, etc.)
     surface: Surface code geometry (square and rotated lattices)
@@ -165,6 +166,7 @@ __all__ = [
     "MissingObservableReferenceError",
     # Submodules
     "analysis",
+    "circuit_steps",
     "color",
     "protocols",
     "surface",

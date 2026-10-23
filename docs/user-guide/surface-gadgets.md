@@ -80,9 +80,6 @@ else:
 `Gadget` is a frozen dataclass with `kind`, `name`, `steps`, `allocations`,
 `dimensions`, `basis`, `x_z_swapped`, and `fold` (`"SZ"`, `"SZdg"`, or `None`). Its steps are `CircuitStep`
 operations from `pecos.qec.circuit_steps` (also exported from `pecos.qec.surface`).
-`OpType.RELABEL` describes a virtual exchange of two distinct qubit roles for
-subsequent steps, with no physical operation or noise location; existing consumers
-reject it explicitly.
 All single-patch functions below take `patch, allocation` first unless shown
 otherwise. `round_order=None` uses the default schedule.
 

@@ -44,7 +44,7 @@ pub use decomposition::{
     InstantiatedOp, Resolution, ResolutionError, ResolvedCircuit, ResolvedOp,
 };
 pub(crate) use decomposition::{
-    DEFAULT_MAX_DECOMPOSITION_DEPTH, GroupInstantiationError, instantiate_per_group,
+    DEFAULT_MAX_DECOMPOSITION_DEPTH, GroupInstantiationError, instantiate_per_group, operand_groups,
 };
 pub use definitions::{
     GateDefinitions, GateDefinitionsBuilder, GateDefinitionsError, GateExecutor, NoNativeGates,

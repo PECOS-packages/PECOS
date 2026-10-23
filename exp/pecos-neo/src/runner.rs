@@ -52,7 +52,7 @@
 use crate::command::{CommandQueue, GateCommand, GateType, SignalStore};
 use crate::extensible::{
     AdaptedOp, AdaptedSequence, DEFAULT_MAX_DECOMPOSITION_DEPTH, GateDefinitions, GateId,
-    GroupInstantiationError, MeasBasis, PrepBasis, ResultId, instantiate_per_group,
+    GroupInstantiationError, MeasBasis, PrepBasis, ResultId, instantiate_per_group, operand_groups,
 };
 use crate::noise::context::NoiseContext;
 use crate::noise::{ComposableNoiseModel, NoiseEvent, NoiseResponse, surviving_gate_qubits};
@@ -675,8 +675,8 @@ impl std::fmt::Display for ExecutionError {
                 got,
             } => write!(
                 f,
-                "Gate ID {} received {got} targets for decomposition, which is not a multiple \
-                 of its registered qubit arity {arity}",
+                "Gate ID {} received {got} targets for decomposition, which is not a nonzero \
+                 multiple of its registered qubit arity {arity}",
                 gate_id.0
             ),
             Self::DecompositionIndexOutOfRange {
@@ -1550,8 +1550,9 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         }
         // Emit before-gate noise event
         let skipped = self.emit_before_gate(sim, gate_id, qubits, angles)?;
-        // Unknown/zero arity or an incomplete/empty batch executes as one group:
-        // overrides and decompositions already receive the whole slice here.
+        // This grouping only decides which operand groups a SkipGate suppresses.
+        // Unknown/zero arity, or an empty or incomplete batch, is one group here;
+        // the decomposition path validates the operand count separately.
         let group_size = self
             .definitions
             .quantum_arity(gate_id)
@@ -1819,30 +1820,32 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         if depth > self.max_decomp_depth {
             return Err(ExecutionError::MaxDecompositionDepthExceeded);
         }
+        let to_execution_error = |error| match error {
+            GroupInstantiationError::QubitArity { arity, got } => {
+                ExecutionError::DecompositionQubitArity {
+                    gate_id,
+                    arity,
+                    got,
+                }
+            }
+            GroupInstantiationError::IndexOutOfRange { index, group_size } => {
+                ExecutionError::DecompositionIndexOutOfRange {
+                    gate_id,
+                    index,
+                    group_size,
+                }
+            }
+        };
+
+        // Check the operand count first, so a malformed batch reports its
+        // arity rather than a missing decomposition.
+        let arity = self.definitions.quantum_arity(gate_id).map(usize::from);
+        let groups = operand_groups(qubits, arity).map_err(to_execution_error)?;
         let Some(decomp_entry) = self.definitions.decomposition(gate_id) else {
             return Err(ExecutionError::NoDecomposition { gate_id });
         };
-
-        let arity = self.definitions.quantum_arity(gate_id).map(usize::from);
-        let instantiated_ops =
-            instantiate_per_group(&decomp_entry.decomposition, qubits, angles, arity).map_err(
-                |error| match error {
-                    GroupInstantiationError::QubitArity { arity, got } => {
-                        ExecutionError::DecompositionQubitArity {
-                            gate_id,
-                            arity,
-                            got,
-                        }
-                    }
-                    GroupInstantiationError::IndexOutOfRange { index, group_size } => {
-                        ExecutionError::DecompositionIndexOutOfRange {
-                            gate_id,
-                            index,
-                            group_size,
-                        }
-                    }
-                },
-            )?;
+        let instantiated_ops = instantiate_per_group(&decomp_entry.decomposition, &groups, angles)
+            .map_err(to_execution_error)?;
 
         for inst in instantiated_ops {
             self.execute_gate(sim, inst.gate, &inst.qubits, &inst.angles, depth + 1)?;
@@ -4216,6 +4219,27 @@ mod tests {
             "{error}"
         );
 
+        // With a registered arity, an empty operand slice is rejected rather
+        // than treated as zero groups.
+        let mut defs = GateDefinitions::new();
+        let paired = defs.register(GateSpec::new("paired").with_quantum_arity(2));
+        defs.set_decomposition(paired, entry(vec![DecompOp::gate2(gates::CX, 0, 1)]));
+        let mut state = SparseStab::with_seed(1, 42);
+        let error = CircuitRunner::with_definitions(defs)
+            .execute_gate(&mut state, paired, &[], &[], 0)
+            .unwrap_err();
+        assert!(
+            matches!(
+                error,
+                ExecutionError::DecompositionQubitArity {
+                    gate_id,
+                    arity: 2,
+                    got: 0,
+                } if gate_id == paired
+            ),
+            "{error}"
+        );
+
         // A self-referential decomposition stops at the depth limit.
         let mut defs = GateDefinitions::new();
         let looping = defs.register(GateSpec::new("looping").with_quantum_arity(1));
@@ -4242,7 +4266,17 @@ mod tests {
             &[],
             0,
         );
-        assert!(result.is_err());
+        assert!(
+            matches!(
+                result,
+                Err(ExecutionError::DecompositionQubitArity {
+                    gate_id,
+                    arity: 3,
+                    got: 4,
+                }) if gate_id == gates::CCX
+            ),
+            "{result:?}"
+        );
         let bits: Vec<bool> = state.mz(&qubits).iter().map(|r| r.outcome).collect();
         assert_eq!(bits, vec![true, true, false, false]);
     }

@@ -175,31 +175,37 @@ pub(crate) enum GroupInstantiationError {
     IndexOutOfRange { index: usize, group_size: usize },
 }
 
-/// Instantiate `decomposition` once per operand group of `qubits`.
+/// Split `qubits` into the operand groups a decomposition is instantiated over.
 ///
-/// A positive `arity` splits `qubits` into groups of that size. Without one,
-/// the whole slice, even an empty one, is a single group.
-pub(crate) fn instantiate_per_group(
-    decomposition: &Decomposition,
+/// A positive `arity` requires a nonzero multiple of that many operands and
+/// splits them into groups of that size. Without one, the whole slice, even an
+/// empty one, is a single group.
+pub(crate) fn operand_groups(
     qubits: &[QubitId],
-    angles: &[Angle64],
     arity: Option<usize>,
-) -> Result<Vec<InstantiatedOp>, GroupInstantiationError> {
-    let groups: Vec<&[QubitId]> = match arity {
+) -> Result<Vec<&[QubitId]>, GroupInstantiationError> {
+    match arity {
         Some(arity) if arity > 0 => {
-            if !qubits.len().is_multiple_of(arity) {
+            if qubits.is_empty() || !qubits.len().is_multiple_of(arity) {
                 return Err(GroupInstantiationError::QubitArity {
                     arity,
                     got: qubits.len(),
                 });
             }
-            qubits.chunks(arity).collect()
+            Ok(qubits.chunks(arity).collect())
         }
-        _ => vec![qubits],
-    };
+        _ => Ok(vec![qubits]),
+    }
+}
 
+/// Instantiate `decomposition` once per operand group from [`operand_groups`].
+pub(crate) fn instantiate_per_group(
+    decomposition: &Decomposition,
+    groups: &[&[QubitId]],
+    angles: &[Angle64],
+) -> Result<Vec<InstantiatedOp>, GroupInstantiationError> {
     let mut instantiated = Vec::new();
-    for group in groups {
+    for &group in groups {
         for op in decomposition.expand() {
             if let Some(&index) = op
                 .qubit_indices
@@ -641,8 +647,8 @@ impl std::fmt::Display for ResolutionError {
             ),
             Self::QubitArity { gate, arity, got } => write!(
                 f,
-                "Gate {gate:?} received {got} targets, which is not a multiple of its qubit \
-                 arity {arity}"
+                "Gate {gate:?} received {got} targets, which is not a nonzero multiple of its \
+                 qubit arity {arity}"
             ),
             Self::IndexOutOfRange {
                 gate,
@@ -944,21 +950,22 @@ impl<'a> CircuitResolver<'a> {
         // like DOUBLE_SWAP → SWAP → CX where DOUBLE_SWAP requires SWAP (not CX directly).
 
         let arity = self.definitions.quantum_arity(gate_id).map(usize::from);
-        let instantiated_ops = instantiate_per_group(&entry.decomposition, qubits, angles, arity)
+        let instantiated_ops = operand_groups(qubits, arity)
+            .and_then(|groups| instantiate_per_group(&entry.decomposition, &groups, angles))
             .map_err(|error| match error {
-            GroupInstantiationError::QubitArity { arity, got } => ResolutionError::QubitArity {
-                gate: gate_id,
-                arity,
-                got,
-            },
-            GroupInstantiationError::IndexOutOfRange { index, group_size } => {
-                ResolutionError::IndexOutOfRange {
+                GroupInstantiationError::QubitArity { arity, got } => ResolutionError::QubitArity {
                     gate: gate_id,
-                    index,
-                    group_size,
+                    arity,
+                    got,
+                },
+                GroupInstantiationError::IndexOutOfRange { index, group_size } => {
+                    ResolutionError::IndexOutOfRange {
+                        gate: gate_id,
+                        index,
+                        group_size,
+                    }
                 }
-            }
-        })?;
+            })?;
 
         active.push(gate_id);
         for instantiated in instantiated_ops {
@@ -1349,6 +1356,14 @@ mod tests {
                 gate,
                 arity: 2,
                 got: 3,
+            }) if gate == gates::SWAP
+        ));
+        assert!(matches!(
+            resolver.resolve(&batched(gates::SWAP, 0)),
+            Err(ResolutionError::QubitArity {
+                gate,
+                arity: 2,
+                got: 0,
             }) if gate == gates::SWAP
         ));
 

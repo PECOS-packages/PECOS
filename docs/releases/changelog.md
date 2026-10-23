@@ -349,9 +349,13 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 ### Rust breaking changes
 
 - pecos-neo decompositions are instantiated once per operand group, sized by
-  the gate's registered qubit arity (whole slice when no arity is registered).
-  A decomposition whose operand indices exceed the registered arity, or a gate
-  whose operand count is not a multiple of it, now returns
+  the gate's registered qubit arity. Only a gate with no `GateSpec`, or one
+  registered with arity zero, is still decomposed over its whole operand slice;
+  `GateSpec::new` defaults to an arity of 1, so a user gate registered without
+  `with_quantum_arity` whose decomposition uses operand index 1 or higher now
+  needs an explicit arity. A decomposition whose operand indices exceed the
+  registered arity, or a gate whose operand count is not a nonzero multiple of a
+  positive registered arity, now returns
   `ExecutionError::DecompositionIndexOutOfRange` /
   `ExecutionError::DecompositionQubitArity` (or
   `ResolutionError::IndexOutOfRange` / `ResolutionError::QubitArity`) instead
@@ -363,7 +367,9 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   `ResolutionError::CircularDependency`, and bounds nesting with the new
   `ResolutionError::MaxDepthExceeded` (the same default depth limit
   as `CircuitRunner`). `GateDefinitions` now has core specs
-  for `ISWAP`, `CCZ`, and `CSWAP`, so category noise applies to them.
+  for `ISWAP`, `CCZ`, and `CSWAP`, so category noise applies to them and these
+  names are reserved: a user gate registered under one of them is no longer
+  found reliably by name.
   `StabilizerMeasurementAdaptor` and `StabilizerPreparationAdaptor` now require
   exactly one qubit pair instead of ignoring additional pairs.
 

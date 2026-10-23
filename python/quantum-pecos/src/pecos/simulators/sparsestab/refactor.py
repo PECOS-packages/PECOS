@@ -21,6 +21,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from pecos.simulators.sparsestab.phase import product_phase
+
 if TYPE_CHECKING:
     from pecos.simulators.sparsestab.state import SparseStabPy
 
@@ -94,16 +96,8 @@ def refactor(
 
     if found:
         # Compute the full product phase before removing the chosen generator
-        # or mutating any source rows, using the logical_sign cumulative-X rule.
-        num_i = len(gens & stabs.signs_i)
-        num_minus = len(gens & stabs.signs_minus)
-        cumulative_x = set()
-        for g in gens:
-            num_minus += len(stabs.row_z[g] & cumulative_x)
-            cumulative_x ^= stabs.row_x[g]
-
-        if num_i % 4 > 1:  # i^2 = -1, i^3 = -i
-            num_minus += 1
+        # or mutating any source rows.
+        phase = product_phase(stabs, gens)
 
         # Now update the generators so the supplied stabilizer is a stabilizer generator.
 
@@ -161,11 +155,11 @@ def refactor(
             destabs.row_z[g] ^= destabs.row_z[new_stab]
 
         # Assign the product phase in the tableau's XZ convention.
-        if num_i % 2:
+        if phase % 2:
             stabs.signs_i.add(new_stab)
         else:
             stabs.signs_i.discard(new_stab)
-        if num_minus % 2:
+        if phase // 2:
             stabs.signs_minus.add(new_stab)
         else:
             stabs.signs_minus.discard(new_stab)

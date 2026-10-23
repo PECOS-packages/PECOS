@@ -20,6 +20,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from pecos.simulators.sparsestab.phase import product_phase
+
 if TYPE_CHECKING:
     from collections.abc import Iterable
     from typing import Any
@@ -139,10 +141,11 @@ def remove_stab(
         msg = "Stabilizer and destabilizers do not anti-commute."
         raise Exception(msg)
 
-    logical_xs = stab_xs
-    logical_zs = stab_zs
-    delogical_xs = destab_xs
-    delogical_zs = destab_zs
+    # Inputs may alias tableau rows that are mutated below.
+    logical_xs = set(stab_xs)
+    logical_zs = set(stab_zs)
+    delogical_xs = set(destab_xs)
+    delogical_zs = set(destab_zs)
 
     stabs = state.stabs
     destabs = state.destabs
@@ -150,7 +153,7 @@ def remove_stab(
     anticom_x = len(logical_xs & delogical_zs) % 2
     anticom_z = len(logical_zs & delogical_xs) % 2
 
-    if not (anticom_x + anticom_z % 2):
+    if not ((anticom_x + anticom_z) % 2):
         msg = "Logical and delogical supplied do not anti-commute!"
         raise Exception(msg)
 
@@ -205,30 +208,12 @@ def remove_stab(
         build_stabs ^= destabs.col_x[q]  # These should point to all the stabilizers that will combine to give Z on
         # qubit q
 
+    # Get the full W-convention phase before removing or mutating any rows.
+    logical_phase = product_phase(stabs, build_stabs)
+    logical_minus, logical_i = divmod(logical_phase, 2)
+
     # Stabilizer to remove
     removed_id = build_stabs.pop()
-
-    # Get sign of the logical operator
-    logical_minus = len(build_stabs & stabs.signs_minus) % 2
-
-    if removed_id in stabs.signs_minus:
-        logical_minus += 1
-
-    logical_i = len(build_stabs & stabs.signs_i)
-
-    if removed_id in stabs.signs_i:
-        logical_i += 1
-
-    logical_i %= 4
-
-    if logical_i == 2:
-        logical_i = 0
-        logical_minus += 1
-    elif logical_i == 3:
-        logical_i = 1
-        logical_minus += 1
-
-    logical_minus %= 2
 
     # --------------------------------
     # Step 2 - Update destabilizers
@@ -262,6 +247,8 @@ def remove_stab(
     # Remove stabs from row
     stabs.row_x[removed_id].clear()
     stabs.row_z[removed_id].clear()
+    stabs.signs_minus.discard(removed_id)
+    stabs.signs_i.discard(removed_id)
 
     # ----
     # Remove destabilizer from column
@@ -280,21 +267,19 @@ def remove_stab(
 
     delog_anticom = set()
 
-    for s, qubits in enumerate(stabs.row_z):
-        overlap = delogical_xs & qubits
+    for q in delogical_xs:
+        delog_anticom ^= stabs.col_z[q]
 
-        if len(overlap) % 2:  # Odd overlap
-            delog_anticom.add(s)
-
-    for s, qubits in enumerate(stabs.row_x):
-        overlap = delogical_zs & qubits
-
-        if len(overlap) % 2:  # Odd overlap
-            delog_anticom.add(s)
+    for q in delogical_zs:
+        delog_anticom ^= stabs.col_x[q]
 
     # Now do rowsum on these with the logical operator
 
     for gen in delog_anticom:
+        # For stabilizer * logical, reorder Z_stabilizer past X_logical
+        # before changing the supports used to compute the phase.
+        if len(stabs.row_z[gen] & logical_xs) % 2:
+            stabs.signs_minus ^= {gen}
         stabs.row_x[gen] ^= logical_xs
         stabs.row_z[gen] ^= logical_zs
 
@@ -325,24 +310,16 @@ def is_not_stabilizer(state: SparseStabPy, qubits_x: set[int], qubits_z: set[int
         qubits_z: Set of qubit indices with Z operators.
 
     Returns:
-        Integer classification: 0=stabilizer, 1=logical, 2=error.
+        Integer classification: 0=stabilizer, 1=anticommutes with a stabilizer,
+        2=commutes but is not in the stabilizer group.
     """
     stabs = state.stabs
     destabs = state.destabs
 
     # ----- Anti-commutes with stabilizers? ----- #
 
-    for qubits in stabs.row_z:
-        overlap = qubits_x & qubits
-
-        if len(overlap) % 2:  # Odd overlap
-            return 1  # Zs do not commute
-
-    for qubits in stabs.row_x:
-        overlap = qubits_z & qubits
-
-        if len(overlap) % 2:  # Odd overlap
-            return 1  # Xs do not commute
+    if not op_commutes(qubits_x, qubits_z, stabs):
+        return 1
 
     # ----- In the stabilizer group? ----- #
 

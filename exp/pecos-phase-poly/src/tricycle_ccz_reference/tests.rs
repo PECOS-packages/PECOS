@@ -190,6 +190,34 @@ fn exact_and_sampled_estimator_and_omitted_mass() {
 }
 
 #[test]
+fn configuration_counts_match_enumeration() {
+    // Fifteen CX alternatives, two measurement flips, and inactive preparations.
+    let mut circuit = TickCircuit::new();
+    circuit.tick().px(&[0]);
+    circuit.tick_at(0).pz(&[1]);
+    circuit.tick().cx(&[(0, 1)]);
+    circuit.tick().mz(&[1]);
+    circuit.tick().mx(&[0]);
+    let catalog =
+        FaultCatalog::from_circuit(&circuit)
+            .unwrap()
+            .parameterized(&StochasticNoiseParams {
+                p1: 0.0,
+                p2: 0.01,
+                p_meas: 0.02,
+                p_prep: 0.0,
+            });
+    for k in 0..=3 {
+        let enumerated = u64::try_from(catalog.fault_configurations(k).count()).unwrap();
+        assert_eq!(
+            configuration_count(&catalog, k).unwrap(),
+            enumerated,
+            "k={k}"
+        );
+    }
+}
+
+#[test]
 fn paper_circuit_has_deterministic_checks_and_logicals() {
     let code = c27();
     let program =

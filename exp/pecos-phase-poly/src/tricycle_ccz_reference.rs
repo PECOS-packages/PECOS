@@ -17,8 +17,8 @@ use std::collections::BTreeSet;
 use pecos_core::{PauliString, gate_type::GateType};
 use pecos_qec::BivariateTricycleCode;
 use pecos_qec::fault_tolerance::fault_sampler::{
-    ExactFaultStratum, FaultAlternative, FaultCatalog, FaultChannel, FaultKind, FaultLocation,
-    FaultStratumCounts, StochasticNoiseParams, StratifiedEstimate,
+    FaultAlternative, FaultCatalog, FaultChannel, FaultKind, FaultLocation, FaultStratumCounts,
+    StochasticNoiseParams, StratifiedEstimate,
 };
 use pecos_quantum::TickCircuit;
 use pecos_random::PecosRng;
@@ -124,7 +124,8 @@ pub fn paper_catalog(
             xor_into(&mut affected_observables, &record.affected_observables);
         }
         catalog.locations.push(FaultLocation {
-            // A Pauli mechanism immediately before the final MX tick.
+            // Not a circuit gate: the Z acts just before the final MX gates, so it
+            // is filed under their tick, and `gate_index` 0 names the first of them.
             tick: measurement_tick,
             gate_index: 0,
             gate_type: GateType::Z,
@@ -184,8 +185,8 @@ pub struct ReferenceEstimate {
 
 /// Enumerate through `k_exact`, then sample through `k_max` with independent streams.
 /// Uses the covariance-aware ratio variance of [`StratifiedEstimate`], with
-/// exactly zero variance for enumerated strata. Three-fault strata use exact
-/// signature aggregation; other exact strata use `fault_configurations`.
+/// exactly zero variance for enumerated strata. Exact strata come from
+/// `FaultCatalog::exact_fault_stratum`.
 /// Batches bound temporary storage.
 /// Zero samples explicitly omit the remaining strata. As in `StratifiedEstimate`,
 /// zero observed failures do not establish a zero true failure probability.
@@ -217,29 +218,11 @@ pub fn estimate(
             failure_probability: 0.0,
         };
         if stratum.exact {
-            if k == 3 {
-                let contribution = catalog
-                    .exact_three_fault_stratum()
-                    .map_err(|e| e.to_string())?;
-                stratum.success_probability = contribution.survival_probability;
-                stratum.failure_probability = contribution.failure_probability;
-                stratum.configurations = three_fault_configuration_count(catalog)?;
-            } else {
-                for configuration in catalog.fault_configurations(k) {
-                    stratum.configurations += 1;
-                    if configuration.affected_detectors.is_empty() {
-                        stratum.success_probability += configuration.configuration_probability;
-                        if !configuration.affected_observables.is_empty() {
-                            stratum.failure_probability += configuration.configuration_probability;
-                        }
-                    }
-                }
-            }
-            exact.push(ExactFaultStratum {
-                k,
-                survival_probability: stratum.success_probability,
-                failure_probability: stratum.failure_probability,
-            });
+            let contribution = catalog.exact_fault_stratum(k).map_err(|e| e.to_string())?;
+            stratum.success_probability = contribution.survival_probability();
+            stratum.failure_probability = contribution.failure_probability();
+            stratum.configurations = configuration_count(catalog, k)?;
+            exact.push(contribution);
         } else if samples_per_stratum > 0 {
             let (mut survived, mut failed) = (0_u32, 0_u32);
             let mut remaining = samples_per_stratum;
@@ -278,8 +261,9 @@ pub fn estimate(
     })
 }
 
-fn three_fault_configuration_count(catalog: &FaultCatalog) -> Result<u64, String> {
-    let mut counts = [1_u64, 0, 0, 0];
+fn configuration_count(catalog: &FaultCatalog, k: usize) -> Result<u64, String> {
+    let mut counts = vec![0_u64; k + 1];
+    counts[0] = 1;
     for location in &catalog.locations {
         let alternatives = u64::try_from(
             location
@@ -289,12 +273,12 @@ fn three_fault_configuration_count(catalog: &FaultCatalog) -> Result<u64, String
                 .count(),
         )
         .map_err(|e| e.to_string())?;
-        for k in (1..=3).rev() {
-            counts[k] = alternatives
-                .checked_mul(counts[k - 1])
-                .and_then(|v| counts[k].checked_add(v))
-                .ok_or("three-fault configuration count overflows u64")?;
+        for j in (1..=k).rev() {
+            counts[j] = alternatives
+                .checked_mul(counts[j - 1])
+                .and_then(|v| counts[j].checked_add(v))
+                .ok_or_else(|| format!("{k}-fault configuration count overflows u64"))?;
         }
     }
-    Ok(counts[3])
+    Ok(counts[k])
 }

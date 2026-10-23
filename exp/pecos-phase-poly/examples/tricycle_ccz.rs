@@ -6,7 +6,7 @@
 use pecos_phase_poly::PhasePoly;
 use pecos_phase_poly::runner::Program;
 use pecos_phase_poly::tricycle_ccz::magic_state_circuit;
-use pecos_phase_poly::tricycle_ccz_noisy::{CczModel, MetaChecks, NoisyCcz};
+use pecos_phase_poly::tricycle_ccz_noisy::{CczModel, MetaChecks, NoiseModel, NoisyCcz};
 use pecos_qec::BivariateTricycleCode;
 use pecos_random::PecosRng;
 use std::error::Error;
@@ -106,7 +106,7 @@ fn noisy_summary(
     model: CczModel,
     meta_checks: MetaChecks,
 ) -> Result<serde_json::Value, Box<dyn Error>> {
-    let protocol = NoisyCcz::new(code, p, model, meta_checks)?;
+    let protocol = NoisyCcz::new(code, p, model, NoiseModel::CircuitLevel, meta_checks)?;
     let (build_time, compile_time) = protocol.construction_times();
     let started = Instant::now();
     let counts = protocol.run_counts(shots as usize, seed)?;

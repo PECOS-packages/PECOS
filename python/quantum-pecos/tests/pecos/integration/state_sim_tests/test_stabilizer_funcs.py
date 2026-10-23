@@ -32,14 +32,7 @@ def test_remove_stab_preserves_signed_group() -> None:
         delogical_zs = set(state.destabs.row_z[partner_id])
         original = deepcopy(state)
 
-        # Also exercise inputs that alias tableau rows changed during removal.
-        remove_stab(
-            state,
-            logical_xs,
-            logical_zs,
-            state.destabs.row_x[partner_id] if trial % 2 else delogical_xs,
-            state.destabs.row_z[partner_id] if trial % 2 else delogical_zs,
-        )
+        remove_stab(state, logical_xs, logical_zs, delogical_xs, delogical_zs)
 
         removed = []
         for gen, (xs, zs) in enumerate(zip(state.stabs.row_x, state.stabs.row_z, strict=True)):
@@ -66,6 +59,35 @@ def test_remove_stab_preserves_signed_group() -> None:
             for qubit in range(num_qubits):
                 assert gens.col_x[qubit] == {gen for gen, xs in enumerate(gens.row_x) if qubit in xs}, trial
                 assert gens.col_z[qubit] == {gen for gen, zs in enumerate(gens.row_z) if qubit in zs}, trial
+
+
+def test_remove_stab_copies_inputs_that_alias_tableau_rows() -> None:
+    """A logical passed as live stabilizer rows survives the removal of that row."""
+    rng = Random(20261024)
+    for trial in range(200):
+        num_qubits = rng.randrange(3, 6)
+        state = SparseStabPy(num_qubits)
+        for _ in range(50):
+            gate = rng.choice(["H", "Sd", "SZ", "CX", "CZ"])
+            if gate in {"CX", "CZ"}:
+                state.run_gate(gate, {tuple(rng.sample(range(num_qubits), 2))})
+            else:
+                state.run_gate(gate, {rng.randrange(num_qubits)})
+
+        removed_id, other_id = rng.sample(range(num_qubits), 2)
+        delogical_xs = state.destabs.row_x[removed_id] ^ state.destabs.row_x[other_id]
+        delogical_zs = state.destabs.row_z[removed_id] ^ state.destabs.row_z[other_id]
+
+        remove_stab(
+            state,
+            state.stabs.row_x[removed_id],
+            state.stabs.row_z[removed_id],
+            delogical_xs,
+            delogical_zs,
+        )
+
+        for gen, (xs, zs) in enumerate(zip(state.stabs.row_x, state.stabs.row_z, strict=True)):
+            assert (len(xs & delogical_zs) + len(zs & delogical_xs)) % 2 == 0, (trial, gen)
 
 
 def test_is_not_stabilizer_classifies_y_and_logicals() -> None:

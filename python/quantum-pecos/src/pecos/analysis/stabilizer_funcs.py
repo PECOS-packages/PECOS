@@ -150,13 +150,6 @@ def remove_stab(
     stabs = state.stabs
     destabs = state.destabs
 
-    anticom_x = len(logical_xs & delogical_zs) % 2
-    anticom_z = len(logical_zs & delogical_xs) % 2
-
-    if not ((anticom_x + anticom_z) % 2):
-        msg = "Logical and delogical supplied do not anti-commute!"
-        raise Exception(msg)
-
     # We want the supplied logical operator to be in the stabilizer group and
     #  the supplied delogical to not be in the stabilizers (we want it to end up being the logical op's destabilizer)
 

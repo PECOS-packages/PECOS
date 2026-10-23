@@ -76,11 +76,7 @@ impl EventHandler for PreparationStateHandler {
     }
 
     fn handle(&self, event: &NoiseEvent<'_>, ctx: &mut NoiseContext) {
-        if let NoiseEvent::AfterPreparation { qubits } = event {
-            for &qubit in *qubits {
-                ctx.mark_prepared(qubit);
-            }
-        }
+        event.apply_state_updates(ctx);
     }
 
     fn name(&self) -> &'static str {
@@ -111,11 +107,7 @@ impl EventHandler for MeasurementStateHandler {
     }
 
     fn handle(&self, event: &NoiseEvent<'_>, ctx: &mut NoiseContext) {
-        if let NoiseEvent::AfterMeasurement { qubits, .. } = event {
-            for &qubit in *qubits {
-                ctx.mark_measured(qubit);
-            }
-        }
+        event.apply_state_updates(ctx);
     }
 
     fn name(&self) -> &'static str {
@@ -155,10 +147,12 @@ mod tests {
         assert!(handler.handles(&event));
 
         let mut ctx = NoiseContext::new();
+        ctx.mark_leaked(QubitId(1));
         handler.handle(&event, &mut ctx);
 
         assert!(ctx.is_active(QubitId(0)));
         assert!(ctx.is_active(QubitId(1)));
+        assert!(!ctx.is_leaked(QubitId(1)), "preparation clears leakage");
         assert!(ctx.exists(QubitId(0)));
         assert!(ctx.exists(QubitId(1)));
     }

@@ -583,8 +583,11 @@ impl<'a> NoiseEvent<'a> {
     /// - Measurement: marks qubits as inactive
     /// - Reset: marks qubits as prepared (clears leakage)
     ///
-    /// This is called by the composer before dispatching to channels,
-    /// ensuring state tracking happens regardless of which channels are added.
+    /// The composer does not call this itself. `CorePlugin`'s event handlers
+    /// call it for `AfterPreparation` and `AfterMeasurement` events, so this
+    /// state is tracked independently of the channels added only when
+    /// `CorePlugin` is registered. `NoiseModelBuilder` and
+    /// `GeneralNoiseModelBuilder` register it.
     ///
     /// Note: This is separate from noise effects (which channels handle).
     /// Events have inherent meaning independent of noise.

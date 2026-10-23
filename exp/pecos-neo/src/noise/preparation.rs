@@ -112,8 +112,8 @@ impl NoiseChannel for PreparationChannel {
         let mut leaked = SmallVec::new();
 
         for &qubit in *qubits {
-            // Note: mark_prepared() is called by the composer, not here,
-            // so that state tracking happens even without this channel.
+            // Note: mark_prepared() is called by CorePlugin's event handler,
+            // not here, so that state tracking happens even without this channel.
 
             // Apply preparation error with probability (using precomputed threshold)
             if rng.check_probability(self.error_threshold) {
@@ -162,7 +162,7 @@ mod tests {
         assert!(channel.responds_to(&event));
 
         let mut ctx = NoiseContext::new();
-        // State updates are handled by the composer via event.apply_state_updates()
+        // State updates are handled by CorePlugin via event.apply_state_updates()
         // In isolated channel tests, we call it manually:
         event.apply_state_updates(&mut ctx);
 

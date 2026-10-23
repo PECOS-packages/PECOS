@@ -13,7 +13,7 @@ from pecos.qec.surface._ancilla_batching import (
     normalize_ancilla_budget,
     normalize_ancilla_schedule,
 )
-from pecos.qec.surface.circuit_builder import OpType, QubitAllocation, SurfaceCircuitStep
+from pecos.qec.surface.circuit_builder import CircuitStep, OpType, QubitAllocation
 from pecos.qec.surface.layouts.rotated_lattice import rotated_id_to_position
 from pecos.qec.surface.patch import Stabilizer, SurfacePatch
 from pecos.qec.surface.schedule import compute_cnot_schedule
@@ -39,7 +39,7 @@ class Gadget:
 
     kind: GadgetKind
     name: str
-    steps: tuple[SurfaceCircuitStep, ...]
+    steps: tuple[CircuitStep, ...]
     allocations: tuple[QubitAllocation, ...]
     dimensions: tuple[int, int]
     basis: str | None
@@ -87,13 +87,13 @@ def prep_gadget(patch: SurfacePatch, allocation: QubitAllocation, *, basis: str)
     """
     basis = _normalize_basis(basis, ("X", "Y", "Z"))
     name = f"prep_{basis.lower()}_basis"
-    steps = [SurfaceCircuitStep(OpType.COMMENT, label=name)]
-    steps.extend(SurfaceCircuitStep(OpType.ALLOC, [q], f"data[{i}]") for i, q in enumerate(allocation.data_qubits))
+    steps = [CircuitStep(OpType.COMMENT, label=name)]
+    steps.extend(CircuitStep(OpType.ALLOC, [q], f"data[{i}]") for i, q in enumerate(allocation.data_qubits))
     if basis.upper() in {"X", "Y"}:
-        steps.extend(SurfaceCircuitStep(OpType.H, [q]) for q in allocation.data_qubits)
+        steps.extend(CircuitStep(OpType.H, [q]) for q in allocation.data_qubits)
     if basis.upper() == "Y":
-        steps.extend(SurfaceCircuitStep(OpType.SZ, [q]) for q in allocation.data_qubits)
-    steps.append(SurfaceCircuitStep(OpType.TICK))
+        steps.extend(CircuitStep(OpType.SZ, [q]) for q in allocation.data_qubits)
+    steps.append(CircuitStep(OpType.TICK))
     return Gadget(GadgetKind.PREP, name, tuple(steps), (allocation,), (patch.dx, patch.dz), basis.upper())
 
 
@@ -116,15 +116,15 @@ def _ancilla_steps(
     allocation: QubitAllocation,
     family: str,
     op: OpType,
-) -> list[SurfaceCircuitStep]:
+) -> list[CircuitStep]:
     stabilizers, qubits = _ancilla_register(patch, allocation, family)
     prefix = "s" if op == OpType.MEASURE else "a"
-    return [SurfaceCircuitStep(op, [qubits[s.index]], f"{prefix}{family.lower()}{s.index}") for s in stabilizers]
+    return [CircuitStep(op, [qubits[s.index]], f"{prefix}{family.lower()}{s.index}") for s in stabilizers]
 
 
-def _hadamards(patch: SurfacePatch, allocation: QubitAllocation, family: str = "X") -> list[SurfaceCircuitStep]:
+def _hadamards(patch: SurfacePatch, allocation: QubitAllocation, family: str = "X") -> list[CircuitStep]:
     return [
-        SurfaceCircuitStep(OpType.COMMENT, label=f"Hadamard on {family} ancillas"),
+        CircuitStep(OpType.COMMENT, label=f"Hadamard on {family} ancillas"),
         *_ancilla_steps(patch, allocation, family, OpType.H),
     ]
 
@@ -137,12 +137,12 @@ def _cx_layers(
     round_order: str | Sequence[int] | None = None,
     x_z_swapped: bool = False,
     stabilizers: set[tuple[str, int]] | None = None,
-) -> list[list[SurfaceCircuitStep]]:
+) -> list[list[CircuitStep]]:
     _, x_ancillas = _ancilla_register(patch, allocation, "X")
     _, z_ancillas = _ancilla_register(patch, allocation, "Z")
     layers = []
     for index, layer in enumerate(compute_cnot_schedule(patch, round_order=round_order)):
-        steps = [SurfaceCircuitStep(OpType.COMMENT, label=f"CX round {index + 1}")]
+        steps = [CircuitStep(OpType.COMMENT, label=f"CX round {index + 1}")]
         for kind, stab, data in layer:
             if family is not None and kind != family:
                 continue
@@ -155,8 +155,8 @@ def _cx_layers(
             )
             if x_z_swapped:
                 operands.reverse()
-            steps.append(SurfaceCircuitStep(OpType.CX, operands, f"{kind}{stab}"))
-        steps.append(SurfaceCircuitStep(OpType.TICK))
+            steps.append(CircuitStep(OpType.CX, operands, f"{kind}{stab}"))
+        steps.append(CircuitStep(OpType.TICK))
         layers.append(steps)
     return layers
 
@@ -167,10 +167,10 @@ def _batch_ancilla_steps(
     op: OpType,
     *,
     family: str | None = None,
-) -> list[SurfaceCircuitStep]:
+) -> list[CircuitStep]:
     prefix = "s" if op == OpType.MEASURE else "a"
     return [
-        SurfaceCircuitStep(op, [registers[kind][index]], f"{prefix}{kind.lower()}{index}")
+        CircuitStep(op, [registers[kind][index]], f"{prefix}{kind.lower()}{index}")
         for kind, index in batch
         if family is None or kind == family
     ]
@@ -210,7 +210,7 @@ def _budgeted_syndrome_steps(
     round_order: str | Sequence[int] | None,
     x_z_swapped: bool,
     family: str | None = None,
-) -> list[SurfaceCircuitStep] | None:
+) -> list[CircuitStep] | None:
     registers = {kind: _ancilla_register(patch, allocation, kind)[1] for kind in ("X", "Z")}
     total = sum(len(register) for register in registers.values())
     budget = normalize_ancilla_budget(total, ancilla_budget)
@@ -227,11 +227,11 @@ def _budgeted_syndrome_steps(
 
         hadamards = _batch_ancilla_steps(registers, selected, OpType.H, family=h_family)
         if hadamards:
-            hadamards.insert(0, SurfaceCircuitStep(OpType.COMMENT, label=f"Hadamard on {h_family} ancillas"))
-        steps.append(SurfaceCircuitStep(OpType.COMMENT, label="Prepare ancillas"))
+            hadamards.insert(0, CircuitStep(OpType.COMMENT, label=f"Hadamard on {h_family} ancillas"))
+        steps.append(CircuitStep(OpType.COMMENT, label="Prepare ancillas"))
         steps.extend(_batch_ancilla_steps(registers, selected, OpType.ALLOC))
         steps.extend(hadamards)
-        steps.append(SurfaceCircuitStep(OpType.TICK))
+        steps.append(CircuitStep(OpType.TICK))
         steps.extend(
             step
             for layer in _cx_layers(
@@ -244,9 +244,9 @@ def _budgeted_syndrome_steps(
             for step in layer
         )
         steps.extend(hadamards)
-        steps.append(SurfaceCircuitStep(OpType.COMMENT, label="Measure ancillas"))
+        steps.append(CircuitStep(OpType.COMMENT, label="Measure ancillas"))
         steps.extend(_batch_ancilla_steps(registers, selected, OpType.MEASURE))
-        steps.append(SurfaceCircuitStep(OpType.TICK))
+        steps.append(CircuitStep(OpType.TICK))
     return steps
 
 
@@ -269,7 +269,7 @@ def init_syndrome_gadget(
     h_family = "Z" if x_z_swapped else "X"
     if x_z_swapped:
         family = "Z" if family == "X" else "X"
-    steps = [SurfaceCircuitStep(OpType.COMMENT, label=f"init_{family.lower()}_syndrome")]
+    steps = [CircuitStep(OpType.COMMENT, label=f"init_{family.lower()}_syndrome")]
     budgeted = _budgeted_syndrome_steps(
         patch,
         allocation,
@@ -285,7 +285,7 @@ def init_syndrome_gadget(
         steps.extend(_ancilla_steps(patch, allocation, family, OpType.ALLOC))
         if family == h_family:
             steps.extend(_hadamards(patch, allocation, h_family))
-        steps.append(SurfaceCircuitStep(OpType.TICK))
+        steps.append(CircuitStep(OpType.TICK))
         steps.extend(
             step
             for layer in _cx_layers(patch, allocation, family, round_order=round_order, x_z_swapped=x_z_swapped)
@@ -293,9 +293,9 @@ def init_syndrome_gadget(
         )
         if family == h_family:
             steps.extend(_hadamards(patch, allocation, h_family))
-        steps.append(SurfaceCircuitStep(OpType.COMMENT, label="Measure ancillas"))
+        steps.append(CircuitStep(OpType.COMMENT, label="Measure ancillas"))
         steps.extend(_ancilla_steps(patch, allocation, family, OpType.MEASURE))
-        steps.append(SurfaceCircuitStep(OpType.TICK))
+        steps.append(CircuitStep(OpType.TICK))
     return Gadget(
         GadgetKind.INIT_SYNDROME,
         f"init_{basis.lower()}_basis" + ("_swapped" if x_z_swapped else ""),
@@ -340,7 +340,7 @@ def syndrome_round_gadget(
         return Gadget(
             GadgetKind.SYNDROME_ROUND,
             "syndrome_extraction" + ("_swapped" if x_z_swapped else ""),
-            (SurfaceCircuitStep(OpType.COMMENT, label=f"syndrome_extraction round {round_index + 1}"), *budgeted),
+            (CircuitStep(OpType.COMMENT, label=f"syndrome_extraction round {round_index + 1}"), *budgeted),
             (allocation,),
             (patch.dx, patch.dz),
             None,
@@ -353,25 +353,25 @@ def syndrome_round_gadget(
 def _syndrome_round(
     patch: SurfacePatch,
     allocation: QubitAllocation,
-    layers: list[list[SurfaceCircuitStep]],
+    layers: list[list[CircuitStep]],
     *,
     round_index: int,
     x_z_swapped: bool,
     name: str = "syndrome_extraction",
     fold: Literal["SZ", "SZdg"] | None = None,
 ) -> Gadget:
-    steps = [SurfaceCircuitStep(OpType.COMMENT, label=f"syndrome_extraction round {round_index + 1}")]
+    steps = [CircuitStep(OpType.COMMENT, label=f"syndrome_extraction round {round_index + 1}")]
     families = ("Z", "X") if x_z_swapped else ("X", "Z")
     for family in families:
         steps.extend(_ancilla_steps(patch, allocation, family, OpType.ALLOC))
     steps.extend(_hadamards(patch, allocation, families[0]))
-    steps.append(SurfaceCircuitStep(OpType.TICK))
+    steps.append(CircuitStep(OpType.TICK))
     steps.extend(step for layer in layers for step in layer)
     steps.extend(_hadamards(patch, allocation, families[0]))
-    steps.append(SurfaceCircuitStep(OpType.COMMENT, label="Measure ancillas"))
+    steps.append(CircuitStep(OpType.COMMENT, label="Measure ancillas"))
     for family in families:
         steps.extend(_ancilla_steps(patch, allocation, family, OpType.MEASURE))
-    steps.append(SurfaceCircuitStep(OpType.TICK))
+    steps.append(CircuitStep(OpType.TICK))
     return Gadget(
         GadgetKind.SYNDROME_ROUND,
         name + ("_swapped" if x_z_swapped else ""),
@@ -456,17 +456,17 @@ def fold_sz_round_gadget(
         raise ValueError(msg)
 
     label = "fold-transversal SZdg layer" if dagger else "fold-transversal SZ layer"
-    fold = [SurfaceCircuitStep(OpType.COMMENT, label=label)]
+    fold = [CircuitStep(OpType.COMMENT, label=label)]
     for (x, y), qubit in sorted(by_position.items()):
         if (y, x) not in by_position:
             msg = f"fold_sz_round_gadget missing transpose partner for site {(x, y)}"
             raise ValueError(msg)
         if x < y:
-            fold.append(SurfaceCircuitStep(OpType.CZ, [qubit, by_position[y, x]]))
+            fold.append(CircuitStep(OpType.CZ, [qubit, by_position[y, x]]))
         elif x == y:
             op = OpType.SZ if (x % 2 == 1) != dagger else OpType.SZDG
-            fold.append(SurfaceCircuitStep(op, [qubit]))
-    fold.append(SurfaceCircuitStep(OpType.TICK))
+            fold.append(CircuitStep(op, [qubit]))
+    fold.append(CircuitStep(OpType.TICK))
     layers = _cx_layers(patch, allocation, x_z_swapped=x_z_swapped)
     if len(layers) != 4:
         msg = "fold_sz_round_gadget requires four CX layers in the default schedule"
@@ -492,10 +492,10 @@ def measure_out_gadget(patch: SurfacePatch, allocation: QubitAllocation, *, basi
         raise NotImplementedError(msg)
     basis = _normalize_basis(basis, ("X", "Z"))
     name = f"measure_{basis.lower()}_basis"
-    steps = [SurfaceCircuitStep(OpType.COMMENT, label=name)]
+    steps = [CircuitStep(OpType.COMMENT, label=name)]
     if basis.upper() == "X":
-        steps.extend(SurfaceCircuitStep(OpType.H, [q]) for q in allocation.data_qubits)
-    steps.extend(SurfaceCircuitStep(OpType.MEASURE, [q], f"final[{i}]") for i, q in enumerate(allocation.data_qubits))
+        steps.extend(CircuitStep(OpType.H, [q]) for q in allocation.data_qubits)
+    steps.extend(CircuitStep(OpType.MEASURE, [q], f"final[{i}]") for i, q in enumerate(allocation.data_qubits))
     return Gadget(GadgetKind.MEASURE_OUT, name, tuple(steps), (allocation,), (patch.dx, patch.dz), basis.upper())
 
 
@@ -506,7 +506,7 @@ def logical_pauli_gadget(patch: SurfacePatch, allocation: QubitAllocation, *, pa
     if logical is None:
         msg = f"Patch has no logical {pauli} operator"
         raise ValueError(msg)
-    steps = tuple(SurfaceCircuitStep(OpType[pauli], [allocation.data_qubits[q]]) for q in logical.data_qubits)
+    steps = tuple(CircuitStep(OpType[pauli], [allocation.data_qubits[q]]) for q in logical.data_qubits)
     return Gadget(
         GadgetKind.LOGICAL_PAULI,
         f"apply_logical_{pauli.lower()}",
@@ -545,7 +545,7 @@ def transversal_layer_gadget(patch: SurfacePatch, allocation: QubitAllocation, *
     return Gadget(
         GadgetKind.TRANSVERSAL,
         names[gate],
-        tuple(SurfaceCircuitStep(OpType[gate], [q]) for q in allocation.data_qubits),
+        tuple(CircuitStep(OpType[gate], [q]) for q in allocation.data_qubits),
         (allocation,),
         (patch.dx, patch.dz),
         gate,
@@ -566,7 +566,7 @@ def transversal_cx_gadget(
         GadgetKind.TWO_PATCH,
         "transversal_cx",
         tuple(
-            SurfaceCircuitStep(OpType.CX, [ctrl, tgt])
+            CircuitStep(OpType.CX, [ctrl, tgt])
             for ctrl, tgt in zip(ctrl_allocation.data_qubits, tgt_allocation.data_qubits, strict=True)
         ),
         (ctrl_allocation, tgt_allocation),

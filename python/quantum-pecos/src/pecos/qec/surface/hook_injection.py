@@ -16,7 +16,7 @@ not implemented here. Undetectable single faults remain at the injection site.
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from pecos.qec.surface.circuit_builder import OpType, QubitAllocation, SurfaceCircuitStep
+from pecos.qec.surface.circuit_builder import CircuitStep, OpType, QubitAllocation
 from pecos.qec.surface.gadgets import Gadget, GadgetKind, default_allocation
 from pecos.qec.surface.injection import _validate_injection_allocation, injection_correction_supports
 from pecos.qec.surface.patch import SurfacePatch
@@ -80,7 +80,7 @@ class HookInjection:
             for bit, correction in zip(outcomes, supports, strict=True):
                 if bit:
                     support.symmetric_difference_update(correction)
-            steps.extend(SurfaceCircuitStep(op, [data[q]]) for q in sorted(support))
+            steps.extend(CircuitStep(op, [data[q]]) for q in sorted(support))
         return Gadget(
             GadgetKind.TRANSVERSAL,
             "correct_hook_signs",
@@ -138,9 +138,9 @@ def hook_injection(
             tiles.append((basis, i, ancilla, (x, y)))
             if all((q in initial_x) == (basis == "X") for q in support):
                 predictable[basis].append(i)
-    seed_steps = [SurfaceCircuitStep(OpType.ALLOC, [q], f"data[{i}]") for i, q in enumerate(data)]
-    seed_steps.extend(SurfaceCircuitStep(OpType.H, [data[q]]) for q in sorted(initial_x))
-    seed_steps.append(SurfaceCircuitStep(OpType.TICK))
+    seed_steps = [CircuitStep(OpType.ALLOC, [q], f"data[{i}]") for i, q in enumerate(data)]
+    seed_steps.extend(CircuitStep(OpType.H, [data[q]]) for q in sorted(initial_x))
+    seed_steps.append(CircuitStep(OpType.TICK))
     seed = Gadget(
         GadgetKind.PREP,
         "prep_injection_hook_seed",
@@ -152,9 +152,9 @@ def hook_injection(
     )
 
     def make_round(*, inject: bool) -> Gadget:
-        steps = [SurfaceCircuitStep(OpType.ALLOC, [a], f"a{b.lower()}{i}") for b, i, a, _ in tiles]
-        steps.extend(SurfaceCircuitStep(OpType.H, [a]) for b, _, a, _ in tiles if b == "X")
-        steps.append(SurfaceCircuitStep(OpType.TICK))
+        steps = [CircuitStep(OpType.ALLOC, [a], f"a{b.lower()}{i}") for b, i, a, _ in tiles]
+        steps.extend(CircuitStep(OpType.H, [a]) for b, _, a, _ in tiles if b == "X")
+        steps.append(CircuitStep(OpType.TICK))
         for layer in range(4):
             for basis, _, ancilla, (x, y) in tiles:
                 order = (_UR, _UL, _DR, _DL) if basis == "X" else (_UR, _DR, _UL, _DL)
@@ -170,15 +170,15 @@ def hook_injection(
                 if inject and layer == 0 and ((basis == "X") == (q in initial_x)):
                     continue
                 pair = [ancilla, data[q]] if basis == "X" else [data[q], ancilla]
-                steps.append(SurfaceCircuitStep(OpType.CX, pair))
-            steps.append(SurfaceCircuitStep(OpType.TICK))
+                steps.append(CircuitStep(OpType.CX, pair))
+            steps.append(CircuitStep(OpType.TICK))
             if inject and layer == 1 and rotations[state] is not None:
                 hook_ancilla = next(a for b, _, a, pos in tiles if b == "Z" and pos == (1, 1))
-                steps.extend((SurfaceCircuitStep(rotations[state], [hook_ancilla]), SurfaceCircuitStep(OpType.TICK)))
-        steps.extend(SurfaceCircuitStep(OpType.H, [a]) for b, _, a, _ in tiles if b == "X")
-        steps.append(SurfaceCircuitStep(OpType.TICK))
-        steps.extend(SurfaceCircuitStep(OpType.MEASURE, [a], f"a{b.lower()}{i}") for b, i, a, _ in tiles)
-        steps.append(SurfaceCircuitStep(OpType.TICK))
+                steps.extend((CircuitStep(rotations[state], [hook_ancilla]), CircuitStep(OpType.TICK)))
+        steps.extend(CircuitStep(OpType.H, [a]) for b, _, a, _ in tiles if b == "X")
+        steps.append(CircuitStep(OpType.TICK))
+        steps.extend(CircuitStep(OpType.MEASURE, [a], f"a{b.lower()}{i}") for b, i, a, _ in tiles)
+        steps.append(CircuitStep(OpType.TICK))
         name = f"hook_injection_{state.lower().replace('-', 'minus_')}" if inject else "hook_verification"
         return Gadget(GadgetKind.SYNDROME_ROUND, name, tuple(steps), (allocation,), (d, d), None)
 

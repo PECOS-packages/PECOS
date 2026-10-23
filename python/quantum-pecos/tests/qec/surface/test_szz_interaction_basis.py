@@ -13,8 +13,8 @@ import stim
 from pecos._traced_circuit import normalize_traced_tick_circuit
 from pecos.qec.surface import NoiseParameters, SurfacePatch, TwirlConfig
 from pecos.qec.surface.circuit_builder import (
+    CircuitStep,
     OpType,
-    SurfaceCircuitStep,
     SzzTouchSign,
     _analyze_szz_forward_flow,
     _default_szz_residual_plan,
@@ -330,13 +330,13 @@ def test_szz_tick_circuit_uses_named_szz_gates() -> None:
 
 def test_szz_forward_flow_merges_h_sandwich_before_host() -> None:
     ops = [
-        SurfaceCircuitStep(OpType.ALLOC, [0]),
-        SurfaceCircuitStep(OpType.ALLOC, [1]),
-        SurfaceCircuitStep(OpType.H, [0]),
-        SurfaceCircuitStep(OpType.H, [0]),
-        SurfaceCircuitStep(OpType.SZZ, [0, 1], "g"),
-        SurfaceCircuitStep(OpType.MEASURE, [0], "m0"),
-        SurfaceCircuitStep(OpType.MEASURE, [1], "m1"),
+        CircuitStep(OpType.ALLOC, [0]),
+        CircuitStep(OpType.ALLOC, [1]),
+        CircuitStep(OpType.H, [0]),
+        CircuitStep(OpType.H, [0]),
+        CircuitStep(OpType.SZZ, [0, 1], "g"),
+        CircuitStep(OpType.MEASURE, [0], "m0"),
+        CircuitStep(OpType.MEASURE, [1], "m1"),
     ]
 
     summary = _analyze_szz_forward_flow(ops)
@@ -349,12 +349,12 @@ def test_szz_forward_flow_merges_h_sandwich_before_host() -> None:
 
 def test_szz_forward_flow_carries_virtual_z_to_measurement() -> None:
     ops = [
-        SurfaceCircuitStep(OpType.ALLOC, [0]),
-        SurfaceCircuitStep(OpType.ALLOC, [1]),
-        SurfaceCircuitStep(OpType.SZ, [0]),
-        SurfaceCircuitStep(OpType.SZZ, [0, 1], "g"),
-        SurfaceCircuitStep(OpType.MEASURE, [0], "m0"),
-        SurfaceCircuitStep(OpType.MEASURE, [1], "m1"),
+        CircuitStep(OpType.ALLOC, [0]),
+        CircuitStep(OpType.ALLOC, [1]),
+        CircuitStep(OpType.SZ, [0]),
+        CircuitStep(OpType.SZZ, [0, 1], "g"),
+        CircuitStep(OpType.MEASURE, [0], "m0"),
+        CircuitStep(OpType.MEASURE, [1], "m1"),
     ]
 
     summary = _analyze_szz_forward_flow(ops)
@@ -370,13 +370,13 @@ def test_szz_forward_flow_carries_virtual_z_to_measurement() -> None:
 
 def test_szz_forward_flow_counts_physical_prefixes_at_hosts() -> None:
     ops = [
-        SurfaceCircuitStep(OpType.ALLOC, [0]),
-        SurfaceCircuitStep(OpType.ALLOC, [1]),
-        SurfaceCircuitStep(OpType.H, [0]),
-        SurfaceCircuitStep(OpType.SZZ, [0, 1], "g"),
-        SurfaceCircuitStep(OpType.H, [1]),
-        SurfaceCircuitStep(OpType.MEASURE, [0], "m0"),
-        SurfaceCircuitStep(OpType.MEASURE, [1], "m1"),
+        CircuitStep(OpType.ALLOC, [0]),
+        CircuitStep(OpType.ALLOC, [1]),
+        CircuitStep(OpType.H, [0]),
+        CircuitStep(OpType.SZZ, [0, 1], "g"),
+        CircuitStep(OpType.H, [1]),
+        CircuitStep(OpType.MEASURE, [0], "m0"),
+        CircuitStep(OpType.MEASURE, [1], "m1"),
     ]
 
     summary = _analyze_szz_forward_flow(ops)

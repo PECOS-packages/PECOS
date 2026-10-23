@@ -78,8 +78,8 @@ else:
 ## The gadget library
 
 `Gadget` is a frozen dataclass with `kind`, `name`, `steps`, `allocations`,
-`dimensions`, `basis`, `x_z_swapped`, and `fold` (`"SZ"`, `"SZdg"`, or `None`). Its steps are `SurfaceCircuitStep`
-operations.
+`dimensions`, `basis`, `x_z_swapped`, and `fold` (`"SZ"`, `"SZdg"`, or `None`). Its steps are `CircuitStep`
+operations from `pecos.qec.circuit_steps` (also exported from `pecos.qec.surface`).
 All single-patch functions below take `patch, allocation` first unless shown
 otherwise. `round_order=None` uses the default schedule.
 
@@ -1739,7 +1739,8 @@ for before_preparation in (True, False):
 | `fold_sz_round_gadget` | `pecos.qec.surface.gadgets` | Fold-transversal logical SZ or SZdg inside a default round |
 | `logical_pauli_gadget`, `transversal_layer_gadget` | `pecos.qec.surface.gadgets` | Logical strings and physical layers |
 | `transversal_cx_gadget`, `memory_gadgets` | `pecos.qec.surface.gadgets` | Two-patch CX and memory composition |
-| `TickCircuitRenderer`, `QubitAllocation`, `SurfaceCircuitStep` | `pecos.qec.surface.circuit_builder` | Render physical operations with register mapping |
+| `TickCircuitRenderer`, `QubitAllocation` | `pecos.qec.surface.circuit_builder` | Render physical operations with register mapping |
+| `CircuitStep`, `OpType` | `pecos.qec.circuit_steps` | Shared circuit step vocabulary |
 | `LogicalCircuitBuilder` | `pecos.qec.surface` | Compose protocols and export circuits, DEMs, and descriptors |
 | `render_gadget_function`, `render_surface_gadget_module` | `pecos.guppy_gen.gadget_render` | Render one function or the memory module |
 | `make_surface_memory` | `pecos.guppy_gen` | Compile certified single-patch gadget memory for Guppy DEM construction |

@@ -319,6 +319,13 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Python bug fixes
 
+- Stabilizer generator products now include the ZX = -XZ reordering phase
+  everywhere they are formed. `SparseStabPy` refactoring, `remove_stab`, and
+  `find_logical_signs` previously could give a new or surviving generator, or a
+  logical operator with two or more Ys, the wrong sign. `remove_stab` and
+  `is_not_stabilizer` now test commutation by the combined X/Z overlap parity, so
+  operators containing Y are no longer misclassified as anticommuting.
+
 - SZZ physical-prefix lowering (`szz_physical_prefixes=True`) folds `F`, `FDG`,
   `SY` and `SYDG` into the pending Clifford. Before, they jumped ahead of the
   pending gates, so Z-basis memories with
@@ -616,6 +623,15 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   with ties away from zero on the signed principal representative.
 
 ### Rust bug fixes
+
+- `GensGeneric::refactor` gives the new generator the full product phase,
+  including the ZX = -XZ reordering term. `GensGeneric` now records its
+  `PauliConvention`, so `generator`, `generators`, `compute_product_sign`,
+  `find_pauli_sign` and `refactor` return correct phases for `SparseStabY`
+  tableaus as well as `SparseStab`; they previously applied the `SparseStab`
+  rule to `SparseStabY`'s Y entries. `compute_product_sign` multiplies in
+  forward iteration order. `pecos-zx`'s `gens_to_pauli_strings` no longer drops
+  the stored imaginary phase.
 
 - pecos-neo decompositions apply to every operand group of a batched gate. This
   covers registered decompositions in `CircuitRunner`, `CircuitResolver`

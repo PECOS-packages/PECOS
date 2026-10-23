@@ -32,7 +32,7 @@
 //! assert!(result.corrections.is_empty());
 //! ```
 
-use super::dem_builder::NoiseConfig;
+use super::dem_builder::{DemBuilderError, NoiseConfig, validate_idle_noise_targets};
 use super::propagator::dag::{DagFaultInfluenceMap, DagSpacetimeLocation, GateFaultLocation};
 use pecos_core::gate_type::GateType;
 use std::collections::BTreeMap;
@@ -73,12 +73,18 @@ impl LookupDecoder {
     /// 1-qubit, p/15 for 2-qubit). Idle gates with T1/T2 use biased noise.
     ///
     /// # Errors
-    /// Returns an error if a fault location contains duplicate qubits.
+    /// Returns a configuration error if a fault location contains duplicate
+    /// qubits, a gate-rate key would not apply as written, or `noise` requests
+    /// idle noise and the map has no idle location to carry it.
     pub fn build(
         map: &DagFaultInfluenceMap,
         noise: &NoiseConfig,
         max_weight: usize,
-    ) -> Result<Self, pecos_core::ParsePauliStringError> {
+    ) -> Result<Self, DemBuilderError> {
+        noise
+            .validate_gate_rate_keys(&map.locations)
+            .map_err(|error| DemBuilderError::ConfigurationError(error.to_string()))?;
+        validate_idle_noise_targets(map, noise.idle_noise_request())?;
         let observable_ids = observable_ids(map);
         let num_observables = observable_ids.len();
 
@@ -99,7 +105,9 @@ impl LookupDecoder {
         for loc in &locs {
             let p = gate_location_prob(loc, &loc_probs, &map.locations);
 
-            let events = loc.all_events()?;
+            let events = loc
+                .all_events()
+                .map_err(|error| DemBuilderError::ConfigurationError(error.to_string()))?;
             let num_physical_events = events.len();
 
             // For idle gates with T1/T2, compute biased per-Pauli probabilities

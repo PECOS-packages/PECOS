@@ -485,9 +485,10 @@ idle-family rate, especially for the nonlinear sine-squared law.
 The default Selene runtime does not emit idle gates. These parameters and
 `t1`/`t2` therefore have no locations to attach to unless the runtime supplies
 scheduled idles or you insert them explicitly. `from_guppy` raises
-`ValueError` when an idle-noise rate is supplied but the final traced circuit
-contains no `Idle` gates; it does not silently build a DEM without the
-requested noise.
+`ValueError`, naming the offending parameters, when a nonzero idle-noise rate
+or `t1`/`t2` is supplied but the final traced circuit contains no `Idle` gates;
+it does not silently build a DEM without the requested noise. Zero rates are
+accepted, so a rate sweep may start at zero.
 
 Both `DetectorErrorModel.from_guppy` and `build_dem_from_guppy` accept two
 passes for controlling those locations:

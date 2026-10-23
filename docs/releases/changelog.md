@@ -278,6 +278,12 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Python bug fixes
 
+- SZZ physical-prefix lowering (`szz_physical_prefixes=True`) folds `F`, `FDG`,
+  `SY` and `SYDG` into the pending Clifford. Before, they jumped ahead of the
+  pending gates, so `clifford_frame_policy="global_axis_cycle_f"` produced
+  circuits with random noiseless detectors. Forward-flow analysis and lowering
+  now raise on any step they have no rule for.
+
 - The Python PHIR interpreter releases cached Result operations on a full reset.
   Declaration size diagnostics now give quantum or classical size guidance on all
   PHIR paths, including when JSON parses an oversized integer as a float.

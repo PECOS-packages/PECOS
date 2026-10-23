@@ -554,15 +554,6 @@ _SIGNED_PAULI_NAMES = {
     -3: "-Z",
 }
 _SZZ_FLOW_IDENTITY: tuple[int, int] = (1, 3)
-_SZZ_FLOW_SINGLE_QUBIT_GATES = {
-    OpType.H,
-    OpType.SX,
-    OpType.SXDG,
-    OpType.SZ,
-    OpType.SZDG,
-    OpType.X,
-    OpType.Z,
-}
 _SZZ_FLOW_GATE_ACTIONS: dict[OpType, dict[int, int]] = {
     OpType.H: {1: 3, 2: -2, 3: 1},
     OpType.F: {1: 2, 2: 3, 3: 1},
@@ -719,7 +710,7 @@ def _analyze_szz_forward_flow(ops: list[SurfaceCircuitStep]) -> SzzForwardFlowSu
             prep_events += 1
             reset_for_prep(op.qubits[0], op)
             continue
-        if op.op_type in _SZZ_FLOW_SINGLE_QUBIT_GATES:
+        if op.op_type in _SZZ_FLOW_GATE_ACTIONS:
             q = op.qubits[0]
             abstract_single_qubit_ops += 1
             pending_by_qubit[q] = _szz_flow_compose_pending_gate(pending_for(q), op.op_type)
@@ -736,6 +727,8 @@ def _analyze_szz_forward_flow(ops: list[SurfaceCircuitStep]) -> SzzForwardFlowSu
             measurements += 1
             discharge_for_measurement(op.qubits[0], host_index, op)
             continue
+        msg = f"SZZ forward-flow analysis does not support {op.op_type.name} steps"
+        raise ValueError(msg)
 
     remaining = {q: pending for q, pending in pending_by_qubit.items() if pending != _SZZ_FLOW_IDENTITY}
     if remaining:
@@ -845,7 +838,7 @@ def _lower_szz_forward_flow_ops(ops: list[SurfaceCircuitStep]) -> list[SurfaceCi
             reset_for_prep(op.qubits[0], op)
             lowered.append(op)
             continue
-        if op.op_type in _SZZ_FLOW_SINGLE_QUBIT_GATES:
+        if op.op_type in _SZZ_FLOW_GATE_ACTIONS:
             q = op.qubits[0]
             pending_by_qubit[q] = _szz_flow_compose_pending_gate(pending_for(q), op.op_type)
             continue
@@ -872,7 +865,8 @@ def _lower_szz_forward_flow_ops(ops: list[SurfaceCircuitStep]) -> list[SurfaceCi
             )
             lowered.append(op)
             continue
-        lowered.append(op)
+        msg = f"SZZ forward-flow lowering does not support {op.op_type.name} steps"
+        raise ValueError(msg)
 
     remaining = {q: pending for q, pending in pending_by_qubit.items() if pending != _SZZ_FLOW_IDENTITY}
     if remaining:

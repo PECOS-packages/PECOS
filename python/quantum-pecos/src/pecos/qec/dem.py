@@ -328,9 +328,13 @@ def _apply_traced_idle_passes(
     *,
     strip_traced_idles: bool | None,
     idle_after_2q_duration: float | None,
-    idle_noise_parameters: Sequence[float | None],
+    idle_noise_parameters: Mapping[str, float | None],
 ) -> None:
-    """Apply requested idle passes and reject idle noise with no target gates."""
+    """Apply requested idle passes and reject idle noise with no target gates.
+
+    A rate requests idle noise when it is nonzero; ``t1`` and ``t2`` request it
+    whenever set. Zero rates stay valid, matching the Rust builders.
+    """
     if strip_traced_idles is None:
         # Inserting a uniform idle convention on top of runtime-emitted idles
         # would double-count idle noise, so insertion implies stripping first.
@@ -347,10 +351,15 @@ def _apply_traced_idle_passes(
             raise ValueError(msg)
         circuit.insert_idle_after_two_qubit_gates(idle_after_2q_duration)
 
-    if any(value is not None for value in idle_noise_parameters) and circuit.gate_counts_by_type().get("Idle", 0) == 0:
+    requested = [
+        f"{name}={value!r}"
+        for name, value in idle_noise_parameters.items()
+        if value is not None and (name in {"t1", "t2"} or value != 0.0)
+    ]
+    if requested and circuit.gate_counts_by_type().get("Idle", 0) == 0:
         msg = (
-            "idle-noise parameters have no idle gates to attach to; either pass "
-            "idle_after_2q_duration=..., or use a Selene runtime that emits scheduled idles"
+            f"idle-noise parameters have no idle gates to attach to (requested: {', '.join(requested)}); "
+            "either pass idle_after_2q_duration=..., or use a Selene runtime that emits scheduled idles"
         )
         raise ValueError(msg)
 
@@ -1548,24 +1557,24 @@ class GuppyDemBuilder:
             circuit,
             strip_traced_idles=None if self._strip_traced_idles is _UNSET else self._strip_traced_idles,
             idle_after_2q_duration=None if self._idle_after_2q is _UNSET else self._idle_after_2q,
-            idle_noise_parameters=(
-                p_idle_linear,
-                p_idle_sin_squared,
-                t1,
-                t2,
-                p_idle_linear_rate,
-                p_idle_quadratic_rate,
-                p_idle_x_linear_rate,
-                p_idle_y_linear_rate,
-                p_idle_z_linear_rate,
-                p_idle_x_quadratic_rate,
-                p_idle_y_quadratic_rate,
-                p_idle_z_quadratic_rate,
-                p_idle_quadratic_sine_rate,
-                p_idle_x_quadratic_sine_rate,
-                p_idle_y_quadratic_sine_rate,
-                p_idle_z_quadratic_sine_rate,
-            ),
+            idle_noise_parameters={
+                "p_idle_linear": p_idle_linear,
+                "p_idle_sin_squared": p_idle_sin_squared,
+                "t1": t1,
+                "t2": t2,
+                "p_idle_linear_rate": p_idle_linear_rate,
+                "p_idle_quadratic_rate": p_idle_quadratic_rate,
+                "p_idle_x_linear_rate": p_idle_x_linear_rate,
+                "p_idle_y_linear_rate": p_idle_y_linear_rate,
+                "p_idle_z_linear_rate": p_idle_z_linear_rate,
+                "p_idle_x_quadratic_rate": p_idle_x_quadratic_rate,
+                "p_idle_y_quadratic_rate": p_idle_y_quadratic_rate,
+                "p_idle_z_quadratic_rate": p_idle_z_quadratic_rate,
+                "p_idle_quadratic_sine_rate": p_idle_quadratic_sine_rate,
+                "p_idle_x_quadratic_sine_rate": p_idle_x_quadratic_sine_rate,
+                "p_idle_y_quadratic_sine_rate": p_idle_y_quadratic_sine_rate,
+                "p_idle_z_quadratic_sine_rate": p_idle_z_quadratic_sine_rate,
+            },
         )
         circuit.set_meta("detectors", detectors_json)
         circuit.set_meta("observables", observables_json)

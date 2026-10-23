@@ -6,12 +6,30 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
-- DEM builders now reject nonzero dedicated idle noise when the circuit has no
-  `Idle` locations, including `from_circuit`, the low-level inferred-annotation
-  helper, and the surface tick-circuit helper. Insert idles with explicit
-  durations or disable idle noise. In particular, `NoiseConfig::uniform(p)`
-  includes idle noise; use `.set_idle(0.0)` when the circuit intentionally has
-  no idles. Zero idle rates remain valid.
+- DEM, DEM-sampler, MEM, and lookup-decoder builders now reject nonzero idle
+  noise when the circuit has no `Idle` locations, including `from_circuit`,
+  the low-level inferred-annotation helper, the surface tick-circuit helper,
+  `DemSamplerBuilder` in both raw and detector modes,
+  `SamplingEngine::from_influence_map`, and `LookupDecoder::build`. Nonzero
+  per-gate `Idle` rates count as idle noise. The error names the requesting
+  settings. Insert idles with explicit durations or disable idle noise. Zero
+  idle rates remain valid, and `from_guppy` now accepts them too instead of
+  rejecting any supplied idle rate. `LookupDecoder::build` now returns
+  `DemBuilderError` and validates gate-rate keys like the other builders.
+
+- A nonzero `Idle` key in `p1_gate_rates` or `p2_gate_rates` is now rejected:
+  `Idle` gates take noise only from the idle model, so the key was silently
+  ignored. Use `p_idle` (`set_idle`) or per-gate `Idle` rates instead.
+  `PerGateTypeNoise::to_neo_channel` likewise rejects these keys and a legacy
+  `idle_rz` angle, which the neo channel cannot carry.
+
+- **Breaking:** `NoiseConfig::uniform(p)` and `DemSamplerBuilder::with_uniform_noise(p)`
+  (Python `DemSampler.raw_uniform` and `DemSampler.from_influence_map`) no
+  longer set idle noise. Circuits with explicit `Idle` gates previously
+  received `p_idle = p` from them and now receive no idle noise. To keep it,
+  use `.set_idle(p)` or `.with_idle_noise(p)` in Rust, and
+  `DemSamplerBuilder(influence_map).with_noise(p, p, p, p, p_idle=p).build()`
+  in Python.
 
 - Shot corpus format v2 stores detector fault-sector labels, and `SampleBatch.save`
   accepts a `DetectorErrorModel`. New readers accept v1 (unlabelled) and v2;

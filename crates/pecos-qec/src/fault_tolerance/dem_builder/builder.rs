@@ -1098,22 +1098,18 @@ impl<'a> DemBuilder<'a> {
     }
 
     fn validate_idle_noise(&self) -> Result<(), DemBuilderError> {
-        let mut has_idle = false;
         for loc in &self.influence_map.locations {
             if loc.gate_type == GateType::Idle && !loc.before {
-                has_idle = true;
                 let _ = self.idle_probabilities_for_loc(loc)?;
             }
         }
-        // Per-gate configuration owns the effective base, just as it does in
+        // Per-gate configuration owns idle resolution, just as it does in
         // idle_probabilities_for_loc. Do not inspect overridden scalar noise.
-        let noise = self.per_gate.as_ref().map_or(&self.noise, |pg| &pg.base);
-        if !has_idle && (noise.uses_dedicated_idle_noise() || noise.idle_rz != 0.0) {
-            return Err(DemBuilderError::ConfigurationError(
-                "idle-noise parameters have no idle gates to attach to; insert explicit Idle gates with durations, or use a runtime that emits scheduled idles".to_string(),
-            ));
-        }
-        Ok(())
+        let idle_noise_request = self.per_gate.as_ref().map_or_else(
+            || self.noise.idle_noise_request(),
+            PerGateTypeNoise::idle_noise_request,
+        );
+        validate_idle_noise_targets(self.influence_map, idle_noise_request)
     }
 
     fn hidden_mz_result_before_crosstalk_payload(
@@ -2725,6 +2721,28 @@ pub(crate) fn validate_sampler_records(
     Ok(())
 }
 
+/// Reject requested idle noise when the map has no idle location to carry it;
+/// otherwise every builder would silently drop it. `idle_noise_request` names
+/// the requesting settings, as returned by `idle_noise_request()`.
+pub(crate) fn validate_idle_noise_targets(
+    map: &DagFaultInfluenceMap,
+    idle_noise_request: Option<String>,
+) -> Result<(), DemBuilderError> {
+    let Some(request) = idle_noise_request else {
+        return Ok(());
+    };
+    let has_idle = map
+        .locations
+        .iter()
+        .any(|loc| loc.gate_type == GateType::Idle && !loc.before);
+    if !has_idle {
+        return Err(DemBuilderError::ConfigurationError(format!(
+            "idle-noise parameters have no idle gates to attach to (requested: {request}); insert explicit Idle gates with durations, or use a runtime that emits scheduled idles"
+        )));
+    }
+    Ok(())
+}
+
 fn validate_dense_sampler_ids(kind: &str, ids: &[u32]) -> Result<(), DemBuilderError> {
     for pair in ids.windows(2) {
         if pair[0] == pair[1] {
@@ -3667,8 +3685,11 @@ mod tests {
         let mut thermal = zero.clone();
         thermal.t1 = Some(100.0);
         thermal.t2 = Some(100.0);
-        let mut legacy_rz = zero.clone();
-        legacy_rz.idle_rz = 0.01;
+        // set_idle_rz currently installs no channel at theta = pi (a known gap
+        // in its T2 surrogate, #1445), so only the recorded angle
+        // marks the request.
+        let legacy_rz = zero.clone().set_idle_rz(std::f64::consts::PI);
+        assert!(!legacy_rz.uses_dedicated_idle_noise());
         let builder = DemBuilder::new(&map).with_noise_config(zero.clone());
         assert!(builder.build().is_ok());
         assert!(builder.try_build().is_ok());
@@ -3690,6 +3711,53 @@ mod tests {
                         error.contains("idle-noise parameters have no idle gates"),
                         "{error}"
                     );
+                }
+            }
+        }
+        // Per-gate Idle entries follow idle resolution: a gate-type entry
+        // shadows the base model, a per-qubit entry covers only its qubit.
+        let q0 = pecos_core::QubitId(0);
+        let base_idle = PerGateTypeNoise::from_base_noise(zero.clone().set_idle(0.01));
+        let no_base_idle = PerGateTypeNoise::from_base_noise(zero.clone());
+        for (per_gate, rejected) in [
+            (
+                no_base_idle
+                    .clone()
+                    .with_1q_rates(GateType::Idle, [0.01, 0.0, 0.0]),
+                true,
+            ),
+            (
+                no_base_idle
+                    .clone()
+                    .with_1q_rates_for_qubit(GateType::Idle, q0, [0.0, 0.0, 0.01]),
+                true,
+            ),
+            (
+                base_idle
+                    .clone()
+                    .with_1q_rates_for_qubit(GateType::Idle, q0, [0.0; 3]),
+                true,
+            ),
+            (base_idle.with_1q_rates(GateType::Idle, [0.0; 3]), false),
+            (
+                no_base_idle.with_1q_rates_for_qubit(GateType::Idle, q0, [0.0; 3]),
+                false,
+            ),
+        ] {
+            let builder = DemBuilder::new(&map).with_per_gate_noise(per_gate);
+            for result in [builder.build(), builder.try_build()] {
+                match (result, rejected) {
+                    (Ok(_), false) => {}
+                    (Err(error), true) => assert!(
+                        error
+                            .to_string()
+                            .contains("idle-noise parameters have no idle gates"),
+                        "{error}"
+                    ),
+                    (result, _) => panic!(
+                        "expected rejected = {rejected}, got error {:?}",
+                        result.err().map(|error| error.to_string())
+                    ),
                 }
             }
         }

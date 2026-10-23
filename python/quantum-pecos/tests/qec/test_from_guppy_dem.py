@@ -760,8 +760,21 @@ _ALL_IDLE_NOISE_PARAMS = {
 
 @pytest.mark.parametrize("idle_param", sorted(_ALL_IDLE_NOISE_PARAMS))
 def test_from_guppy_rejects_idle_noise_without_idle_gates(idle_param: str) -> None:
-    with pytest.raises(ValueError, match=r"idle-noise parameters have no idle gates"):
+    with pytest.raises(ValueError, match=rf"idle-noise parameters have no idle gates .*requested: {idle_param}="):
         _two_qubit_dem(**{idle_param: _ALL_IDLE_NOISE_PARAMS[idle_param]})
+
+
+@pytest.mark.parametrize("idle_param", sorted(set(_ALL_IDLE_NOISE_PARAMS) - {"t1", "t2"}))
+def test_from_guppy_accepts_zero_idle_rate_without_idle_gates(idle_param: str) -> None:
+    # A zero rate is a valid sweep endpoint and drops nothing.
+    assert _two_qubit_dem(**{idle_param: 0.0}).to_string() == _two_qubit_dem().to_string()
+
+
+@pytest.mark.parametrize("time_param", ["t1", "t2"])
+def test_from_guppy_zero_relaxation_time_still_requests_idle_noise(time_param: str) -> None:
+    # T1/T2 are times, not rates: zero is not "off", so it still needs idle gates.
+    with pytest.raises(ValueError, match=rf"requested: {time_param}=0\.0"):
+        _two_qubit_dem(**{time_param: 0.0})
 
 
 @pytest.mark.parametrize("bad_duration", [0.0, -1.0, float("nan"), float("inf")])

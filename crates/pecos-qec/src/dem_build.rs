@@ -608,15 +608,6 @@ impl DemBuildBuilder {
         let noise = self
             .noise
             .unwrap_or_else(|| NoiseConfig::new(0.001, 0.01, 0.001, 0.001));
-        if (noise.uses_dedicated_idle_noise() || noise.idle_rz != 0.0)
-            && !circuit
-                .iter_gate_batches()
-                .any(|batch| batch.gate_type == pecos_core::gate_type::GateType::Idle)
-        {
-            return Err(DemBuildError::Configuration(
-                "idle-noise parameters have no idle gates to attach to".into(),
-            ));
-        }
         let definitions = definitions_from_tick_circuit(&circuit)?;
         let detector_ids: Vec<_> = definitions
             .detectors

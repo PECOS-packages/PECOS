@@ -2355,6 +2355,17 @@ impl fmt::Display for GateRateKeyMismatch {
 
 impl std::error::Error for GateRateKeyMismatch {}
 
+/// A gate-keyed rate that no builder would apply as written.
+#[derive(Debug, Clone, thiserror::Error)]
+pub(crate) enum GateRateKeyError {
+    #[error(transparent)]
+    Mismatch(#[from] GateRateKeyMismatch),
+    #[error(
+        "{table} key Idle has no effect: Idle gates take noise only from the idle model. Set p_idle (set_idle) or per-gate Idle rates instead."
+    )]
+    IdleKey { table: &'static str },
+}
+
 /// The rate representation shared by the one- and two-qubit tables.
 #[derive(Clone, Copy)]
 enum GateRateTableFamily {
@@ -2417,11 +2428,14 @@ pub(crate) fn validate_scalar_gate_rate_tables(
     p1_gate_rates: &BTreeMap<GateType, f64>,
     p2_gate_rates: &BTreeMap<GateType, f64>,
     locations: &[crate::fault_tolerance::propagator::DagSpacetimeLocation],
-) -> Result<(), GateRateKeyMismatch> {
+) -> Result<(), GateRateKeyError> {
     for (table, rates) in [
         ("p1_gate_rates", p1_gate_rates),
         ("p2_gate_rates", p2_gate_rates),
     ] {
+        if rates.get(&GateType::Idle).is_some_and(|&rate| rate != 0.0) {
+            return Err(GateRateKeyError::IdleKey { table });
+        }
         validate_active_gate_rate_keys(
             table,
             rates.iter().filter_map(|(&key, &rate)| {
@@ -3561,7 +3575,7 @@ impl NoiseConfig {
     pub(crate) fn validate_gate_rate_keys(
         &self,
         locations: &[crate::fault_tolerance::propagator::DagSpacetimeLocation],
-    ) -> Result<(), GateRateKeyMismatch> {
+    ) -> Result<(), GateRateKeyError> {
         validate_scalar_gate_rate_tables(&self.p1_gate_rates, &self.p2_gate_rates, locations)
     }
 
@@ -3619,7 +3633,10 @@ impl NoiseConfig {
         }
     }
 
-    /// Creates a uniform noise configuration (including depolarizing idle).
+    /// Creates a uniform gate, preparation, and measurement noise configuration.
+    ///
+    /// Idle noise stays off: it attaches only to explicit `Idle` gates, so
+    /// enable it with [`Self::set_idle`] for circuits that carry them.
     #[must_use]
     pub fn uniform(p: f64) -> Self {
         Self {
@@ -3629,7 +3646,7 @@ impl NoiseConfig {
             p2_gate_rates: BTreeMap::new(),
             p_meas: p,
             p_prep: p,
-            p_idle: p,
+            p_idle: 0.0,
             t1: None,
             t2: None,
             p1_weights: None,
@@ -4180,6 +4197,34 @@ impl NoiseConfig {
             || self.p_idle_quadratic.rate != 0.0
             || self.p_idle_quadratic_sine.rate != 0.0
     }
+
+    /// Names the idle-noise settings this configuration requests, or `None`
+    /// when it requests none.
+    ///
+    /// Covers the fields of [`Self::uses_dedicated_idle_noise`] plus a nonzero
+    /// `idle_rz` angle that [`Self::set_idle_rz`] could not convert to a
+    /// stochastic channel.
+    #[must_use]
+    pub fn idle_noise_request(&self) -> Option<String> {
+        let rates = [
+            ("p_idle", self.p_idle),
+            ("p_idle_linear", self.p_idle_linear.rate),
+            ("p_idle_quadratic", self.p_idle_quadratic.rate),
+            ("p_idle_quadratic_sine", self.p_idle_quadratic_sine.rate),
+            ("idle_rz", self.idle_rz),
+        ];
+        let parts: Vec<String> = rates
+            .into_iter()
+            .filter(|&(_, value)| value != 0.0)
+            .map(|(name, value)| format!("{name} = {value}"))
+            .chain(
+                [("t1", self.t1), ("t2", self.t2)]
+                    .into_iter()
+                    .filter_map(|(name, time)| time.map(|time| format!("{name} = {time}"))),
+            )
+            .collect();
+        (!parts.is_empty()).then(|| parts.join(", "))
+    }
 }
 
 /// Extract the Pauli type pattern from a `PauliString`, ignoring qubit IDs.
@@ -4527,7 +4572,7 @@ impl PerGateTypeNoise {
     pub(crate) fn validate_gate_rate_keys(
         &self,
         locations: &[crate::fault_tolerance::propagator::DagSpacetimeLocation],
-    ) -> Result<(), GateRateKeyMismatch> {
+    ) -> Result<(), GateRateKeyError> {
         self.base.validate_gate_rate_keys(locations)?;
         validate_active_gate_rate_keys(
             "rates_1q",
@@ -4667,6 +4712,35 @@ impl PerGateTypeNoise {
             .or_else(|| self.explicit_1q_rates(gate))
     }
 
+    /// Names the settings that would give any qubit nonzero idle noise, or
+    /// `None` when none would.
+    ///
+    /// Mirrors idle resolution: a per-qubit `Idle` entry wins, then a
+    /// gate-type `Idle` entry, which shadows the base idle model for every
+    /// other qubit.
+    #[must_use]
+    pub fn idle_noise_request(&self) -> Option<String> {
+        let nonzero = |rates: &[f64; 3]| rates.iter().any(|&p| p != 0.0);
+        let mut per_qubit: Vec<(usize, [f64; 3])> = self
+            .rates_1q_per_qubit
+            .iter()
+            .filter(|&(&(gate, _), rates)| gate == GateType::Idle && nonzero(rates))
+            .map(|(&(_, qubit), &rates)| (qubit.index(), rates))
+            .collect();
+        // The map is unordered; sort so the message is deterministic.
+        per_qubit.sort_by_key(|&(qubit, _)| qubit);
+        let mut parts: Vec<String> = per_qubit
+            .into_iter()
+            .map(|(qubit, rates)| format!("rates_1q_per_qubit[(Idle, {qubit})] = {rates:?}"))
+            .collect();
+        match self.rates_1q.get(&GateType::Idle) {
+            Some(rates) if nonzero(rates) => parts.push(format!("rates_1q[Idle] = {rates:?}")),
+            Some(_) => {}
+            None => parts.extend(self.base.idle_noise_request()),
+        }
+        (!parts.is_empty()).then(|| parts.join(", "))
+    }
+
     /// Attach rates for a 2Q gate on a specific ordered qubit pair.
     /// Takes precedence over [`Self::with_2q_rates`] for that
     /// `(gate, q_control, q_target)` combination.
@@ -4784,14 +4858,16 @@ impl PerGateTypeNoise {
     ///
     /// # Errors
     ///
-    /// Returns an error if this model carries invalid probabilities, dedicated idle noise, or any
-    /// `GateType::Idle` rates -- idle noise cannot be represented in the
-    /// returned Pauli channel.
+    /// Returns an error if this model carries invalid probabilities, requested idle noise, or any
+    /// `GateType::Idle` rates, including base gate-rate keys -- idle noise cannot be
+    /// represented in the returned Pauli channel.
     #[cfg(feature = "neo")]
     pub fn to_neo_channel(
         &self,
     ) -> pecos_neo::noise::validation::ValidationResult<pecos_neo::noise::PerGatePauliChannel> {
-        if self.base.uses_dedicated_idle_noise()
+        if self.base.idle_noise_request().is_some()
+            || self.base.p1_gate_rates.contains_key(&GateType::Idle)
+            || self.base.p2_gate_rates.contains_key(&GateType::Idle)
             || self.rates_1q.contains_key(&GateType::Idle)
             || self
                 .rates_1q_per_qubit

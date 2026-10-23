@@ -5,8 +5,9 @@
 //! This is an internal protocol between PECOS packages, not a public API. A
 //! version-1 provider is any Python object with:
 //!
-//! - `_pecos_decoder_api_version == 1`. Any other value is rejected, so a change
-//!   to this contract takes a new version number.
+//! - `_pecos_decoder_api_version`, the integer 1. Any other value, including
+//!   `True` and `1.0`, is rejected, so a change to this contract takes a new
+//!   version number.
 //! - `history_dependent: bool` and `wall_clock_dependent: bool`, read once when the
 //!   provider is passed to `decode`. Either one keeps automatic planning
 //!   sequential. An explicit parallel worker count is rejected for a
@@ -33,9 +34,10 @@
 //! one DEM is prepared once per decode call and shared by every worker build,
 //! including concurrent builds. A failed preparation is cached the same way, so
 //! every build reports that one exception unchanged. The prepared object is
-//! released after the decode call. Preparation may run on any worker thread and
-//! blocks the other builds until it finishes, so it must not re-enter PECOS batch
-//! decoding.
+//! released after the decode call. Preparation may run on a pool worker thread
+//! while the call's other builds wait for it, so it must not re-enter PECOS batch
+//! decoding: a worker thread waiting on a nested call can pick up another build of
+//! the outer call, which then waits on the preparation running on that same thread.
 //!
 //! Version 2 also replaces the worker method with `_pecos_decode_outcome(bytes)`,
 //! returning `(words_or_none, fallback_used, syndrome_consistent_or_none, deltas)`.
@@ -50,10 +52,10 @@ use crate::decoder_spec_bindings::PyDecoderSpec;
 use pecos_decoder_core::{DecoderError, ObservableDecoder, obs_mask::ObsMask};
 use pecos_decoders::batch::{DecoderFactory, PreparedModel};
 use pecos_decoders::{DecodeModel, DecoderSpec, spec::ExecutionTraits};
-use pyo3::exceptions::{PyAttributeError, PyRuntimeError, PyTypeError};
+use pyo3::exceptions::{PyAttributeError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
-use pyo3::types::{PyBytes, PyString};
+use pyo3::types::{PyBool, PyBytes, PyString};
 
 pub(crate) enum BatchDecoderSpec {
     Builtin(DecoderSpec),
@@ -61,8 +63,9 @@ pub(crate) enum BatchDecoderSpec {
         spec: Py<PyAny>,
         traits: ExecutionTraits,
         version: u32,
-        /// The one DEM of this decode call and the outcome of preparing it.
-        prepared: PyOnceLock<(String, PyResult<Py<PyAny>>)>,
+        /// The outcome of preparing this decode call's one DEM. A spec is extracted
+        /// per decode call, and a call builds every decoder from one model.
+        prepared: PyOnceLock<PyResult<Py<PyAny>>>,
     },
 }
 
@@ -99,6 +102,8 @@ impl BatchDecoderSpec {
         // An object without the version member is simply not a provider; any
         // other failure while reading it belongs to the caller.
         let version = match decoder.getattr("_pecos_decoder_api_version") {
+            // A bool is an int in Python, but True is not a version number.
+            Ok(version) if version.is_instance_of::<PyBool>() => None,
             Ok(version) => version.extract::<u32>().ok(),
             Err(error)
                 if error.is_instance_of::<PyAttributeError>(py)
@@ -208,19 +213,14 @@ impl DecoderFactory for BatchDecoderSpec {
                     let worker = if *version == 2 {
                         // A failure is cached too, so concurrent builders report the
                         // one exception instead of each repeating the preparation.
-                        let (prepared_dem, prepared) = prepared.get_or_init(py, || {
-                            let prepared = spec
-                                .bind(py)
-                                .call_method1("_pecos_prepare_decoder", (dem,))
-                                .map(Bound::unbind);
-                            (dem.clone(), prepared)
-                        });
-                        if prepared_dem != dem {
-                            return Err(PyRuntimeError::new_err(
-                                "internal error: a decoder provider preparation was reused for a different DEM",
-                            ));
-                        }
-                        let prepared = prepared.as_ref().map_err(|error| error.clone_ref(py))?;
+                        let prepared = prepared
+                            .get_or_init(py, || {
+                                spec.bind(py)
+                                    .call_method1("_pecos_prepare_decoder", (dem,))
+                                    .map(Bound::unbind)
+                            })
+                            .as_ref()
+                            .map_err(|error| error.clone_ref(py))?;
                         prepared.bind(py).call_method0("_pecos_build_decoder")?
                     } else {
                         spec.bind(py).call_method1("_pecos_build_decoder", (dem,))?

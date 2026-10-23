@@ -47,9 +47,10 @@ def test_provider_validation_and_execution_traits():
     with pytest.raises(TypeError, match="decoder must"):
         batch.decode(DEM, object())
     provider = Provider()
-    provider._pecos_decoder_api_version = 99
-    with pytest.raises(TypeError, match="version-1"):
-        batch.decode(DEM, provider)
+    for version in (99, True, 1.0):
+        provider._pecos_decoder_api_version = version
+        with pytest.raises(TypeError, match="version-1"):
+            batch.decode(DEM, provider)
     provider._pecos_decoder_api_version = 1
     provider.history_dependent = True
     with pytest.raises(ValueError, match="history|stateful|workers"):

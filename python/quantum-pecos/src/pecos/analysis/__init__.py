@@ -28,6 +28,12 @@ Example:
 from pecos.analysis import fault_tolerance_checks as fault_tolerance
 from pecos.analysis import pseudo_threshold_tools as pseudo_threshold
 from pecos.analysis import threshold_tools as threshold
+from pecos.analysis.circuit_parallelism import (
+    CircuitParallelism,
+    ParallelismSummary,
+    ParallelLayer,
+    circuit_parallelism,
+)
 from pecos.analysis.circuit_statistics import (
     CircuitRunStatistics,
     CircuitStatistics,
@@ -68,16 +74,20 @@ from pecos.analysis.tool_anticommute import anticommute
 from pecos.analysis.tool_collection import fault_tolerance_check
 
 __all__ = [
+    "CircuitParallelism",
     "CircuitRunStatistics",
     "CircuitStatistics",
     "CircuitStatisticsData",
     "ExecutionViews",
     "OperationClassifier",
     "OperationStatistic",
+    "ParallelLayer",
+    "ParallelismSummary",
     "RuntimeSummary",
     "StatisticValue",
     "VerifyStabilizers",
     "anticommute",
+    "circuit_parallelism",
     "classify_operations",
     "cliff_str2matrix",
     "codecapacity_logical_rate",

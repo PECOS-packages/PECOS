@@ -859,9 +859,18 @@ impl ScheduleTimeline {
                 }
                 for q in &gate.qubits {
                     let q = q.0;
+                    if q >= config.qubits {
+                        return Err(error(&format!(
+                            "scheduled qubit {q} is outside profile capacity {}; use qubits 0..{} or enlarge the profile",
+                            config.qubits, config.qubits
+                        )));
+                    }
                     let busy_until = prepared.timeline.ends.get(&q).copied().unwrap_or(0);
-                    if q >= config.qubits || batch.start_nanos < busy_until {
-                        return Err(error("scheduled capacity or timing overlap"));
+                    if batch.start_nanos < busy_until {
+                        return Err(error(&format!(
+                            "scheduled batch {} starts at {} ns while qubit {q} is busy until {busy_until} ns; start the batch at or after {busy_until} ns",
+                            batch.batch_index, batch.start_nanos
+                        )));
                     }
                     if touched.insert(q) {
                         let gap = batch.start_nanos - busy_until;
@@ -992,6 +1001,35 @@ mod timing_tests {
         assert_eq!(
             idle_qubits_and_seconds(&ops(&prepared, 1)),
             vec![(0, 2.0), (1, 2.0)]
+        );
+    }
+    #[test]
+    fn capacity_and_overlap_errors_name_the_qubit_and_times() {
+        let outside = ScheduleTimeline::new()
+            .prepare(&config(), vec![batch(0, 0, 1, vec![Gate::mz(&[2])])])
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(
+            outside.contains("qubit 2 is outside profile capacity 2"),
+            "{outside}"
+        );
+        let overlap = ScheduleTimeline::new()
+            .prepare(
+                &config(),
+                vec![
+                    batch(0, 0, 5, vec![Gate::mz(&[0])]),
+                    batch(1, 4, 1, vec![Gate::mz(&[0])]),
+                ],
+            )
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(
+            overlap.contains(
+                "batch 1 starts at 4000000000 ns while qubit 0 is busy until 5000000000 ns"
+            ),
+            "{overlap}"
         );
     }
     #[test]

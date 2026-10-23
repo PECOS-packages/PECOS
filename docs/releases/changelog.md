@@ -320,11 +320,14 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 ### Python bug fixes
 
 - Stabilizer generator products now include the ZX = -XZ reordering phase
-  everywhere they are formed. `SparseStabPy` refactoring, `remove_stab`, and
-  `find_logical_signs` previously could give a new or surviving generator, or a
-  logical operator with two or more Ys, the wrong sign. `remove_stab` and
-  `is_not_stabilizer` now test commutation by the combined X/Z overlap parity, so
-  operators containing Y are no longer misclassified as anticommuting.
+  everywhere they are formed. `SparseStabPy` refactoring and `remove_stab`
+  previously could give a new or surviving generator the wrong sign.
+  `find_logical_signs` gave the wrong sign for a logical operator whose Y count
+  is 2 or 3 mod 4. `remove_stab` and `is_not_stabilizer` now test commutation by
+  the combined X/Z overlap parity; before, an operator whose X and Z overlaps
+  with some stabilizer were both odd (so it commutes) was reported as
+  anticommuting. `refactor(state, xs, zs)` with the default `choose` and
+  `protected` no longer raises `KeyError`.
 
 - SZZ physical-prefix lowering (`szz_physical_prefixes=True`) folds `F`, `FDG`,
   `SY` and `SYDG` into the pending Clifford. Before, they jumped ahead of the
@@ -626,12 +629,15 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 - `GensGeneric::refactor` gives the new generator the full product phase,
   including the ZX = -XZ reordering term. `GensGeneric` now records its
-  `PauliConvention`, so `generator`, `generators`, `compute_product_sign`,
-  `find_pauli_sign` and `refactor` return correct phases for `SparseStabY`
-  tableaus as well as `SparseStab`; they previously applied the `SparseStab`
-  rule to `SparseStabY`'s Y entries. `compute_product_sign` multiplies in
-  forward iteration order. `pecos-zx`'s `gens_to_pauli_strings` no longer drops
-  the stored imaginary phase.
+  `PauliConvention` (new; set with `GensGeneric::with_convention`, read with
+  `convention()`; `new` and `from_parts` build the `SparseStab` convention), so
+  `generator`, `generators`, `compute_product_sign`, `find_pauli_sign` and
+  `refactor` return correct phases for `SparseStabY` tableaus as well as
+  `SparseStab`; they previously applied the `SparseStab` rule to `SparseStabY`'s
+  Y entries. `compute_product_sign` multiplies in forward iteration order, which
+  changes results only for anticommuting index sets, never for stabilizer
+  products. `pecos-zx`'s `gens_to_pauli_strings` now converts stored XZ pairs to
+  Y, so generators whose Y count is 2 or 3 mod 4 no longer get the wrong sign.
 
 - pecos-neo decompositions apply to every operand group of a batched gate. This
   covers registered decompositions in `CircuitRunner`, `CircuitResolver`

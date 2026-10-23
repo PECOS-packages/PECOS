@@ -32,7 +32,14 @@ def test_remove_stab_preserves_signed_group() -> None:
         delogical_zs = set(state.destabs.row_z[partner_id])
         original = deepcopy(state)
 
-        remove_stab(state, logical_xs, logical_zs, delogical_xs, delogical_zs)
+        # Odd trials pass the live destabilizer rows, which removal mutates.
+        remove_stab(
+            state,
+            logical_xs,
+            logical_zs,
+            state.destabs.row_x[partner_id] if trial % 2 else delogical_xs,
+            state.destabs.row_z[partner_id] if trial % 2 else delogical_zs,
+        )
 
         removed = []
         for gen, (xs, zs) in enumerate(zip(state.stabs.row_x, state.stabs.row_z, strict=True)):

@@ -206,6 +206,14 @@ NoiseEvent::AfterGate {
 }
 ```
 
+After-gate events carry executed operand groups plus groups suppressed while
+containing a leaked qubit, in original operand order. The runner checks leakage
+immediately after before-gate dispatch, before execution or decomposition.
+Groups suppressed without leakage are absent even if a child gate later leaks
+one of their qubits. Queue user after-gate handlers receive the same filtered
+operands. If all operands of a non-empty command are dropped, no after-gate
+event or handler runs. Originally empty operand slices retain their behavior.
+
 ## Multiple Shots
 
 ```rust

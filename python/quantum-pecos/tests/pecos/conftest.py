@@ -63,6 +63,7 @@ def build_timed_runtime(
         "-std=c11",
         "-shared",
         "-fPIC",
+        "-pthread",
         "-I",
         str(includes[0]),
         "-DBASE_LIBRARY=" + json.dumps(str(SimpleRuntimePlugin().library_file)),

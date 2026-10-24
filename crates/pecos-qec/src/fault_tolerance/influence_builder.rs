@@ -508,6 +508,9 @@ impl<'a> InfluenceBuilder<'a> {
                             sim.h(&[qubits[0]]);
                         }
                         sim.mz(&[qubits[0]]);
+                        if op.gate_type == pecos_quantum::GateType::MX {
+                            sim.h(&[qubits[0]]);
+                        }
                         if op.gate_type == pecos_quantum::GateType::MPZ {
                             // Measure-and-prepare resets after the readout.
                             sim.pz(qubits[0]);
@@ -1213,6 +1216,31 @@ mod tests {
     use super::*;
     use crate::fault_tolerance::propagator::DemOutputKind;
     use pecos_quantum::DagCircuit;
+
+    #[test]
+    fn mx_influence_restores_x_eigenstate() {
+        for minus in [false, true] {
+            let mut tc = pecos_quantum::TickCircuit::new();
+            tc.tick().h(&[0]);
+            if minus {
+                tc.tick().z(&[0]);
+            }
+            tc.tick().mx(&[0]);
+            tc.tick().mx(&[0]);
+            let dag = DagCircuit::try_from(&tc).unwrap();
+            let builder = InfluenceBuilder::new(&dag).unwrap();
+            let replay = builder.run_symbolic_simulation().unwrap();
+            let first = replay.history.get(0).unwrap();
+            let second = replay.history.get(1).unwrap();
+            assert!(first.is_deterministic);
+            assert!(second.is_deterministic);
+            assert!(second.outcome.is_empty());
+            assert_eq!(second.outcome, first.outcome);
+            assert_eq!(second.flip, first.flip);
+            assert_eq!(second.flip, minus);
+            assert_eq!(builder.build().unwrap().detectors.len(), 2);
+        }
+    }
 
     #[test]
     fn emission_replay_determinism_matches_tick_history() {

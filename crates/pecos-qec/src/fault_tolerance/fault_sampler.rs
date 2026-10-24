@@ -1660,6 +1660,9 @@ pub fn symbolic_measurement_history(
                             leaked_sites.insert(result.index, (tick_idx, qs.clone()));
                         }
                     }
+                    if gate.gate_type == GateType::MX {
+                        sim.h(&qs);
+                    }
                     // Measure-and-prepare resets after the readout.
                     if gate.gate_type == GateType::MPZ {
                         for &q in &qs {
@@ -2733,6 +2736,36 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn mx_history_restores_x_eigenstate() {
+        for prepared in [false, true] {
+            for minus in [false, true] {
+                let mut tc = TickCircuit::new();
+                if prepared {
+                    tc.tick().h(&[0]);
+                }
+                if minus {
+                    tc.tick().z(&[0]);
+                }
+                tc.tick().mx(&[0]);
+                tc.tick().mx(&[0]);
+                let history = symbolic_measurement_history(&tc).unwrap();
+                let first = history.get(0).unwrap();
+                let second = history.get(1).unwrap();
+                assert_eq!(first.is_deterministic, prepared);
+                assert!(second.is_deterministic);
+                assert_eq!(second.outcome, first.outcome);
+                assert_eq!(second.flip, first.flip);
+                if prepared {
+                    assert!(second.outcome.is_empty());
+                    assert_eq!(second.flip, minus);
+                } else {
+                    assert_eq!(second.outcome.iter().collect::<Vec<_>>(), [0]);
+                }
+            }
+        }
     }
 
     // ---- symbolic_measurement_history tests ----

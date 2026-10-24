@@ -101,7 +101,7 @@ jobs:
         shell: bash
         # A step timeout below the job's lets the always() steps below publish the
         # log when the suite runs long; a job timeout cancels them and the log is lost.
-        # The suite takes about 12 minutes on a warm runner.
+        # The suite takes about 4-6 minutes.
         timeout-minutes: 25
         run: |
           set -euo pipefail

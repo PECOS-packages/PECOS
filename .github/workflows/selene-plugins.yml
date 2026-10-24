@@ -91,7 +91,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     # Linux also builds the PECOS packages for the cross-runtime parity tests
     # (about 14 min cold), and non-PR Linux runs add the extended semantic suite
-    # (about 31 min); a cold non-PR run measured about 50 min.
+    # (about 6 min); a cold non-PR run measured about 24 min.
     timeout-minutes: ${{ matrix.os != 'ubuntu-latest' && 30 || github.event_name != 'pull_request' && 75 || 60 }}
     strategy:
       fail-fast: false

@@ -119,7 +119,7 @@ fn invalid_batches_do_not_escape_and_failures_require_reset() {
 #[test]
 fn callback_budgets_reject_before_reading_oversize_payload_and_stop_appends() {
     let mut batch = RuntimeOperationBatch {
-        extraction_budget: Some((1, 2)),
+        extraction_budget: Some((crate::scheduled_transport::BudgetLayout::Minimum, 40, 2)),
         ..Default::default()
     };
     unsafe {
@@ -137,7 +137,7 @@ fn callback_budgets_reject_before_reading_oversize_payload_and_stop_appends() {
         Some("runtime payload budget exceeded")
     );
     let mut batch = RuntimeOperationBatch {
-        extraction_budget: Some((1, 0)),
+        extraction_budget: Some((crate::scheduled_transport::BudgetLayout::Minimum, 40, 0)),
         ..Default::default()
     };
     unsafe {
@@ -148,24 +148,26 @@ fn callback_budgets_reject_before_reading_oversize_payload_and_stop_appends() {
     assert_eq!(batch.operations.len(), 1);
     assert_eq!(
         batch.callback_error,
-        Some("runtime operation budget exceeded")
+        Some("runtime operation byte budget exceeded; reduce scheduled output")
     );
 }
 
 #[test]
-fn operation_limit_applies_to_one_native_batch() {
+fn byte_budget_applies_to_one_native_batch() {
     let mut runtime = synthetic();
-    assert!(
-        runtime
-            .collect_scheduled(|runtime| {
-                runtime.retain_scheduled_batch(RuntimeOperationBatch {
-                    operations: vec![RuntimeScheduledOp::Reset { qubit_id: 0 }; MAX_OPERATIONS + 1],
-                    ..Default::default()
-                })?;
-                Ok(vec![])
-            })
-            .is_err()
-    );
+    let (layout, remaining) = crate::scheduled_transport::EventBudget::default().batch_allowance();
+    // One framing plus floor(remaining / gate cost) + 1 = 1,677,721 resets exceeds 64 MiB.
+    let count = remaining / layout.operation_bytes(None, false) + 1;
+    let error = runtime
+        .collect_scheduled(|runtime| {
+            runtime.retain_scheduled_batch(RuntimeOperationBatch {
+                operations: vec![RuntimeScheduledOp::Reset { qubit_id: 0 }; count],
+                ..Default::default()
+            })?;
+            Ok(vec![])
+        })
+        .unwrap_err();
+    assert!(error.to_string().contains("event transport limit"));
 }
 
 #[test]
@@ -608,4 +610,32 @@ fn budget_rejected_batch_has_no_measurement_or_custom_effects() {
     assert!(error.contains("event transport limit"), "{error}");
     assert!(runtime.emitted_measurements.is_empty());
     assert_eq!(*delivered.lock().unwrap(), vec![0; accepted]);
+}
+
+#[test]
+fn callback_reservation_matches_both_transport_layouts() {
+    use crate::scheduled_transport::{BudgetLayout, EventBudget};
+    for layout in [BudgetLayout::Minimum, BudgetLayout::V7] {
+        let mut budget = EventBudget::new(layout);
+        let (layout, allowance) = budget.batch_allowance();
+        let mut batch = RuntimeOperationBatch {
+            extraction_budget: Some((layout, allowance, MAX_PAYLOAD_BYTES)),
+            ..Default::default()
+        };
+        unsafe {
+            runtime_batch_reset((&raw mut batch).cast(), 0);
+            runtime_batch_measure((&raw mut batch).cast(), 0, 1);
+            runtime_batch_measure_leaked((&raw mut batch).cast(), 0, 2);
+            runtime_batch_custom((&raw mut batch).cast(), 1, b"abc".as_ptr().cast(), 3);
+        }
+        let expected = layout.operation_bytes(None, false)
+            + 2 * layout.operation_bytes(None, true)
+            + layout.operation_bytes(Some(3), false);
+        assert_eq!(batch.extraction_budget.unwrap().1, allowance - expected);
+        budget.charge(&batch.operations, 2).unwrap();
+        assert_eq!(
+            budget.batch_allowance().1,
+            allowance - expected - layout.framing_bytes(0)
+        );
+    }
 }

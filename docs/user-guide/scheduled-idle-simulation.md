@@ -4,9 +4,8 @@ The opt-in QIS scheduled route carries original native batch timestamps into
 `sim()` and applies checked local idle channels using `GeneralNoiseModel`. It supports
 state-vector simulation and `pr.stabilizer()` with a fixed admitted profile of at
 least one physical qubit; the profile sets no upper bound on the qubit count.
-Per-batch limits still apply: at most 4096 operations per native batch and, for
-crosstalk exposures from v7 adapters, 16,384 spectator targets per batch, where a
-global exposure counts the whole profile capacity. Stabilizer execution requires zero coherent
+Batch records and spectator targets are bounded by the 64 MiB schedule byte
+budget, not by fixed counts. Stabilizer execution requires zero coherent
 idle rate and supported Clifford rotations. It accepts stochastic idle noise,
 including the sine-squared dephasing channel, and the checked local/crosstalk profiles.
 Coherent noise is never converted automatically: choosing a stochastic profile
@@ -290,9 +289,9 @@ profile classes.
 
 ## Shared scheduled admission and execution limits
 
-Every scheduled profile admits at most 4096 gates per batch. Same-qubit
-measurement, reset and reuse (including repeated measurement) execute in the
-runtime's original operation order. Each measurement captures the leakage state
+Every scheduled profile bounds batch records by the 64 MiB schedule byte budget.
+Same-qubit measurement, reset and reuse (including repeated measurement) execute
+in the runtime's original operation order. Each measurement captures the leakage state
 at its own position, so a later reset cannot change an earlier readout. This
 applies to both original v6 and normalized v7 gates, including idle-only profiles.
 Adapters cannot split or retime native batches.

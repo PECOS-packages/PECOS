@@ -7,8 +7,7 @@ use crate::runtime::{
     ClassicalState, QisRuntime, Result, RuntimeError, Shot, for_each_quantum_qubit,
 };
 use crate::scheduled::{
-    MAX_OPERATIONS, MAX_PAYLOAD_BYTES, RuntimeScheduledOp, ScheduledBatch, ScheduledMeasurement,
-    ScheduledOutput,
+    MAX_PAYLOAD_BYTES, RuntimeScheduledOp, ScheduledBatch, ScheduledMeasurement, ScheduledOutput,
 };
 use crate::selene_native::{NativeOp, RuntimeInput, classify};
 pub use crate::selene_native::{RuntimeNativeGate, RuntimeNativeGateSet};
@@ -33,23 +32,33 @@ struct RuntimeOperationBatch {
     invoked: bool,
     callback_error: Option<&'static str>,
     operations: Vec<RuntimeScheduledOp>,
-    extraction_budget: Option<(usize, usize)>,
+    extraction_budget: Option<(crate::scheduled_transport::BudgetLayout, usize, usize)>,
     payload_bytes: usize,
 }
 
 impl RuntimeOperationBatch {
     // Every callback must stop allocating after the first failure. Reserve
     // explicitly so operation-vector growth cannot panic/abort through Vec::push.
-    fn reserve_operations(&mut self, additional: usize) -> bool {
+    fn reserve_operations(
+        &mut self,
+        additional: usize,
+        data_len: Option<usize>,
+        measurement: bool,
+    ) -> bool {
         self.invoked = true;
         if self.callback_error.is_some() {
             return false;
         }
-        if self
-            .extraction_budget
-            .is_some_and(|(limit, _)| self.operations.len().saturating_add(additional) > limit)
-        {
-            self.callback_error = Some("runtime operation budget exceeded");
+        if let Some((layout, remaining, _)) = &mut self.extraction_budget {
+            let bytes = layout
+                .operation_bytes(data_len, measurement)
+                .saturating_mul(additional);
+            if let Some(left) = remaining.checked_sub(bytes) {
+                *remaining = left;
+            } else {
+                self.callback_error =
+                    Some("runtime operation byte budget exceeded; reduce scheduled output");
+            }
         }
         if self.callback_error.is_some() {
             return false;
@@ -62,7 +71,15 @@ impl RuntimeOperationBatch {
     }
 
     fn push(&mut self, operation: RuntimeScheduledOp) {
-        if self.reserve_operations(1) {
+        let measurement = matches!(
+            operation,
+            RuntimeScheduledOp::Measure { .. } | RuntimeScheduledOp::MeasureLeaked { .. }
+        );
+        let data_len = match &operation {
+            RuntimeScheduledOp::Custom { data, .. } => Some(data.len()),
+            _ => None,
+        };
+        if self.reserve_operations(1, data_len, measurement) {
             self.operations.push(operation);
         }
     }
@@ -210,12 +227,12 @@ unsafe extern "C" fn runtime_batch_custom(
     }
     if batch
         .extraction_budget
-        .is_some_and(|(_, limit)| data_len > limit.saturating_sub(batch.payload_bytes))
+        .is_some_and(|(_, _, limit)| data_len > limit.saturating_sub(batch.payload_bytes))
     {
         batch.callback_error = Some("runtime payload budget exceeded");
         return;
     }
-    if !batch.reserve_operations(1) {
+    if !batch.reserve_operations(1, Some(data_len), false) {
         return;
     }
     batch.payload_bytes = batch.payload_bytes.saturating_add(data_len);
@@ -1077,9 +1094,6 @@ impl SeleneRuntime {
         let capacity = self
             .num_qubits_hint
             .ok_or_else(|| fail("scheduled extraction requires explicit capacity"))?;
-        if batch.operations.len() > MAX_OPERATIONS {
-            return Err(fail("scheduled per-batch operation budget exceeded"));
-        }
         let mut bytes = 0usize;
         let mut measurements = Vec::new();
         measurements
@@ -2220,7 +2234,12 @@ impl SeleneRuntime {
             }
             let mut batch = RuntimeOperationBatch::default();
             if terminal || self.scheduled_output.is_some() {
-                batch.extraction_budget = Some((MAX_OPERATIONS, MAX_PAYLOAD_BYTES));
+                let budget = self
+                    .scheduled_output
+                    .as_ref()
+                    .map_or(&terminal_budget, |output| &output.budget);
+                let (layout, remaining) = budget.batch_allowance();
+                batch.extraction_budget = Some((layout, remaining, MAX_PAYLOAD_BYTES));
             }
             let errno = {
                 let lib = self.library.as_ref().ok_or_else(|| {
@@ -3227,10 +3246,11 @@ impl QisRuntime for SeleneRuntime {
     /// decomposed through the same native table as flat lowering. Reset,
     /// measurements, allocation/release and barriers are accepted; Idle and source
     /// trace metadata are rejected rather than silently lost. Flat and scheduled lowering cannot
-    /// be mixed within a shot. Each native batch admits at most 4096 operations
-    /// and 256 KiB of opaque payload. Each collection is capped at the cheapest
-    /// size any scheduled transport could encode, so it cannot grow without
-    /// bound. No history is kept after return.
+    /// be mixed within a shot. Opaque payloads are capped at 256 KiB per batch.
+    /// Each collection is capped at the 64 MiB schedule budget, charged at the
+    /// cheapest size any scheduled transport could encode and reserved before
+    /// records are allocated, so it cannot grow without bound. No history is kept
+    /// after return.
     ///
     /// # Errors
     /// Rejects unsupported inputs before submission. Extraction failures after
@@ -3701,7 +3721,7 @@ mod tests {
         let mut batch = RuntimeOperationBatch::default();
         // Deterministic capacity overflow exercises the fallible reserve path
         // without allocating large memory or passing an unreadable payload.
-        assert!(!batch.reserve_operations(usize::MAX));
+        assert!(!batch.reserve_operations(usize::MAX, None, false));
         unsafe {
             runtime_batch_custom((&raw mut batch).cast(), 8404, std::ptr::null(), 0);
             runtime_batch_rz((&raw mut batch).cast(), 0, 0.25);

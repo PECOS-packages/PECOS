@@ -9,7 +9,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
 };
 
-/// Maximum complete transport size. Extraction itself remains uncapped.
+/// Maximum complete transport size and scheduled collection byte budget.
 pub const MAX_SCHEDULE_BYTES: usize = 64 * 1024 * 1024;
 /// Native timing and ordered operations. The v6 encoder admits ordinary gates
 /// only. Internally normalized v7 batches may also carry checked exposure metadata;
@@ -843,9 +843,6 @@ impl ScheduleTimeline {
                 .start_nanos
                 .checked_add(batch.duration_nanos)
                 .ok_or_else(|| error("schedule time overflow"))?;
-            if batch.gates.len() > crate::scheduled_events::MAX_BATCH_OPERATIONS {
-                return Err(error("scheduled batch operation limit"));
-            }
             let mut touched = BTreeSet::new();
             let mut builder = ByteMessage::quantum_operations_builder();
             for gate in batch.gates {

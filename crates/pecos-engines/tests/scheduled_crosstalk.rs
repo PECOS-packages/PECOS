@@ -444,7 +444,7 @@ fn leakage_and_unprepared_victims_follow_general_semantics() {
 }
 
 #[test]
-fn maximum_spectator_fanout_and_latched_output_rejection() {
+fn global_exposures_above_old_fanout_are_admitted() {
     struct Fanout(usize);
     impl ScheduledBatchAdapter for Fanout {
         fn validate(&self, _: &ScheduledEventBatch) -> Result<(), PecosError> {
@@ -456,36 +456,34 @@ fn maximum_spectator_fanout_and_latched_output_rejection() {
             out: &mut ScheduledGateBuffer<'_>,
         ) -> Result<(), PecosError> {
             for _ in 0..self.0 {
-                // Even swallowing an admission failure cannot authorize the batch.
-                let _ = out.push_crosstalk(ScheduledCrosstalk::GlobalExcluding(vec![]));
+                out.push_crosstalk(ScheduledCrosstalk::GlobalExcluding(vec![]))?;
             }
             Ok(())
         }
     }
-    for count in [1024, 1025] {
-        let config = ScheduledNoise::new(16)
-            .unwrap()
-            .with_measurement_crosstalk(0.0, 0.0, flips())
-            .unwrap();
-        let model = ScheduledEventNoise::new(config, move |_| Ok(Box::new(Fanout(count))))
-            .into_noise_model()
-            .unwrap();
-        let mut system = QuantumSystem::new(model, Box::new(StateVecEngine::new(16)));
-        system
-            .begin_shot(ShotContext {
-                run: 0,
-                worker: 0,
-                shot: 0,
-            })
-            .unwrap();
-        let result =
-            system.process(encode_event_batches(&[batch(0, 0, 0, vec![e(1, &[])])]).unwrap());
-        assert_eq!(result.is_ok(), count == 1024);
-    }
+    // 1025 global exposures at capacity 16 exceed the former 16 384-target limit.
+    let count = 1025;
+    let config = ScheduledNoise::new(16)
+        .unwrap()
+        .with_measurement_crosstalk(0.0, 0.0, flips())
+        .unwrap();
+    let model = ScheduledEventNoise::new(config, move |_| Ok(Box::new(Fanout(count))))
+        .into_noise_model()
+        .unwrap();
+    let mut system = QuantumSystem::new(model, Box::new(StateVecEngine::new(16)));
+    system
+        .begin_shot(ShotContext {
+            run: 0,
+            worker: 0,
+            shot: 0,
+        })
+        .unwrap();
+    let result = system.process(encode_event_batches(&[batch(0, 0, 0, vec![e(1, &[])])]).unwrap());
+    result.unwrap();
 }
 
 #[test]
-fn firing_exposures_at_maximum_fanout_fit_the_execution_budget() {
+fn firing_exposures_above_old_fanout_fit_the_execution_budget() {
     // Every candidate fires and flips, so each target costs an internal MZ and a
     // transition. Global exposures charge the whole capacity, not their list.
     let profile = || {
@@ -504,23 +502,21 @@ fn firing_exposures_at_maximum_fanout_fit_the_execution_budget() {
     // An odd number of global flips leaves every qubit in |1>.
     let global = around((0..1023).map(|_| e(1, &[])).collect());
     assert_eq!(run(&mut host_with(profile(), 16), &[global]), vec![1; 16]);
-    // Exactly the aggregate target limit; an even number of flips.
+    // At the former aggregate target limit; an even number of flips.
     let mut exposures: Vec<_> = (0..1024).map(|_| e(0, &all)).collect();
     let local = around(exposures.clone());
     assert_eq!(run(&mut host_with(profile(), 16), &[local]), vec![0; 16]);
     exposures.push(e(0, &[0]));
-    let error = host_with(profile(), 16)
-        .process(encode_event_batches(&[around(exposures)]).unwrap())
-        .err()
-        .expect("expected rejection");
-    assert!(
-        error.to_string().contains("spectator expansion limit"),
-        "{error}"
+    let mut expected = vec![0; 16];
+    expected[0] = 1;
+    assert_eq!(
+        run(&mut host_with(profile(), 16), &[around(exposures)]),
+        expected
     );
 }
 
 #[test]
-fn writer_rejects_oversized_lists_and_full_batches_at_push() {
+fn writer_rejects_oversized_lists_and_accepts_records_above_old_bound() {
     struct Full;
     impl ScheduledBatchAdapter for Full {
         fn validate(&self, _: &ScheduledEventBatch) -> Result<(), PecosError> {
@@ -531,7 +527,7 @@ fn writer_rejects_oversized_lists_and_full_batches_at_push() {
             _: &ScheduledEventBatch,
             out: &mut ScheduledGateBuffer<'_>,
         ) -> Result<(), PecosError> {
-            for _ in 0..MAX_BATCH_OPERATIONS {
+            for _ in 0..4096 {
                 out.push(Gate::pz(&[0]))?;
             }
             out.push_crosstalk(ScheduledCrosstalk::Local(vec![]))
@@ -559,14 +555,9 @@ fn writer_rejects_oversized_lists_and_full_batches_at_push() {
             shot: 0,
         })
         .unwrap();
-    let error = system
+    system
         .process(encode_event_batches(&[batch(0, 0, 0, vec![e(0, &[])])]).unwrap())
-        .err()
-        .expect("expected rejection");
-    assert!(
-        error.to_string().contains("spectator expansion limit"),
-        "{error}"
-    );
+        .unwrap();
 }
 
 fn basis_probability(system: &mut QuantumSystem, basis: usize) -> f64 {
@@ -797,4 +788,26 @@ fn stabilizer_full_capacity_spectators_resume_without_exposing_internal_results(
         ),
         vec![0]
     );
+}
+
+#[test]
+fn global_exposure_at_16400_qubits_is_admitted() {
+    const QUBITS: usize = 16_400;
+    let profile = ScheduledNoise::new(QUBITS)
+        .unwrap()
+        .with_measurement_crosstalk(1.0, 1.0, flips())
+        .unwrap();
+    let mut system = host_with_engine(
+        profile,
+        Box::new(pecos_engines::StabilizerEngine::new(QUBITS)),
+    );
+    // Prepare the endpoints so the exposure also proves high-index execution.
+    let operations = vec![
+        g(Gate::pz(&[0])),
+        g(Gate::pz(&[QUBITS - 1])),
+        e(1, &[]),
+        g(Gate::mz(&[0])),
+        g(Gate::mz(&[QUBITS - 1])),
+    ];
+    assert_eq!(run(&mut system, &[batch(0, 0, 0, operations)]), vec![1, 1]);
 }

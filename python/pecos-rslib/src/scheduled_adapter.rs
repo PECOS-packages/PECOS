@@ -2,8 +2,8 @@
 use crate::dag_circuit_bindings::PyGate;
 use pecos_core::errors::PecosError;
 use pecos_engines::scheduled_events::{
-    MAX_BATCH_OPERATIONS, ScheduledBatchAdapter, ScheduledCrosstalk, ScheduledEventBatch,
-    ScheduledEventNoise, ScheduledEventOp, ScheduledGateBuffer,
+    ScheduledBatchAdapter, ScheduledCrosstalk, ScheduledEventBatch, ScheduledEventNoise,
+    ScheduledEventOp, ScheduledGateBuffer,
 };
 use pecos_engines::scheduled_frame::{ScheduledIdleZ, ScheduledNoise};
 use pyo3::exceptions::{PyTypeError, PyValueError};
@@ -197,10 +197,17 @@ impl ScheduledBatchAdapter for PythonAdapter {
                 .bind(py)
                 .cast::<PyList>()
                 .map_err(|e| callback_error("output", e.into()))?;
-            if gates.len() > MAX_BATCH_OPERATIONS {
-                return Err(PecosError::Input(
-                    "scheduled adapter expansion limit".into(),
-                ));
+            if gates
+                .len()
+                .checked_mul(40)
+                .is_none_or(|bytes| bytes > output.remaining_bytes())
+            {
+                return Err(PecosError::Input(format!(
+                    "scheduled adapter expansion limit: {} records need at least {} bytes, with {} remaining; reduce adapter output",
+                    gates.len(),
+                    gates.len().saturating_mul(40),
+                    output.remaining_bytes()
+                )));
             }
             for gate in gates.iter() {
                 if let Ok(effect) = gate.extract::<PyScheduledCrosstalk>() {

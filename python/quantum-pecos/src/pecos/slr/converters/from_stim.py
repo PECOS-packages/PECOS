@@ -126,11 +126,11 @@ def _convert_instruction(instruction, q, c, measurement_offset):
             ops.append(Comment(f"Noise: {instruction}"))
 
         if not is_pure_noise:
-            converted = _map_gate(gate_name, targets, args, q, c, measurement_offset)
+            converted = _map_gate(gate_name, targets, q, c, measurement_offset)
             if converted is not None:
                 ops.extend(converted)
             elif is_annotation:
-                ops.append(Comment(f"{gate_name} {targets} {args}"))
+                ops.append(Comment(str(instruction)))
             else:
                 msg = f"Unsupported Stim gate {gate_name}: {instruction}"
                 raise NotImplementedError(msg)
@@ -138,13 +138,12 @@ def _convert_instruction(instruction, q, c, measurement_offset):
     return ops
 
 
-def _map_gate(gate_name, targets, args, q, c, measurement_offset):
+def _map_gate(gate_name, targets, q, c, measurement_offset):
     """Map a Stim gate to SLR operations.
 
     Args:
         gate_name: Name of the Stim gate
         targets: List of target qubits/bits
-        args: Gate arguments (e.g., rotation angles, error probabilities)
         q: Quantum register
         c: Classical register
         measurement_offset: Current offset in measurement record
@@ -223,15 +222,6 @@ def _map_gate(gate_name, targets, args, q, c, measurement_offset):
         basis = {"R": "Z", "RX": "X", "RY": "Y"}[gate_name]
         for idx in qubit_targets:
             ops.extend(_reset_in_basis(q[idx], basis))
-    elif gate_name == "TICK":
-        # Timing boundary - add as comment
-        ops.append(Comment("TICK"))
-    elif gate_name in ["DETECTOR", "OBSERVABLE_INCLUDE"]:
-        # Annotations - add as comment
-        ops.append(Comment(f"{gate_name} {targets}"))
-    elif gate_name == "QUBIT_COORDS":
-        # Coordinate annotation
-        ops.append(Comment(f"QUBIT_COORDS {targets} {args}"))
     else:
         return None
 

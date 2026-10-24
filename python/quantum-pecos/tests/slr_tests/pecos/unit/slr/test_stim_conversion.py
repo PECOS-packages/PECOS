@@ -1,5 +1,7 @@
 """Tests for Stim circuit to/from SLR conversion."""
 
+import re
+
 import pytest
 import stim
 from pecos.slr import Comment, CReg, For, Main, Parallel, QReg, Repeat, Return, SlrConverter, While, rad
@@ -433,8 +435,8 @@ def _assert_records_match_stim(circuit: stim.Circuit) -> None:
     assert samples.shape == (50, len(expected))
     assert (samples == expected).all(), (samples[0], expected)
     qasm = SlrConverter(prog).qasm(skip_headers=True)
-    for index in range(len(expected)):
-        assert qasm.count(f"-> c[{index}]") == 1
+    # Program order is record order, so the k-th measurement must write c[k].
+    assert re.findall(r"-> c\[(\d+)\]", qasm) == [str(index) for index in range(len(expected))]
 
 
 @pytest.mark.parametrize(
@@ -526,8 +528,8 @@ _GATE_EXAMPLES = {
     "SPP": "SPP X0*Z1",
     "SPP_DAG": "SPP_DAG X0*Z1",
     "MPAD": "MPAD 1",
-    "DETECTOR": "DETECTOR rec[-1]",
-    "OBSERVABLE_INCLUDE": "OBSERVABLE_INCLUDE(0) rec[-1]",
+    "DETECTOR": "DETECTOR(4, 5) rec[-1]",
+    "OBSERVABLE_INCLUDE": "OBSERVABLE_INCLUDE(3) rec[-1]",
     "QUBIT_COORDS": "QUBIT_COORDS(1, 2) 0",
     "SHIFT_COORDS": "SHIFT_COORDS(1, 2)",
     "TICK": "TICK",
@@ -599,8 +601,10 @@ def test_stim_gate_catalog(name: str) -> None:
         qasm = SlrConverter(prog).qasm(skip_headers=True)
         assert f"// Noise: {circuit[-1]}" in qasm, name
     elif not (data.is_unitary or data.is_noisy_gate or data.produces_measurements or data.is_reset):
-        assert payload, name
-        assert all(isinstance(op, Comment) for op in payload), name
+        assert len(payload) == 1, name
+        assert isinstance(payload[0], Comment), name
+        qasm = SlrConverter(prog).qasm(skip_headers=True)
+        assert f"// {circuit[-1]}" in qasm, name
     elif data.is_unitary:
         assert stim.Tableau.from_circuit(circuit) == stim.Tableau.from_circuit(SlrConverter(prog).stim()), name
     elif data.produces_measurements:

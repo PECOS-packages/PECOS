@@ -25,12 +25,14 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   and the heralded channels) and classical-feedback or sweep-bit targets
   (`CX rec[-1] 1`) raise `NotImplementedError`. Noise channels, and the noise
   argument of a measurement, become `// Noise:` comments with the full
-  instruction text, and annotations such as `DETECTOR` stay comments. From
-  `QuantumCircuit`, the long-form measurement symbols (`measure X`,
-  `Measure +Y`, ...) are measured in their basis and advance the bit offset.
-  Unsupported symbols raise `NotImplementedError`, including `RX`, `RY` and
-  `RZ`, which are rotations and were previously converted to resets. Gate
-  parameters and malformed one- or two-qubit locations raise `ValueError`.
+  instruction text, and annotations such as `DETECTOR` stay comments with
+  their arguments. From `QuantumCircuit`, the long-form measurement symbols
+  (`measure X`, `Measure +Y`, ...) are measured in their basis and advance the
+  bit offset. Unsupported symbols raise `NotImplementedError`, including `RX`,
+  `RY` and `RZ`, which are rotations, and `R`, which is `SY`; all four were
+  previously converted to resets. Gate parameters, malformed one- or two-qubit
+  locations, negative qubit indices and two-qubit gates on one qubit raise
+  `ValueError`.
 
 - Live scheduled simulation now admits `StabilizerEngine` (`pr.stabilizer()`) with
   checked stochastic noise. Coherent idle rates and unsupported rotations reject

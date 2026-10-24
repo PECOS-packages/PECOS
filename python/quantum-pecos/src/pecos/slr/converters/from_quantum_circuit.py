@@ -52,7 +52,6 @@ _ONE_QUBIT_GATES = {
     "T": qubit.T,
     "TDG": qubit.Tdg,
     "T_DAG": qubit.Tdg,
-    "R": qubit.PZ,
     "RESET": qubit.PZ,
 }
 _TWO_QUBIT_GATES = {"CX": qubit.CX, "CNOT": qubit.CX, "CY": qubit.CY, "CZ": qubit.CZ}
@@ -63,21 +62,31 @@ def _measurement_basis(symbol: str) -> str | None:
     return _MEASUREMENT_BASES.get(symbol.upper())
 
 
+def _is_qubit_index(idx):
+    """Return whether idx is a valid qubit index; a negative one would wrap."""
+    return isinstance(idx, int) and idx >= 0
+
+
 def _one_qubit_location(symbol, location):
     """Validate a single-qubit location."""
-    if isinstance(location, int):
+    if _is_qubit_index(location):
         return location
-    if isinstance(location, tuple) and len(location) == 1 and isinstance(location[0], int):
+    if isinstance(location, tuple) and len(location) == 1 and _is_qubit_index(location[0]):
         return location[0]
-    msg = f"Unsupported one-qubit location for {symbol}: {location!r}; expected an int or a 1-tuple of int"
+    msg = f"Unsupported one-qubit location for {symbol}: {location!r}; expected a non-negative int or a 1-tuple of one"
     raise ValueError(msg)
 
 
 def _two_qubit_location(symbol, location):
     """Validate a two-qubit location."""
-    if isinstance(location, tuple) and len(location) == 2 and all(isinstance(idx, int) for idx in location):
+    if (
+        isinstance(location, tuple)
+        and len(location) == 2
+        and all(_is_qubit_index(idx) for idx in location)
+        and location[0] != location[1]
+    ):
         return location
-    msg = f"Unsupported two-qubit location for {symbol}: {location!r}; expected a 2-tuple of int"
+    msg = f"Unsupported two-qubit location for {symbol}: {location!r}; expected a 2-tuple of distinct non-negative ints"
     raise ValueError(msg)
 
 

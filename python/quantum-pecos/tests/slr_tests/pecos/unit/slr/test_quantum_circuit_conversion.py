@@ -1,5 +1,6 @@
 """Tests for QuantumCircuit to/from SLR conversion."""
 
+import re
 import sys
 from pathlib import Path
 
@@ -527,8 +528,23 @@ def test_measurement_aliases(symbol: str, basis: str, *, tuple_ticks: bool) -> N
     assert samples.shape == (50, 2)
     assert (samples == [1, 0]).all()
     qasm = SlrConverter(prog).qasm(skip_headers=True)
-    assert qasm.count("-> c[0]") == 1
-    assert qasm.count("-> c[1]") == 1
+    assert re.findall(r"-> c\[(\d+)\]", qasm) == ["0", "1"]
+
+
+@pytest.mark.parametrize("tuple_ticks", [False, True])
+def test_multi_qubit_measurement_bit_order(*, tuple_ticks: bool) -> None:
+    """The k-th measurement emitted from one tick writes c[k] and holds its qubit's record."""
+    locations = {0, 1, 2}
+    qc = [("X", {1}, {}), ("M", locations, {})]
+    if not tuple_ticks:
+        qc = QuantumCircuit()
+        qc.append({"X": {1}})
+        qc.append({"M": locations})
+    prog = _return_declared_cregs(SlrConverter.from_quantum_circuit(qc))
+    samples = SlrConverter(prog).stim().compile_sampler(seed=7).sample(50)
+    assert (samples == [int(idx == 1) for idx in locations]).all()
+    qasm = SlrConverter(prog).qasm(skip_headers=True)
+    assert re.findall(r"-> c\[(\d+)\]", qasm) == ["0", "1", "2"]
 
 
 @pytest.mark.parametrize("symbol", ["M", "MX", "MY", "measure X", "Measure +Y"])
@@ -589,15 +605,25 @@ def test_nonmeasurement_params_rejected(symbol: str, params: dict) -> None:
     assert next(iter(params)) in str(exc.value)
 
 
-@pytest.mark.parametrize(("symbol", "locations"), [("H", {(0, 1)}), ("CX", {0, 1})])
+@pytest.mark.parametrize(
+    ("symbol", "locations"),
+    [
+        ("H", {(0, 1)}),
+        ("CX", {0, 1}),
+        ("X", {-1}),
+        ("M", {(-1,)}),
+        ("CX", {(0, -1)}),
+        ("CX", {(0, 0)}),
+    ],
+)
 def test_malformed_gate_locations_rejected(symbol: str, locations: set) -> None:
-    """Invalid arities must not silently remove gates."""
+    """Invalid arities and indices must not silently remove or move gates."""
     with pytest.raises(ValueError, match=symbol) as exc:
         SlrConverter.from_quantum_circuit([(symbol, locations, {})])
     assert any(repr(loc) in str(exc.value) for loc in locations)
 
 
-@pytest.mark.parametrize("symbol", ["RZ", "RX", "RY", "SX", "CH"])
+@pytest.mark.parametrize("symbol", ["R", "RZ", "RX", "RY", "SX", "CH"])
 def test_unsupported_quantum_circuit_gates(symbol: str) -> None:
     """Valid but unsupported gates report their symbol and locations."""
     locations = {(0, 1)} if symbol == "CH" else {0}

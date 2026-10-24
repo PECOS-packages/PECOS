@@ -127,6 +127,10 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Python breaking changes
 
+- `SurfaceCircuitStep` is renamed to `CircuitStep` and moves, with `OpType`, to
+  `pecos.qec.circuit_steps`; `pecos.qec.surface` and `pecos.qec` export both.
+  The old name is removed.
+
 - `LogicalCircuitBuilder.build_dem` returns a `DetectorErrorModel` object; use
   `str(dem)` for text. Graph decoders given the object apply its detectors'
   `fault_sector` labels, so their predictions can differ from decoding the text.
@@ -347,6 +351,9 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   `global_axis_cycle_f2`, still raise because no physical prefix is defined for
   their pending Clifford. Forward-flow analysis and lowering now raise on any
   step they have no rule for.
+
+- `StimRenderer` raises on `PREP`, `F`, `FDG`, `SY`, `SYDG`, `X` and `Z` steps
+  instead of silently dropping them. `TickCircuitRenderer` renders all of them.
 
 - The Python PHIR interpreter releases cached Result operations on a full reset.
   Declaration size diagnostics now give quantum or classical size guidance on all

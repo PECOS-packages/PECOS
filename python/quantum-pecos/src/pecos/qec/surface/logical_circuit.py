@@ -39,12 +39,13 @@ from typing import TYPE_CHECKING, Literal
 from pecos_rslib.qec import DEM_SLICE_ROUND_ATTRIBUTE, transform_two_patch_pauli
 
 from pecos.qec._replay import _replay_measurements
+from pecos.qec.circuit_steps import OpType
 from pecos.qec.surface import gadgets
-from pecos.qec.surface.circuit_builder import OpType, QubitAllocation, _build_observable_descriptors
+from pecos.qec.surface.circuit_builder import QubitAllocation, _build_observable_descriptors
 
 if TYPE_CHECKING:
     from pecos.qec import DetectorErrorModel
-    from pecos.qec.surface.circuit_builder import SurfaceCircuitStep
+    from pecos.qec.circuit_steps import CircuitStep
     from pecos.qec.surface.patch import Stabilizer, SurfacePatch
 
 PatchSnapshot = dict[str, bool]
@@ -2974,7 +2975,7 @@ class _CircuitGenerator:
             [q + ps.qubit_offset for q in allocation.z_ancilla_qubits],
         )
 
-    def _emit_steps(self, step_lists: list[tuple[SurfaceCircuitStep, ...]]) -> dict[tuple[int, int], int]:
+    def _emit_steps(self, step_lists: list[tuple[CircuitStep, ...]]) -> dict[tuple[int, int], int]:
         """Split different-type conflicts within TICK groups, then zip with padding.
 
         Each TICK-delimited group, including a comment-only group, produces

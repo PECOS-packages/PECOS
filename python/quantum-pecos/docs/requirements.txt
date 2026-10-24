@@ -1,6 +1,7 @@
 matplotlib==3.9.2
 pillow>=11.3.0  # CVE-2023-50447 + libwebp; transitive via matplotlib
 idna>=3.18  # CVE-2026-45409 (re-fix of CVE-2024-3651): idna.encode() DoS on crafted long inputs
+certifi>=2026.10.19  # PYSEC-2026-4320: bundled emSign root CAs with compromised intermediate keys; transitive via requests
 networkx==3.3
 numpy==1.26.4
 scipy==1.14.1

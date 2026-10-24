@@ -13,8 +13,10 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   the generator set type; `SparseStabBitSet` and `GensBitSet` retain the old
   type. Typical small-code gate throughput is about 1.25x slower than before.
   Pivot ties now choose the lowest generator id everywhere, changing stored
-  generators after measurement, but not outcomes, for insertion-ordered variants
-  (`SparseStabHybrid`, `SymbolicSparseStabVecSet`, `SparseStabYUnsortedVecSet`).
+  generators after measurement, but not outcomes, for the insertion-ordered
+  variants `SparseStabUnsortedVecSet`, `SparseStabHybrid`,
+  `SymbolicSparseStabVecSet` and `SparseStabYUnsortedVecSet`, and for
+  `GensVecSet::refactor`.
 
 - Live scheduled simulation now admits `StabilizerEngine` (`pr.stabilizer()`) with
   checked stochastic noise. Coherent idle rates and unsupported rotations reject

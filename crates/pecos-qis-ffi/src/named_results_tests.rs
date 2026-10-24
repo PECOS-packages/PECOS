@@ -484,8 +484,8 @@ fn float_json_preserves_all_bits() {
 #[test]
 fn panic_decodes_length_prefixed_message_and_clears_at_shot_start() {
     let registered = RegisteredContext::new();
-    for code in [0, 1, 999, 1000, 1001, 1002, -1] {
-        let expected = if (0..=1000).contains(&code) {
+    for code in [0, 1, 999, 1000, 1001, 1002, -1, i32::MIN, i32::MAX] {
+        let expected = if (0..1000).contains(&code) {
             ProgramError::Exit {
                 code,
                 message: "hello".to_string(),

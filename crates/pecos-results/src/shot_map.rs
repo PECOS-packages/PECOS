@@ -59,6 +59,9 @@ pub struct ShotMap {
     data: BTreeMap<String, DataVec>,
     /// Number of shots (all columns have the same length)
     num_shots: usize,
+    /// Sparse exit diagnostics keyed by zero-based result-row index.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    program_exits: BTreeMap<usize, super::ProgramExit>,
 }
 
 impl ShotMap {
@@ -113,7 +116,28 @@ impl ShotMap {
         Ok(Self {
             data: typed_data,
             num_shots,
+            program_exits: BTreeMap::new(),
         })
+    }
+
+    /// Carry row metadata after validating the register columns. Empty-output
+    /// shots still count even when there are no columns from which to infer size.
+    pub(crate) fn with_shot_metadata(mut self, shots: &[super::Shot]) -> Self {
+        self.num_shots = shots.len();
+        self.program_exits = shots
+            .iter()
+            .enumerate()
+            .filter_map(|(i, shot)| shot.program_exit.clone().map(|exit| (i, exit)))
+            .collect();
+        self
+    }
+
+    /// Ordinary exits aligned with result rows, independent of register names.
+    #[must_use]
+    pub fn program_exits(&self) -> Vec<Option<super::ProgramExit>> {
+        (0..self.num_shots)
+            .map(|i| self.program_exits.get(&i).cloned())
+            .collect()
     }
 
     /// Get the number of shots

@@ -5,20 +5,21 @@ from __future__ import annotations
 
 import json
 import re
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pecos as pc
 import pytest
 import stim
 from pecos._traced_circuit import normalize_traced_tick_circuit
+from pecos.qec.circuit_steps import CircuitStep, OpType
 from pecos.qec.surface import NoiseParameters, SurfacePatch, TwirlConfig
 from pecos.qec.surface.circuit_builder import (
-    OpType,
-    SurfaceCircuitStep,
     SzzTouchSign,
     _analyze_szz_forward_flow,
     _default_szz_residual_plan,
     _default_szz_sign_vector,
+    _lower_szz_forward_flow_ops,
     _propagate_compensated_szz_frame_bits,
     _propagate_sxx_frame_bits,
     _propagate_szz_frame_bits,
@@ -30,6 +31,7 @@ from pecos.qec.surface.circuit_builder import (
     generate_dem_from_tick_circuit_via_stim,
     generate_stim_from_patch,
     generate_tick_circuit_from_patch,
+    tick_circuit_to_stim,
 )
 from pecos.qec.surface.decode import (
     _dem_string_from_cached_surface_topology,
@@ -40,6 +42,9 @@ from pecos.qec.surface.decode import (
     generate_circuit_level_dem_from_builder,
 )
 from pecos.quantum import PHYSICAL_DURATION_META_KEY
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 def _to_numpy_complex(matrix: object) -> np.ndarray:
@@ -330,13 +335,13 @@ def test_szz_tick_circuit_uses_named_szz_gates() -> None:
 
 def test_szz_forward_flow_merges_h_sandwich_before_host() -> None:
     ops = [
-        SurfaceCircuitStep(OpType.ALLOC, [0]),
-        SurfaceCircuitStep(OpType.ALLOC, [1]),
-        SurfaceCircuitStep(OpType.H, [0]),
-        SurfaceCircuitStep(OpType.H, [0]),
-        SurfaceCircuitStep(OpType.SZZ, [0, 1], "g"),
-        SurfaceCircuitStep(OpType.MEASURE, [0], "m0"),
-        SurfaceCircuitStep(OpType.MEASURE, [1], "m1"),
+        CircuitStep(OpType.ALLOC, [0]),
+        CircuitStep(OpType.ALLOC, [1]),
+        CircuitStep(OpType.H, [0]),
+        CircuitStep(OpType.H, [0]),
+        CircuitStep(OpType.SZZ, [0, 1], "g"),
+        CircuitStep(OpType.MEASURE, [0], "m0"),
+        CircuitStep(OpType.MEASURE, [1], "m1"),
     ]
 
     summary = _analyze_szz_forward_flow(ops)
@@ -349,12 +354,12 @@ def test_szz_forward_flow_merges_h_sandwich_before_host() -> None:
 
 def test_szz_forward_flow_carries_virtual_z_to_measurement() -> None:
     ops = [
-        SurfaceCircuitStep(OpType.ALLOC, [0]),
-        SurfaceCircuitStep(OpType.ALLOC, [1]),
-        SurfaceCircuitStep(OpType.SZ, [0]),
-        SurfaceCircuitStep(OpType.SZZ, [0, 1], "g"),
-        SurfaceCircuitStep(OpType.MEASURE, [0], "m0"),
-        SurfaceCircuitStep(OpType.MEASURE, [1], "m1"),
+        CircuitStep(OpType.ALLOC, [0]),
+        CircuitStep(OpType.ALLOC, [1]),
+        CircuitStep(OpType.SZ, [0]),
+        CircuitStep(OpType.SZZ, [0, 1], "g"),
+        CircuitStep(OpType.MEASURE, [0], "m0"),
+        CircuitStep(OpType.MEASURE, [1], "m1"),
     ]
 
     summary = _analyze_szz_forward_flow(ops)
@@ -370,13 +375,13 @@ def test_szz_forward_flow_carries_virtual_z_to_measurement() -> None:
 
 def test_szz_forward_flow_counts_physical_prefixes_at_hosts() -> None:
     ops = [
-        SurfaceCircuitStep(OpType.ALLOC, [0]),
-        SurfaceCircuitStep(OpType.ALLOC, [1]),
-        SurfaceCircuitStep(OpType.H, [0]),
-        SurfaceCircuitStep(OpType.SZZ, [0, 1], "g"),
-        SurfaceCircuitStep(OpType.H, [1]),
-        SurfaceCircuitStep(OpType.MEASURE, [0], "m0"),
-        SurfaceCircuitStep(OpType.MEASURE, [1], "m1"),
+        CircuitStep(OpType.ALLOC, [0]),
+        CircuitStep(OpType.ALLOC, [1]),
+        CircuitStep(OpType.H, [0]),
+        CircuitStep(OpType.SZZ, [0, 1], "g"),
+        CircuitStep(OpType.H, [1]),
+        CircuitStep(OpType.MEASURE, [0], "m0"),
+        CircuitStep(OpType.MEASURE, [1], "m1"),
     ]
 
     summary = _analyze_szz_forward_flow(ops)
@@ -1215,3 +1220,74 @@ def test_szz_virtual_prefix_ticks_do_not_contribute_idle_dem() -> None:
         == tagged_dem
     )
     assert retagged_dem != tagged_dem
+
+
+@pytest.mark.parametrize("num_rounds", [1, 2])
+def test_szz_physical_prefixes_keep_axis_cycle_frame_detectors_deterministic(num_rounds: int) -> None:
+    """The F and SY frame rotations join the pending Clifford instead of jumping ahead of it."""
+    patch = SurfacePatch.create(distance=3)
+    tick_circuit = generate_tick_circuit_from_patch(
+        patch,
+        num_rounds=num_rounds,
+        basis="Z",
+        interaction_basis="szz",
+        clifford_frame_policy="global_axis_cycle_f",
+        szz_physical_prefixes=True,
+    )
+    _assert_noiseless_record_metadata_is_zero(tick_circuit_to_stim(tick_circuit), tick_circuit)
+
+
+@pytest.mark.parametrize(
+    "gate",
+    [
+        OpType.H,
+        OpType.F,
+        OpType.FDG,
+        OpType.SX,
+        OpType.SXDG,
+        OpType.SY,
+        OpType.SYDG,
+        OpType.SZ,
+        OpType.SZDG,
+        OpType.X,
+        OpType.Z,
+    ],
+    ids=lambda gate: gate.name,
+)
+def test_szz_forward_flow_folds_every_single_qubit_clifford(gate: OpType) -> None:
+    steps = [
+        CircuitStep(OpType.ALLOC, [0]),
+        CircuitStep(gate, [0]),
+        CircuitStep(OpType.MEASURE, [0]),
+    ]
+    assert _analyze_szz_forward_flow(steps).abstract_single_qubit_ops == 1
+
+
+@pytest.mark.parametrize("gate", [OpType.F, OpType.FDG], ids=lambda gate: gate.name)
+def test_szz_lowering_emits_a_folded_face_clifford_as_its_hosts_prefix(gate: OpType) -> None:
+    steps = [
+        CircuitStep(OpType.ALLOC, [0]),
+        CircuitStep(gate, [0]),
+        CircuitStep(OpType.MEASURE, [0], "m"),
+    ]
+    lowered = [(step.op_type, step.label) for step in _lower_szz_forward_flow_ops(steps)]
+    assert lowered == [
+        (OpType.ALLOC, ""),
+        (OpType.TICK, ""),
+        (gate, f"szz_physical_prefix:{gate.name}:m:q0"),
+        (OpType.TICK, ""),
+        (OpType.MEASURE, "m"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("consumer", "name"),
+    [(_analyze_szz_forward_flow, "analysis"), (_lower_szz_forward_flow_ops, "lowering")],
+)
+def test_szz_forward_flow_rejects_operations_without_a_case(
+    consumer: Callable[[list[CircuitStep]], object],
+    name: str,
+) -> None:
+    steps = [CircuitStep(OpType.ALLOC, [0]), CircuitStep(OpType.T, [0], "t0")]
+    with pytest.raises(ValueError, match=rf"^SZZ forward-flow {name} does not support T steps: q=\[0\], label='t0'; "):
+        consumer(steps)

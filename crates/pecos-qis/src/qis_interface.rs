@@ -109,6 +109,11 @@ pub trait QisInterface: Send + Sync {
         measurements: BTreeMap<usize, bool>,
     ) -> Result<OperationCollector, InterfaceError>;
 
+    /// Assign the job-wide index for the next program execution. This is not a
+    /// seed or the native runtime's per-worker shot ID. Interfaces without a
+    /// program-visible shot query may ignore it.
+    fn set_program_shot(&mut self, _shot: u64) {}
+
     /// Get metadata about the implementation
     fn metadata(&self) -> BTreeMap<String, String> {
         BTreeMap::new()
@@ -327,6 +332,17 @@ pub trait DynamicSyncHandle: Send + Sync {
     fn get_named_results(
         &self,
     ) -> Result<std::collections::BTreeMap<String, pecos_qis_ffi_types::NamedResult>, InterfaceError>;
+
+    /// Get the ordinary exit diagnostic from the owned execution context.
+    /// Backends that do not report exits return `None`.
+    ///
+    /// # Errors
+    /// Returns an error if the context cannot be read or contains a fatal error.
+    fn get_program_exit(
+        &self,
+    ) -> Result<Option<pecos_engines::shot_results::ProgramExit>, InterfaceError> {
+        Ok(None)
+    }
 
     /// Get named result provenance from the execution context.
     ///

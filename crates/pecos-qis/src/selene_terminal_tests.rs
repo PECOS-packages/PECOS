@@ -11,7 +11,7 @@ use pecos_engines::scheduled_events::{
 };
 use pecos_engines::scheduled_frame::ScheduledIdleZ;
 use pecos_engines::{
-    ByteMessage, ClassicalControlEngineBuilder, ControlEngine, Engine, EngineStage,
+    ByteMessage, ClassicalControlEngineBuilder, ClassicalEngine, ControlEngine, Engine, EngineStage,
 };
 
 use std::sync::{
@@ -20,6 +20,13 @@ use std::sync::{
 };
 
 type EndFn = unsafe extern "C" fn(*mut c_void) -> i32;
+type StartFn = unsafe extern "C" fn(*mut c_void, u64, u64) -> i32;
+static REAL_START: Mutex<Option<StartFn>> = Mutex::new(None);
+static STARTS: Mutex<Vec<(u64, u64)>> = Mutex::new(Vec::new());
+unsafe extern "C" fn start(instance: *mut c_void, shot: u64, seed: u64) -> i32 {
+    STARTS.lock().unwrap().push((shot, seed));
+    unsafe { REAL_START.lock().unwrap().unwrap()(instance, shot, seed) }
+}
 // The upstream repr(C) handle is non_exhaustive; the callback uses the local
 // ABI mirror, as the production descriptor bridge does.
 type NextFn = unsafe extern "C" fn(*mut c_void, SeleneRuntimeGetOperationHandle) -> i32;
@@ -30,11 +37,24 @@ static EMITTED: AtomicBool = AtomicBool::new(false);
 static CALLS: AtomicUsize = AtomicUsize::new(0);
 static BARRIER_AFTER_END: AtomicBool = AtomicBool::new(false);
 static MODE: AtomicUsize = AtomicUsize::new(0);
+static RESERVED: AtomicUsize = AtomicUsize::new(0);
+static EXPECTED_RESERVATIONS: AtomicUsize = AtomicUsize::new(0);
+static PREFIX_BATCHES: AtomicUsize = AtomicUsize::new(0);
 unsafe extern "C" fn end(instance: *mut c_void) -> i32 {
     CALLS.fetch_add(1, Ordering::SeqCst);
     let errno = unsafe { REAL_END.lock().unwrap().unwrap()(instance) };
     ENDED.store(true, Ordering::SeqCst);
     errno
+}
+// Mode 3 fills the collection with full-payload custom batches: (bytes per
+// batch, number of batches that fit after the 16-byte header).
+fn mode3_prefix() -> (usize, usize) {
+    use crate::scheduled_transport::BudgetLayout;
+    let layout = BudgetLayout::Minimum;
+    let prefix_bytes =
+        layout.framing_bytes(0) + layout.operation_bytes(Some(MAX_PAYLOAD_BYTES), false);
+    let prefix_count = (pecos_engines::scheduled_frame::MAX_SCHEDULE_BYTES - 16) / prefix_bytes;
+    (prefix_bytes, prefix_count)
 }
 unsafe extern "C" fn next(instance: *mut c_void, out: SeleneRuntimeGetOperationHandle) -> i32 {
     if ENDED.load(Ordering::SeqCst) {
@@ -44,15 +64,49 @@ unsafe extern "C" fn next(instance: *mut c_void, out: SeleneRuntimeGetOperationH
         if MODE.load(Ordering::SeqCst) == 2 {
             return 19;
         }
+        if MODE.load(Ordering::SeqCst) == 3 {
+            let (_, prefix_count) = mode3_prefix();
+            if PREFIX_BATCHES.fetch_add(1, Ordering::SeqCst) < prefix_count {
+                let payload = vec![0; MAX_PAYLOAD_BYTES];
+                unsafe {
+                    (out.interface.custom)(
+                        out.instance,
+                        7301,
+                        payload.as_ptr().cast(),
+                        payload.len(),
+                    );
+                }
+                return 0;
+            }
+        }
         if !EMITTED.swap(true, Ordering::SeqCst) {
             unsafe {
                 (out.interface.set_batch_time)(out.instance, 123, 17);
                 if MODE.load(Ordering::SeqCst) == 1 {
                     (out.interface.custom)(out.instance, 7301, std::ptr::null(), 0);
                 } else if MODE.load(Ordering::SeqCst) == 3 {
-                    for _ in 0..=MAX_OPERATIONS {
+                    use crate::scheduled_transport::BudgetLayout;
+                    use pecos_engines::scheduled_frame::MAX_SCHEDULE_BYTES;
+                    // 255 custom batches use 255 * (40 + 24 + 262144) bytes.
+                    // After this batch's framing, 245768 bytes fit 6144 gates;
+                    // the 6145th must fail reservation on both drain routes.
+                    let layout = BudgetLayout::Minimum;
+                    let (prefix_bytes, prefix_count) = mode3_prefix();
+                    let remaining = MAX_SCHEDULE_BYTES
+                        - 16
+                        - prefix_count * prefix_bytes
+                        - layout.framing_bytes(0);
+                    let count = remaining / layout.operation_bytes(None, false);
+                    EXPECTED_RESERVATIONS.store(count, Ordering::SeqCst);
+                    for _ in 0..=count {
                         (out.interface.rxy)(out.instance, 0, 0.0, 0.0);
                     }
+                    RESERVED.store(
+                        (*out.instance.cast::<RuntimeOperationBatch>())
+                            .operations
+                            .len(),
+                        Ordering::SeqCst,
+                    );
                 } else {
                     (out.interface.rxy)(out.instance, 0, std::f64::consts::PI, 0.0);
                 }
@@ -89,6 +143,8 @@ fn install_descriptor() -> (
     let mut descriptor =
         Box::new(unsafe { SeleneRuntime::runtime_plugin_descriptor(&library).unwrap() });
     *REAL_END.lock().unwrap() = Some(descriptor.shot_end_fn);
+    *REAL_START.lock().unwrap() = Some(descriptor.shot_start_fn);
+    descriptor.shot_start_fn = start;
     let real_next: NextFn = unsafe { std::mem::transmute(descriptor.get_next_operations_fn) };
     *REAL_NEXT.lock().unwrap() = Some(real_next);
     *REAL_BARRIER.lock().unwrap() = Some(descriptor.global_barrier_fn);
@@ -114,11 +170,14 @@ fn install_descriptor() -> (
 }
 
 fn reset_shim(mode: usize) {
+    STARTS.lock().unwrap().clear();
     ENDED.store(false, Ordering::SeqCst);
     EMITTED.store(false, Ordering::SeqCst);
     CALLS.store(0, Ordering::SeqCst);
     BARRIER_AFTER_END.store(false, Ordering::SeqCst);
     MODE.store(mode, Ordering::SeqCst);
+    PREFIX_BATCHES.store(0, Ordering::SeqCst);
+    RESERVED.store(0, Ordering::SeqCst);
 }
 
 #[test]
@@ -140,6 +199,9 @@ fn native_end_tail_preserves_identity_timing_and_strict_rejection() {
             for shot in [73, 74] {
                 runtime.reset().unwrap();
                 reset_shim(mode);
+                if mode == 3 {
+                    runtime.set_custom_event_policy(RuntimeCustomEventPolicy::Capture);
+                }
                 runtime.shot_start(shot, Some(9)).unwrap();
                 let operations = [Operation::AllocateQubit { id: 0 }];
                 if scheduled {
@@ -172,7 +234,14 @@ fn native_end_tail_preserves_identity_timing_and_strict_rejection() {
                 if mode == 3 {
                     // Must fail on the extraction bound, not on any later check.
                     let message = result.as_ref().unwrap_err().to_string();
-                    assert!(message.contains("budget exceeded"), "{message}");
+                    assert!(
+                        message.contains("runtime operation byte budget exceeded"),
+                        "{message}"
+                    );
+                    assert_eq!(
+                        RESERVED.load(Ordering::SeqCst),
+                        EXPECTED_RESERVATIONS.load(Ordering::SeqCst)
+                    );
                 }
                 assert_eq!(CALLS.load(Ordering::SeqCst), 1);
                 if mode != 0 || legacy {
@@ -307,10 +376,20 @@ fn native_end_tail_executes_before_engine_completion() {
     let program = pecos_programs::Qis::from_string(
         r#"
         define i64 @qmain(i64 %shot) #0 {
+            ; Guppy RNG(42) uses this stream, independently of runtime IDs/seeds.
+            call void @random_seed(i64 42)
+            %random = call i32 @random_int()
+            %valid = icmp eq i32 %random, 1085446021
+            br i1 %valid, label %gates, label %bad_rng
+        bad_rng:
+            ret i64 77
+        gates:
             call void @__quantum__qis__x__body(i64 0)
             %m = call i32 @__quantum__qis__m__body(i64 0, i64 0)
             ret i64 0
         }
+        declare void @random_seed(i64)
+        declare i32 @random_int()
         declare void @__quantum__qis__x__body(i64)
         declare i32 @__quantum__qis__m__body(i64, i64)
         attributes #0 = { "EntryPoint" }
@@ -336,6 +415,8 @@ fn native_end_tail_executes_before_engine_completion() {
             ScheduledTransport::V7 => builder.scheduled_event_batches(true),
         };
         let mut engine = builder.build().unwrap();
+        engine.set_seed(123);
+        let mut expected_rng = pecos_random::PecosRng::seed_from_u64(123);
         let mut quantum = quantum_system(transport);
         for (shot, mode) in [0, 0, 4, 4, 1, 0, 2, 0].into_iter().enumerate() {
             reset_shim(mode);
@@ -349,6 +430,11 @@ fn native_end_tail_executes_before_engine_completion() {
                 })
                 .unwrap();
             let result = finish_engine_shot(&mut engine, &mut quantum);
+            assert_eq!(
+                *STARTS.lock().unwrap(),
+                [(u64::try_from(shot).unwrap(), expected_rng.next_u64())],
+                "{transport:?}, mode {mode}: native ID and seed",
+            );
             assert_eq!(
                 CALLS.load(Ordering::SeqCst),
                 1,

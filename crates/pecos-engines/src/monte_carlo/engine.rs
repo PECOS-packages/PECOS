@@ -465,6 +465,11 @@ impl MonteCarloEngine {
                             nth_derived_seed(seed_report.base_seed, (first_shot + shot_idx) as u64);
                         engine.set_seed(shot_seed);
                         engine.reset()?;
+                        engine.classical_engine.set_program_shot(
+                            u64::try_from(first_shot + shot_idx).map_err(|_| {
+                                PecosError::Input("program shot index exceeds u64".into())
+                            })?,
+                        );
 
                         // Catch panics during shot execution and convert to PecosError
                         let shot_result =

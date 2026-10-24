@@ -372,13 +372,15 @@ assert result.num_errors == 0
 
 Frontier accepts raw DEMs, including hyperedges. `workers=None` selects the
 worker count automatically; `workers=1` runs sequentially. Parallel execution
-releases the Python GIL and preserves shot order. At most one Rust decoder per
-worker is alive at a time, so more workers and larger `k` increase memory use.
+releases the Python GIL and preserves shot order. Each active worker owns
+independent decoder scratch, so more workers and larger `k` increase memory use.
 `SampleBatch.decode(...)` builds exactly one decoder per worker;
 `DemSampler.decode(...)` builds one up front to check dimensions and then one per
 scheduled group of sampling chunks, which can be several times the worker count
-on a long run, so a model that is slow to construct pays that cost more than
-once per worker there.
+on a long run. Plain specifications rebuild the model for each decoder.
+Recovery-configured Frontier specifications prepare the trellis model and optional
+feasibility basis once per decode call, sharing them across all workers with
+independent scratch. This prepared state is released when the call finishes.
 
 Options match `pecos_rslib_exp.FrontierDecoder.from_dem`: `k`, `delta`,
 `score_alpha`, `bp_score_iterations`, `column_order`, `merge_indistinguishable`,
@@ -387,6 +389,173 @@ Options match `pecos_rslib_exp.FrontierDecoder.from_dem`: `k`, `delta`,
 column permutations are also accepted. Frontier remains experimental, and
 pruning can make predictions approximate. For per-shot logical masses, pruning
 status, and complementary gaps, use the direct experimental binding.
+
+### Strict, reporting, and always-answer Frontier calls
+
+The direct `FrontierDecoder.decode_syndrome`, `decode_from_defects`, and
+`decode_batch` methods share a Rust recovery implementation. They accept
+`on_no_path="raise"` (default), `"report"`, or `"fallback"`, and an optional
+`delta_max`. Invalid inputs, configuration errors, and engine faults still raise
+in every mode. Always-answer means a prediction is returned for a normal
+no-path outcome; it does not suppress programming errors.
+
+```python
+from pecos_rslib_exp import FrontierDecoder
+
+decoder = FrontierDecoder.from_dem(
+    "error(0.1) D0 D1 L0\n",
+    k=256,
+    delta=16,
+    fallback="feasible_then_zero",
+)
+
+# Strict: raise if no configured attempt finds a path.
+assert decoder.decode_syndrome([1, 1]).observable_flips.mask == 1
+
+# Reporting: retain successful shots and explicit no-path reports in order.
+outcomes = decoder.decode_batch(
+    [[0, 0], [1, 0], [1, 1]],
+    workers=2,
+    on_no_path="report",
+    delta_max=64,
+)
+assert [outcome.no_path for outcome in outcomes] == [False, True, False]
+assert outcomes[1].cause == "infeasible"
+
+# Always-answer: use the explicitly configured fallback after attempts fail.
+answer = decoder.decode_syndrome([1, 0], on_no_path="fallback", delta_max=64)
+assert answer.fallback_used
+assert answer.status == "fallback:zero"
+assert answer.syndrome_consistent is False
+```
+
+With `delta=16, delta_max=64`, attempts use 16, 32, then 64, stopping at the
+first success. A non-power-of-two maximum is included as the final cap. A zero
+base grows first to `min(1, delta_max)`. The maximum must be finite and at least
+the base delta; omitting it disables retries. K stays fixed. Attempts restart
+DP using one prepared model and one BP preparation per shot. Residual or
+infeasible failures skip remaining attempts because widening cannot help.
+`delta_max` bounds the pruning window, not wall-clock runtime.
+
+The returned types are distinct:
+
+- `FrontierResult`: a decoded prediction, `no_path=False`, `fallback_used=False`.
+  `deltas_tried`, `delta_used`, and `escalation_rungs_used` record recovery.
+  Transitions count all attempts; evidence and pruning diagnostics describe the
+  successful attempt, whose prediction can still be approximate.
+- `FrontierNoPath`: no prediction, `no_path=True`, `fallback_used=False`.
+  `cause` is `"residual"`, `"infeasible"`, or `"exhausted"`. Residual includes a
+  `detector` that cannot be changed; exhausted indicates failure after pruning,
+  which alone does not prove incompatibility. Reports expose `deltas_tried`,
+  total `transitions`, total `dropped_states`, and one-shot `bp_seconds`.
+- `FrontierFallback`: an explicit prediction, `no_path=True`, `fallback_used=True`.
+  `failure` retains the original no-path report. It has no likelihood or
+  confidence estimate. Its `observable_flips` can be nonzero.
+
+Configure `fallback="feasible_then_zero"` to prepare a reusable GF(2) solver for
+an independent binary DEM. It chooses a probability-ordered column basis and
+verifies the resulting fault explanation against the syndrome. A successful
+fallback has `status="fallback:feasible"`, `syndrome_consistent=True`, and
+`mechanism_indices` referring to the original DEM. This is a deterministic
+heuristic, not a maximum-likelihood or minimum-weight decoder. Preprocessing
+uses additional memory for the basis and witnesses. Direct `decode_batch` workers
+share this state; recovery-configured specifications also share it across all
+workers within each `SampleBatch.decode` or `DemSampler.decode` call.
+`build_seconds` reports Frontier construction only, excluding that preparation.
+
+If the DEM has no explanation, this policy returns zero observable flips with
+`status="fallback:zero"` and `syndrome_consistent=False`. An explicitly selected
+`fallback="zero"` always uses zero after no-path and reports consistency as
+`None` (unverified). Neither zero prediction is presented as a successful decode.
+Configuring a fallback does not activate it until `on_no_path="fallback"` is
+requested. Feasibility handles p=0/p=1 and joint `^` components, but is rejected
+for categorical `from_factors` models; those can use the explicit zero policy.
+
+Syndrome consistency does not imply logical identity. For the model
+`error(0.1) D0 L0`, a fired D0 requires logical mask 1; no identity-sector
+explanation exists. A DEM mechanism explanation is also not automatically a
+physical data-qubit Pauli correction. Record fallback and incompatible-shot
+rates alongside logical error rates. Do not silently drop undecoded shots from
+the denominator; always-answer predictions can be scored across all shots.
+
+Rust callers use `pecos_frontier::recovery::FrontierRecoveryDecoder` with
+`RecoveryOptions`, `NoPathAction`, and `FallbackPolicy`. The normal
+`FrontierDecoder` remains the strict parity-port engine. The shared
+`pecos_decoder_core::feasibility::DemFeasibility` utility can also be prepared
+and queried independently of Frontier.
+
+```rust
+use pecos_frontier::{FrontierConfig, SparseDem};
+use pecos_frontier::recovery::{
+    FallbackPolicy, FrontierRecoveryDecoder, FrontierRecoveryOutcome,
+    NoPathAction, RecoveryOptions,
+};
+
+let dem = SparseDem::from_dem_str("error(0.1) D0 D1 L0")?;
+let mut decoder = FrontierRecoveryDecoder::from_sparse_dem(
+    &dem,
+    FrontierConfig { k: 256, delta: 16.0, ..Default::default() },
+    Some(FallbackPolicy::FeasibleThenZero),
+)?;
+let outcome = decoder.decode(&[1, 0], RecoveryOptions {
+    delta_max: Some(64.0),
+    on_no_path: NoPathAction::Fallback,
+})?;
+assert!(matches!(outcome, FrontierRecoveryOutcome::Fallback {
+    syndrome_consistent: Some(false), ..
+}));
+```
+
+Rust `decode_batch` preserves per-shot `Result` values in input order. Python
+batch calls preserve normal no-path/fallback outcomes but still raise an indexed
+exception for other errors. Rust callers can also bind options using
+`decoder.with_options(options)?` to obtain an `ObservableDecoder` adapter for
+a shared batch `DecoderFactory` (with native batch dispatch disabled).
+`decode_outcome` preserves reports; prediction-only `decode_obs` returns an error
+when reporting supplies no mask. `FrontierCommitteeDecoder` remains strict.
+
+The `frontier(...)` specification accepts the same recovery controls for both
+`SampleBatch.decode` and `DemSampler.decode`:
+
+```python
+from pecos_rslib_exp import frontier
+from pecos_rslib.qec import SampleBatch
+
+dem = "error(0.1) D0 D1 D2 L0\n"
+# The middle syndrome is incompatible with this DEM and uses the zero fallback.
+batch = SampleBatch([[1, 1, 1], [1, 0, 0], [0, 0, 0]], [1, 1, 0])
+spec = frontier(
+    k=256,
+    delta=16,
+    delta_max=64,
+    on_no_path="fallback",
+    fallback="feasible_then_zero",
+)
+result = batch.decode(dem, spec, workers=4, predictions=True)
+print(result.num_errors, result.num_fallback, result.num_undecoded)
+fallback_errors = sum(r.logical_error for r in result.recovery if r.fallback_used)
+assert result.num_fallback == 1
+assert result.num_undecoded == 0
+assert result.num_errors == 1
+assert fallback_errors == 1
+```
+
+Every supplied prediction, including fallback, is compared against the shot's
+true logical observables. A syndrome-compatible fallback with the wrong logical
+mask counts as an error. `recovery` contains shot indices, actual `deltas_tried`,
+`fallback_used`, `syndrome_consistent`, `undecoded`, and `logical_error` for shots
+requiring retries, reporting, or fallback. These records are retained even when
+`predictions=False`, so fallback success can be measured separately.
+
+With `on_no_path="report"`, retained `predictions` contains `None` for undecoded
+shots. `num_scored` excludes those shots and `num_errors` counts mismatches among
+supplied predictions. The full-batch `logical_error_rate` (including timing
+stats) is NaN and `interval()` raises when any shot is undecoded; neither an
+identity placeholder nor an artificially reduced error rate is reported. Rust
+`DecodeResult` exposes `partial_predictions` in this case and leaves its
+complete `predictions` absent. Strict defaults and version-1 providers retain
+their existing behavior. Recovery specifications require both the standard and
+experimental Python extensions to support provider protocol version 2.
 
 ## Rust-backed BP-Trellis batch decoding
 

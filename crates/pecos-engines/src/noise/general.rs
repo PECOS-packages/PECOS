@@ -564,7 +564,8 @@ impl GeneralNoiseModel {
         Ok(EngineStage::NeedsProcessing(noisy_gates))
     }
 
-    /// Only for the closed scheduled profile: no crosstalk, emission or seepage.
+    /// Only for checked scheduled profiles, including explicit measurement exposures.
+    /// Transition hooks remain excluded. Internal replies use the ordinary controller.
     /// Keeps one batch lifecycle and the existing gate-fault/readout RNG order.
     pub(crate) fn start_scheduled(
         &mut self,
@@ -4043,7 +4044,7 @@ mod tests {
         );
     }
 
-    // Captured gate order and randomness retained; bytes migrated to version 5.
+    // Captured gate order and randomness retained; bytes migrated to version 8.
     // RZ fractions use exact significand-ratio rounding, independently checked
     // with Python Fraction (f64 radians / f64 TAU * 2^64).
     #[test]
@@ -4064,10 +4065,11 @@ mod tests {
             .unwrap()
             .into_bytes();
         let captured_legacy_bytes = vec![
-            83, 67, 69, 80, 5, 0, 0, 0, 5, 0, 0, 0, 100, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0,
-            0, 1, 0, 0, 0, 10, 0, 0, 0, 12, 0, 0, 0, 2, 2, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 10, 0, 0,
-            0, 8, 0, 0, 0, 2, 1, 0, 0, 0, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0, 0, 2, 0, 0, 0,
-            10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0, 0, 0, 0, 0, 0,
+            83, 67, 69, 80, 8, 0, 0, 0, 5, 0, 0, 0, 120, 0, 0, 0, 10, 0, 0, 0, 12, 0, 0, 0, 2, 0,
+            0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 10, 0, 0, 0, 16, 0, 0, 0, 2, 0, 0, 0, 2, 0, 0, 0, 0, 0,
+            0, 0, 1, 0, 0, 0, 10, 0, 0, 0, 12, 0, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 10, 0,
+            0, 0, 12, 0, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 10, 0, 0, 0, 12, 0, 0, 0, 2, 0,
+            0, 0, 1, 0, 0, 0, 0, 0, 0, 0,
         ];
 
         assert_eq!(output, captured_legacy_bytes);
@@ -4166,7 +4168,7 @@ mod tests {
         );
     }
 
-    // Captured gate order and randomness retained; bytes migrated to version 5.
+    // Captured gate order and randomness retained; bytes migrated to version 8.
     // RZ fractions use exact significand-ratio rounding, independently checked
     // with Python Fraction (f64 radians / f64 TAU * 2^64).
     #[test]
@@ -4182,8 +4184,8 @@ mod tests {
         model.apply_tq_faults(&Gate::cz(&[(0, 1)]), 1.0, &mut builder);
         let output = builder.build().into_bytes();
         let captured_legacy_bytes = vec![
-            83, 67, 69, 80, 5, 0, 0, 0, 1, 0, 0, 0, 32, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 134, 1,
-            0, 0, 0, 0, 0, 0,
+            83, 67, 69, 80, 8, 0, 0, 0, 1, 0, 0, 0, 36, 0, 0, 0, 10, 0, 0, 0, 12, 0, 0, 0, 134, 0,
+            0, 0, 1, 0, 0, 0, 0, 0, 0, 0,
         ];
 
         assert_eq!(output, captured_legacy_bytes);
@@ -4465,7 +4467,7 @@ mod tests {
         assert_eq!(gates[0].qubits, [QubitId(0)].into());
     }
 
-    // Captured gate order and randomness retained; bytes migrated to version 5.
+    // Captured gate order and randomness retained; bytes migrated to version 8.
     // RZ fractions use exact significand-ratio rounding, independently checked
     // with Python Fraction (f64 radians / f64 TAU * 2^64).
     #[test]
@@ -4486,14 +4488,15 @@ mod tests {
             .apply_noise_on_start(&input_builder.build())
             .unwrap()
             .into_bytes();
-        let captured_v5_bytes = vec![
-            83, 67, 69, 80, 5, 0, 0, 0, 4, 0, 0, 0, 96, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0,
-            0, 0, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0, 0, 1, 0, 0, 0, 10, 0, 0, 0, 12, 0, 0,
-            0, 1, 2, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 10, 0, 0, 0, 20, 0, 0, 0, 32, 2, 1, 0, 0, 0, 0,
-            0, 1, 0, 0, 0, 222, 130, 200, 201, 109, 48, 95, 20,
+        let captured_v8_bytes = vec![
+            83, 67, 69, 80, 8, 0, 0, 0, 4, 0, 0, 0, 112, 0, 0, 0, 10, 0, 0, 0, 12, 0, 0, 0, 2, 0,
+            0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 10, 0, 0, 0, 12, 0, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0, 1, 0,
+            0, 0, 10, 0, 0, 0, 16, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 10, 0,
+            0, 0, 24, 0, 0, 0, 32, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 222, 130, 200, 201,
+            109, 48, 95, 20,
         ];
 
-        assert_eq!(output, captured_v5_bytes);
+        assert_eq!(output, captured_v8_bytes);
     }
 
     #[test]
@@ -4695,7 +4698,7 @@ mod tests {
         assert!(first_outputs.iter().any(|output| output.len() > 16));
     }
 
-    // Captured gate order and randomness retained; bytes migrated to version 5.
+    // Captured gate order and randomness retained; bytes migrated to version 8.
     // RZ fractions use exact significand-ratio rounding, independently checked
     // with Python Fraction (f64 radians / f64 TAU * 2^64).
     #[test]
@@ -4719,18 +4722,19 @@ mod tests {
 
         let output = model.apply_noise_on_start(&input).unwrap().into_bytes();
         let expected = vec![
-            83, 67, 69, 80, 5, 0, 0, 0, 10, 0, 0, 0, 176, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 3, 1,
-            0, 0, 1, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 1, 1, 0, 0, 3, 0, 0, 0, 10, 0, 0, 0, 8, 0,
-            0, 0, 2, 1, 0, 0, 2, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0, 0, 3, 0, 0, 0, 10, 0,
-            0, 0, 8, 0, 0, 0, 2, 1, 0, 0, 1, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0, 0, 1, 0, 0,
-            0, 10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0, 0, 3, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 1, 1, 0,
-            0, 0, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 1, 1, 0, 0, 2, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0,
-            0, 2, 1, 0, 0, 1, 0, 0, 0,
+            83, 67, 69, 80, 8, 0, 0, 0, 10, 0, 0, 0, 216, 0, 0, 0, 10, 0, 0, 0, 12, 0, 0, 0, 3, 0,
+            0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 10, 0, 0, 0, 12, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 3, 0,
+            0, 0, 10, 0, 0, 0, 12, 0, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 10, 0, 0, 0, 12, 0,
+            0, 0, 2, 0, 0, 0, 1, 0, 0, 0, 3, 0, 0, 0, 10, 0, 0, 0, 12, 0, 0, 0, 2, 0, 0, 0, 1, 0,
+            0, 0, 1, 0, 0, 0, 10, 0, 0, 0, 12, 0, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 10, 0,
+            0, 0, 12, 0, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0, 3, 0, 0, 0, 10, 0, 0, 0, 12, 0, 0, 0, 1, 0,
+            0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 10, 0, 0, 0, 12, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 2, 0,
+            0, 0, 10, 0, 0, 0, 12, 0, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0,
         ];
         assert_eq!(output, expected);
     }
 
-    // Captured gate order and randomness retained; bytes migrated to version 5.
+    // Captured gate order and randomness retained; bytes migrated to version 8.
     // RZ fractions use exact significand-ratio rounding, independently checked
     // with Python Fraction (f64 radians / f64 TAU * 2^64).
     #[test]
@@ -4754,23 +4758,25 @@ mod tests {
 
         let output = model.apply_noise_on_start(&input).unwrap().into_bytes();
         let expected = vec![
-            83, 67, 69, 80, 5, 0, 0, 0, 16, 0, 0, 0, 176, 1, 0, 0, 10, 0, 0, 0, 28, 0, 0, 0, 32, 4,
-            1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 229, 112, 61, 10, 215, 163, 112,
-            13, 10, 0, 0, 0, 28, 0, 0, 0, 32, 4, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0,
-            0, 229, 112, 61, 10, 215, 163, 112, 13, 10, 0, 0, 0, 8, 0, 0, 0, 3, 1, 0, 0, 1, 0, 0,
-            0, 10, 0, 0, 0, 8, 0, 0, 0, 1, 1, 0, 0, 3, 0, 0, 0, 10, 0, 0, 0, 28, 0, 0, 0, 32, 4, 1,
-            0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 229, 112, 61, 10, 215, 163, 112, 13,
-            10, 0, 0, 0, 8, 0, 0, 0, 1, 1, 0, 0, 2, 0, 0, 0, 10, 0, 0, 0, 28, 0, 0, 0, 32, 4, 1, 0,
-            0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 229, 112, 61, 10, 215, 163, 112, 13,
-            10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0, 0, 1, 0, 0, 0, 10, 0, 0, 0, 28, 0, 0, 0, 32, 4, 1, 0,
-            0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 229, 112, 61, 10, 215, 163, 112, 13,
-            10, 0, 0, 0, 8, 0, 0, 0, 1, 1, 0, 0, 1, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0, 0,
-            3, 0, 0, 0, 10, 0, 0, 0, 28, 0, 0, 0, 32, 4, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0,
-            3, 0, 0, 0, 229, 112, 61, 10, 215, 163, 112, 13, 10, 0, 0, 0, 8, 0, 0, 0, 3, 1, 0, 0,
-            3, 0, 0, 0, 10, 0, 0, 0, 28, 0, 0, 0, 32, 4, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0,
-            3, 0, 0, 0, 229, 112, 61, 10, 215, 163, 112, 13, 10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0, 0,
-            2, 0, 0, 0, 10, 0, 0, 0, 28, 0, 0, 0, 32, 4, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0,
-            3, 0, 0, 0, 229, 112, 61, 10, 215, 163, 112, 13,
+            83, 67, 69, 80, 8, 0, 0, 0, 16, 0, 0, 0, 240, 1, 0, 0, 10, 0, 0, 0, 32, 0, 0, 0, 32, 1,
+            0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 229, 112, 61, 10,
+            215, 163, 112, 13, 10, 0, 0, 0, 32, 0, 0, 0, 32, 1, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 1, 0,
+            0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 229, 112, 61, 10, 215, 163, 112, 13, 10, 0, 0, 0, 12, 0,
+            0, 0, 3, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 10, 0, 0, 0, 12, 0, 0, 0, 1, 0, 0, 0, 1, 0,
+            0, 0, 3, 0, 0, 0, 10, 0, 0, 0, 32, 0, 0, 0, 32, 1, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 1, 0,
+            0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 229, 112, 61, 10, 215, 163, 112, 13, 10, 0, 0, 0, 12, 0,
+            0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 10, 0, 0, 0, 32, 0, 0, 0, 32, 1, 0, 0, 4, 0,
+            0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 229, 112, 61, 10, 215, 163, 112,
+            13, 10, 0, 0, 0, 12, 0, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 10, 0, 0, 0, 32, 0,
+            0, 0, 32, 1, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 229,
+            112, 61, 10, 215, 163, 112, 13, 10, 0, 0, 0, 12, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0,
+            0, 0, 10, 0, 0, 0, 12, 0, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0, 3, 0, 0, 0, 10, 0, 0, 0, 32, 0,
+            0, 0, 32, 1, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 229,
+            112, 61, 10, 215, 163, 112, 13, 10, 0, 0, 0, 12, 0, 0, 0, 3, 0, 0, 0, 1, 0, 0, 0, 3, 0,
+            0, 0, 10, 0, 0, 0, 32, 0, 0, 0, 32, 1, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0,
+            0, 0, 3, 0, 0, 0, 229, 112, 61, 10, 215, 163, 112, 13, 10, 0, 0, 0, 12, 0, 0, 0, 2, 0,
+            0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 10, 0, 0, 0, 32, 0, 0, 0, 32, 1, 0, 0, 4, 0, 0, 0, 0, 0,
+            0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 229, 112, 61, 10, 215, 163, 112, 13,
         ];
         assert_eq!(output, expected);
     }

@@ -4203,6 +4203,8 @@ impl PyDemSampler {
     }
 
     /// Create a sampler in raw measurement mode with uniform noise.
+    ///
+    /// Idle gates receive no noise, as in `from_influence_map`.
     #[staticmethod]
     #[pyo3(signature = (influence_map, p_error))]
     fn raw_uniform(influence_map: &PyDagFaultInfluenceMap, p_error: f64) -> PyResult<Self> {
@@ -4307,7 +4309,9 @@ impl PyDemSampler {
     ///
     /// Args:
     ///     `influence_map`: A `DagFaultInfluenceMap` from `DagFaultAnalyzer` or `InfluenceBuilder`.
-    ///     `p_error`: Uniform depolarizing error probability per fault location.
+    ///     `p_error`: Uniform depolarizing error probability per gate,
+    ///         preparation, and measurement location. Idle gates receive no
+    ///         noise; use `DemSamplerBuilder.with_noise(..., p_idle=...)` for that.
     #[staticmethod]
     fn from_influence_map(influence_map: &PyDagFaultInfluenceMap, p_error: f64) -> PyResult<Self> {
         let inner = RustNewDemSamplerBuilder::new(&influence_map.inner)
@@ -8274,6 +8278,7 @@ fn transform_two_patch_pauli(pauli: u8, gate: &str) -> PyResult<u8> {
 /// Register the QEC fault tolerance module.
 pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let qec = PyModule::new(m.py(), "qec")?;
+    crate::dem_inference_bindings::register(&qec)?;
     qec.add(
         "DEM_SLICE_ROUND_ATTRIBUTE",
         pecos_qec::fault_tolerance::dem_builder::DEM_SLICE_ROUND_ATTRIBUTE,
@@ -8295,6 +8300,7 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     qec.add_class::<PyDemBuilder>()?;
     qec.add_class::<PySampleBatch>()?;
     qec.add_class::<batch_decode::PyDecodeResult>()?;
+    qec.add_class::<batch_decode::PyDecodeRecovery>()?;
     qec.add_class::<PyProjectionReport>()?;
     qec.add_class::<PyDecoderComparisonResult>()?;
     qec.add_class::<PyCssUfDecoder>()?;

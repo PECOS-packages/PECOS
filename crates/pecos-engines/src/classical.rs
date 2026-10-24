@@ -48,6 +48,12 @@ pub trait ClassicalEngine: Engine<Input = (), Output = Shot> + DynClone + Send +
     /// Returns `PecosError` if result retrieval fails.
     fn get_results(&self) -> Result<Shot, PecosError>;
 
+    /// Assign the job-wide index visible to the next program invocation.
+    ///
+    /// Schedulers call this after reset, independently of RNG seeding and native
+    /// runtime identity. Engines without program-visible shot queries may ignore it.
+    fn set_program_shot(&mut self, _shot: u64) {}
+
     /// Sets a specific seed for the classical engine.
     fn set_seed(&mut self, _seed: u64) {
         // Default implementation does nothing
@@ -135,6 +141,10 @@ impl ClassicalEngine for Box<dyn ClassicalControlEngine> {
 
     fn get_results(&self) -> Result<Shot, PecosError> {
         (**self).get_results()
+    }
+
+    fn set_program_shot(&mut self, shot: u64) {
+        (**self).set_program_shot(shot);
     }
 
     fn set_seed(&mut self, seed: u64) {

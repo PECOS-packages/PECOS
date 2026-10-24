@@ -425,6 +425,53 @@ impl DynamicSyncHandle for HeliosSyncHandle {
         Ok(result)
     }
 
+    fn get_program_exit(
+        &self,
+    ) -> Result<Option<pecos_engines::shot_results::ProgramExit>, InterfaceError> {
+        let lib = Self::get_lib()?;
+        // Resolve both symbols before allocating the JSON buffer.
+        // SAFETY: Symbols have the declared explicit-context reader/deallocator ABI.
+        let (get, free) = unsafe {
+            let get = lib
+                .get::<GetNamedResultsJsonFn>(b"pecos_get_program_error_json_with_context\0")
+                .map_err(|e| {
+                    InterfaceError::ExecutionError(format!("Missing program error reader: {e}"))
+                })?;
+            let free = lib
+                .get::<FreeNamedResultsJsonFn>(b"pecos_free_named_results_json\0")
+                .map_err(|e| {
+                    InterfaceError::ExecutionError(format!("Missing JSON deallocator: {e}"))
+                })?;
+            (get, free)
+        };
+        let mut ptr = std::ptr::null_mut();
+        // SAFETY: This handle owns the live context; output is valid writable storage.
+        check_context_status(
+            unsafe { get(self.execution_context.0, &raw mut ptr) },
+            "read program exit",
+        )?;
+        if ptr.is_null() {
+            return Ok(None);
+        }
+        // SAFETY: Success returns an allocated, NUL-terminated JSON buffer.
+        let json = unsafe { std::ffi::CStr::from_ptr(ptr) }.to_bytes();
+        let error = serde_json::from_slice::<pecos_qis_ffi_types::ProgramError>(json);
+        // SAFETY: Parsing no longer borrows the buffer; release it exactly once.
+        unsafe { free(ptr) };
+        let error = error.map_err(|e| {
+            InterfaceError::ExecutionError(format!("Invalid program error JSON: {e}"))
+        })?;
+        match error {
+            pecos_qis_ffi_types::ProgramError::Exit { code, message } => {
+                Ok(Some(pecos_engines::shot_results::ProgramExit {
+                    code,
+                    message,
+                }))
+            }
+            error => Err(InterfaceError::ProgramError(error)),
+        }
+    }
+
     fn get_named_result_traces(
         &self,
     ) -> Result<Vec<pecos_qis_ffi_types::NamedResultTrace>, InterfaceError> {
@@ -697,6 +744,7 @@ pub struct QisHeliosInterface {
     /// Shared with sync handles; replacing this Arc leaves older handles valid.
     execution_context: Option<Arc<ExecutionContextPtr>>,
     dynamic_mode: bool,
+    program_shot: u64,
 }
 
 impl QisHeliosInterface {
@@ -710,6 +758,7 @@ impl QisHeliosInterface {
             metadata: BTreeMap::new(),
             execution_context: None,
             dynamic_mode: false,
+            program_shot: 0,
         }
     }
 
@@ -1929,6 +1978,19 @@ entry:
         unsafe { reset_fn() };
 
         let execution = (|| {
+            // Assign through the same cdylib/context as the program's queries.
+            let set_shot: Symbol<unsafe extern "C" fn(*mut ExecutionContext, u64) -> i32> = unsafe {
+                pecos_qis_lib
+                    .get(b"pecos_set_program_shot_with_context\0")
+                    .map_err(|e| {
+                        InterfaceError::ExecutionError(format!("Missing program shot setter: {e}"))
+                    })?
+            };
+            check_context_status(
+                unsafe { set_shot(ctx, self.program_shot) },
+                "set program shot",
+            )?;
+
             // Step 2b: Pre-populate the execution context before the program
             // reads its measurement futures.
             if let Some(measurements) = measurements {
@@ -2202,6 +2264,10 @@ impl QisInterface for QisHeliosInterface {
         self.execute_program(Some(&measurements))
     }
 
+    fn set_program_shot(&mut self, shot: u64) {
+        self.program_shot = shot;
+    }
+
     fn metadata(&self) -> BTreeMap<String, String> {
         self.metadata.clone()
     }
@@ -2213,6 +2279,7 @@ impl QisInterface for QisHeliosInterface {
     fn reset(&mut self) -> Result<(), InterfaceError> {
         // Subsequent collection must use a fresh context, including after cancellation.
         self.dynamic_mode = false;
+        self.program_shot = 0;
         Ok(())
     }
 
@@ -3193,7 +3260,8 @@ attributes #0 = { "EntryPoint" }
 
     #[test]
     fn link_error_preserves_diagnostics_from_both_streams() {
-        let symbol = b"program.obj : error LNK2019: unresolved external symbol get_current_shot";
+        let symbol =
+            b"program.obj : error LNK2019: unresolved external symbol pecos_test_missing_import";
         let summary = b"clang: error: linker command failed with exit code 1120";
         // MSVC's linker reports unresolved names on stdout, while clang puts
         // its exit-code summary on stderr. Other linkers use stderr instead.
@@ -3202,7 +3270,7 @@ attributes #0 = { "EntryPoint" }
             (summary.as_slice(), symbol.as_slice()),
         ] {
             let message = link_error_message(stdout, stderr);
-            assert!(message.contains("get_current_shot"), "{message}");
+            assert!(message.contains("pecos_test_missing_import"), "{message}");
             assert!(message.contains("exit code 1120"), "{message}");
         }
     }
@@ -3280,7 +3348,16 @@ attributes #0 = { "EntryPoint" }
             let free: Symbol<FreeNamedResultsJsonFn> =
                 ffi.get(b"pecos_free_named_results_json\0").expect("free");
             // No wrapper has installed a handler: record without jumping into an invalid buffer.
-            for code in [0, 1000, 1001] {
+            for code in [
+                0,
+                1,
+                999,
+                1000,
+                1001,
+                i32::MAX.cast_unsigned(),
+                1 << 31,
+                u32::MAX,
+            ] {
                 clear();
                 assert_eq!(
                     panic(std::ptr::null_mut(), tag(b"outside"), code).error_code,
@@ -3288,11 +3365,28 @@ attributes #0 = { "EntryPoint" }
                 );
                 let ptr = get();
                 assert!(!ptr.is_null());
+                let handle = HeliosSyncHandle {
+                    execution_context: Arc::clone(&context),
+                };
+                // The host reader must not depend on the worker's TLS registration.
+                register(std::ptr::null_mut());
+                if code < 1000 {
+                    assert_eq!(
+                        handle.get_program_exit().unwrap(),
+                        Some(pecos_engines::shot_results::ProgramExit {
+                            code: i32::try_from(code).unwrap(),
+                            message: "outside".into()
+                        })
+                    );
+                } else {
+                    assert!(handle.get_program_exit().is_err());
+                }
+                register(context.0);
                 let error: ProgramError =
                     serde_json::from_slice(std::ffi::CStr::from_ptr(ptr).to_bytes())
                         .expect("termination JSON");
                 free(ptr);
-                let expected = if code <= 1000 {
+                let expected = if code < 1000 {
                     ProgramError::Exit {
                         code: code.cast_signed(),
                         message: "outside".to_string(),
@@ -3380,9 +3474,9 @@ attributes #0 = { "EntryPoint" }
             let error = interface
                 .load_program(
                     br"
-                        declare i64 @get_current_shot()
+                        declare i64 @pecos_test_missing_import()
                         define i64 @qmain(i64 %arg) {
-                            %shot = call i64 @get_current_shot()
+                            %shot = call i64 @pecos_test_missing_import()
                             ret i64 %shot
                         }
                     ",
@@ -3391,7 +3485,10 @@ attributes #0 = { "EntryPoint" }
                 .expect_err("an undefined program import must fail at load time");
             // The linker rejects it before any library is published or opened.
             assert!(error.to_string().contains("Linking failed"), "{error}");
-            assert!(error.to_string().contains("get_current_shot"), "{error}");
+            assert!(
+                error.to_string().contains("pecos_test_missing_import"),
+                "{error}"
+            );
             return;
         }
 
@@ -3723,9 +3820,9 @@ attributes #0 = { "EntryPoint" }
         // Linking and dialect validation fail at different points of the load.
         let failing_programs: [&[u8]; 2] = [
             br"
-                declare i64 @get_current_shot()
+                declare i64 @pecos_test_missing_import()
                 define i64 @qmain(i64 %arg) {
-                    %shot = call i64 @get_current_shot()
+                    %shot = call i64 @pecos_test_missing_import()
                     ret i64 %shot
                 }
             ",
@@ -3971,7 +4068,7 @@ attributes #0 = { "EntryPoint" }
             ("main", "void", "", "void"),
         ] {
             let mut interface = QisHeliosInterface::new();
-            for code in [0, 1, 999, 1000, 1001, 1002, -1] {
+            for code in [0, 1, 999, 1000, 1001, 1002, -1, i32::MIN, i32::MAX] {
                 let program = format!(
                     r#"
                     @message = private constant [6 x i8] c"\05hello"
@@ -3985,7 +4082,7 @@ attributes #0 = { "EntryPoint" }
                 interface
                     .load_program(program.as_bytes(), ProgramFormat::LlvmIrText)
                     .expect("load panic program");
-                if (0..=1000).contains(&code) {
+                if (0..1000).contains(&code) {
                     interface.collect_operations().expect("exit must succeed");
                 } else {
                     let error = interface.collect_operations().expect_err("panic must fail");

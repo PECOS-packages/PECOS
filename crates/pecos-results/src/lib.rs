@@ -109,7 +109,7 @@ pub mod shot_vec;
 // Re-export all public types for backward compatibility
 pub use data::Data;
 pub use data_vec::{DataVec, DataVecType};
-pub use shot::Shot;
+pub use shot::{ProgramExit, Shot};
 pub use shot_map::ShotMap;
 pub use shot_map_formatter::{
     BitVecDisplayFormat, ShotMapDisplay, ShotMapDisplayExt, ShotMapDisplayOptions,

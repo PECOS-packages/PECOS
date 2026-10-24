@@ -86,7 +86,7 @@
 //!
 //! # Event Flow
 //!
-//! 1. `BeforeGate` - can skip the gate (for leaked qubits)
+//! 1. `BeforeGate` - can skip operand groups (for leaked qubits)
 //! 2. `AfterGate` - can inject Pauli errors
 //! 3. `AfterMeasurement` - can flip outcomes
 //! 4. `AfterPreparation` - can inject bit-flip errors
@@ -147,6 +147,7 @@ use pecos_core::{Angle64, QubitId, Signal, TimeUnits};
 use pecos_random::PecosRng;
 use smallvec::SmallVec;
 use std::any::{Any, TypeId};
+use std::borrow::Cow;
 
 macro_rules! declare_noise_event_kinds {
     ($($variant:ident),+ $(,)?) => {
@@ -242,8 +243,8 @@ impl EventKinds {
 pub enum NoiseEvent<'a> {
     /// Emitted before a gate is applied.
     ///
-    /// Channels can respond with `SkipGate` to prevent the gate from
-    /// being applied (e.g., for leaked qubits).
+    /// Channels can respond with `SkipGate(qubits)` to suppress operand groups
+    /// containing the listed qubits (e.g., leaked qubits).
     BeforeGate {
         gate_type: GateType,
         qubits: &'a [QubitId],
@@ -582,8 +583,11 @@ impl<'a> NoiseEvent<'a> {
     /// - Measurement: marks qubits as inactive
     /// - Reset: marks qubits as prepared (clears leakage)
     ///
-    /// This is called by the composer before dispatching to channels,
-    /// ensuring state tracking happens regardless of which channels are added.
+    /// The composer does not call this itself. `CorePlugin`'s event handlers
+    /// call it for `AfterPreparation` and `AfterMeasurement` events, so this
+    /// state is tracked independently of the channels added only when
+    /// `CorePlugin` is registered. `NoiseModelBuilder` and
+    /// `GeneralNoiseModelBuilder` register it.
     ///
     /// Note: This is separate from noise effects (which channels handle).
     /// Events have inherent meaning independent of noise.
@@ -630,11 +634,11 @@ pub enum NoiseResponse {
     /// inject 0-2 gates, so the heap allocation cost is acceptable.
     InjectGates(Box<SmallVec<[GateCommand; 4]>>),
 
-    /// Skip the current gate entirely.
+    /// Suppress each operand group of the current gate containing a listed qubit.
     ///
-    /// Used when a gate acts on a leaked qubit - the gate should not
-    /// be applied to the quantum state.
-    SkipGate,
+    /// Qubits outside the current gate's operands have no effect. To suppress
+    /// the whole command, list all of its operands.
+    SkipGate(SmallVec<[QubitId; 4]>),
 
     /// Flip measurement outcomes for specific qubits.
     FlipOutcomes(SmallVec<[QubitId; 4]>),
@@ -730,14 +734,17 @@ impl NoiseResponse {
         matches!(self, Self::None)
     }
 
-    /// Check if this response requests skipping the gate.
+    /// Get the union of qubits whose operand groups should be skipped.
     #[must_use]
-    pub fn should_skip_gate(&self) -> bool {
-        match self {
-            Self::SkipGate => true,
-            Self::Multiple(responses) => responses.iter().any(Self::should_skip_gate),
-            _ => false,
-        }
+    pub fn skipped_qubits(&self) -> SmallVec<[QubitId; 4]> {
+        let mut qubits = match self {
+            Self::SkipGate(qubits) => qubits.clone(),
+            Self::Multiple(responses) => responses.iter().flat_map(Self::skipped_qubits).collect(),
+            _ => SmallVec::new(),
+        };
+        qubits.sort_unstable();
+        qubits.dedup();
+        qubits
     }
 
     /// Get qubits that have leaked measurements (should return 2).
@@ -752,6 +759,30 @@ impl NoiseResponse {
             _ => SmallVec::new(),
         }
     }
+}
+
+/// Retain complete operand groups that contain no skipped qubits, in order.
+/// The group size must be positive. Unchanged operands are borrowed.
+pub(crate) fn surviving_gate_qubits<'a>(
+    qubits: &'a [QubitId],
+    group_size: usize,
+    skipped: &[QubitId],
+) -> Cow<'a, [QubitId]> {
+    debug_assert!(
+        group_size > 0,
+        "callers must pass a positive operand-group size"
+    );
+    if skipped.is_empty() || !qubits.iter().any(|q| skipped.contains(q)) {
+        return Cow::Borrowed(qubits);
+    }
+    Cow::Owned(
+        qubits
+            .chunks(group_size)
+            .filter(|group| !group.iter().any(|q| skipped.contains(q)))
+            .flatten()
+            .copied()
+            .collect(),
+    )
 }
 
 /// Trait for noise channels that respond to events.
@@ -1607,11 +1638,53 @@ mod tests {
 
     #[test]
     fn test_noise_response_skip_gate() {
-        assert!(NoiseResponse::SkipGate.should_skip_gate());
-        assert!(!NoiseResponse::None.should_skip_gate());
+        let skip = NoiseResponse::SkipGate(smallvec::smallvec![QubitId(2), QubitId(2)]);
+        assert_eq!(skip.skipped_qubits().as_slice(), &[QubitId(2)]);
+        assert!(NoiseResponse::None.skipped_qubits().is_empty());
 
-        let combined = NoiseResponse::SkipGate.combine(NoiseResponse::None);
-        assert!(combined.should_skip_gate());
+        let combined = NoiseResponse::Multiple(vec![
+            skip,
+            NoiseResponse::Multiple(vec![
+                NoiseResponse::None,
+                NoiseResponse::SkipGate(smallvec::smallvec![QubitId(0), QubitId(2)]),
+            ]),
+        ]);
+        assert_eq!(
+            combined.skipped_qubits().as_slice(),
+            &[QubitId(0), QubitId(2)]
+        );
+    }
+
+    #[test]
+    fn test_surviving_gate_qubits() {
+        let qubits = [
+            QubitId(0),
+            QubitId(1),
+            QubitId(2),
+            QubitId(3),
+            QubitId(4),
+            QubitId(5),
+        ];
+        for skipped in [&[][..], &[QubitId(99)][..]] {
+            let result = surviving_gate_qubits(&qubits, 2, skipped);
+            assert!(matches!(result, Cow::Borrowed(_)));
+            assert_eq!(result.as_ptr(), qubits.as_ptr());
+        }
+        assert_eq!(
+            surviving_gate_qubits(&qubits, 2, &[QubitId(2), QubitId(99)]).as_ref(),
+            &[QubitId(0), QubitId(1), QubitId(4), QubitId(5)]
+        );
+        assert_eq!(
+            surviving_gate_qubits(&qubits, 1, &[QubitId(2)]).as_ref(),
+            &[QubitId(0), QubitId(1), QubitId(3), QubitId(4), QubitId(5)]
+        );
+        assert_eq!(
+            surviving_gate_qubits(&qubits, 3, &[QubitId(2)]).as_ref(),
+            &[QubitId(3), QubitId(4), QubitId(5)]
+        );
+        assert!(
+            surviving_gate_qubits(&qubits, 2, &[QubitId(0), QubitId(2), QubitId(5)]).is_empty()
+        );
     }
 
     #[test]

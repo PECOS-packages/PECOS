@@ -307,9 +307,10 @@ in operation order and needs no outcome-dependent transition or new boundary.
 
 Legacy and metadata runtime-frame routes share this execution. Frame expansion
 and continuation counts remain bounded; existing physical-event admission is not
-widened. Scheduled profiles still exclude crosstalk and retain their single-call
-contract. Failed crosstalk continuations stay blocked across clones until reset,
-which clears pending gates and buffered readouts. Low-level callers of
+widened. Scheduled profiles keep their single-call contract for batches without
+explicit [measurement-crosstalk exposures](scheduled-event-adapters.md#measurement-crosstalk-exposures),
+including batches with preparation crosstalk. Failed crosstalk continuations stay
+blocked across clones until reset, which clears pending gates and buffered readouts. Low-level callers of
 `apply_noise_on_start` must process each returned command message and feed replies
 to `apply_noise_on_continue_processing` until no commands remain; the initial
 command message need not contain every source gate.

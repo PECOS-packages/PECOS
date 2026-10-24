@@ -30,6 +30,7 @@ import random
 
 import pytest
 import stim
+from pecos.qec import DetectorErrorModel
 from pecos.qec.surface import LogicalCircuitBuilder, SurfacePatch
 from pecos.qec.surface.logical_circuit import (
     _TWO_PATCH_IDENTITY,
@@ -313,7 +314,7 @@ def test_single_round_memory_provider_reuses_bounded_slices(monkeypatch):
         p_meas=0.003,
         p_prep=0.004,
     )
-    assert builder.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004) == oracle.to_string()
+    assert str(builder.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004)) == oracle.to_string()
     after_first = _cached_surface_singleton_memory_dem_slices.cache_info()
     assert after_first.misses == 1
     assert after_first.currsize == 1
@@ -372,7 +373,7 @@ def test_multi_patch_memory_provider_matches_full_compile(rounds, shapes, bases)
         p_meas=0.003,
         p_prep=0.004,
     )
-    assert builder.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004) == oracle.to_string()
+    assert str(builder.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004)) == oracle.to_string()
 
 
 def test_multi_patch_memory_provider_reuses_physical_family(monkeypatch):
@@ -473,7 +474,7 @@ def test_cached_memory_provider_matches_full_compile_across_geometries(dx, dz, b
         p_meas=0.004,
         p_prep=0.005,
     )
-    assert builder.build_dem(p1=0.002, p2=0.003, p_meas=0.004, p_prep=0.005) == oracle.to_string()
+    assert str(builder.build_dem(p1=0.002, p2=0.003, p_meas=0.004, p_prep=0.005)) == oracle.to_string()
 
 
 def test_logical_h_provider_reuses_bounded_slices(monkeypatch):
@@ -571,7 +572,7 @@ def test_cached_logical_h_provider_matches_full_compile_across_families(
         p_meas=0.004,
         p_prep=0.005,
     )
-    assert builder.build_dem(p1=0.002, p2=0.003, p_meas=0.004, p_prep=0.005) == oracle.to_string()
+    assert str(builder.build_dem(p1=0.002, p2=0.003, p_meas=0.004, p_prep=0.005)) == oracle.to_string()
 
 
 @pytest.mark.parametrize(
@@ -603,7 +604,7 @@ def test_repeated_logical_h_provider_matches_full_compile(orientation, rounds, b
         p_meas=0.004,
         p_prep=0.005,
     )
-    assert builder.build_dem(p1=0.002, p2=0.003, p_meas=0.004, p_prep=0.005) == oracle.to_string()
+    assert str(builder.build_dem(p1=0.002, p2=0.003, p_meas=0.004, p_prep=0.005)) == oracle.to_string()
     descriptor = builder.build_algorithm_descriptor(
         p1=0.002,
         p2=0.003,
@@ -797,7 +798,7 @@ def test_cached_logical_cx_provider_matches_full_compile_across_families(
         p_meas=0.004,
         p_prep=0.005,
     )
-    assert builder.build_dem(p1=0.002, p2=0.003, p_meas=0.004, p_prep=0.005) == oracle.to_string()
+    assert str(builder.build_dem(p1=0.002, p2=0.003, p_meas=0.004, p_prep=0.005)) == oracle.to_string()
 
 
 @pytest.mark.parametrize(
@@ -828,7 +829,7 @@ def test_repeated_logical_cx_provider_matches_full_compile(final_basis, rounds):
         p_meas=0.004,
         p_prep=0.005,
     )
-    assert builder.build_dem(p1=0.002, p2=0.003, p_meas=0.004, p_prep=0.005) == oracle.to_string()
+    assert str(builder.build_dem(p1=0.002, p2=0.003, p_meas=0.004, p_prep=0.005)) == oracle.to_string()
     descriptor = builder.build_algorithm_descriptor(
         p1=0.002,
         p2=0.003,
@@ -953,7 +954,7 @@ def test_mixed_h_cx_provider_matches_full_compile(gate_names, rounds, initial_ba
         p_meas=0.004,
         p_prep=0.005,
     )
-    assert builder.build_dem(p1=0.002, p2=0.003, p_meas=0.004, p_prep=0.005) == oracle.to_string()
+    assert str(builder.build_dem(p1=0.002, p2=0.003, p_meas=0.004, p_prep=0.005)) == oracle.to_string()
     descriptor = builder.build_algorithm_descriptor(
         p1=0.002,
         p2=0.003,
@@ -1074,7 +1075,7 @@ def test_mixed_h_cx_with_history_sensitive_outputs_uses_full_fallback(monkeypatc
         raise AssertionError(message)
 
     monkeypatch.setattr(logical_circuit, "_cached_surface_mixed_dem_slices", reject_mixed_cache)
-    assert builder.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004) == oracle.to_string()
+    assert str(builder.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004)) == oracle.to_string()
     assert "L0" in oracle.to_string()
     assert "L1" not in oracle.to_string()
 
@@ -1441,6 +1442,47 @@ def test_python_logical_decoders_reject_decision_points(decoder_type):
         match=r"descriptor contains feed-forward decision points.*issue #596",
     ):
         decoder_type(desc, **kwargs)
+
+
+@pytest.mark.parametrize("with_h", [False, True])
+@pytest.mark.parametrize("force_full_model", [False, True])
+def test_build_dem_returns_labelled_model(monkeypatch, with_h, force_full_model):
+    """The public model keeps the provider's text and detector labels."""
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(SurfacePatch.create(3), "A")
+    builder.add_memory("A", 3, "Z")
+    if with_h:
+        builder.add_transversal_h("A")
+        builder.add_memory("A", 3, "X")
+    noise = {"p1": 0.001, "p2": 0.002, "p_meas": 0.003, "p_prep": 0.004}
+    oracle = _full_compile_with_composed_fault_sectors(builder, **noise)
+    if force_full_model:
+        monkeypatch.setattr(builder, "_build_structured_dem_from_cached_slices", lambda **_: None)
+    dem = builder.build_dem(**noise)
+    assert isinstance(dem, DetectorErrorModel)
+    assert str(dem) == oracle.to_string()
+    assert dem.detector_fault_sectors() == oracle.detector_fault_sectors()
+
+
+@pytest.mark.parametrize("with_h", [False, True])
+def test_build_dem_labels_reach_batch_projection(with_h):
+    """Graph decoding sees the model's labels, including through cached slices."""
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(SurfacePatch.create(3), "A")
+    builder.add_memory("A", 3, "Z")
+    if with_h:
+        builder.add_transversal_h("A")
+        builder.add_memory("A", 3, "X")
+    noise = {"p1": 0.001, "p2": 0.002, "p_meas": 0.003, "p_prep": 0.004}
+    model = _full_compile_with_composed_fault_sectors(builder, **noise)
+    labels = model.detector_fault_sectors()
+    unset = sum(label is None for _, label in labels)
+    assert unset < len(labels)
+    batch = model.to_sampler().sample_batch(100, seed=42)
+    report = batch.decode(builder.build_dem(**noise), "pymatching").projection
+    assert report is not None
+    assert report.input_hyperedges > 0
+    assert report.unlabelled_detectors == unset
 
 
 if __name__ == "__main__":

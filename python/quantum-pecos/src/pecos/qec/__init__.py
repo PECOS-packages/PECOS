@@ -8,6 +8,7 @@ with no SLR or runtime dependencies.
 
 Submodules:
     analysis: Result analysis and post-processing utilities
+    circuit_steps: Circuit step vocabulary shared by code-family gadget builders
     generic: Generic stabilizer check framework
     protocols: Protocol geometry (MSD, etc.)
     surface: Surface code geometry (square and rotated lattices)
@@ -39,6 +40,7 @@ from pecos_rslib.qec import (
     DagFaultAnalyzer,
     DagFaultInfluenceMap,
     DemBuilder,
+    DemInferenceSettings,
     DemSampler,
     DemSamplerBuilder,
     DistanceProblem,
@@ -101,6 +103,7 @@ from pecos.qec.analysis import (
     syndrome_difference,
     syndrome_to_detection_events,
 )
+from pecos.qec.circuit_steps import CircuitStep, OpType
 from pecos.qec.color import (
     ColorCode488,
     ColorCode488Builder,
@@ -158,9 +161,12 @@ from pecos.qec.surface import (
 from pecos.qec.surface._detection_events import MissingObservableReferenceError
 
 __all__ = [
+    "CircuitStep",
+    "OpType",
     "MissingObservableReferenceError",
     # Submodules
     "analysis",
+    "circuit_steps",
     "color",
     "protocols",
     "surface",
@@ -173,6 +179,7 @@ __all__ = [
     "CircuitFaultAnalyzer",
     "CircuitFaultLocation",
     "DemBuilder",
+    "DemInferenceSettings",
     "DemSampler",
     "DemSamplerBuilder",
     "SampleBatch",

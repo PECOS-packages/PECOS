@@ -43,6 +43,7 @@ trait BoxedClassicalEngineBuilder: Send {
 
 /// Trait for building boxed quantum engines
 trait BoxedQuantumEngineBuilder: Send {
+    fn as_any(&self) -> &dyn std::any::Any;
     fn build_boxed(self: Box<Self>) -> Result<Box<dyn crate::quantum::QuantumEngine>, PecosError>;
     fn num_qubits(&self) -> Option<usize>;
     fn set_qubits_if_needed(&mut self, num_qubits: usize);
@@ -77,6 +78,10 @@ impl<B> BoxedQuantumEngineBuilder for QuantumBuilderWrapper<B>
 where
     B: QuantumEngineBuilder + Send + 'static,
 {
+    fn as_any(&self) -> &dyn std::any::Any {
+        &self.builder
+    }
+
     fn build_boxed(
         mut self: Box<Self>,
     ) -> Result<Box<dyn crate::quantum::QuantumEngine>, PecosError> {
@@ -300,19 +305,38 @@ impl SimBuilder {
             classical_engine.set_num_qubits_hint(num_qubits);
         }
 
-        let quantum_engine = if let Some(mut builder) = self.quantum_builder {
-            builder.set_qubits_if_needed(num_qubits);
-            builder.build_boxed()?
-        } else {
-            Box::new(SparseStabEngine::new(num_qubits))
-        };
-
         // Build noise model (with default if not set)
         let noise_model = if let Some(builder) = self.noise_builder {
             builder.build_boxed()?
         } else {
             // Default: no noise
             Box::new(PassThroughNoiseModel::new())
+        };
+
+        // Reject unsupported scheduled combinations before simulator allocation.
+        // Inspect the concrete builders without opening an arbitrary opt-in contract.
+        let scheduled = noise_model
+            .as_any()
+            .downcast_ref::<crate::scheduled_frame::ScheduledIdleModel>()
+            .or_else(|| {
+                noise_model
+                    .as_any()
+                    .downcast_ref::<crate::scheduled_events::ScheduledEventModel>()
+                    .map(|model| &model.inner)
+            });
+        if let Some(profile) = scheduled {
+            let builder = self.quantum_builder.as_ref().ok_or_else(|| PecosError::Input(
+                "scheduled execution requires an explicit state_vector() or stabilizer() builder".into()))?;
+            let backend =
+                crate::quantum_engine_builder::scheduled_backend(builder.as_any(), num_qubits)?;
+            profile.validate_backend(backend)?;
+        }
+
+        let quantum_engine = if let Some(mut builder) = self.quantum_builder {
+            builder.set_qubits_if_needed(num_qubits);
+            builder.build_boxed()?
+        } else {
+            Box::new(SparseStabEngine::new(num_qubits))
         };
 
         // Build HybridEngine

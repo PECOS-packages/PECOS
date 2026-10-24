@@ -15,7 +15,9 @@
 
 use pecos_decoder_core::dem::SparseDem;
 use pecos_decoder_core::dem_views::{DetectorBasis, gari_transform, init_dets_view};
-use pecos_qec::fault_tolerance::dem_builder::{DemBuilder, DetectorDef, DetectorErrorModel};
+use pecos_qec::fault_tolerance::dem_builder::{
+    DemBuilder, DetectorDef, DetectorErrorModel, FaultMechanism,
+};
 use pecos_qec::{BbMemoryBasis, bb_memory_circuit};
 use pecos_quantum::Attribute;
 
@@ -52,14 +54,32 @@ fn detector_bases_reject_detectors_without_an_xz_sector() {
     dem.detectors[1].fault_sector = Some("XZ-rotated".into());
     assert!(error_text(&dem).contains(r#"detector D1 has fault sector "XZ-rotated""#));
 
-    // A repeated id leaves another id undefined.
-    dem.detectors[1] = detector(0, Some("Z"));
-    assert!(error_text(&dem).contains("detector D1 is undefined or has no fault sector"));
-
-    dem.detectors[1].id = 2;
+    // A gap in the definition ids leaves the skipped id undefined.
+    dem.detectors[1] = detector(2, Some("Z"));
     assert_eq!(
         error_text(&dem),
-        "Invalid configuration: detector D2 is outside the ids of the model's 2 detector definitions"
+        "Invalid configuration: detector D1 is undefined or has no fault sector"
+    );
+}
+
+#[test]
+fn detector_bases_cover_mechanism_targets_without_definitions() {
+    let mut dem = DetectorErrorModel::new();
+    dem.add_detector(detector(0, Some("X")));
+    dem.add_detector(detector(1, Some("Z")));
+    dem.add_direct_contribution(FaultMechanism::from_unsorted([1, 2], []), 0.1);
+    assert_eq!(dem.to_structured_decoder_dem().unwrap().num_detectors, 3);
+    assert_eq!(
+        error_text(&dem),
+        "Invalid configuration: detector D2 is undefined or has no fault sector"
+    );
+
+    // A model with mechanisms but no detector definitions has no mask.
+    let mut mechanisms_only = DetectorErrorModel::new();
+    mechanisms_only.add_direct_contribution(FaultMechanism::from_unsorted([0], []), 0.1);
+    assert_eq!(
+        error_text(&mechanisms_only),
+        "Invalid configuration: detector D0 is undefined or has no fault sector"
     );
 }
 

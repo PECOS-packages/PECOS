@@ -61,17 +61,18 @@ fn classical_parameters_remain_f64() {
 
 #[test]
 fn legacy_f64_angle_batches_are_rejected() {
-    let mut bytes = ByteMessage::quantum_operations_builder()
-        .rz(Angle64::QUARTER_TURN, &[0])
-        .build()
-        .into_bytes();
-    bytes[4] = 1; // Legacy version with f64 angle words.
-    bytes[32..40].copy_from_slice(&std::f64::consts::FRAC_PI_2.to_le_bytes());
+    // Legacy v1 uses a four-byte gate header and an f64 angle word.
+    let mut bytes = vec![
+        83, 67, 69, 80, 1, 0, 0, 0, 1, 0, 0, 0, 40, 0, 0, 0, 10, 0, 0, 0, 16, 0, 0, 0,
+    ];
+    bytes.extend_from_slice(&[GateType::RZ as u8, 1, 1, 0]);
+    bytes.extend_from_slice(&0_u32.to_le_bytes());
+    bytes.extend_from_slice(&std::f64::consts::FRAC_PI_2.to_le_bytes());
     let error = ByteMessage::new(&bytes)
         .quantum_ops()
         .unwrap_err()
         .to_string();
-    assert!(error.contains("version 5"), "{error}");
+    assert!(error.contains("version 8"), "{error}");
     assert!(error.contains("rebuild"), "{error}");
 }
 

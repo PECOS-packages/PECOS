@@ -101,10 +101,8 @@ pub struct ScheduledBatch {
     pub measurements: Vec<ScheduledMeasurement>,
 }
 
-// Bounds on each indivisible native callback batch, not the entire drain.
-// Every collection also has a transport-derived limit, including empty batches.
-#[cfg(feature = "selene")]
-pub(crate) const MAX_OPERATIONS: usize = 4096;
+// Payload bound on each indivisible native callback batch. Records and batch
+// framing are charged to the collection's schedule byte budget instead.
 #[cfg(feature = "selene")]
 pub(crate) const MAX_PAYLOAD_BYTES: usize = 262_144;
 

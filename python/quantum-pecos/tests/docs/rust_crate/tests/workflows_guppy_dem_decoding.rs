@@ -83,9 +83,12 @@ fn test_workflows_guppy_dem_decoding_rust_3() -> Result<(), Box<dyn std::error::
     use pecos_decoders::DecoderSpec;
     use pecos_decoders::batch::{DecodeOptions, ExecutionPath};
     use pecos_decoders::spec::{BpOsdConfig, PyMatchingConfig};
-    use pecos_frontier::{FrontierConfig, FrontierDecoder, FrontierStatus, SparseDem, TrellisOrdering};
     use pecos_qec::fault_tolerance::dem_builder::{ParsedDem, SampleBatch};
     use pecos_random::PecosRng;
+    use pecos_frontier::recovery::{
+FallbackPolicy, FrontierRecoveryDecoder, FrontierRecoveryOutcome,
+NoPathAction, RecoveryOptions,
+};
     let raw_text = std::fs::read_to_string("guppy_dem_decoding.dem")?;
     let sampler = ParsedDem::parse(&raw_text)?.to_dem_sampler();
     let mut rng = PecosRng::seed_from_u64(1);
@@ -128,6 +131,141 @@ fn test_workflows_guppy_dem_decoding_rust_3() -> Result<(), Box<dyn std::error::
         assert!(0 < result.num_errors && result.num_errors < result.num_shots);
         println!("{name:11} {:5}   {:.4}%", result.num_errors, 100.0 * result.logical_error_rate());
     }
+
+
+    let recovery_dem = pecos_frontier::SparseDem::from_dem_str(&raw_text)?;
+    let recovery_config = pecos_frontier::FrontierConfig {
+        k: 256,
+        delta: 16.0,
+        column_order: pecos_frontier::TrellisOrdering::Deadline.resolve(&recovery_dem)?,
+        ..Default::default()
+    };
+    let recovery_decoder = FrontierRecoveryDecoder::from_sparse_dem(
+        &recovery_dem, recovery_config, Some(FallbackPolicy::FeasibleThenZero),
+    )?;
+    let syndromes: Vec<_> = batch.shots().map(|shot| shot.syndrome).collect();
+    let outcomes = recovery_decoder.decode_batch(&syndromes, 4, RecoveryOptions {
+        delta_max: Some(64.0),
+        on_no_path: NoPathAction::Fallback,
+    })?;
+
+    let (mut errors, mut fallback_errors, mut fallbacks, mut incompatible) = (0, 0, 0, 0);
+    for (shot, outcome) in batch.shots().zip(outcomes) {
+        let (prediction, used_fallback) = match outcome? {
+            FrontierRecoveryOutcome::Decoded { result, .. } => (result.predicted, false),
+            FrontierRecoveryOutcome::Fallback { predicted, syndrome_consistent, .. } => {
+                fallbacks += 1;
+                incompatible += usize::from(syndrome_consistent == Some(false));
+                (predicted, true)
+            }
+            FrontierRecoveryOutcome::NoPath(_) => {
+                return Err("fallback mode returned no prediction".into());
+            }
+        };
+        let logical_error = prediction != shot.observable_flips;
+        errors += usize::from(logical_error);
+        fallback_errors += usize::from(used_fallback && logical_error);
+    }
+    println!("all shots: {errors}/{} logical errors", batch.num_shots());
+    println!("fallback shots: {fallback_errors}/{fallbacks} logical errors");
+    println!("fallback shots incompatible with the DEM: {incompatible}");
+    Ok(())
+}
+
+
+
+#[test]
+fn test_workflows_guppy_dem_decoding_rust_4() -> Result<(), Box<dyn std::error::Error>> {
+    use pecos_decoders::DecoderSpec;
+    use pecos_decoders::batch::{DecodeOptions, ExecutionPath};
+    use pecos_decoders::spec::{BpOsdConfig, PyMatchingConfig};
+    use pecos_frontier::{FrontierConfig, FrontierDecoder, FrontierStatus, SparseDem, TrellisOrdering};
+    use pecos_qec::fault_tolerance::dem_builder::{ParsedDem, SampleBatch};
+    use pecos_random::PecosRng;
+    use pecos_frontier::recovery::{
+FallbackPolicy, FrontierRecoveryDecoder, FrontierRecoveryOutcome,
+NoPathAction, RecoveryOptions,
+};
+    let raw_text = std::fs::read_to_string("guppy_dem_decoding.dem")?;
+    let sampler = ParsedDem::parse(&raw_text)?.to_dem_sampler();
+    let mut rng = PecosRng::seed_from_u64(1);
+    let batch: SampleBatch = sampler.sample_shots(2000, &mut rng)?;
+
+    assert_eq!(batch.num_shots(), 2000);
+    for (index, shot) in batch.shots().take(2).enumerate() {
+        assert_eq!(shot.syndrome.len(), batch.num_detectors());
+        let l0_flipped = shot.observable_flips.get(0);
+        println!("shot {index}: syndrome={:?}, L0_flipped={l0_flipped}", shot.syndrome);
+    }
+
+
+    let pymatching = DecoderSpec::PyMatching(PyMatchingConfig {
+        correlated: true,
+        ..Default::default()
+    });
+    let bp_osd = DecoderSpec::BpOsd(BpOsdConfig {
+        max_iter: 10,
+        osd_order: 1,
+        ..Default::default()
+    });
+
+    let pymatching_result = batch.decode(&raw_text, &pymatching)?;
+    let options = DecodeOptions::default().workers(4).predictions(true);
+    let bp_osd_result = batch.decode_with(&raw_text, &bp_osd, &options)?;
+
+    assert_eq!(pymatching_result.execution_path, ExecutionPath::NativeBatch);
+    assert_eq!(pymatching_result.workers_used, 1);
+    assert_eq!(bp_osd_result.execution_path, ExecutionPath::Parallel);
+    assert_eq!(bp_osd_result.workers_used, 4);
+    let predictions = bp_osd_result
+        .predictions
+        .as_deref()
+        .ok_or("BP+OSD predictions were requested but not returned")?;
+    assert_eq!(predictions.len(), batch.num_shots());
+
+    for (name, result) in [("pymatching", &pymatching_result), ("bp_osd", &bp_osd_result)] {
+        assert_eq!(result.num_shots, batch.num_shots());
+        assert!(0 < result.num_errors && result.num_errors < result.num_shots);
+        println!("{name:11} {:5}   {:.4}%", result.num_errors, 100.0 * result.logical_error_rate());
+    }
+
+
+    let recovery_dem = pecos_frontier::SparseDem::from_dem_str(&raw_text)?;
+    let recovery_config = pecos_frontier::FrontierConfig {
+        k: 256,
+        delta: 16.0,
+        column_order: pecos_frontier::TrellisOrdering::Deadline.resolve(&recovery_dem)?,
+        ..Default::default()
+    };
+    let recovery_decoder = FrontierRecoveryDecoder::from_sparse_dem(
+        &recovery_dem, recovery_config, Some(FallbackPolicy::FeasibleThenZero),
+    )?;
+    let syndromes: Vec<_> = batch.shots().map(|shot| shot.syndrome).collect();
+    let outcomes = recovery_decoder.decode_batch(&syndromes, 4, RecoveryOptions {
+        delta_max: Some(64.0),
+        on_no_path: NoPathAction::Fallback,
+    })?;
+
+    let (mut errors, mut fallback_errors, mut fallbacks, mut incompatible) = (0, 0, 0, 0);
+    for (shot, outcome) in batch.shots().zip(outcomes) {
+        let (prediction, used_fallback) = match outcome? {
+            FrontierRecoveryOutcome::Decoded { result, .. } => (result.predicted, false),
+            FrontierRecoveryOutcome::Fallback { predicted, syndrome_consistent, .. } => {
+                fallbacks += 1;
+                incompatible += usize::from(syndrome_consistent == Some(false));
+                (predicted, true)
+            }
+            FrontierRecoveryOutcome::NoPath(_) => {
+                return Err("fallback mode returned no prediction".into());
+            }
+        };
+        let logical_error = prediction != shot.observable_flips;
+        errors += usize::from(logical_error);
+        fallback_errors += usize::from(used_fallback && logical_error);
+    }
+    println!("all shots: {errors}/{} logical errors", batch.num_shots());
+    println!("fallback shots: {fallback_errors}/{fallbacks} logical errors");
+    println!("fallback shots incompatible with the DEM: {incompatible}");
 
 
     // Python's FrontierDecoder.from_dem defaults to column_order="deadline_reorder".

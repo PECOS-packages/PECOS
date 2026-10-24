@@ -97,6 +97,8 @@ extern selene_u64_result_t selene_custom_runtime_call(SeleneInstance *instance, 
                                                const uint8_t *data, uint64_t data_length);
 extern void *pecos_create_execution_context(void);
 extern void pecos_register_execution_context(void *);
+extern int32_t pecos_set_program_shot_with_context(void *, uint64_t);
+extern uint64_t get_current_shot(void);
 extern void pecos_destroy_execution_context(void *);
 extern void pecos_clear_program_error(void);
 extern char *pecos_get_program_error_json(void);
@@ -149,6 +151,7 @@ int abi_oracle(void (*set_measurements)(void)) {
     char *json = NULL;
     void *ctx = pecos_create_execution_context();
     pecos_register_execution_context(ctx);
+    CHECK(pecos_set_program_shot_with_context(ctx, UINT64_MAX) == 0);
     SeleneInstance *instance = NULL, *again = NULL;
     OK(selene_load_config(&instance, NULL));
     OK(selene_load_config(&again, "ignored"));
@@ -218,7 +221,9 @@ int abi_oracle(void (*set_measurements)(void)) {
     OK(selene_dump_state(instance, tag, NULL, UINT64_MAX));
     OK(selene_set_tc(instance, 999));
     CHECK(selene_get_tc(instance).value == 0);
-    CHECK(selene_get_current_shot(instance).value == 0);
+    u = selene_get_current_shot(instance);
+    CHECK(u.error_code == 0 && u.value == UINT64_MAX);
+    CHECK(get_current_shot() == UINT64_MAX);
     CHECK(selene_shot_count(instance).value == 1);
     OK(selene_local_barrier(instance, NULL, 88, 99));
     OK(selene_global_barrier(instance, 111));

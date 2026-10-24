@@ -472,3 +472,25 @@ pub fn density_matrix() -> DensityMatrixEngineBuilder {
 pub fn coin_toss() -> CoinTossEngineBuilder {
     CoinTossEngineBuilder::new()
 }
+
+/// Closed pre-allocation admission corresponding to `ScheduledBackend::inspect`.
+pub(crate) fn scheduled_backend(
+    builder: &dyn std::any::Any,
+    capacity: usize,
+) -> Result<crate::quantum::ScheduledBackend, PecosError> {
+    let clifford = if let Some(state_vector) = builder.downcast_ref::<StateVectorEngineBuilder>() {
+        if state_vector.parallel || state_vector.num_threads.is_some() {
+            return Err(PecosError::Input(
+                "scheduled execution does not admit the parallel/dense state-vector backend".into(),
+            ));
+        }
+        false
+    } else if builder.is::<StabilizerEngineBuilder>() {
+        true
+    } else {
+        return Err(PecosError::Input(
+            "scheduled execution requires state_vector() or stabilizer()".into(),
+        ));
+    };
+    Ok(crate::quantum::ScheduledBackend { capacity, clifford })
+}

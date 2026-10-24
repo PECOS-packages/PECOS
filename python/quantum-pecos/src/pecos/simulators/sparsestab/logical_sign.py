@@ -21,6 +21,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from pecos.simulators.sparsestab.phase import product_phase
+
 if TYPE_CHECKING:
     from pecos.circuits import QuantumCircuit
     from pecos.simulators.sparsestab.state import SparseStabPy
@@ -138,93 +140,11 @@ def find_logical_signs(
         msg = f"Failure due to not finding logical op! x... {test_x ^ logical_xs!s} z... {test_z ^ logical_zs!s}"
         raise Exception(msg)
 
-    # Get the sign of the logical operator
-    # --------------------------
-
-    """
-    num_minuses = len(anticom_destabs_col & stabs.signs_minus)
-    num_is = len(anticom_destabs_col & stabs.signs_i)
-
-    # Sign correction due ZX -> -XZ
-    cumulative_x = set([])
-    for row in anticom_destabs_col:
-        num_minuses += len(stabs_row_z[row] & cumulative_x)
-
-        # Update the row sum Paulis
-        cumulative_x ^= stabs_row_x[row]
-
-    if num_is % 4:  # Can only be 0 or 2
-        num_minuses += 1
-
-    meas_outcome = num_minuses % 2
-    """
-
-    num_logical_is = len(logical_ys) % 2
-
-    num_minuses = len(build_stabs & stabs.signs_minus)
-    num_is = len(build_stabs & stabs.signs_i) - num_logical_is
-
-    # Sign correction due ZX -> -XZ
-    cumulative_x = set()
-    for row in build_stabs:
-        num_minuses += len(stabs.row_z[row] & cumulative_x)
-        cumulative_x ^= stabs.row_x[row]
-
-    if num_is % 4:  # Can only be 0 or 2
-        num_minuses += 1
-
-    if num_is % 2:
+    # Since Y = iW, converting the product from W to explicit Y subtracts
+    # one power of i for every Y, including pairs that contribute a minus.
+    phase = (product_phase(stabs, build_stabs) - len(logical_ys)) % 4
+    if phase % 2:
         msg = "Final sign should not have an imaginary sign!"
         raise Exception(msg)
 
-    logical_sign = num_minuses % 2
-
-    """
-    # First, get the minus signs in front of the stabilizers
-    logical_minus = len(build_stabs & stabs.signs_minus)
-
-    print('num stab minuses', logical_minus)
-
-    # Second, see get the imaginary signs in front of the stabilizers
-    logical_i = len(build_stabs & stabs.signs_i)
-
-    print('num stab is', logical_i)
-
-    # Translate the Ws to Ys... W = -i(iW) = -iY => For each Y add another -1 and +i.
-    # logical_ws = logical_xs & logical_zs
-    num_ys = 0
-    for stab in build_stabs:
-        num_ys += len(stabs.row_x[stab] & stabs.row_z[stab])
-
-    # num_ys = len(logical_ws)  # number of -is acquired
-
-    print('num -is', num_ys, 'xs')
-
-    logical_minus += num_ys
-    logical_i += num_ys
-
-    print('num minuses', logical_minus)
-    print('num is', logical_i)
-
-    # Do (-1)^even = 1 -> 0, (-1)^odd = -1 -> 1
-    logical_minus %= 2
-
-    # Reinterpret number of is
-    logical_i %= 4
-
-    # num_is %4 = 0 => +1 => logical_i = 0, logical_minus += 0
-    # num_is %4 = 1 => +i => logical_i = 1, logical_minus += 0
-
-    if logical_i == 2:  # num_is %4 = 2 => -1 => logical_i = 0, logical_minus += 1
-        logical_i = 0
-        logical_minus += 1
-    elif logical_i == 3:  # num_is %4 = 3 => -i => logical_i = 1, logical_minus += 1
-        logical_i = 1
-        logical_minus += 1
-
-    if logical_i != 0:
-        raise Exception('Logical operator has an imaginary sign... Not allowed if logical state is stabilized '
-                        'by logical op!')
-    """
-
-    return logical_sign
+    return phase // 2

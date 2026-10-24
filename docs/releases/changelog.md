@@ -16,12 +16,63 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   converters, MY) without a reset: such reuse now gives the correct outcomes
   and detectors.
 
+- Live scheduled simulation now admits `StabilizerEngine` (`pr.stabilizer()`) with
+  checked stochastic noise. Coherent idle rates and unsupported rotations reject
+  before current-input execution. Scheduled profiles no longer cap the qubit
+  count (previously 1..=16 for StateVec). Per-batch record and spectator counts
+  are bounded by the 64 MiB schedule byte budget instead of fixed counts (4096
+  operations and 16,384 spectator targets per batch). Spectator IDs passed to
+  `ScheduledCrosstalk` are checked against the profile capacity at admission
+  rather than a fixed bound. Preparation-crosstalk expansion budgets scale with
+  the admitted capacity.
+
+- DEM, DEM-sampler, MEM, and lookup-decoder builders now reject nonzero idle
+  noise when the circuit has no `Idle` locations, including `from_circuit`,
+  the low-level inferred-annotation helper, the surface tick-circuit helper,
+  `DemSamplerBuilder` in both raw and detector modes,
+  `SamplingEngine::from_influence_map`, and `LookupDecoder::build`. Nonzero
+  per-gate `Idle` rates count as idle noise. The error names the requesting
+  settings. Insert idles with explicit durations or disable idle noise. Zero
+  idle rates remain valid, and `from_guppy` now accepts them too instead of
+  rejecting any supplied idle rate. `LookupDecoder::build` now returns
+  `DemBuilderError` and validates gate-rate keys like the other builders.
+
+- A nonzero `Idle` key in `p1_gate_rates` or `p2_gate_rates` is now rejected:
+  `Idle` gates take noise only from the idle model, so the key was silently
+  ignored. Use `p_idle` (`set_idle`) or per-gate `Idle` rates instead.
+  `PerGateTypeNoise::to_neo_channel` likewise rejects these keys and a legacy
+  `idle_rz` angle, which the neo channel cannot carry.
+
+- **Breaking:** `NoiseConfig::uniform(p)` and `DemSamplerBuilder::with_uniform_noise(p)`
+  (Python `DemSampler.raw_uniform` and `DemSampler.from_influence_map`) no
+  longer set idle noise. Circuits with explicit `Idle` gates previously
+  received `p_idle = p` from them and now receive no idle noise. To keep it,
+  use `.set_idle(p)` or `.with_idle_noise(p)` in Rust, and
+  `DemSamplerBuilder(influence_map).with_noise(p, p, p, p, p_idle=p).build()`
+  in Python.
+
 - Shot corpus format v2 stores detector fault-sector labels, and `SampleBatch.save`
   accepts a `DetectorErrorModel`. New readers accept v1 (unlabelled) and v2;
   every save writes v2, which older PECOS installations reject. Loaded batches
   report the version on disk; resaving does not mutate the source batch.
 
 ### Decoder changes
+
+- Frontier has matching opt-in recovery in Rust and Python calls:
+  strict errors, no-path reports, or explicit fallback predictions. `delta_max`
+  enables capped doubling retries without changing K. Rust exposes
+  `FrontierRecoveryDecoder`; Python uses `FrontierDecoder` method options.
+  The `feasible_then_zero` fallback returns a verified DEM explanation when one
+  exists, otherwise a flagged zero prediction. `DemFeasibility` in decoder-core
+  provides reusable preparation independently of Frontier. The `frontier(...)`
+  batch specification accepts the same controls for `SampleBatch.decode` and
+  `DemSampler.decode`. Batch results retain recovery and logical-error records;
+  fallback predictions are scored against truth, and undecoded shots remain
+  explicit holes. Recovery-configured specs use provider protocol v2 to prepare
+  the trellis and optional feasibility basis once per decode call, sharing them
+  across workers with independent scratch. Their batch adapter uses prediction-only
+  attempts; detailed direct calls retain full results. Defaults and provider
+  protocol v1 remain unchanged.
 
 - `LogicalCircuitBuilder` detector `fault_sector` labels follow the code's
   stabilizer family across a transversal H; previously post-H detectors were
@@ -31,8 +82,7 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   `irreducible="refuse"` by default and `"drop"` on request. Already-decomposed
   `^` input whose components are all graphlike is used as given.
 - DEMs that `LogicalCircuitBuilder` composes from cached slices keep detector
-  `fault_sector` labels, matching the full compile. Its public methods still
-  return DEM text, which does not carry labels. Rust: `DemSliceDetector` gains
+  `fault_sector` labels, matching the full compile. Rust: `DemSliceDetector` gains
   `fault_sector` and is no longer `Copy`.
 - Perturbed ensembles keep zero-probability errors at exactly zero in every
   perturbed copy; previously they were raised to `1e-15`.
@@ -86,6 +136,16 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   first decision from program results.
 
 ### Python breaking changes
+
+- `SurfaceCircuitStep` is renamed to `CircuitStep` and moves, with `OpType`, to
+  `pecos.qec.circuit_steps`; `pecos.qec.surface` and `pecos.qec` export both.
+  The old name is removed.
+
+- `LogicalCircuitBuilder.build_dem` returns a `DetectorErrorModel` object; use
+  `str(dem)` for text. Graph decoders given the object apply its detectors'
+  `fault_sector` labels, so their predictions can differ from decoding the text.
+  Python decoder providers take text only: they reject the object, and they
+  reject a corpus saved from it when it is decoded with `dem=None`.
 
 - PHIR declaration sizes reject explicit null, including with
   `phir_validate=False`. The PECOS schema is deliberately stricter than upstream
@@ -283,6 +343,28 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Python bug fixes
 
+- Stabilizer generator products now include the ZX = -XZ reordering phase
+  everywhere they are formed. `SparseStabPy` refactoring and `remove_stab`
+  previously could give a new or surviving generator the wrong sign.
+  `find_logical_signs` gave the wrong sign for a logical operator whose Y count
+  is 2 or 3 mod 4. `remove_stab` and `is_not_stabilizer` now test commutation by
+  the combined X/Z overlap parity; before, an operator whose X and Z overlaps
+  with some stabilizer were both odd (so it commutes) was reported as
+  anticommuting. `refactor(state, xs, zs)` with the default `choose` and
+  `protected` no longer raises `KeyError`.
+
+- SZZ physical-prefix lowering (`szz_physical_prefixes=True`) folds `F`, `FDG`,
+  `SY` and `SYDG` into the pending Clifford. Before, they jumped ahead of the
+  pending gates, so Z-basis memories with
+  `clifford_frame_policy="global_axis_cycle_f"` had random noiseless detectors;
+  they are now deterministic. X-basis memories with that policy, and
+  `global_axis_cycle_f2`, still raise because no physical prefix is defined for
+  their pending Clifford. Forward-flow analysis and lowering now raise on any
+  step they have no rule for.
+
+- `StimRenderer` raises on `PREP`, `F`, `FDG`, `SY`, `SYDG`, `X` and `Z` steps
+  instead of silently dropping them. `TickCircuitRenderer` renders all of them.
+
 - The Python PHIR interpreter releases cached Result operations on a full reset.
   Declaration size diagnostics now give quantum or classical size guidance on all
   PHIR paths, including when JSON parses an oversized integer as a float.
@@ -352,6 +434,36 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   qubit in the Rust PHIR-JSON engine, not only the first.
 
 ### Rust breaking changes
+
+- pecos-neo decompositions are instantiated once per operand group, sized by
+  the gate's registered qubit arity. Only a gate with no `GateSpec`, or one
+  registered with arity zero, is still decomposed over its whole operand slice;
+  `GateSpec::new` defaults to an arity of 1, so a user gate registered without
+  `with_quantum_arity` whose decomposition uses operand index 1 or higher now
+  needs an explicit arity. A decomposition whose operand indices exceed the
+  registered arity, or a gate whose operand count is not a nonzero multiple of a
+  positive registered arity, now returns
+  `ExecutionError::DecompositionIndexOutOfRange` /
+  `ExecutionError::DecompositionQubitArity` (or
+  `ResolutionError::IndexOutOfRange` / `ResolutionError::QubitArity`) instead
+  of running on a truncated or whole slice. `DecompOp::qubit_indices` is now
+  exactly the indices given; constructors no longer pad it with zeros, so a
+  manually built `DecompOp` must not include padding. `CircuitResolver` groups
+  by `GateDefinitions` arities (core gates by default, user gates via the new
+  `with_definitions`), reports decomposition cycles as
+  `ResolutionError::CircularDependency`, and bounds nesting with the new
+  `ResolutionError::MaxDepthExceeded` (the same default depth limit
+  as `CircuitRunner`). `GateDefinitions` now has core specs
+  for `ISWAP`, `CCZ`, and `CSWAP`, so category noise applies to them and these
+  names are reserved: a user gate registered under one of them is no longer
+  found reliably by name.
+  `StabilizerMeasurementAdaptor` and `StabilizerPreparationAdaptor` now require
+  exactly one qubit pair instead of ignoring additional pairs.
+
+- pecos-neo `NoiseResponse::SkipGate` now carries `SmallVec<[QubitId; 4]>`:
+  operand groups containing a listed qubit are suppressed; list all operands to
+  skip a whole command. `should_skip_gate()` is replaced by `skipped_qubits()`,
+  which returns the union of skipped qubits across combined responses.
 
 - `Environment::copy_variable` preserves destination widths (narrowing when
   required) and rejects quantum destinations. Whole signed Result/copy_variable
@@ -488,10 +600,13 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   removed in favour of `try_from_radians` / `try_from_turns` (which return
   `NonFiniteAngleError`) and the compile-time `radians!` / `turns!` macros.
   `from_turn_ratio` rejects ratios above one full turn at every width.
-- ByteMessage gate payloads encode angles as exact `u64` fractions (protocol
-  version 5); scheduled batches and events use versions 6 and 7. Older versions
-  are rejected with an error naming the expected version. A `Custom` gate with
-  non-angle parameters is rejected by `Gate::validate`.
+- Ordinary ByteMessage batches now use version 8 with an 8-byte gate header
+  and a `u32` qubit count. Version 5 batches used a one-byte count and are rejected;
+  they must be re-encoded, not patched by changing only the version byte.
+- ByteMessage gate payloads encode angles as exact `u64` fractions (introduced
+  in version 5); scheduled batches and events retain versions 6 and 7. Older
+  versions are rejected with an error naming the expected version. A `Custom`
+  gate with non-angle parameters is rejected by `Gate::validate`.
 - Every simulator has a fixed qubit count: `StateVectorEngine` no longer grows,
   `StateVectorSimulator::create_with_rng` is removed, and `QuantumEngineBuilder`
   has a required `num_qubits()` accessor. `SimBuilder` and the `MonteCarloEngine`
@@ -538,6 +653,39 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   with ties away from zero on the signed principal representative.
 
 ### Rust bug fixes
+
+- `GensGeneric::refactor` gives the new generator the full product phase,
+  including the ZX = -XZ reordering term. `GensGeneric` now records its
+  `PauliConvention` (new; set with `GensGeneric::with_convention`, read with
+  `convention()`; `new` and `from_parts` build the `SparseStab` convention), so
+  `generator`, `generators`, `compute_product_sign`, `find_pauli_sign` and
+  `refactor` return correct phases for `SparseStabY` tableaus as well as
+  `SparseStab`; they previously applied the `SparseStab` rule to `SparseStabY`'s
+  Y entries. `compute_product_sign` multiplies in forward iteration order, which
+  changes results only for anticommuting index sets, never for stabilizer
+  products. `pecos-zx`'s `gens_to_pauli_strings` now converts stored XZ pairs to
+  Y, so generators whose Y count is 2 or 3 mod 4 no longer get the wrong sign.
+
+- pecos-neo decompositions apply to every operand group of a batched gate. This
+  covers registered decompositions in `CircuitRunner`, `CircuitResolver`
+  (including the built-in SWAP and iSWAP decompositions), and the CCX
+  rotation-executor path, which previously acted on the first group only.
+  `DecompOp` keeps every qubit index, so a two-qubit operation whose second
+  index is 0, such as the `CX(1, 0)` step of the SWAP and iSWAP decompositions,
+  no longer loses its second qubit. A self-referential decomposition in
+  `CircuitRunner::execute_gate` now stops at the decomposition depth limit
+  instead of overflowing the stack.
+
+- pecos-neo gate suppression applies per operand group in batched commands,
+  including adapted circuits and importance sampling. `LeakageChannel` injects
+  partner Pauli noise only within pairs containing exactly one leaked qubit.
+  Adapted gate execution now emits one after-gate event with the full operand
+  slice even when some or all groups are skipped, matching queue execution.
+
+- Gate commands with more than 255 qubits no longer panic. PHIR-JSON broadcasts
+  use one command per operation, retaining individual preparation/measurement
+  commands. The C API no longer rejects more than 255 operands or 127 pairs,
+  and the Selene adapter no longer rejects crosstalk payloads above 255 qubits.
 
 - Native PHIR-JSON loading, the Rust interpreter, shared input validation and
   JSON-to-module conversion use the same declaration-size decoder. Negative,

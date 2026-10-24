@@ -43,7 +43,9 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 
 mod stratified;
-pub use stratified::{FaultCountError, FaultCountPmf, FaultStratumCounts, StratifiedEstimate};
+pub use stratified::{
+    ExactFaultStratum, FaultCountError, FaultCountPmf, FaultStratumCounts, StratifiedEstimate,
+};
 
 use super::circuit_definitions::{
     CircuitDefinitions, DefinitionError, definitions_from_tick_circuit,
@@ -595,6 +597,11 @@ pub enum FaultChannel {
     PMeas,
     /// State preparation flip (`p_prep`).
     PPrep,
+    /// Caller-supplied mechanism; `with_noise` preserves all its probabilities.
+    /// It follows the same model as every location: alternatives are equally
+    /// likely given that the location fires (see [`FaultLocation`]), which
+    /// [`FaultCatalog::to_mechanisms`] relies on.
+    Explicit,
 }
 
 /// One alternative within a physical fault location.
@@ -705,7 +712,7 @@ impl FaultCatalog {
         build_structural_fault_catalog(tc)
     }
 
-    /// Recompute noise-dependent probability fields for this catalog.
+    /// Recompute built-in channel probabilities, leaving explicit locations untouched.
     ///
     /// This updates only `channel_probability`, `no_fault_probability`, and
     /// `absolute_probability`. Structural fields such as `num_alternatives`,
@@ -723,6 +730,7 @@ impl FaultCatalog {
                 FaultChannel::P2 => noise.p2,
                 FaultChannel::PMeas => noise.p_meas,
                 FaultChannel::PPrep => noise.p_prep,
+                FaultChannel::Explicit => continue,
             };
             let k = loc.num_alternatives;
             debug_assert!(k > 0, "fault location has no alternatives");
@@ -790,61 +798,116 @@ impl FaultCatalog {
     }
 }
 
+// Range products avoid rescanning every inactive location for each configuration.
+// A product tree needs no division, so zero factors and underflowed full products
+// do not prevent computing a nonzero product over the unselected locations.
+struct NoFaultProducts {
+    tree: Vec<f64>,
+    width: usize,
+    len: usize,
+}
+
+impl NoFaultProducts {
+    fn new(catalog: &FaultCatalog) -> Self {
+        let len = catalog.locations.len();
+        let width = len.next_power_of_two();
+        let mut tree = vec![1.0; 2 * width];
+        for (i, location) in catalog.locations.iter().enumerate() {
+            tree[width + i] = location.no_fault_probability;
+        }
+        for i in (1..width).rev() {
+            tree[i] = tree[2 * i] * tree[2 * i + 1];
+        }
+        Self { tree, width, len }
+    }
+
+    fn range(&self, start: usize, end: usize) -> f64 {
+        let (mut left, mut right) = (start + self.width, end + self.width);
+        let mut product = 1.0;
+        while left < right {
+            if left % 2 == 1 {
+                product *= self.tree[left];
+                left += 1;
+            }
+            if right % 2 == 1 {
+                right -= 1;
+                product *= self.tree[right];
+            }
+            left /= 2;
+            right /= 2;
+        }
+        product
+    }
+
+    fn excluding(&self, selected: &[usize]) -> f64 {
+        // Selected indices must be strictly ascending and below the catalog length.
+        debug_assert!(
+            selected.iter().all(|&index| index < self.len)
+                && selected.windows(2).all(|pair| pair[0] < pair[1]),
+            "selected locations must be strictly ascending and below the catalog length"
+        );
+        let mut product = 1.0;
+        let mut start = 0;
+        for &index in selected {
+            product *= self.range(start, index);
+            start = index + 1;
+        }
+        product * self.range(start, self.len)
+    }
+}
+
+// Sort once, retaining precisely the indices with odd multiplicity.
+fn parity_indices(mut indices: Vec<usize>) -> Vec<usize> {
+    indices.sort_unstable();
+    let mut end = 0;
+    let mut start = 0;
+    while start < indices.len() {
+        let value = indices[start];
+        let mut next = start + 1;
+        while next < indices.len() && indices[next] == value {
+            next += 1;
+        }
+        if (next - start) % 2 == 1 {
+            indices[end] = value;
+            end += 1;
+        }
+        start = next;
+    }
+    indices.truncate(end);
+    indices
+}
+
 /// Construct effects and stored probabilities for an ascending location selection.
 fn build_fault_configuration(
     catalog: &FaultCatalog,
     location_indices: Vec<usize>,
     alternative_indices: Vec<usize>,
+    products: &NoFaultProducts,
 ) -> FaultConfiguration {
-    let mut meas_set = std::collections::BTreeSet::new();
-    let mut det_set = std::collections::BTreeSet::new();
-    let mut obs_set = std::collections::BTreeSet::new();
-    let mut tracked_pauli_set = std::collections::BTreeSet::new();
+    let mut meas_set = Vec::new();
+    let mut det_set = Vec::new();
+    let mut obs_set = Vec::new();
+    let mut tracked_pauli_set = Vec::new();
     let mut selected_prob = 1.0;
 
     for (&location_index, &alternative_index) in location_indices.iter().zip(&alternative_indices) {
         let loc = &catalog.locations[location_index];
         let alt = &loc.faults[alternative_index];
         selected_prob *= alt.absolute_probability;
-        for &m in &alt.affected_measurements {
-            if !meas_set.remove(&m) {
-                meas_set.insert(m);
-            }
-        }
-        for &d in &alt.affected_detectors {
-            if !det_set.remove(&d) {
-                det_set.insert(d);
-            }
-        }
-        for &o in &alt.affected_observables {
-            if !obs_set.remove(&o) {
-                obs_set.insert(o);
-            }
-        }
-        for &op in &alt.affected_tracked_paulis {
-            if !tracked_pauli_set.remove(&op) {
-                tracked_pauli_set.insert(op);
-            }
-        }
+        meas_set.extend_from_slice(&alt.affected_measurements);
+        det_set.extend_from_slice(&alt.affected_detectors);
+        obs_set.extend_from_slice(&alt.affected_observables);
+        tracked_pauli_set.extend_from_slice(&alt.affected_tracked_paulis);
     }
-
-    let selected_set: std::collections::BTreeSet<usize> =
-        location_indices.iter().copied().collect();
-    let unselected_no_fault: f64 = catalog
-        .locations
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| !selected_set.contains(i))
-        .map(|(_, loc)| loc.no_fault_probability)
-        .product();
+    let unselected_no_fault = products.excluding(&location_indices);
 
     FaultConfiguration {
         location_indices,
         alternative_indices,
-        affected_measurements: meas_set.into_iter().collect(),
-        affected_detectors: det_set.into_iter().collect(),
-        affected_observables: obs_set.into_iter().collect(),
-        affected_tracked_paulis: tracked_pauli_set.into_iter().collect(),
+        affected_measurements: parity_indices(meas_set),
+        affected_detectors: parity_indices(det_set),
+        affected_observables: parity_indices(obs_set),
+        affected_tracked_paulis: parity_indices(tracked_pauli_set),
         selected_probability: selected_prob,
         configuration_probability: selected_prob * unselected_no_fault,
     }
@@ -857,6 +920,7 @@ fn build_fault_configuration(
 /// Combinations range over nonzero-probability fault alternatives only; the
 /// full structural catalog remains available through `FaultCatalog::locations`.
 struct FaultConfigCursor {
+    products: NoFaultProducts,
     k: usize,
     location_indices: Vec<usize>,
     alternative_indices: Vec<Vec<usize>>,
@@ -887,6 +951,7 @@ impl FaultConfigCursor {
         let num_active_locations = location_indices.len();
         if k == 0 || k > num_active_locations {
             return Self {
+                products: NoFaultProducts::new(catalog),
                 k,
                 location_indices,
                 alternative_indices,
@@ -904,6 +969,7 @@ impl FaultConfigCursor {
             .collect();
         let alt_indices = vec![0usize; k];
         Self {
+            products: NoFaultProducts::new(catalog),
             k,
             location_indices,
             alternative_indices,
@@ -957,6 +1023,7 @@ impl FaultConfigCursor {
                 .zip(&self.alt_indices)
                 .map(|(&loc_pos, &alt_pos)| self.alternative_indices[loc_pos][alt_pos])
                 .collect(),
+            &self.products,
         )
     }
 

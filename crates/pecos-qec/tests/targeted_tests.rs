@@ -104,10 +104,11 @@ fn t1_t2_biased_idle_noise() {
     assert!(pp.total() > 0.0, "Total should be > 0");
 }
 
-/// Verify uniform depolarizing idle gives equal X/Y/Z.
+/// Verify `uniform` leaves idle noise off and depolarizing idle gives equal X/Y/Z.
 #[test]
 fn uniform_idle_noise() {
-    let noise = NoiseConfig::uniform(0.001);
+    assert_eq!(NoiseConfig::uniform(0.001).idle_noise_request(), None);
+    let noise = NoiseConfig::uniform(0.001).set_idle(0.001);
     let pp = noise.idle_pauli_probs(1.0);
 
     let eps = 1e-15;

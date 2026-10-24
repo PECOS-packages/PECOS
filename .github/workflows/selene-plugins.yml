@@ -125,7 +125,7 @@ jobs:
         run: rustup show
 
       - name: Cache Rust
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
         with:
           cache-bin: false
           # One cache per runner OS/arch, shared with build-wheels. Per-plugin caches
@@ -194,7 +194,10 @@ jobs:
       # Linux is the only runner that provisions it here.
       - name: Install just
         if: runner.os == 'Linux'
-        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: just@1.59.0
+          fallback: none
 
       - name: Cache LLVM ${{ env.LLVM_VERSION }}
         if: runner.os == 'Linux'
@@ -281,7 +284,7 @@ jobs:
         run: rustup show
 
       - name: Cache Rust
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
         with:
           cache-bin: false
           # Restore the test job's release build of every plugin; only that job saves.

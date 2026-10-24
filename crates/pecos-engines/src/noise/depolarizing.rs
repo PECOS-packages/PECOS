@@ -965,8 +965,8 @@ mod tests {
         assert!((p2 - 0.5).abs() < f64::EPSILON);
     }
 
-    // Captured gate order and randomness retained; bytes migrated to version 5.
-    // This sequence contains no angle words; only the protocol version byte changed.
+    // Captured gate order and randomness retained; bytes migrated to version 8.
+    // This sequence contains no angle words; the version, gate headers and byte sizes changed.
     #[test]
     fn field_name_setters_match_captured_alias_gate_sequence() {
         let mut noise = DepolarizingNoiseModel::builder()
@@ -987,10 +987,10 @@ mod tests {
         assert_eq!(
             output.as_bytes(),
             [
-                83, 67, 69, 80, 5, 0, 0, 0, 4, 0, 0, 0, 84, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 1, 1,
-                0, 0, 0, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 10, 0, 0, 0, 12,
-                0, 0, 0, 50, 2, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0, 0,
-                1, 0, 0, 0,
+                83, 67, 69, 80, 8, 0, 0, 0, 4, 0, 0, 0, 100, 0, 0, 0, 10, 0, 0, 0, 12, 0, 0, 0, 1,
+                0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 10, 0, 0, 0, 12, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0,
+                0, 0, 0, 0, 10, 0, 0, 0, 16, 0, 0, 0, 50, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0,
+                0, 10, 0, 0, 0, 12, 0, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0,
             ]
         );
     }

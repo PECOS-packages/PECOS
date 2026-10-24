@@ -47,6 +47,15 @@ No approximate arithmetic or reduced beam width is introduced. Timing gains
 depend on the model, compiler and runtime. Published benchmark modules are
 separate frozen artifacts; a build from current upstream is not byte-identical.
 
+### Shared decoder optimizations
+
+Native and WASM builds use the same compact sorting, stable retention, paired
+emission, and ordered suffix-scoring fast paths in `pecos-trellis`. Rebuilding
+this adapter picks them up without changing the ABI or enabling SIMD. See the
+[core validation instructions](../pecos-trellis/README.md#exact-runtime-fast-paths)
+for scalar-reference checks. Validate predictions on the target runtime after
+rebuilding; native timings do not establish WASM performance.
+
 ### Explicit fixed-lag streaming
 
 Dependency-driven scheduling remains the default. To select persistent
@@ -288,3 +297,21 @@ cargo run --release -p pecos-frontier --example public_dem_benchmark -- \
 The output includes the model dimensions, seed, failures, and prediction
 checksum alongside mean decode time. Treat it as a throughput probe rather
 than a hardware-latency measurement.
+
+### Differential runtime regression check
+
+`tests/runtime_equivalence.mjs` generates a deterministic 96-detector DEM and
+compares two actual WASM modules on 72 syndromes in four delivery modes. It
+checks status, processed-column counts, and every correction word. This is a
+correctness fixture, not synthetic performance evidence.
+
+```console
+node exp/pecos-frontier-wasm/tests/runtime_equivalence.mjs --write-model /tmp/runtime.dem 1
+FRONTIER_K=256 FRONTIER_DELTA=14 python scripts/build_frontier_wasm.py /tmp/runtime.dem --output /tmp/candidate.wasm
+node exp/pecos-frontier-wasm/tests/runtime_equivalence.mjs /tmp/baseline.wasm /tmp/candidate.wasm
+```
+
+Build `/tmp/baseline.wasm` from the revision being compared, using the same
+model, compiler, K, Delta and SIMD setting. Repeat with `65` instead of `1`
+when generating the model to cover multiple logical words and the general
+sorting fallback. The script requires Node.js with WebAssembly and BigInt.

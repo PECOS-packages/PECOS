@@ -15,6 +15,18 @@ use bitvec::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// An ordinary early program exit, separate from user output registers.
+///
+/// This is diagnostic metadata, not a job failure. QIS classifies codes 0 through
+/// 999 as ordinary exits; panics continue to fail execution instead.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProgramExit {
+    /// The program's exit code.
+    pub code: i32,
+    /// The program's exit message.
+    pub message: String,
+}
+
 /// Represents the results of a single shot (execution) of a quantum program.
 ///
 /// This struct contains a flexible mapping of data values for storing measurement
@@ -24,6 +36,10 @@ use std::collections::BTreeMap;
 pub struct Shot {
     /// Mapping of names to data values (measurements, calculations, complex data, etc.)
     pub data: BTreeMap<String, Data>,
+    /// Ordinary early-exit diagnostic, if reported by the execution engine.
+    /// `None` means no exit was reported, not proof that all engines support it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub program_exit: Option<ProgramExit>,
 }
 
 impl Shot {

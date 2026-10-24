@@ -16,6 +16,22 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   converters, MY) without a reset: such reuse now gives the correct outcomes
   and detectors.
 
+- **Breaking:** the SLR converters from Stim and `QuantumCircuit` no longer
+  drop, alter or shift gates and measurement records silently (#1370); input
+  they cannot convert now raises instead of becoming a comment. From Stim,
+  `MR`, `MRX`, `MRY` and inverted targets (`M !0`) are converted, and a
+  `REPEAT` block that measures is unrolled so each iteration writes its own
+  bits. Unsupported gates (for example `SQRT_X`, `ISWAP`, `MPP`, `MXX`, `MPAD`
+  and the heralded channels) and classical-feedback or sweep-bit targets
+  (`CX rec[-1] 1`) raise `NotImplementedError`. Noise channels, and the noise
+  argument of a measurement, become `// Noise:` comments with the full
+  instruction text, and annotations such as `DETECTOR` stay comments. From
+  `QuantumCircuit`, the long-form measurement symbols (`measure X`,
+  `Measure +Y`, ...) are measured in their basis and advance the bit offset.
+  Unsupported symbols raise `NotImplementedError`, including `RX`, `RY` and
+  `RZ`, which are rotations and were previously converted to resets. Gate
+  parameters and malformed one- or two-qubit locations raise `ValueError`.
+
 - Live scheduled simulation now admits `StabilizerEngine` (`pr.stabilizer()`) with
   checked stochastic noise. Coherent idle rates and unsupported rotations reject
   before current-input execution. Scheduled profiles no longer cap the qubit

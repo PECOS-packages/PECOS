@@ -487,5 +487,123 @@ def test_repeated_mx_and_my_agree() -> None:
     assert (samples[:, 2] == samples[:, 3]).all()
 
 
+@pytest.mark.parametrize(
+    ("symbol", "basis"),
+    [
+        ("M", "Z"),
+        ("mz", "Z"),
+        ("mX", "X"),
+        ("my", "Y"),
+        ("MEASURE", "Z"),
+        ("measure Z", "Z"),
+        ("Measure", "Z"),
+        ("Measure +Z", "Z"),
+        ("Measure Z", "Z"),
+        ("measure", "Z"),
+        ("measure X", "X"),
+        ("Measure +X", "X"),
+        ("measure Y", "Y"),
+        ("Measure +Y", "Y"),
+    ],
+)
+@pytest.mark.parametrize("tuple_ticks", [False, True])
+def test_measurement_aliases(symbol: str, basis: str, *, tuple_ticks: bool) -> None:
+    """Sizing, emission and advancement share the same aliases in both tick formats.
+
+    Qubit 0 is prepared in the -1 eigenstate of the measured basis, so the
+    records are [1, 0] only when the alias is measured in its basis and the
+    offset advances past it.
+    """
+    preparation = {"Z": ["X"], "X": ["H", "Z"], "Y": ["H", "S", "Z"]}[basis]
+    ticks = [(gate, {0}, {}) for gate in preparation] + [(symbol, {(0,)}, {}), ("M", {1}, {})]
+    qc = ticks
+    if not tuple_ticks:
+        qc = QuantumCircuit()
+        for gate, locations, _params in ticks:
+            qc.append({gate: locations})
+    prog = _return_declared_cregs(SlrConverter.from_quantum_circuit(qc))
+    assert sum(len(var) for var in prog.vars if isinstance(var, CReg)) == 2
+    samples = SlrConverter(prog).stim().compile_sampler(seed=7).sample(50)
+    assert samples.shape == (50, 2)
+    assert (samples == [1, 0]).all()
+    qasm = SlrConverter(prog).qasm(skip_headers=True)
+    assert qasm.count("-> c[0]") == 1
+    assert qasm.count("-> c[1]") == 1
+
+
+@pytest.mark.parametrize("symbol", ["M", "MX", "MY", "measure X", "Measure +Y"])
+@pytest.mark.parametrize("location", [(), (0, 1), ("bad",), "bad"])
+def test_invalid_measurement_location(symbol: str, location: object) -> None:
+    """Malformed locations fail before qubit sizing or measurement emission."""
+    with pytest.raises(ValueError, match="Unsupported one-qubit location") as exc:
+        SlrConverter.from_quantum_circuit([(symbol, {location}, {})])
+    assert symbol in str(exc.value)
+    assert repr(location) in str(exc.value)
+
+
+@pytest.mark.parametrize("symbol", ["Measure -Z", "MeasureFree", "MPZ", "force output"])
+def test_unknown_symbol_rejected(symbol: str) -> None:
+    """Unknown symbols cannot be distinguished from unknown record producers."""
+    qc = QuantumCircuit()
+    qc.append({"X": {0}})
+    qc.append({symbol: {0}})
+    qc.append({"M": {1}})
+    with pytest.raises(NotImplementedError, match="Unsupported QuantumCircuit gate") as exc:
+        SlrConverter.from_quantum_circuit(qc)
+    assert symbol in str(exc.value)
+    assert "{0}" in str(exc.value)
+
+
+@pytest.mark.parametrize("key", ["Pauli", "var_output", "var"])
+@pytest.mark.parametrize("tuple_ticks", [False, True])
+def test_measurement_params_rejected(key: str, *, tuple_ticks: bool) -> None:
+    """Measurement parameters cannot silently change basis or destination."""
+    params = {key: {0: ("c", 0)} if key == "var_output" else "X"}
+    qc = [("measure Z", {0}, params)]
+    if not tuple_ticks:
+        qc = QuantumCircuit()
+        qc.append({"measure Z": {0}}, **params)
+    with pytest.raises(ValueError, match="Unsupported parameters") as exc:
+        SlrConverter.from_quantum_circuit(qc)
+    assert "measure Z" in str(exc.value)
+    assert key in str(exc.value)
+
+
+@pytest.mark.parametrize("symbol", ["RZ", "RX", "RY"])
+@pytest.mark.parametrize("tuple_ticks", [False, True])
+def test_rotation_parameters_rejected(symbol: str, *, tuple_ticks: bool) -> None:
+    """QuantumCircuit rotations must not become resets."""
+    qc = [(symbol, {0}, {"angles": [0.5]})]
+    if not tuple_ticks:
+        qc = QuantumCircuit()
+        qc.append({symbol: {0}}, angles=[0.5])
+    with pytest.raises(ValueError, match=symbol):
+        SlrConverter.from_quantum_circuit(qc)
+
+
+@pytest.mark.parametrize(("symbol", "params"), [("X", {"angles": [0.3]}), ("RESET", {"foo": 1})])
+def test_nonmeasurement_params_rejected(symbol: str, params: dict) -> None:
+    """No gate parameters may be silently ignored."""
+    with pytest.raises(ValueError, match=symbol) as exc:
+        SlrConverter.from_quantum_circuit([(symbol, {0}, params)])
+    assert next(iter(params)) in str(exc.value)
+
+
+@pytest.mark.parametrize(("symbol", "locations"), [("H", {(0, 1)}), ("CX", {0, 1})])
+def test_malformed_gate_locations_rejected(symbol: str, locations: set) -> None:
+    """Invalid arities must not silently remove gates."""
+    with pytest.raises(ValueError, match=symbol) as exc:
+        SlrConverter.from_quantum_circuit([(symbol, locations, {})])
+    assert any(repr(loc) in str(exc.value) for loc in locations)
+
+
+@pytest.mark.parametrize("symbol", ["RZ", "RX", "RY", "SX", "CH"])
+def test_unsupported_quantum_circuit_gates(symbol: str) -> None:
+    """Valid but unsupported gates report their symbol and locations."""
+    locations = {(0, 1)} if symbol == "CH" else {0}
+    with pytest.raises(NotImplementedError, match=f"Unsupported QuantumCircuit gate {symbol}"):
+        SlrConverter.from_quantum_circuit([(symbol, locations, {})])
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

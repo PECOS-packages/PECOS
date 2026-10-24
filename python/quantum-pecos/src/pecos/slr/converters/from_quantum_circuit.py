@@ -15,11 +15,70 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pecos.slr import Barrier, Comment, CReg, Main, Parallel, QReg
+from pecos.slr import Barrier, CReg, Main, Parallel, QReg
 from pecos.slr.qeclib import qubit
 
 if TYPE_CHECKING:
     from pecos.circuits.quantum_circuit import QuantumCircuit
+
+
+# Upper-cased PECOS measurement spellings and the basis each one measures.
+_MEASUREMENT_BASES = {
+    "M": "Z",
+    "MZ": "Z",
+    "MX": "X",
+    "MY": "Y",
+    "MEASURE": "Z",
+    "MEASURE Z": "Z",
+    "MEASURE +Z": "Z",
+    "MEASURE X": "X",
+    "MEASURE +X": "X",
+    "MEASURE Y": "Y",
+    "MEASURE +Y": "Y",
+}
+
+
+_ONE_QUBIT_GATES = {
+    "H": qubit.H,
+    "X": qubit.X,
+    "Y": qubit.Y,
+    "Z": qubit.Z,
+    "S": qubit.SZ,
+    "SZ": qubit.SZ,
+    "SDG": qubit.SZdg,
+    "S_DAG": qubit.SZdg,
+    "SZDG": qubit.SZdg,
+    "SZ_DAG": qubit.SZdg,
+    "T": qubit.T,
+    "TDG": qubit.Tdg,
+    "T_DAG": qubit.Tdg,
+    "R": qubit.PZ,
+    "RESET": qubit.PZ,
+}
+_TWO_QUBIT_GATES = {"CX": qubit.CX, "CNOT": qubit.CX, "CY": qubit.CY, "CZ": qubit.CZ}
+
+
+def _measurement_basis(symbol: str) -> str | None:
+    """Return the basis for supported PECOS measurement spellings."""
+    return _MEASUREMENT_BASES.get(symbol.upper())
+
+
+def _one_qubit_location(symbol, location):
+    """Validate a single-qubit location."""
+    if isinstance(location, int):
+        return location
+    if isinstance(location, tuple) and len(location) == 1 and isinstance(location[0], int):
+        return location[0]
+    msg = f"Unsupported one-qubit location for {symbol}: {location!r}; expected an int or a 1-tuple of int"
+    raise ValueError(msg)
+
+
+def _two_qubit_location(symbol, location):
+    """Validate a two-qubit location."""
+    if isinstance(location, tuple) and len(location) == 2 and all(isinstance(idx, int) for idx in location):
+        return location
+    msg = f"Unsupported two-qubit location for {symbol}: {location!r}; expected a 2-tuple of int"
+    raise ValueError(msg)
 
 
 def quantum_circuit_to_slr(qc: QuantumCircuit) -> Main:
@@ -35,19 +94,26 @@ def quantum_circuit_to_slr(qc: QuantumCircuit) -> Main:
         - QuantumCircuit's parallel gate structure is preserved
         - Assumes standard gate names from PECOS
     """
-    # Determine number of qubits from the circuit
+    # Size both registers from the same validated source operations.
     max_qubit = -1
-    for tick in qc:
-        if hasattr(tick, "items"):
-            # Dictionary-like format
-            for _gate_symbol, locations, _params in tick.items():
-                for loc in locations:
-                    max_qubit = max(max_qubit, *loc) if isinstance(loc, tuple) else max(max_qubit, loc)
-        else:
-            # Tuple format
-            gate_symbol, locations, _params = tick
+    measurement_count = 0
+    for gate_symbol, locations, params in qc:
+        if params:
+            msg = f"Unsupported parameters for QuantumCircuit gate {gate_symbol}: {list(params)}"
+            raise ValueError(msg)
+        basis = _measurement_basis(gate_symbol)
+        gate_upper = gate_symbol.upper()
+        if basis is not None:
+            measurement_count += len(locations)
+        if basis is not None or gate_upper in _ONE_QUBIT_GATES:
             for loc in locations:
-                max_qubit = max(max_qubit, *loc) if isinstance(loc, tuple) else max(max_qubit, loc)
+                max_qubit = max(max_qubit, _one_qubit_location(gate_symbol, loc))
+        elif gate_upper in _TWO_QUBIT_GATES or gate_upper == "SWAP":
+            for loc in locations:
+                max_qubit = max(max_qubit, *_two_qubit_location(gate_symbol, loc))
+        else:
+            msg = f"Unsupported QuantumCircuit gate {gate_symbol} on {locations}"
+            raise NotImplementedError(msg)
 
     num_qubits = max_qubit + 1 if max_qubit >= 0 else 0
 
@@ -60,41 +126,8 @@ def quantum_circuit_to_slr(qc: QuantumCircuit) -> Main:
     q = QReg("q", num_qubits)
     ops.append(q)
 
-    # Track if we need classical registers for measurements
-    has_measurements = False
-    measurement_count = 0
-
-    # First pass: check for measurements
-    for tick_idx in range(len(qc)):
-        tick = qc[tick_idx]
-        if hasattr(tick, "items"):
-            # Dictionary-like format
-            for gate_symbol, locations, _params in tick.items():
-                # Handle various measurement formats in PECOS
-                if gate_symbol.upper() in [
-                    "M",
-                    "MZ",
-                    "MX",
-                    "MY",
-                    "MEASURE",
-                ] or gate_symbol in [
-                    "measure Z",
-                    "Measure",
-                    "Measure +Z",
-                    "Measure Z",
-                    "measure",
-                ]:
-                    has_measurements = True
-                    measurement_count += len(locations)
-        else:
-            # Tuple format
-            gate_symbol, locations, _params = tick
-            if gate_symbol.upper() in ["M", "MZ", "MX", "MY", "MEASURE"]:
-                has_measurements = True
-                measurement_count += len(locations)
-
     # Create classical register if needed
-    if has_measurements:
+    if measurement_count:
         c = CReg("c", measurement_count)
         ops.append(c)
         current_measurement = 0
@@ -128,7 +161,7 @@ def quantum_circuit_to_slr(qc: QuantumCircuit) -> Main:
                 parallel_ops.extend(gate_ops)
 
                 # Update measurement counter
-                if gate_symbol.upper() in ["M", "MZ", "MX", "MY", "MEASURE"]:
+                if _measurement_basis(gate_symbol) is not None:
                     current_measurement += len(locations)
         else:
             # Tuple format (symbol, locations, params)
@@ -143,7 +176,7 @@ def quantum_circuit_to_slr(qc: QuantumCircuit) -> Main:
             parallel_ops.extend(gate_ops)
 
             # Update measurement counter
-            if gate_symbol.upper() in ["M", "MZ", "MX", "MY", "MEASURE"]:
+            if _measurement_basis(gate_symbol) is not None:
                 current_measurement += len(locations)
 
         # Add operations for this tick
@@ -176,128 +209,38 @@ def _convert_gate_set(gate_symbol, locations, q, c, measurement_offset):
     """
     ops = []
     gate_upper = gate_symbol.upper()
+    basis = _measurement_basis(gate_symbol)
 
     # Map gate symbols to operations
-    if gate_upper == "H":
+    if gate_upper in _ONE_QUBIT_GATES:
+        gate = _ONE_QUBIT_GATES[gate_upper]
+        ops.extend(gate(q[_one_qubit_location(gate_symbol, loc)]) for loc in locations)
+    elif gate_upper in _TWO_QUBIT_GATES:
+        gate = _TWO_QUBIT_GATES[gate_upper]
         for loc in locations:
-            if isinstance(loc, int):
-                ops.append(qubit.H(q[loc]))
-            elif isinstance(loc, tuple) and len(loc) == 1:
-                ops.append(qubit.H(q[loc[0]]))
-    elif gate_upper == "X":
-        for loc in locations:
-            if isinstance(loc, int):
-                ops.append(qubit.X(q[loc]))
-            elif isinstance(loc, tuple) and len(loc) == 1:
-                ops.append(qubit.X(q[loc[0]]))
-    elif gate_upper == "Y":
-        for loc in locations:
-            if isinstance(loc, int):
-                ops.append(qubit.Y(q[loc]))
-            elif isinstance(loc, tuple) and len(loc) == 1:
-                ops.append(qubit.Y(q[loc[0]]))
-    elif gate_upper == "Z":
-        for loc in locations:
-            if isinstance(loc, int):
-                ops.append(qubit.Z(q[loc]))
-            elif isinstance(loc, tuple) and len(loc) == 1:
-                ops.append(qubit.Z(q[loc[0]]))
-    elif gate_upper in ["S", "SZ"]:
-        for loc in locations:
-            if isinstance(loc, int):
-                ops.append(qubit.SZ(q[loc]))
-            elif isinstance(loc, tuple) and len(loc) == 1:
-                ops.append(qubit.SZ(q[loc[0]]))
-    elif gate_upper in ["SDG", "S_DAG", "SZDG", "SZ_DAG"]:
-        for loc in locations:
-            if isinstance(loc, int):
-                ops.append(qubit.SZdg(q[loc]))
-            elif isinstance(loc, tuple) and len(loc) == 1:
-                ops.append(qubit.SZdg(q[loc[0]]))
-    elif gate_upper == "T":
-        for loc in locations:
-            if isinstance(loc, int):
-                ops.append(qubit.T(q[loc]))
-            elif isinstance(loc, tuple) and len(loc) == 1:
-                ops.append(qubit.T(q[loc[0]]))
-    elif gate_upper in ["TDG", "T_DAG"]:
-        for loc in locations:
-            if isinstance(loc, int):
-                ops.append(qubit.Tdg(q[loc]))
-            elif isinstance(loc, tuple) and len(loc) == 1:
-                ops.append(qubit.Tdg(q[loc[0]]))
-    elif gate_upper in ["CX", "CNOT"]:
-        ops.extend(qubit.CX(q[loc[0]], q[loc[1]]) for loc in locations if isinstance(loc, tuple) and len(loc) == 2)
-    elif gate_upper == "CY":
-        ops.extend(qubit.CY(q[loc[0]], q[loc[1]]) for loc in locations if isinstance(loc, tuple) and len(loc) == 2)
-    elif gate_upper == "CZ":
-        ops.extend(qubit.CZ(q[loc[0]], q[loc[1]]) for loc in locations if isinstance(loc, tuple) and len(loc) == 2)
+            first, second = _two_qubit_location(gate_symbol, loc)
+            ops.append(gate(q[first], q[second]))
     elif gate_upper == "SWAP":
         for loc in locations:
-            if isinstance(loc, tuple) and len(loc) == 2:
-                # Decompose SWAP into 3 CNOTs
-                ops.append(qubit.CX(q[loc[0]], q[loc[1]]))
-                ops.append(qubit.CX(q[loc[1]], q[loc[0]]))
-                ops.append(qubit.CX(q[loc[0]], q[loc[1]]))
-    elif gate_upper in ["M", "MZ", "MEASURE"] or gate_symbol in [
-        "measure Z",
-        "Measure",
-        "Measure +Z",
-        "Measure Z",
-        "measure",
-    ]:
-        # Handle various PECOS measurement formats
-        if c is not None:
-            idx = measurement_offset
-            for loc in locations:
-                if isinstance(loc, int):
-                    if idx < len(c):
-                        ops.append(qubit.Measure(q[loc]) > c[idx])
-                        idx += 1
-                elif isinstance(loc, tuple) and len(loc) == 1 and idx < len(c):
-                    ops.append(qubit.Measure(q[loc[0]]) > c[idx])
-                    idx += 1
-    elif gate_upper == "MX":
-        # Rotate into Z, measure, rotate back so the qubit is left in the
-        # measured X eigenstate (MY below does the same for Y).
-        if c is not None:
-            idx = measurement_offset
-            for loc in locations:
-                if isinstance(loc, int) and idx < len(c):
-                    ops.append(qubit.H(q[loc]))
-                    ops.append(qubit.Measure(q[loc]) > c[idx])
-                    ops.append(qubit.H(q[loc]))
-                    idx += 1
-    elif gate_upper == "MY":
-        if c is not None:
-            idx = measurement_offset
-            for loc in locations:
-                if isinstance(loc, int) and idx < len(c):
-                    ops.append(qubit.SZdg(q[loc]))
-                    ops.append(qubit.H(q[loc]))
-                    ops.append(qubit.Measure(q[loc]) > c[idx])
-                    ops.append(qubit.H(q[loc]))
-                    ops.append(qubit.SZ(q[loc]))
-                    idx += 1
-    elif gate_upper in ["R", "RZ", "RESET"]:
-        for loc in locations:
-            if isinstance(loc, int):
-                ops.append(qubit.PZ(q[loc]))
-            elif isinstance(loc, tuple) and len(loc) == 1:
-                ops.append(qubit.PZ(q[loc[0]]))
-    elif gate_upper == "RX":
-        for loc in locations:
-            if isinstance(loc, int):
-                ops.append(qubit.PZ(q[loc]))
-                ops.append(qubit.H(q[loc]))
-    elif gate_upper == "RY":
-        for loc in locations:
-            if isinstance(loc, int):
-                ops.append(qubit.PZ(q[loc]))
-                ops.append(qubit.H(q[loc]))
-                ops.append(qubit.SZ(q[loc]))
+            first, second = _two_qubit_location(gate_symbol, loc)
+            # Decompose SWAP into 3 CNOTs
+            ops.append(qubit.CX(q[first], q[second]))
+            ops.append(qubit.CX(q[second], q[first]))
+            ops.append(qubit.CX(q[first], q[second]))
+    elif basis is not None:
+        for i, loc in enumerate(locations):
+            idx = _one_qubit_location(gate_symbol, loc)
+            if basis == "Y":
+                ops.append(qubit.SZdg(q[idx]))
+            if basis in ["X", "Y"]:
+                ops.append(qubit.H(q[idx]))
+            ops.append(qubit.Measure(q[idx]) > c[measurement_offset + i])
+            if basis in ["X", "Y"]:
+                ops.append(qubit.H(q[idx]))
+            if basis == "Y":
+                ops.append(qubit.SZ(q[idx]))
     else:
-        # Unknown gate - add as comment
-        ops.append(Comment(f"Unknown gate: {gate_symbol} on {locations}"))
+        msg = f"Unsupported QuantumCircuit gate {gate_symbol} on {locations}"
+        raise NotImplementedError(msg)
 
     return ops

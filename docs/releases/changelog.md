@@ -6,6 +6,16 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- `SparseStab`, and therefore `StabilizerEngine` and `Stabilizer`, now use an
+  adaptive sparse set. Initial memory is O(n) instead of O(n^2), and tableau
+  memory scales with its nonzeros; measured peak memory at 130k qubits fell
+  from 13.2 GB to 0.59 GB. This is a breaking change for Rust code that names
+  the generator set type; `SparseStabBitSet` and `GensBitSet` retain the old
+  type. Typical small-code gate throughput is about 1.25x slower than before.
+  Pivot ties now choose the lowest generator id everywhere, changing stored
+  generators after measurement, but not outcomes, for insertion-ordered variants
+  (`SparseStabHybrid`, `SymbolicSparseStabVecSet`, `SparseStabYUnsortedVecSet`).
+
 - Live scheduled simulation now admits `StabilizerEngine` (`pr.stabilizer()`) with
   checked stochastic noise. Coherent idle rates and unsupported rotations reject
   before current-input execution. Scheduled profiles no longer cap the qubit

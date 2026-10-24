@@ -21,7 +21,7 @@
 //! arbitrary global phase.
 
 use num_complex::Complex64;
-use pecos_simulators::{Gens, SparseStabY};
+use pecos_simulators::{GensBitSet, SparseStabY};
 
 use super::tableau_compose::multiply_row_within;
 
@@ -74,7 +74,7 @@ impl QuarterPhase {
 #[derive(Clone)]
 pub(super) struct CanonicalKet {
     num_qubits: usize,
-    reduced_stabs: Gens,
+    reduced_stabs: GensBitSet,
     /// `(pivot_qubit, generator_row)` in increasing qubit order.
     x_pivots: Vec<(usize, usize)>,
     first_support: Vec<bool>,
@@ -203,7 +203,7 @@ impl CanonicalKet {
 
 /// Return `<target|P|ket>` for one signed Y-convention Pauli generator row.
 fn pauli_applied_amplitude_at(
-    gens: &Gens,
+    gens: &GensBitSet,
     row: usize,
     ket: &CanonicalKet,
     target: &[bool],
@@ -457,7 +457,7 @@ fn normalized_scalar(numerator: Complex64, denominator: Complex64, context: &str
 }
 
 /// Exponent `e` such that a signed row maps `|bits>` to `i^e |bits xor x>`.
-fn pauli_row_action_exponent(gens: &Gens, row: usize, bits: &[bool]) -> usize {
+fn pauli_row_action_exponent(gens: &GensBitSet, row: usize, bits: &[bool]) -> usize {
     let mut exponent =
         usize::from(gens.signs_i.contains(row)) + 2 * usize::from(gens.signs_minus.contains(row));
     for (qubit, &bit) in bits.iter().enumerate() {

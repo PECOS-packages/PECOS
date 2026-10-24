@@ -4,7 +4,7 @@ use crate::simulator_utils::{
     SymbolEntry, extract_angle, extract_angles, extract_forced_outcome, supports_exact,
     validate_supported_symbol,
 };
-use pecos_core::BitSet;
+use pecos_simulators::SparseStabSet;
 use pecos_simulators::clifford_rotation::CliffordRotation;
 //
 // Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
@@ -736,24 +736,26 @@ impl PySparseStab {
         let serialize_gens = |gens: &Gens| -> PyResult<Py<PyDict>> {
             let dict = PyDict::new(py);
 
-            let bitset_to_list = |sets: &[BitSet]| -> PyResult<Py<PyList>> {
+            let sets_to_list = |sets: &[SparseStabSet]| -> PyResult<Py<PyList>> {
                 let items: Vec<Py<PyList>> = sets
                     .iter()
                     .map(|s| {
-                        let elems: Vec<usize> = s.iter().collect();
+                        let mut elems: Vec<usize> = s.iter().collect();
+                        elems.sort_unstable();
                         Ok(PyList::new(py, &elems)?.unbind())
                     })
                     .collect::<PyResult<_>>()?;
                 Ok(PyList::new(py, &items)?.unbind())
             };
 
-            dict.set_item("col_x", bitset_to_list(&gens.col_x)?)?;
-            dict.set_item("col_z", bitset_to_list(&gens.col_z)?)?;
-            dict.set_item("row_x", bitset_to_list(&gens.row_x)?)?;
-            dict.set_item("row_z", bitset_to_list(&gens.row_z)?)?;
+            dict.set_item("col_x", sets_to_list(&gens.col_x)?)?;
+            dict.set_item("col_z", sets_to_list(&gens.col_z)?)?;
+            dict.set_item("row_x", sets_to_list(&gens.row_x)?)?;
+            dict.set_item("row_z", sets_to_list(&gens.row_z)?)?;
 
-            let set_to_list = |s: &BitSet| -> PyResult<Py<PyList>> {
-                let elems: Vec<usize> = s.iter().collect();
+            let set_to_list = |s: &SparseStabSet| -> PyResult<Py<PyList>> {
+                let mut elems: Vec<usize> = s.iter().collect();
+                elems.sort_unstable();
                 Ok(PyList::new(py, &elems)?.unbind())
             };
 
@@ -792,7 +794,7 @@ impl PySparseStab {
         destabs_dict: &Bound<'_, PyDict>,
     ) -> PyResult<Self> {
         let deserialize_gens = |dict: &Bound<'_, PyDict>| -> PyResult<Gens> {
-            let list_to_bitsets = |key: &str| -> PyResult<Vec<BitSet>> {
+            let list_to_sets = |key: &str| -> PyResult<Vec<SparseStabSet>> {
                 let list: Bound<'_, PyList> = dict
                     .get_item(key)?
                     .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>(key.to_string()))?
@@ -800,13 +802,13 @@ impl PySparseStab {
                 let mut result = Vec::with_capacity(list.len());
                 for item in list.iter() {
                     let inner_list: Vec<usize> = item.extract()?;
-                    let set: BitSet = inner_list.into_iter().collect();
+                    let set: SparseStabSet = inner_list.into_iter().collect();
                     result.push(set);
                 }
                 Ok(result)
             };
 
-            let list_to_bitset = |key: &str| -> PyResult<BitSet> {
+            let list_to_set = |key: &str| -> PyResult<SparseStabSet> {
                 let list = dict.get_item(key)?.ok_or_else(|| {
                     PyErr::new::<pyo3::exceptions::PyKeyError, _>(key.to_string())
                 })?;
@@ -816,12 +818,12 @@ impl PySparseStab {
 
             Ok(Gens::from_parts(
                 num_qubits,
-                list_to_bitsets("col_x")?,
-                list_to_bitsets("col_z")?,
-                list_to_bitsets("row_x")?,
-                list_to_bitsets("row_z")?,
-                list_to_bitset("signs_minus")?,
-                list_to_bitset("signs_i")?,
+                list_to_sets("col_x")?,
+                list_to_sets("col_z")?,
+                list_to_sets("row_x")?,
+                list_to_sets("row_z")?,
+                list_to_set("signs_minus")?,
+                list_to_set("signs_i")?,
             ))
         };
 
@@ -836,20 +838,7 @@ impl PySparseStab {
 
     /// Returns the raw gens data (`col_x`, `col_z`, `row_x`, `row_z`) for stabs or destabs.
     fn _gens_data(&self, is_stab: bool) -> crate::simulator_utils::GensData {
-        let gens = if is_stab {
-            self.inner.stabs()
-        } else {
-            self.inner.destabs()
-        };
-        let to_vecs = |sets: &[BitSet]| -> Vec<Vec<usize>> {
-            sets.iter().map(|s| s.iter().collect()).collect()
-        };
-        (
-            to_vecs(&gens.col_x),
-            to_vecs(&gens.col_z),
-            to_vecs(&gens.row_x),
-            to_vecs(&gens.row_z),
-        )
+        self.inner.gens_data(is_stab)
     }
 
     #[getter]

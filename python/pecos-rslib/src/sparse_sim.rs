@@ -14,7 +14,6 @@ use crate::prelude::*;
 use crate::simulator_utils::{
     SymbolEntry, extract_forced_outcome, supports_exact, validate_supported_symbol,
 };
-use pecos_core::BitSet;
 use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PySet, PyTuple};
@@ -564,20 +563,7 @@ impl SparseSim {
 
     /// Returns the raw gens data (`col_x`, `col_z`, `row_x`, `row_z`) for stabs or destabs.
     fn _gens_data(&self, is_stab: bool) -> crate::simulator_utils::GensData {
-        let gens = if is_stab {
-            self.inner.stabs()
-        } else {
-            self.inner.destabs()
-        };
-        let to_vecs = |sets: &[BitSet]| -> Vec<Vec<usize>> {
-            sets.iter().map(|s| s.iter().collect()).collect()
-        };
-        (
-            to_vecs(&gens.col_x),
-            to_vecs(&gens.col_z),
-            to_vecs(&gens.row_x),
-            to_vecs(&gens.row_z),
-        )
+        self.inner.gens_data(is_stab)
     }
 
     #[getter]

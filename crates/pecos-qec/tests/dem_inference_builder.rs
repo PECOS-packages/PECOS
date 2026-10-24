@@ -60,6 +60,31 @@ fn inferred_and_explicit_builds_share_noise_idle_and_evaluation() {
 }
 
 #[test]
+fn idle_noise_needs_idle_gates() {
+    let build = |idle_after_2q: Option<f64>| {
+        let builder = DetectorErrorModel::builder()
+            .with_circuit(circuit())
+            .with_detectors(vec![vec![0, 1]])
+            .with_observables(vec![vec![0]])
+            .with_noise(NoiseConfig::new(0.001, 0.01, 0.02, 0.001).set_idle(0.01));
+        match idle_after_2q {
+            Some(duration) => builder.with_idle_after_2q(duration).build(),
+            None => builder.build(),
+        }
+    };
+    assert!(build(Some(1.0)).is_ok());
+    let Err(error) = build(None) else {
+        panic!("idle noise without idle gates must be rejected");
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("idle-noise parameters have no idle gates to attach to"),
+        "{error}"
+    );
+}
+
+#[test]
 fn conflicts_and_bad_ids_fail_before_building() {
     let mut data = probes();
     data.raw_measurement_ids[0] = 9;

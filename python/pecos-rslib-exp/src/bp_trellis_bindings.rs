@@ -11,7 +11,7 @@
 // the License.
 
 use crate::decoder_specs::{
-    decoder_error_to_py, indexed_decoder_error_to_py, validate_batch_workers,
+    decoder_error_to_py, indexed_decoder_error_to_py, report_no_path, validate_batch_workers,
 };
 use pecos_trellis::bp_trellis::{
     BpTrellisConfig as RustBpTrellisConfig, BpTrellisDecoder as RustBpTrellisDecoder,
@@ -116,16 +116,6 @@ pub(crate) fn resolve_escalation(
             .into_iter()
             .map(|(k, delta)| EscalationRung { k, delta })
             .collect()),
-    }
-}
-
-fn report_no_path(on_no_path: &str) -> PyResult<bool> {
-    match on_no_path {
-        "raise" => Ok(false),
-        "report" => Ok(true),
-        _ => Err(PyValueError::new_err(
-            "on_no_path must be 'raise' or 'report'",
-        )),
     }
 }
 

@@ -51,7 +51,8 @@
 
 use crate::command::{CommandQueue, GateCommand, GateType, SignalStore};
 use crate::extensible::{
-    AdaptedOp, AdaptedSequence, GateDefinitions, GateId, MeasBasis, PrepBasis, ResultId,
+    AdaptedOp, AdaptedSequence, DEFAULT_MAX_DECOMPOSITION_DEPTH, GateDefinitions, GateId,
+    GroupInstantiationError, MeasBasis, PrepBasis, ResultId, instantiate_per_group, operand_groups,
 };
 use crate::noise::context::NoiseContext;
 use crate::noise::{ComposableNoiseModel, NoiseEvent, NoiseResponse, surviving_gate_qubits};
@@ -621,6 +622,20 @@ pub enum ExecutionError {
         arity: usize,
         got: usize,
     },
+    /// A gate reaching its decomposition carries a number of target qubits
+    /// that is not a multiple of the gate's registered qubit arity.
+    DecompositionQubitArity {
+        gate_id: GateId,
+        arity: usize,
+        got: usize,
+    },
+    /// A decomposition operation refers to an operand index outside the
+    /// operand group it is instantiated over.
+    DecompositionIndexOutOfRange {
+        gate_id: GateId,
+        index: usize,
+        group_size: usize,
+    },
     /// Maximum decomposition depth exceeded (possible infinite recursion).
     MaxDecompositionDepthExceeded,
 }
@@ -653,6 +668,26 @@ impl std::fmt::Display for ExecutionError {
                 f,
                 "Gate {gate:?} received {got} targets, which is not a nonzero multiple of its \
                  qubit arity {arity}"
+            ),
+            Self::DecompositionQubitArity {
+                gate_id,
+                arity,
+                got,
+            } => write!(
+                f,
+                "Gate ID {} received {got} targets for decomposition, which is not a nonzero \
+                 multiple of its registered qubit arity {arity}",
+                gate_id.0
+            ),
+            Self::DecompositionIndexOutOfRange {
+                gate_id,
+                index,
+                group_size,
+            } => write!(
+                f,
+                "Decomposition of gate ID {} uses operand index {index}, but each operand group \
+                 has {group_size} qubits; check the gate's registered arity",
+                gate_id.0
             ),
             Self::MaxDecompositionDepthExceeded => {
                 write!(f, "Maximum decomposition depth exceeded")
@@ -816,7 +851,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
             overrides: None,
             rotation_executor: None,
             results: Vec::new(),
-            max_decomp_depth: 10,
+            max_decomp_depth: DEFAULT_MAX_DECOMPOSITION_DEPTH,
             noise: None,
             signal_handlers: SignalHandlerRegistry::new(),
             gate_handlers: GateEventHandlers::new(),
@@ -1515,8 +1550,9 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         }
         // Emit before-gate noise event
         let skipped = self.emit_before_gate(sim, gate_id, qubits, angles)?;
-        // Unknown/zero arity or an incomplete/empty batch executes as one group:
-        // overrides and decompositions already receive the whole slice here.
+        // This grouping only decides which operand groups a SkipGate suppresses.
+        // Unknown/zero arity, or an empty or incomplete batch, is one group here;
+        // the decomposition path validates the operand count separately.
         let group_size = self
             .definitions
             .quantum_arity(gate_id)
@@ -1769,6 +1805,10 @@ impl<S: CliffordGateable> CircuitRunner<S> {
     }
 
     /// Execute a gate via decomposition from `GateDefinitions`.
+    ///
+    /// The decomposition is instantiated once per operand group, sized by the
+    /// gate's registered qubit arity. Without a positive registered arity, the
+    /// whole operand slice is one group.
     fn execute_via_decomposition(
         &mut self,
         sim: &mut S,
@@ -1777,15 +1817,35 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         angles: &[Angle64],
         depth: usize,
     ) -> Result<(), ExecutionError> {
+        if depth > self.max_decomp_depth {
+            return Err(ExecutionError::MaxDecompositionDepthExceeded);
+        }
+        let to_execution_error = |error| match error {
+            GroupInstantiationError::QubitArity { arity, got } => {
+                ExecutionError::DecompositionQubitArity {
+                    gate_id,
+                    arity,
+                    got,
+                }
+            }
+            GroupInstantiationError::IndexOutOfRange { index, group_size } => {
+                ExecutionError::DecompositionIndexOutOfRange {
+                    gate_id,
+                    index,
+                    group_size,
+                }
+            }
+        };
+
+        // Check the operand count first, so a malformed batch reports its
+        // arity rather than a missing decomposition.
+        let arity = self.definitions.quantum_arity(gate_id).map(usize::from);
+        let groups = operand_groups(qubits, arity).map_err(to_execution_error)?;
         let Some(decomp_entry) = self.definitions.decomposition(gate_id) else {
             return Err(ExecutionError::NoDecomposition { gate_id });
         };
-
-        let instantiated_ops: Vec<_> = decomp_entry
-            .decomposition
-            .expand()
-            .map(|op| op.instantiate(qubits, angles))
-            .collect();
+        let instantiated_ops = instantiate_per_group(&decomp_entry.decomposition, &groups, angles)
+            .map_err(to_execution_error)?;
 
         for inst in instantiated_ops {
             self.execute_gate(sim, inst.gate, &inst.qubits, &inst.angles, depth + 1)?;
@@ -2561,26 +2621,29 @@ where
                 sim.rzz(*angle, &pairs);
                 true
             }
-            // CCX (Toffoli) decomposition
-            GateType::CCX if qubits.len() >= 3 => {
-                let c1 = qubits[0];
-                let c2 = qubits[1];
-                let target = qubits[2];
-                sim.h(&[target]);
-                sim.cx(&[(c2, target)]);
-                sim.tdg(&[target]);
-                sim.cx(&[(c1, target)]);
-                sim.t(&[target]);
-                sim.cx(&[(c2, target)]);
-                sim.tdg(&[target]);
-                sim.cx(&[(c1, target)]);
-                sim.t(&[c2]);
-                sim.t(&[target]);
-                sim.h(&[target]);
-                sim.cx(&[(c1, c2)]);
-                sim.t(&[c1]);
-                sim.tdg(&[c2]);
-                sim.cx(&[(c1, c2)]);
+            // CCX (Toffoli) decomposition, applied to each (c1, c2, target) group
+            GateType::CCX => {
+                let (groups, remainder) = qubits.as_chunks::<3>();
+                if groups.is_empty() || !remainder.is_empty() {
+                    return false;
+                }
+                for &[c1, c2, target] in groups {
+                    sim.h(&[target]);
+                    sim.cx(&[(c2, target)]);
+                    sim.tdg(&[target]);
+                    sim.cx(&[(c1, target)]);
+                    sim.t(&[target]);
+                    sim.cx(&[(c2, target)]);
+                    sim.tdg(&[target]);
+                    sim.cx(&[(c1, target)]);
+                    sim.t(&[c2]);
+                    sim.t(&[target]);
+                    sim.h(&[target]);
+                    sim.cx(&[(c1, c2)]);
+                    sim.t(&[c1]);
+                    sim.tdg(&[c2]);
+                    sim.cx(&[(c1, c2)]);
+                }
                 true
             }
             _ => false,
@@ -3969,6 +4032,253 @@ mod tests {
             !bit,
             "default RZ(pi/2) = S leaves |0> unchanged (measure 0)"
         );
+    }
+
+    #[test]
+    fn batched_command_applies_decomposition_to_every_operand_group() {
+        use crate::extensible::{DecompEntry, DecompOp, Decomposition, GateDefinitions};
+        use std::sync::Arc;
+
+        let mut defs = GateDefinitions::new();
+        defs.set_decomposition(
+            gates::RZ,
+            DecompEntry {
+                requires: crate::extensible::GateSupportSet::from_iter([gates::X]),
+                decomposition: Decomposition::Dynamic(Arc::new(vec![DecompOp::gate1(gates::X, 0)])),
+            },
+        );
+        let circuit = CommandBuilder::new()
+            .pz(&[0, 1, 2])
+            .gate(GateCommand::with_angles(
+                GateType::RZ,
+                smallvec::smallvec![QubitId(0), QubitId(1), QubitId(2)],
+                smallvec::smallvec![Angle64::QUARTER_TURN],
+            ))
+            .mz(&[0, 1, 2])
+            .build();
+        let mut state = SparseStab::with_seed(3, 42);
+        let outcomes = CircuitRunner::<SparseStab>::with_definitions(defs)
+            .with_seed(42)
+            .apply_circuit(&mut state, &circuit)
+            .unwrap();
+        let bits: Vec<bool> = outcomes.iter().map(|r| r.outcome).collect();
+        assert_eq!(bits, vec![true, true, true]);
+    }
+
+    #[test]
+    fn execute_gate_decomposes_custom_gate_per_registered_arity() {
+        use crate::extensible::{DecompEntry, DecompOp, Decomposition, GateDefinitions};
+        use std::sync::Arc;
+
+        // The decomposition acts on operand index 1 only, so each group's
+        // second qubit flips when the slice is grouped by arity.
+        let entry = || DecompEntry {
+            requires: crate::extensible::GateSupportSet::from_iter([gates::X]),
+            decomposition: Decomposition::Dynamic(Arc::new(vec![DecompOp::gate1(gates::X, 1)])),
+        };
+        for (arity, count, expected) in [
+            (Some(2), 4, Ok(vec![false, true, false, true])),
+            (Some(2), 3, Err(3)),
+            (None, 4, Ok(vec![false, true, false, false])),
+        ] {
+            let mut defs = GateDefinitions::new();
+            let id = arity.map_or(GateId(1000), |arity| {
+                defs.register(GateSpec::new("custom").with_quantum_arity(arity))
+            });
+            defs.set_decomposition(id, entry());
+            let mut runner = CircuitRunner::<SparseStab>::with_definitions(defs);
+            let qubits: Vec<_> = (0..count).map(QubitId).collect();
+            let mut state = SparseStab::with_seed(count, 42);
+            match (
+                runner.execute_gate(&mut state, id, &qubits, &[], 0),
+                expected,
+            ) {
+                (Ok(()), Ok(expected)) => {
+                    let bits: Vec<bool> = state.mz(&qubits).iter().map(|r| r.outcome).collect();
+                    assert_eq!(bits, expected);
+                }
+                (Err(error), Err(got)) => assert!(
+                    matches!(
+                        error,
+                        ExecutionError::DecompositionQubitArity { gate_id, arity: 2, got: g }
+                            if gate_id == id && g == got
+                    ),
+                    "{error}"
+                ),
+                (result, expected) => panic!("got {result:?}, expected {expected:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn rotation_executor_applies_ccx_to_every_group() {
+        let circuit = CommandBuilder::new()
+            .pz(&[0, 1, 2, 3, 4, 5])
+            .x(&[0, 1, 3, 4])
+            .gate(GateCommand::new(
+                GateType::CCX,
+                (0..6).map(QubitId).collect::<SmallVec<_>>(),
+            ))
+            .mz(&[2, 5])
+            .build();
+        let mut state = StateVec::with_seed(6, 42);
+        let outcomes = CircuitRunner::<StateVec>::rotations()
+            .apply_circuit(&mut state, &circuit)
+            .unwrap();
+        assert_eq!(outcomes.get_bit(QubitId(2)), Some(true));
+        assert_eq!(outcomes.get_bit(QubitId(5)), Some(true));
+    }
+
+    #[test]
+    fn decomposition_forwards_shared_angles_to_every_group() {
+        use crate::extensible::{DecompEntry, DecompOp, Decomposition, GateDefinitions};
+        use std::sync::Arc;
+
+        let mut defs = GateDefinitions::new();
+        let id = defs.register(
+            GateSpec::new("custom_rx")
+                .with_quantum_arity(1)
+                .with_angle_arity(1),
+        );
+        defs.set_decomposition(
+            id,
+            DecompEntry {
+                requires: crate::extensible::GateSupportSet::from_iter([gates::RX]),
+                decomposition: Decomposition::Dynamic(Arc::new(vec![DecompOp::rotation(
+                    gates::RX,
+                    0,
+                    0,
+                )])),
+            },
+        );
+        let qubits: Vec<_> = (0..3).map(QubitId).collect();
+        for (angle, expected) in [(Angle64::HALF_TURN, true), (Angle64::ZERO, false)] {
+            let mut state = SparseStab::with_seed(3, 42);
+            CircuitRunner::<SparseStab>::with_definitions(defs.clone())
+                .execute_gate(&mut state, id, &qubits, &[angle], 0)
+                .unwrap();
+            let bits: Vec<bool> = state.mz(&qubits).iter().map(|r| r.outcome).collect();
+            assert_eq!(bits, vec![expected; 3], "angle {angle:?}");
+        }
+    }
+
+    #[test]
+    fn decomposition_edge_cases_fail_loudly_or_run_once() {
+        use crate::extensible::{DecompEntry, DecompOp, Decomposition, GateDefinitions};
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        static CHILD_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+        let entry = |ops: Vec<DecompOp>| DecompEntry {
+            requires: crate::extensible::GateSupportSet::new(),
+            decomposition: Decomposition::Dynamic(Arc::new(ops)),
+        };
+
+        // Without a registered arity, an empty operand slice is still one
+        // group, so an operand-free child runs exactly once.
+        let child = GateId(1001);
+        let parent = GateId(1000);
+        let mut defs = GateDefinitions::new();
+        defs.set_decomposition(
+            parent,
+            entry(vec![DecompOp {
+                gate: child,
+                qubit_indices: SmallVec::new(),
+                angles: SmallVec::new(),
+            }]),
+        );
+        let overrides = GateOverrides::new().register(child, |_sim: &mut SparseStab, _, _| {
+            CHILD_CALLS.fetch_add(1, Ordering::Relaxed);
+            true
+        });
+        let mut state = SparseStab::with_seed(1, 42);
+        CircuitRunner::with_definitions(defs)
+            .with_overrides(overrides)
+            .execute_gate(&mut state, parent, &[], &[], 0)
+            .unwrap();
+        assert_eq!(CHILD_CALLS.load(Ordering::Relaxed), 1);
+
+        // A decomposition index outside the registered group size is an error.
+        let mut defs = GateDefinitions::new();
+        let narrow = defs.register(GateSpec::new("narrow").with_quantum_arity(1));
+        defs.set_decomposition(narrow, entry(vec![DecompOp::gate1(gates::X, 1)]));
+        let mut state = SparseStab::with_seed(2, 42);
+        let error = CircuitRunner::with_definitions(defs)
+            .execute_gate(&mut state, narrow, &[QubitId(0), QubitId(1)], &[], 0)
+            .unwrap_err();
+        assert!(
+            matches!(
+                error,
+                ExecutionError::DecompositionIndexOutOfRange {
+                    gate_id,
+                    index: 1,
+                    group_size: 1,
+                } if gate_id == narrow
+            ),
+            "{error}"
+        );
+
+        // With a registered arity, an empty operand slice is rejected rather
+        // than treated as zero groups.
+        let mut defs = GateDefinitions::new();
+        let paired = defs.register(GateSpec::new("paired").with_quantum_arity(2));
+        defs.set_decomposition(paired, entry(vec![DecompOp::gate2(gates::CX, 0, 1)]));
+        let mut state = SparseStab::with_seed(1, 42);
+        let error = CircuitRunner::with_definitions(defs)
+            .execute_gate(&mut state, paired, &[], &[], 0)
+            .unwrap_err();
+        assert!(
+            matches!(
+                error,
+                ExecutionError::DecompositionQubitArity {
+                    gate_id,
+                    arity: 2,
+                    got: 0,
+                } if gate_id == paired
+            ),
+            "{error}"
+        );
+
+        // A self-referential decomposition stops at the depth limit.
+        let mut defs = GateDefinitions::new();
+        let looping = defs.register(GateSpec::new("looping").with_quantum_arity(1));
+        defs.set_decomposition(looping, entry(vec![DecompOp::gate1(looping, 0)]));
+        let mut state = SparseStab::with_seed(1, 42);
+        let error = CircuitRunner::with_definitions(defs)
+            .execute_gate(&mut state, looping, &[QubitId(0)], &[], 0)
+            .unwrap_err();
+        assert!(
+            matches!(error, ExecutionError::MaxDecompositionDepthExceeded),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn rotation_executor_rejects_incomplete_ccx_groups_before_acting() {
+        let mut state = StateVec::with_seed(4, 42);
+        state.x(&[QubitId(0), QubitId(1)]);
+        let qubits: Vec<_> = (0..4).map(QubitId).collect();
+        let result = CircuitRunner::<StateVec>::rotations().execute_gate(
+            &mut state,
+            gates::CCX,
+            &qubits,
+            &[],
+            0,
+        );
+        assert!(
+            matches!(
+                result,
+                Err(ExecutionError::DecompositionQubitArity {
+                    gate_id,
+                    arity: 3,
+                    got: 4,
+                }) if gate_id == gates::CCX
+            ),
+            "{result:?}"
+        );
+        let bits: Vec<bool> = state.mz(&qubits).iter().map(|r| r.outcome).collect();
+        assert_eq!(bits, vec![true, true, false, false]);
     }
 
     // --- apply_gate (interpreter mode) tests ---

@@ -217,9 +217,8 @@ fn base_noise_back_fills_unlisted_gates() {
 
 #[test]
 fn idle_configuration_is_rejected_not_dropped() {
-    // NoiseConfig::uniform sets p_idle = p, and the DEM built from this
-    // config includes idle contributions; silently dropping them in the
-    // conversion would change the physics.
+    // The DEM built from a config with p_idle includes idle contributions;
+    // silently dropping them in the conversion would change the physics.
     let noise = PerGateTypeNoise::from_base_noise(NoiseConfig {
         p_idle: 0.001,
         ..NoiseConfig::uniform(0.0)
@@ -244,6 +243,27 @@ fn idle_gate_entries_are_rejected_not_dropped() {
             .to_string()
             .contains("cannot carry idle noise")
     );
+}
+
+#[test]
+fn base_idle_requests_are_rejected_not_dropped() {
+    // The neo channel never sees idle events, so base gate-rate keys for Idle
+    // and an idle_rz angle would vanish in the conversion. theta = pi exercises
+    // the recorded angle alone, since set_idle_rz currently installs no
+    // channel there (a known gap, #1445).
+    let mut p2_key = NoiseConfig::uniform(0.0);
+    p2_key.p2_gate_rates.insert(GateType::Idle, 0.001);
+    for base in [
+        NoiseConfig::uniform(0.0).set_p1_gate_rate(GateType::Idle, 0.001),
+        p2_key,
+        NoiseConfig::uniform(0.0).set_idle_rz(std::f64::consts::PI),
+    ] {
+        let error = PerGateTypeNoise::from_base_noise(base)
+            .to_neo_channel()
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("cannot carry idle noise"), "{error}");
+    }
 }
 
 #[test]

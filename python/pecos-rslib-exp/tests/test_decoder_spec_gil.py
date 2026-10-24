@@ -84,6 +84,29 @@ def test_decode_releases_gil(spec):
     assert_releases_gil(decode_call)
 
 
+# Recovery-configured specifications use the v2 provider protocol.
+RECOVERY = frontier(delta_max=100.0, on_no_path="fallback", fallback="feasible_then_zero")
+
+
+def test_recovery_prepare_releases_gil():
+    def prepare_call(length):
+        dem = synthetic_dem(length, 1)
+        return lambda: RECOVERY._pecos_prepare_decoder(dem)
+
+    assert_releases_gil(prepare_call)
+
+
+def test_recovery_decode_outcome_releases_gil():
+    stride = 64
+
+    def decode_call(length):
+        worker = RECOVERY._pecos_prepare_decoder(synthetic_dem(length, stride))._pecos_build_decoder()
+        syndrome = bytes(length + stride)
+        return lambda: worker._pecos_decode_outcome(syndrome)
+
+    assert_releases_gil(decode_call)
+
+
 @pytest.mark.parametrize("decoder_class", [FrontierDecoder, FrontierCommitteeDecoder])
 def test_direct_parallel_batch_releases_gil(decoder_class):
     def decode_call(length):

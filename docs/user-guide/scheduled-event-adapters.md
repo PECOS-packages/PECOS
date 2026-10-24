@@ -3,7 +3,15 @@
 Mandatory v7 transport preserves opaque native events for a shot-local adapter.
 The adapter normalizes complete batches into checked gates and optional typed
 crosstalk exposures **before quantum execution**. The noise controller resolves
-those exposures during execution. Profiles retain the 1–16-qubit StateVec limit;
+those exposures during execution. Profiles run on StateVec or StabilizerEngine
+(Python: `pr.stabilizer()`) with no profile-imposed qubit limit; batch records
+and spectator targets are bounded by the schedule byte budget. The stabilizer path requires
+zero coherent idle rate and supported Clifford rotations; it rejects unsupported
+normalized gates before starting the noise controller for the current input.
+Each subsequent live input is admitted separately. Noise-generated continuation
+commands are checked before simulator execution, and execution failures require reset.
+See [scheduled simulation](scheduled-idle-simulation.md) for the model restrictions.
+
 Python supports an opt-in adapter factory on the QIS/HUGR engines route. This is
 not a general execution-time event API.
 
@@ -72,14 +80,14 @@ current encoder. Each batch contains:
    source result ID. Positions must match the measurement gates; both ID namespaces
    must be unique per input.
 
-Unknown records, versions, reserved bits and malformed lengths reject. Each source
-or expanded batch allows 4096 operations; opaque payloads total at most 256 KiB per
-batch. Normalized exposures also have a 16,384-candidate-target limit per batch;
-global exposures charge the full configured capacity, even with exclusions. Wire
-and expanded sizes are each capped at 64 MiB, including eight bytes per exposure
-ID in addition to the fixed normalized record charge. These bounds
-are not a process-RSS limit. Native extraction still has no aggregate output cap,
-and adapters must bound their own retained state. The host retains only bounded
+Unknown records, versions, reserved bits and malformed lengths reject. Source and
+expanded record and spectator counts are bounded by the 64 MiB schedule byte
+budget; opaque payloads total at most 256 KiB per batch. Normalized output charges
+16 bytes per collection, 40 per batch, 40 per record and eight per explicit
+spectator ID. Global exposures charge their full candidate capacity to the derived
+execution budget. Native extraction reserves against the remaining collection byte
+budget before allocating records. These bounds are not a process-RSS limit, and
+adapters must bound their own retained state. The host retains only bounded
 per-qubit timing and shot/ordinal state after processing.
 
 Nested v6 angle words are exact little-endian u64 Angle64 fractions; all 64 bits
@@ -110,9 +118,10 @@ must create a fresh object with two methods:
 - `validate(batch)` returns `None`, or raises for an unsupported schema/semantics.
   It must not mutate adapter state. A boolean return is rejected.
 - `translate(batch)` updates deterministic shot-local state and returns a **list**
-  of `pecos_rslib.quantum.Gate` or `pecos_rslib.ScheduledCrosstalk` objects, at most
-  4096 in total. Iterators are not consumed. All items pass through the checked
-  Rust writer; program measurement order, kind and targets must remain unchanged.
+  of `pecos_rslib.quantum.Gate` or `pecos_rslib.ScheduledCrosstalk` objects fitting
+  the remaining schedule byte budget. Iterators are not consumed. All items pass
+  through the checked Rust writer; program measurement order, kind and targets
+  must remain unchanged.
 
 `batch` is an owned, read-only snapshot with `runtime_shot_id`, `batch_index`,
 `start_nanos`, and `duration_nanos`. Its `operations` property returns a copy of the

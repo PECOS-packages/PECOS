@@ -4,6 +4,7 @@ mod execution;
 mod sample;
 mod scoring;
 
+pub use execution::split_predictions;
 pub use execution::{
     BatchDecodeError, DecodeOptions, DecodeResult, DecoderFactory, PreparedModel,
     logical_error_rate,

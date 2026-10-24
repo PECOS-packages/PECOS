@@ -25,9 +25,10 @@
 //! assert!(registry.can_execute(gates::SWAP, &sim_support));
 //! ```
 
-use super::{GateId, GateSupportSet, gates};
+use super::{GateDefinitions, GateId, GateSupportSet, gates};
 use pecos_core::{Angle64, QubitId};
 use smallvec::SmallVec;
+use std::borrow::Cow;
 use std::sync::Arc;
 
 /// A single operation in a decomposition sequence.
@@ -50,7 +51,7 @@ impl DecompOp {
     pub fn gate1(gate: GateId, q: u8) -> Self {
         Self {
             gate,
-            qubit_indices: SmallVec::from_buf([q, 0, 0, 0]),
+            qubit_indices: smallvec::smallvec![q],
             angles: SmallVec::new(),
         }
     }
@@ -60,7 +61,7 @@ impl DecompOp {
     pub fn gate2(gate: GateId, q0: u8, q1: u8) -> Self {
         Self {
             gate,
-            qubit_indices: SmallVec::from_buf([q0, q1, 0, 0]),
+            qubit_indices: smallvec::smallvec![q0, q1],
             angles: SmallVec::new(),
         }
     }
@@ -72,7 +73,7 @@ impl DecompOp {
         angles.push(AngleSource::Input(angle_idx));
         Self {
             gate,
-            qubit_indices: SmallVec::from_buf([q, 0, 0, 0]),
+            qubit_indices: smallvec::smallvec![q],
             angles,
         }
     }
@@ -84,7 +85,7 @@ impl DecompOp {
         angles.push(AngleSource::Fixed(angle));
         Self {
             gate,
-            qubit_indices: SmallVec::from_buf([q, 0, 0, 0]),
+            qubit_indices: smallvec::smallvec![q],
             angles,
         }
     }
@@ -95,7 +96,6 @@ impl DecompOp {
         let mapped_qubits: SmallVec<[QubitId; 4]> = self
             .qubit_indices
             .iter()
-            .take(self.qubit_count())
             .map(|&idx| qubits[idx as usize])
             .collect();
 
@@ -110,17 +110,6 @@ impl DecompOp {
             qubits: mapped_qubits,
             angles: resolved_angles,
         }
-    }
-
-    /// Get the number of qubits this operation uses.
-    fn qubit_count(&self) -> usize {
-        // Count non-zero indices (hacky but works for small counts)
-        self.qubit_indices
-            .iter()
-            .enumerate()
-            .take_while(|(i, idx)| *i == 0 || **idx != 0)
-            .count()
-            .max(1)
     }
 }
 
@@ -171,6 +160,67 @@ pub struct InstantiatedOp {
     pub qubits: SmallVec<[QubitId; 4]>,
     /// Resolved angle values.
     pub angles: SmallVec<[Angle64; 2]>,
+}
+
+/// Default limit on nested decomposition expansion, shared by
+/// `CircuitRunner` and `CircuitResolver`.
+pub(crate) const DEFAULT_MAX_DECOMPOSITION_DEPTH: usize = 10;
+
+/// Why a decomposition could not be instantiated over an operand slice.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum GroupInstantiationError {
+    /// The operand count is not a multiple of the gate's qubit arity.
+    QubitArity { arity: usize, got: usize },
+    /// A decomposition operation refers to an operand index outside its group.
+    IndexOutOfRange { index: usize, group_size: usize },
+}
+
+/// Split `qubits` into the operand groups a decomposition is instantiated over.
+///
+/// A positive `arity` requires a nonzero multiple of that many operands and
+/// splits them into groups of that size. Without one, the whole slice, even an
+/// empty one, is a single group.
+pub(crate) fn operand_groups(
+    qubits: &[QubitId],
+    arity: Option<usize>,
+) -> Result<Vec<&[QubitId]>, GroupInstantiationError> {
+    match arity {
+        Some(arity) if arity > 0 => {
+            if qubits.is_empty() || !qubits.len().is_multiple_of(arity) {
+                return Err(GroupInstantiationError::QubitArity {
+                    arity,
+                    got: qubits.len(),
+                });
+            }
+            Ok(qubits.chunks(arity).collect())
+        }
+        _ => Ok(vec![qubits]),
+    }
+}
+
+/// Instantiate `decomposition` once per operand group from [`operand_groups`].
+pub(crate) fn instantiate_per_group(
+    decomposition: &Decomposition,
+    groups: &[&[QubitId]],
+    angles: &[Angle64],
+) -> Result<Vec<InstantiatedOp>, GroupInstantiationError> {
+    let mut instantiated = Vec::new();
+    for &group in groups {
+        for op in decomposition.expand() {
+            if let Some(&index) = op
+                .qubit_indices
+                .iter()
+                .find(|&&index| usize::from(index) >= group.len())
+            {
+                return Err(GroupInstantiationError::IndexOutOfRange {
+                    index: usize::from(index),
+                    group_size: group.len(),
+                });
+            }
+            instantiated.push(op.instantiate(group, angles));
+        }
+    }
+    Ok(instantiated)
 }
 
 /// How to decompose a gate into simpler gates.
@@ -557,6 +607,20 @@ pub enum ResolutionError {
     },
     /// Circular dependency detected in decomposition chain.
     CircularDependency(GateId),
+    /// Nested decomposition expansion exceeded the maximum depth.
+    MaxDepthExceeded(GateId),
+    /// A gate's operand count is not a multiple of its qubit arity.
+    QubitArity {
+        gate: GateId,
+        arity: usize,
+        got: usize,
+    },
+    /// A decomposition operation refers to an operand index outside its group.
+    IndexOutOfRange {
+        gate: GateId,
+        index: usize,
+        group_size: usize,
+    },
 }
 
 impl std::fmt::Display for ResolutionError {
@@ -576,6 +640,25 @@ impl std::fmt::Display for ResolutionError {
             Self::CircularDependency(gate) => {
                 write!(f, "Circular dependency detected at gate {gate:?}")
             }
+            Self::MaxDepthExceeded(gate) => write!(
+                f,
+                "Decomposition of gate {gate:?} exceeds the maximum expansion depth \
+                 {DEFAULT_MAX_DECOMPOSITION_DEPTH}"
+            ),
+            Self::QubitArity { gate, arity, got } => write!(
+                f,
+                "Gate {gate:?} received {got} targets, which is not a nonzero multiple of its \
+                 qubit arity {arity}"
+            ),
+            Self::IndexOutOfRange {
+                gate,
+                index,
+                group_size,
+            } => write!(
+                f,
+                "Decomposition of gate {gate:?} uses operand index {index}, but each operand \
+                 group has {group_size} qubits; check the gate's registered arity"
+            ),
         }
     }
 }
@@ -716,16 +799,30 @@ impl ResolvedOp {
 pub struct CircuitResolver<'a> {
     registry: &'a DecompositionRegistry,
     simulator_support: &'a GateSupportSet,
+    /// Gate specs supplying the qubit arity used to group batched operands.
+    definitions: Cow<'a, GateDefinitions>,
 }
 
 impl<'a> CircuitResolver<'a> {
     /// Create a new resolver for a target simulator.
+    ///
+    /// Batched operands are grouped by the core gate arities of
+    /// `GateDefinitions::new()`; use [`Self::with_definitions`] to supply the
+    /// arities of user-defined gates.
     #[must_use]
     pub fn new(registry: &'a DecompositionRegistry, simulator_support: &'a GateSupportSet) -> Self {
         Self {
             registry,
             simulator_support,
+            definitions: Cow::Owned(GateDefinitions::new()),
         }
+    }
+
+    /// Group batched operands by the arities in `definitions`.
+    #[must_use]
+    pub fn with_definitions(mut self, definitions: &'a GateDefinitions) -> Self {
+        self.definitions = Cow::Borrowed(definitions);
+        self
     }
 
     /// Resolve an adapted sequence to native gates.
@@ -767,7 +864,7 @@ impl<'a> CircuitResolver<'a> {
                     });
                 } else {
                     // Need to decompose
-                    self.expand_gate(*gate_id, qubits, angles, out)?;
+                    self.expand_gate(*gate_id, qubits, angles, out, &mut Vec::new())?;
                 }
             }
 
@@ -821,13 +918,24 @@ impl<'a> CircuitResolver<'a> {
         Ok(())
     }
 
+    /// Expand a non-native gate, tracking the gates currently being expanded
+    /// in `active` so that a decomposition cycle or an overly deep chain is
+    /// reported, not recursed.
     fn expand_gate(
         &self,
         gate_id: GateId,
-        qubits: &SmallVec<[QubitId; 4]>,
-        angles: &SmallVec<[Angle64; 3]>,
+        qubits: &[QubitId],
+        angles: &[Angle64],
         out: &mut Vec<ResolvedOp>,
+        active: &mut Vec<GateId>,
     ) -> Result<(), ResolutionError> {
+        if active.contains(&gate_id) {
+            return Err(ResolutionError::CircularDependency(gate_id));
+        }
+        if active.len() > DEFAULT_MAX_DECOMPOSITION_DEPTH {
+            return Err(ResolutionError::MaxDepthExceeded(gate_id));
+        }
+
         let entry = self
             .registry
             .get(gate_id)
@@ -841,10 +949,26 @@ impl<'a> CircuitResolver<'a> {
         // below handles gates that need further decomposition. This enables chaining
         // like DOUBLE_SWAP → SWAP → CX where DOUBLE_SWAP requires SWAP (not CX directly).
 
-        // Expand the decomposition
-        for decomp_op in entry.decomposition.expand() {
-            let instantiated = decomp_op.instantiate(qubits, angles);
+        let arity = self.definitions.quantum_arity(gate_id).map(usize::from);
+        let instantiated_ops = operand_groups(qubits, arity)
+            .and_then(|groups| instantiate_per_group(&entry.decomposition, &groups, angles))
+            .map_err(|error| match error {
+                GroupInstantiationError::QubitArity { arity, got } => ResolutionError::QubitArity {
+                    gate: gate_id,
+                    arity,
+                    got,
+                },
+                GroupInstantiationError::IndexOutOfRange { index, group_size } => {
+                    ResolutionError::IndexOutOfRange {
+                        gate: gate_id,
+                        index,
+                        group_size,
+                    }
+                }
+            })?;
 
+        active.push(gate_id);
+        for instantiated in instantiated_ops {
             // Recursively resolve (in case decomposition uses non-native gates)
             if self.simulator_support.contains(instantiated.gate) {
                 out.push(ResolvedOp::Gate {
@@ -857,11 +981,13 @@ impl<'a> CircuitResolver<'a> {
                 self.expand_gate(
                     instantiated.gate,
                     &instantiated.qubits,
-                    &instantiated.angles.iter().copied().collect(),
+                    &instantiated.angles,
                     out,
+                    active,
                 )?;
             }
         }
+        active.pop();
 
         Ok(())
     }
@@ -985,6 +1111,15 @@ mod tests {
         assert_eq!(instantiated.gate, gates::CX);
         assert_eq!(instantiated.qubits[0], QubitId(5));
         assert_eq!(instantiated.qubits[1], QubitId(10));
+    }
+
+    #[test]
+    fn test_decomp_op_instantiate_keeps_every_index() {
+        let qubits = [QubitId(5), QubitId(10)];
+        let reversed = DecompOp::gate2(gates::CX, 1, 0).instantiate(&qubits, &[]);
+        assert_eq!(reversed.qubits.as_slice(), &[QubitId(10), QubitId(5)]);
+        let single = DecompOp::gate1(gates::H, 1).instantiate(&qubits, &[]);
+        assert_eq!(single.qubits.as_slice(), &[QubitId(10)]);
     }
 
     #[test]
@@ -1174,6 +1309,165 @@ mod tests {
                 _ => panic!("Expected Gate"),
             }
         }
+    }
+
+    #[test]
+    fn test_resolver_decomposes_every_operand_group() {
+        use super::super::{AdaptedOp, AdaptedSequence};
+
+        let registry = DecompositionRegistry::new();
+        let batched = |gate_id: GateId, count: usize| {
+            AdaptedSequence::new(vec![AdaptedOp::Gate {
+                gate_id,
+                qubits: (0..count).map(QubitId).collect(),
+                angles: SmallVec::new(),
+            }])
+        };
+        let ops = |resolved: &ResolvedCircuit| -> Vec<(GateId, Vec<QubitId>)> {
+            resolved
+                .ops
+                .iter()
+                .map(|op| match op {
+                    ResolvedOp::Gate {
+                        gate_id, qubits, ..
+                    } => (*gate_id, qubits.to_vec()),
+                    _ => panic!("Expected Gate"),
+                })
+                .collect()
+        };
+        let q = QubitId;
+
+        let cx_only = GateSupportSet::from_iter([gates::CX]);
+        let resolver = CircuitResolver::new(&registry, &cx_only);
+        assert_eq!(
+            ops(&resolver.resolve(&batched(gates::SWAP, 4)).unwrap()),
+            vec![
+                (gates::CX, vec![q(0), q(1)]),
+                (gates::CX, vec![q(1), q(0)]),
+                (gates::CX, vec![q(0), q(1)]),
+                (gates::CX, vec![q(2), q(3)]),
+                (gates::CX, vec![q(3), q(2)]),
+                (gates::CX, vec![q(2), q(3)]),
+            ]
+        );
+        assert!(matches!(
+            resolver.resolve(&batched(gates::SWAP, 3)),
+            Err(ResolutionError::QubitArity {
+                gate,
+                arity: 2,
+                got: 3,
+            }) if gate == gates::SWAP
+        ));
+        assert!(matches!(
+            resolver.resolve(&batched(gates::SWAP, 0)),
+            Err(ResolutionError::QubitArity {
+                gate,
+                arity: 2,
+                got: 0,
+            }) if gate == gates::SWAP
+        ));
+
+        let iswap_support = GateSupportSet::from_iter([gates::SZ, gates::H, gates::CX]);
+        let resolver = CircuitResolver::new(&registry, &iswap_support);
+        let iswap = ops(&resolver.resolve(&batched(gates::ISWAP, 4)).unwrap());
+        assert_eq!(iswap.len(), 12);
+        let (first, second) = iswap.split_at(6);
+        assert!(first.iter().flat_map(|(_, qs)| qs).all(|q| q.0 < 2));
+        assert!(second.iter().flat_map(|(_, qs)| qs).all(|q| q.0 >= 2));
+    }
+
+    #[test]
+    fn test_resolver_reports_cycles_and_out_of_range_indices() {
+        use super::super::{AdaptedOp, AdaptedSequence, GateSpec};
+
+        let looping = GateId(300);
+        let wide = GateId(301);
+        let mut registry = DecompositionRegistry::new();
+        registry.register(
+            looping,
+            GateSupportSet::new(),
+            Decomposition::Dynamic(Arc::new(vec![DecompOp::gate1(looping, 0)])),
+        );
+        registry.register(
+            wide,
+            GateSupportSet::from_iter([gates::X]),
+            Decomposition::Dynamic(Arc::new(vec![DecompOp::gate1(gates::X, 1)])),
+        );
+        let support = GateSupportSet::from_iter([gates::X]);
+        let resolver = CircuitResolver::new(&registry, &support);
+        let gate = |gate_id: GateId, count: usize| {
+            AdaptedSequence::new(vec![AdaptedOp::Gate {
+                gate_id,
+                qubits: (0..count).map(QubitId).collect(),
+                angles: SmallVec::new(),
+            }])
+        };
+
+        assert!(matches!(
+            resolver.resolve(&gate(looping, 1)),
+            Err(ResolutionError::CircularDependency(id)) if id == looping
+        ));
+
+        // A chain of distinct gates deeper than the limit is reported, while
+        // a chain within the limit resolves.
+        let chain = |length: u16| {
+            let mut chained = DecompositionRegistry::new();
+            for link in 0..length {
+                let next = if link + 1 == length {
+                    gates::X
+                } else {
+                    GateId(400 + link + 1)
+                };
+                chained.register(
+                    GateId(400 + link),
+                    GateSupportSet::new(),
+                    Decomposition::Dynamic(Arc::new(vec![DecompOp::gate1(next, 0)])),
+                );
+            }
+            chained
+        };
+        for length in [3, 11] {
+            let within = chain(length);
+            assert_eq!(
+                CircuitResolver::new(&within, &support)
+                    .resolve(&gate(GateId(400), 1))
+                    .unwrap()
+                    .len(),
+                1,
+                "{length} links"
+            );
+        }
+        for length in [12, 50] {
+            let deep = chain(length);
+            assert!(
+                matches!(
+                    CircuitResolver::new(&deep, &support).resolve(&gate(GateId(400), 1)),
+                    Err(ResolutionError::MaxDepthExceeded(_))
+                ),
+                "{length} links"
+            );
+        }
+
+        let mut definitions = GateDefinitions::new();
+        let wide_spec = definitions.register(GateSpec::new("wide").with_quantum_arity(1));
+        assert_eq!(wide_spec, GateId(256));
+        let mut registry = registry.clone();
+        registry.register(
+            wide_spec,
+            GateSupportSet::from_iter([gates::X]),
+            Decomposition::Dynamic(Arc::new(vec![DecompOp::gate1(gates::X, 1)])),
+        );
+        let resolver = CircuitResolver::new(&registry, &support).with_definitions(&definitions);
+        assert!(matches!(
+            resolver.resolve(&gate(wide_spec, 2)),
+            Err(ResolutionError::IndexOutOfRange {
+                gate,
+                index: 1,
+                group_size: 1,
+            }) if gate == wide_spec
+        ));
+        // Without a registered arity, the whole slice is one group.
+        assert_eq!(resolver.resolve(&gate(wide, 2)).unwrap().len(), 1);
     }
 
     #[test]

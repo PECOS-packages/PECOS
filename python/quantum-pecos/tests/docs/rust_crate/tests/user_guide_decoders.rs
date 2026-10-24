@@ -220,3 +220,35 @@ match decoder.decode(&syndrome.view()) {
 }
     Ok(())
 }
+
+
+#[test]
+fn test_user_guide_decoders_rust_11() -> Result<(), Box<dyn std::error::Error>> {
+    use ndarray::array;
+    use pecos_decoders::{BeliefFindDecoder, BpLsdDecoder, BpMethod, BpOsdDecoder, BpSchedule, Decoder, FlipDecoder, InputVectorType, LdpcError, OsdMethod, SoftInfoBpDecoder, SparseMatrix, UfMethod, UnionFindDecoder};
+    use pecos_frontier::{FrontierConfig, SparseDem};
+    use pecos_frontier::recovery::{
+FallbackPolicy, FrontierRecoveryDecoder, FrontierRecoveryOutcome,
+NoPathAction, RecoveryOptions,
+};
+    let rows: Vec<u32> = vec![0, 0, 1, 1];
+    let cols: Vec<u32> = vec![0, 1, 2, 3];
+    let pcm = SparseMatrix::from_coo(2, 4, rows, cols)?;
+    let error_rate = 0.05;
+    let syndrome = array![1u8, 0];
+
+let dem = SparseDem::from_dem_str("error(0.1) D0 D1 L0")?;
+let mut decoder = FrontierRecoveryDecoder::from_sparse_dem(
+    &dem,
+    FrontierConfig { k: 256, delta: 16.0, ..Default::default() },
+    Some(FallbackPolicy::FeasibleThenZero),
+)?;
+let outcome = decoder.decode(&[1, 0], RecoveryOptions {
+    delta_max: Some(64.0),
+    on_no_path: NoPathAction::Fallback,
+})?;
+assert!(matches!(outcome, FrontierRecoveryOutcome::Fallback {
+    syndrome_consistent: Some(false), ..
+}));
+    Ok(())
+}

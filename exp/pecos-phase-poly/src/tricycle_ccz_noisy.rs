@@ -10,17 +10,19 @@
 //! any solution of `H_Z` x = s', instead of integer programming, as permitted
 //! for logical-plus preparation by source line 1150.
 //!
-//! The noise is circuit-level depolarizing (source line 1132) with every
-//! preparation noisy, so acceptance is not directly comparable with Table II.
+//! `NoiseModel::CircuitLevel` uses circuit-level depolarizing noise (source line
+//! 1132) with every preparation noisy, so acceptance is not directly comparable
+//! with Table II.
 //! The simulation code released with the paper applies no data-preparation
 //! error, uses single-qubit depolarizing (outcome flip 2p/3) on ancilla
 //! preparation, ancilla measurement and final readout, and simulates no syndrome
 //! repair. For the [[27,3,3]] code at p = 1e-3 that convention gives 0.70
 //! acceptance (Table II) where this module gives about 0.62; data-preparation
-//! noise accounts for most of the difference.
+//! noise accounts for most of the difference. `NoiseModel::Paper` selects the
+//! Table II channels while retaining the repair and readout machinery below.
 //!
-//! X-check detectors plus inverse-target readout use dephasing, ideal inverse
-//! encoding, X-check pivot detectors, and logical-pivot observables. In exact
+//! X-check detectors plus inverse-target readout use the selected readout channel,
+//! ideal inverse encoding, X-check pivot detectors, and logical-pivot observables. In exact
 //! mode the logical CCZ tensor is undone before scoring the target. This is an
 //! intentional extension: the paper measures logical X directly. Non-pivot Z
 //! readouts diagnose residual X errors but never reject a shot; the paper assumes
@@ -68,6 +70,7 @@ use pecos_qec::BivariateTricycleCode;
 use pecos_quantum::{F2Matrix, TickCircuit};
 use pecos_random::PecosRng;
 use pecos_relay_bp::{RelayBpDecoder, StoppingCriterion};
+use std::collections::BTreeSet;
 
 use crate::PhasePoly;
 use crate::distillation::validate_probability;
@@ -76,6 +79,240 @@ use crate::tricycle_ccz::{Encoder, stage};
 
 #[cfg(test)]
 mod tests;
+
+/// CX layers of the Z-check round in the circuit recorded with the Table II
+/// [[27,3,3]] run of the simulation code released with arXiv:2510.07269, as
+/// single-block `(data, check)` pairs in this crate's qubit and check indices.
+/// The recorded code equals `c27()` under a relabeling that preserves both
+/// check matrices; the schedule was carried through that relabeling.
+pub const PAPER_C27_SCHEDULE: [[(usize, usize); 27]; 4] = [
+    [
+        (2, 15),
+        (1, 17),
+        (0, 16),
+        (8, 12),
+        (7, 14),
+        (6, 13),
+        (5, 9),
+        (4, 11),
+        (3, 10),
+        (21, 26),
+        (23, 25),
+        (22, 24),
+        (18, 23),
+        (20, 22),
+        (19, 21),
+        (24, 20),
+        (26, 19),
+        (17, 3),
+        (14, 1),
+        (13, 0),
+        (12, 2),
+        (11, 7),
+        (10, 6),
+        (9, 8),
+        (15, 4),
+        (16, 5),
+        (25, 18),
+    ],
+    [
+        (3, 15),
+        (5, 17),
+        (4, 16),
+        (0, 12),
+        (2, 14),
+        (1, 13),
+        (6, 9),
+        (8, 11),
+        (7, 10),
+        (26, 26),
+        (25, 25),
+        (24, 24),
+        (23, 23),
+        (22, 22),
+        (21, 21),
+        (20, 20),
+        (19, 19),
+        (16, 3),
+        (12, 1),
+        (14, 0),
+        (13, 2),
+        (9, 7),
+        (11, 6),
+        (10, 8),
+        (17, 4),
+        (15, 5),
+        (18, 18),
+    ],
+    [
+        (19, 15),
+        (18, 17),
+        (20, 16),
+        (25, 12),
+        (24, 14),
+        (26, 13),
+        (22, 9),
+        (21, 11),
+        (23, 10),
+        (10, 26),
+        (9, 25),
+        (11, 24),
+        (16, 23),
+        (15, 22),
+        (17, 21),
+        (13, 20),
+        (12, 19),
+        (1, 3),
+        (8, 1),
+        (7, 0),
+        (6, 2),
+        (5, 7),
+        (4, 6),
+        (3, 8),
+        (2, 4),
+        (0, 5),
+        (14, 18),
+    ],
+    [
+        (20, 15),
+        (19, 17),
+        (18, 16),
+        (26, 12),
+        (25, 14),
+        (24, 13),
+        (23, 9),
+        (22, 11),
+        (21, 10),
+        (14, 26),
+        (13, 25),
+        (12, 24),
+        (11, 23),
+        (10, 22),
+        (9, 21),
+        (17, 20),
+        (16, 19),
+        (3, 3),
+        (1, 1),
+        (0, 0),
+        (2, 2),
+        (7, 7),
+        (6, 6),
+        (8, 8),
+        (4, 4),
+        (5, 5),
+        (15, 18),
+    ],
+];
+
+/// Validated single-block Z-check extraction layers, bound to a Tanner graph.
+#[derive(Clone, Debug)]
+pub struct ExtractionSchedule {
+    layers: Vec<Vec<(usize, usize)>>,
+    n: usize,
+    checks: usize,
+}
+
+impl ExtractionSchedule {
+    /// Construct the edge coloring used by `NoisyCcz`, preserving edge order.
+    ///
+    /// # Errors
+    /// Returns coloring or schedule-validation errors.
+    pub fn edge_coloring(code: &BivariateTricycleCode) -> Result<Self, String> {
+        let edges = Self::edges(code);
+        let coloring = bipartite_edge_coloring(code.num_qubits(), code.hz().num_checks(), &edges)
+            .map_err(|e| e.to_string())?;
+        let layers = (0..coloring.num_colors())
+            .map(|color| {
+                edges
+                    .iter()
+                    .zip(coloring.colors())
+                    .filter_map(|(&edge, &c)| (c == color).then_some(edge))
+                    .collect()
+            })
+            .collect();
+        Self::from_layers(code, layers)
+    }
+
+    /// Validate caller-supplied layers against every edge of `H_Z`.
+    ///
+    /// # Errors
+    /// Rejects non-edges, repeated data/check endpoints within a layer, missing
+    /// edges, and edges appearing more than once across layers.
+    pub fn from_layers(
+        code: &BivariateTricycleCode,
+        layers: Vec<Vec<(usize, usize)>>,
+    ) -> Result<Self, String> {
+        let schedule = Self {
+            layers,
+            n: code.num_qubits(),
+            checks: code.hz().num_checks(),
+        };
+        schedule.validate(code)?;
+        Ok(schedule)
+    }
+
+    /// Single-block layers in their supplied order.
+    #[must_use]
+    pub fn layers(&self) -> &[Vec<(usize, usize)>] {
+        &self.layers
+    }
+
+    fn edges(code: &BivariateTricycleCode) -> Vec<(usize, usize)> {
+        code.hz()
+            .rows()
+            .iter()
+            .enumerate()
+            .flat_map(|(check, row)| {
+                row.iter()
+                    .enumerate()
+                    .filter_map(move |(data, &bit)| (bit != 0).then_some((data, check)))
+            })
+            .collect()
+    }
+
+    pub(crate) fn validate(&self, code: &BivariateTricycleCode) -> Result<(), String> {
+        if self.n != code.num_qubits() || self.checks != code.hz().num_checks() {
+            return Err("schedule dimensions do not match the code".into());
+        }
+        let edges = Self::edges(code).into_iter().collect::<BTreeSet<_>>();
+        let mut seen = BTreeSet::new();
+        for (layer, pairs) in self.layers.iter().enumerate() {
+            let (mut data_seen, mut check_seen) = (BTreeSet::new(), BTreeSet::new());
+            for &(data, check) in pairs {
+                if !edges.contains(&(data, check)) {
+                    return Err(format!(
+                        "pair ({data}, {check}) in layer {layer} is not an H_Z edge"
+                    ));
+                }
+                if !data_seen.insert(data) || !check_seen.insert(check) {
+                    return Err(format!("data qubit or check repeated in layer {layer}"));
+                }
+                if !seen.insert((data, check)) {
+                    return Err(format!("H_Z edge ({data}, {check}) appears more than once"));
+                }
+            }
+        }
+        if seen != edges {
+            return Err("schedule is missing H_Z edges".into());
+        }
+        Ok(())
+    }
+
+    pub(crate) fn three_blocks(&self) -> impl Iterator<Item = Vec<(usize, usize)>> + '_ {
+        self.layers.iter().map(move |pairs| {
+            (0..3)
+                .flat_map(|block| {
+                    pairs.iter().map(move |&(data, check)| {
+                        (
+                            block * self.n + data,
+                            3 * self.n + block * self.checks + check,
+                        )
+                    })
+                })
+                .collect()
+        })
+    }
+}
 
 /// Physical CCZ or the paper's Pauli approximation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -87,6 +324,15 @@ pub enum CczModel {
     /// and new three-qubit depolarizing errors ("the above errors"). No CCZ or
     /// additional depolarizing channel is applied in this mode.
     PaperSurrogate,
+}
+
+/// Noise convention for preparation, ancilla measurement, and data readout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NoiseModel {
+    /// Noisy data preparation, bit-flip ancillas, and dephasing readout.
+    CircuitLevel,
+    /// Table II convention: ideal data preparation and depolarizing ancillas/readout.
+    Paper,
 }
 
 /// Meta checks used to repair recorded Z syndromes.
@@ -184,12 +430,14 @@ impl NoisyCcz {
         code: &BivariateTricycleCode,
         p: f64,
         model: CczModel,
+        noise_model: NoiseModel,
         meta_checks: MetaChecks,
     ) -> Result<Self, String> {
         Self::build(
             code,
             p,
             model,
+            noise_model,
             meta_checks,
             #[cfg(test)]
             &[],
@@ -200,6 +448,7 @@ impl NoisyCcz {
         code: &BivariateTricycleCode,
         p: f64,
         model: CczModel,
+        noise_model: NoiseModel,
         meta_checks: MetaChecks,
         #[cfg(test)] faults: &[Fault],
     ) -> Result<Self, String> {
@@ -211,7 +460,7 @@ impl NoisyCcz {
             .checked_add(m_z)
             .and_then(|v| v.checked_mul(3))
             .ok_or("three-block circuit size overflows usize")?;
-        let mut prefix = preparation(code, p, total)?;
+        let mut prefix = preparation(code, p, total, noise_model)?;
         #[cfg(test)]
         append_faults(
             &mut prefix,
@@ -225,7 +474,7 @@ impl NoisyCcz {
         #[cfg(test)]
         append_faults(&mut suffix, faults, FaultPoint::BeforeCcz, 0, 3 * n)?;
         ccz_stage(&mut suffix, code, p, model);
-        let diagnostics_start = readout(&mut suffix, code, p, model)?;
+        let diagnostics_start = readout(&mut suffix, code, p, model, noise_model)?;
         let meta_rows = meta_check_rows(code, meta_checks);
         let meta = Array2::from_shape_vec((meta_rows.len(), m_z), meta_rows.concat())
             .map_err(|e| e.to_string())?;
@@ -479,41 +728,29 @@ impl SyndromeSolver {
     }
 }
 
-fn preparation(code: &BivariateTricycleCode, p: f64, total: usize) -> Result<TickCircuit, String> {
+fn preparation(
+    code: &BivariateTricycleCode,
+    p: f64,
+    total: usize,
+    noise_model: NoiseModel,
+) -> Result<TickCircuit, String> {
     let n = code.num_qubits();
-    let m_z = code.hz().num_checks();
     let mut circuit = TickCircuit::new();
     circuit.tick().px(&(0..3 * n).collect::<Vec<_>>());
     circuit.tick_at(0).pz(&(3 * n..total).collect::<Vec<_>>());
     let mut noise = circuit.tick();
-    for q in 0..3 * n {
-        noise.channel(channel::Dephasing(p, q));
+    if noise_model == NoiseModel::CircuitLevel {
+        for q in 0..3 * n {
+            noise.channel(channel::Dephasing(p, q));
+        }
     }
     for q in 3 * n..total {
-        noise.channel(channel::BitFlip(p, q));
+        noise.channel(match noise_model {
+            NoiseModel::CircuitLevel => channel::BitFlip(p, q),
+            NoiseModel::Paper => channel::Depolarizing(p, q),
+        });
     }
-    let edges = code
-        .hz()
-        .rows()
-        .iter()
-        .enumerate()
-        .flat_map(|(check, row)| {
-            row.iter()
-                .enumerate()
-                .filter_map(move |(data, &bit)| (bit != 0).then_some((data, check)))
-        })
-        .collect::<Vec<_>>();
-    let coloring = bipartite_edge_coloring(n, m_z, &edges).map_err(|e| e.to_string())?;
-    for color in 0..coloring.num_colors() {
-        let pairs = (0..3)
-            .flat_map(|block| {
-                edges
-                    .iter()
-                    .zip(coloring.colors())
-                    .filter(move |&(_, &c)| c == color)
-                    .map(move |(&(data, check), _)| (block * n + data, 3 * n + block * m_z + check))
-            })
-            .collect::<Vec<_>>();
+    for pairs in ExtractionSchedule::edge_coloring(code)?.three_blocks() {
         circuit.tick().cx(&pairs);
         let mut noise = circuit.tick();
         for (data, ancilla) in pairs {
@@ -522,7 +759,10 @@ fn preparation(code: &BivariateTricycleCode, p: f64, total: usize) -> Result<Tic
     }
     let mut noise = circuit.tick();
     for q in 3 * n..total {
-        noise.channel(channel::BitFlip(p, q));
+        noise.channel(match noise_model {
+            NoiseModel::CircuitLevel => channel::BitFlip(p, q),
+            NoiseModel::Paper => channel::Depolarizing(p, q),
+        });
     }
     Ok(circuit)
 }
@@ -560,7 +800,7 @@ fn correlated_z(p: f64, support: &[usize]) -> ChannelExpr {
     ChannelExpr::MixedUnitary(vec![(1.0 - p, identity), (p, error)])
 }
 
-fn surrogate_supports(code: &BivariateTricycleCode) -> Vec<Vec<usize>> {
+pub(crate) fn surrogate_supports(code: &BivariateTricycleCode) -> Vec<Vec<usize>> {
     let n = code.num_qubits();
     let mut supports = (0..3 * n).map(|q| vec![q]).collect::<Vec<_>>();
     for [a, b, c] in code.cup_product_ccz().concat() {
@@ -648,12 +888,16 @@ fn readout(
     code: &BivariateTricycleCode,
     p: f64,
     model: CczModel,
+    noise_model: NoiseModel,
 ) -> Result<usize, String> {
     let n = code.num_qubits();
     let encoder = Encoder::new(code);
     let mut noise = suffix.tick();
     for data in 0..3 * n {
-        noise.channel(channel::Dephasing(p, data));
+        noise.channel(match noise_model {
+            NoiseModel::CircuitLevel => channel::Dephasing(p, data),
+            NoiseModel::Paper => channel::Depolarizing(p, data),
+        });
     }
     stage(suffix, n, &encoder.stabilizers, &encoder.stabilizer_pivots);
     stage(suffix, n, &encoder.logicals, &encoder.logical_pivots);

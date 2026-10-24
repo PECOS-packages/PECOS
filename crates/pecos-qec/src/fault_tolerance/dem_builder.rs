@@ -86,6 +86,7 @@ pub(crate) mod sampler;
 mod slice;
 mod types;
 
+pub(crate) use builder::validate_idle_noise_targets;
 pub use builder::{
     DemBuilder, DemBuilderError, ParsedDetector, ParsedObservable, parse_detectors_json,
     parse_observables_json, resolve_result_tags,

@@ -48,23 +48,35 @@ struct ScheduledExecutionLimits {
 
 impl ScheduledExecutionLimits {
     fn for_batch(gates: &[crate::Gate], qubits: usize) -> Result<Self, PecosError> {
-        // Admission already bounds records, aggregate fanout and capacity.
+        // Admission bounds record bytes and validates spectator IDs against capacity.
+        let overflow = || runtime_frame::error("scheduled expansion overflow");
         let mut exposures = 0usize;
         let mut targets = 0usize;
         for gate in gates {
             if gate.gate_type.is_crosstalk_payload() {
                 exposures += 1;
-                targets += if gate.gate_type == crate::GateType::MeasCrosstalkGlobalPayload {
+                let candidates = if gate.gate_type == crate::GateType::MeasCrosstalkGlobalPayload {
                     qubits
                 } else {
                     gate.qubits.len()
                 };
+                targets = targets.checked_add(candidates).ok_or_else(overflow)?;
             }
         }
         let ordinary = gates.len() - exposures;
-        let overflow = || runtime_frame::error("scheduled expansion overflow");
+        // Each preparation can collapse every other prepared qubit. The
+        // general model emits one internal MZ command per affected target.
+        let preparations = gates
+            .iter()
+            .filter(|g| g.gate_type == crate::GateType::PZ)
+            .count();
         let operations = ordinary
             .checked_mul(16)
+            .and_then(|n| {
+                preparations
+                    .checked_mul(qubits)
+                    .and_then(|p| n.checked_add(p))
+            })
             .and_then(|n| targets.checked_mul(2).and_then(|t| n.checked_add(t)))
             .ok_or_else(overflow)?;
         if exposures == 0 {
@@ -73,7 +85,7 @@ impl ScheduledExecutionLimits {
         // Each exposure yields at most once, followed by the last transition/
         // source suffix. Per candidate target the general model emits at most one
         // single-qubit internal MZ and one transition gate; the exposure itself
-        // emits nothing. Every such command fits the 128-byte operation charge.
+        // emits nothing. Every emitted command fits the 128-byte operation charge.
         let simulator_calls = exposures.checked_add(1).ok_or_else(overflow)?;
         let bytes = operations
             .checked_mul(128)
@@ -187,7 +199,8 @@ impl QuantumSystem {
                             remaining.bytes, limits.bytes
                         ))
                     })?;
-                    let operations = commands.quantum_ops()?.len();
+                    let gates = commands.quantum_ops()?;
+                    let operations = gates.len();
                     remaining.operations = remaining
                         .operations
                         .checked_sub(operations)
@@ -198,6 +211,8 @@ impl QuantumSystem {
                                 remaining.operations, limits.operations
                             ))
                         })?;
+                    crate::quantum::ScheduledBackend::inspect(&*self.quantum_engine)?
+                        .validate(&gates, false)?;
                     let reply = self.quantum_engine.process(commands)?;
                     stage = self.noise_model.continue_processing(reply)?;
                 }
@@ -262,16 +277,8 @@ impl QuantumSystem {
         let model = self
             .scheduled_model()
             .ok_or_else(|| runtime_frame::error("scheduled capability required"))?;
-        let sim = self
-            .quantum_engine
-            .as_any()
-            .downcast_ref::<crate::StateVecEngine>()
-            .ok_or_else(|| runtime_frame::error("scheduled idle requires state vector"))?;
-        if sim.simulator().num_qubits() < model.qubits() {
-            return Err(runtime_frame::error(
-                "simulator capacity below scheduled profile",
-            ));
-        }
+        let backend = crate::quantum::ScheduledBackend::inspect(&*self.quantum_engine)?;
+        model.validate_backend(backend)?;
         // The classical engine can yield an empty wait message. No other legacy
         // input may bypass this capability's timing/capacity admission.
         if input.as_bytes() == ByteMessage::builder().build().as_bytes() {
@@ -296,6 +303,11 @@ impl QuantumSystem {
                 None,
             )
         };
+        // Validate every normalized batch before starting the noise controller.
+        // Later live inputs remain separate admissions, not whole-shot preflight.
+        for message in &prepared.messages {
+            backend.validate(&message.quantum_ops()?, true)?;
+        }
         self.frame_poisoned = true;
         let mut outcomes = Vec::new();
         for message in std::mem::take(&mut prepared.messages) {

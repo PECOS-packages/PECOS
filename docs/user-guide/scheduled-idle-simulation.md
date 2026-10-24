@@ -2,10 +2,19 @@
 
 The opt-in QIS scheduled route carries original native batch timestamps into
 `sim()` and applies checked local idle channels using `GeneralNoiseModel`. It supports
-state-vector simulation with a fixed admitted profile of 1–16 physical qubits.
-The simulator must have at least that capacity; any extra qubits are inaccessible
-to scheduled input. This is an
-experimental integration API; it does not enable an arbitrary general noise
+state-vector simulation and `pr.stabilizer()` with a fixed admitted profile of at
+least one physical qubit; the profile sets no upper bound on the qubit count.
+Batch records and spectator targets are bounded by the 64 MiB schedule byte
+budget, not by fixed counts. Stabilizer execution requires zero coherent
+idle rate and supported Clifford rotations. It accepts stochastic idle noise,
+including the sine-squared dephasing channel, and the checked local/crosstalk profiles.
+Coherent noise is never converted automatically: choosing a stochastic profile
+changes the model and must be recorded explicitly in comparisons.
+The simulator must have at least the profile's capacity; extra qubits are inaccessible
+to scheduled input. `sim()` checks the concrete backend and profile before allocating
+the simulator. Scheduled execution requires an explicit `state_vector()` or
+`stabilizer()` builder; parallel/dense state vectors and other backends remain
+unsupported. This is an experimental integration API; it does not enable an arbitrary general noise
 configuration or establish agreement with a device model.
 
 "Scheduled" refers to timing supplied by the running runtime. The program runs
@@ -280,9 +289,9 @@ profile classes.
 
 ## Shared scheduled admission and execution limits
 
-Every scheduled profile admits at most 4096 gates per batch. Same-qubit
-measurement, reset and reuse (including repeated measurement) execute in the
-runtime's original operation order. Each measurement captures the leakage state
+Every scheduled profile bounds batch records by the 64 MiB schedule byte budget.
+Same-qubit measurement, reset and reuse (including repeated measurement) execute
+in the runtime's original operation order. Each measurement captures the leakage state
 at its own position, so a later reset cannot change an earlier readout. This
 applies to both original v6 and normalized v7 gates, including idle-only profiles.
 Adapters cannot split or retime native batches.

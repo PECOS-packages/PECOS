@@ -490,6 +490,7 @@ impl SamplingEngine {
                 super::types::EXACT_BRANCH_REPLAY_REQUIRES_PROVIDER.to_string(),
             ));
         }
+        super::builder::validate_idle_noise_targets(influence_map, noise.idle_noise_request())?;
 
         let mut aggregated: BTreeMap<DemMechanism, f64> = BTreeMap::new();
         let mut idle_noise_residuals = Vec::new();
@@ -2133,7 +2134,7 @@ impl<'a> SamplingEngineBuilder<'a> {
         self.p1_weights.clone_from(&noise.p1_weights);
         self.p2_weights.clone_from(&noise.p2_weights);
         self.p2_replacement_approximation = noise.p2_replacement_approximation;
-        self.idle_noise = noise.uses_dedicated_idle_noise().then_some(noise);
+        self.idle_noise = noise.idle_noise_request().is_some().then_some(noise);
         self
     }
 
@@ -2278,6 +2279,16 @@ impl<'a> SamplingEngineBuilder<'a> {
                 super::types::EXACT_BRANCH_REPLAY_REQUIRES_PROVIDER.to_string(),
             ));
         }
+        // Per-gate configuration owns idle resolution, as in idle_families.
+        let idle_noise_request = self.per_gate.as_ref().map_or_else(
+            || {
+                self.idle_noise
+                    .as_ref()
+                    .and_then(NoiseConfig::idle_noise_request)
+            },
+            PerGateTypeNoise::idle_noise_request,
+        );
+        super::builder::validate_idle_noise_targets(self.influence_map, idle_noise_request)?;
         let num_detectors = self.detector_records.len();
         let influence_observable_ids = self.influence_map.observable_ids();
         let num_influence_observables = self.influence_map.num_observables();

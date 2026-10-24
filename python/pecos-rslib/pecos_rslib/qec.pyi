@@ -659,18 +659,30 @@ class DecodeStats:
     per_shot_max: float
     quantiles: list[float]
 
+class DecodeRecovery:
+    shot_index: int
+    undecoded: bool
+    logical_error: bool | None
+    fallback_used: bool
+    syndrome_consistent: bool | None
+    deltas_tried: list[float]
+
 class DecodeResult:
     @property
     def projection(self) -> ProjectionReport | None:
         """Shared report, or None if unneeded or projected within members without a shared policy."""
     num_shots: int
     num_errors: int
+    num_scored: int
+    num_undecoded: int
+    num_fallback: int
+    recovery: list[DecodeRecovery]
     logical_error_rate: float
     execution_path: str
     workers_used: int
     reproducibility_warnings: list[str]
     sampling_seed_used: int | None
-    predictions: list[int] | None
+    predictions: list[int | None] | None
     stats: DecodeStats | None
     def interval(self, alpha: float = ...) -> tuple[float, float]: ...
 

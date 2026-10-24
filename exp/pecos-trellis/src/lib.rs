@@ -2530,6 +2530,18 @@ impl TrellisDecoder {
         self.attempt_with_mode(params, DecodeMode::Full)
     }
 
+    /// Run a fresh DP attempt on the prepared shot for its prediction only.
+    /// `LogSumExpFloat` kernels skip dropped-mass accounting, and every metric mode
+    /// reports `dropped_log_mass` as NaN on success. Validation and readiness
+    /// requirements are the same as for [`Self::attempt`].
+    ///
+    /// # Panics
+    /// Panics unless the latest prepare completed `Ready`.
+    #[must_use]
+    pub fn attempt_prediction_only(&mut self, params: PruneParams) -> TrellisDecodeAttempt {
+        self.attempt_with_mode(params, DecodeMode::PredictionOnly)
+    }
+
     fn attempt_with_mode(&mut self, params: PruneParams, mode: DecodeMode) -> TrellisDecodeAttempt {
         if let Err(error) = params.validate(self.model.config.metric_mode) {
             return TrellisDecodeAttempt::Error(error);

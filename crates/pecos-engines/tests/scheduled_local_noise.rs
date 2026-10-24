@@ -351,13 +351,14 @@ fn same_batch_reuse_preserves_gate_order_readout_and_rng() {
 }
 
 #[test]
-fn oversized_batch_rejected_before_execution() {
+fn local_noise_accepts_batch_above_old_record_bound() {
     let mut sim = system(profile(1.0, 1.0, 1.0, 1.0, 1.0), false, 0);
-    let invalid = [batch(0, 0, 0, vec![Gate::pz(&[0]); 4097])];
-    assert!(sim.process(message(&invalid, false)).is_err());
+    let large = [batch(0, 0, 0, vec![Gate::pz(&[0]); 4097])];
+    sim.process(message(&large, false)).unwrap();
+    // Preparation faults leave |1>; the certain readout fault returns 0.
     assert_eq!(
-        run(&mut sim, &[batch(0, 0, 0, vec![Gate::mz(&[0])])], false),
-        vec![1]
+        run(&mut sim, &[batch(1, 0, 0, vec![Gate::mz(&[0])])], false),
+        vec![0]
     );
 }
 

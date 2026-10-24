@@ -1091,12 +1091,13 @@ impl<'a> DemSamplerBuilder<'a> {
         self
     }
 
-    /// Set uniform noise (same probability for all gate types, including idle).
+    /// Set uniform gate, preparation, and measurement noise.
+    ///
+    /// Idle noise stays off, as in [`NoiseConfig::uniform`]; enable it with
+    /// [`Self::with_idle_noise`].
     #[must_use]
     pub fn with_uniform_noise(self, p: f64) -> Self {
-        let mut s = self.with_noise(p, p, p, p);
-        s.noise.p_idle = p;
-        s
+        self.with_noise(p, p, p, p)
     }
 
     /// Set idle gate noise rate.

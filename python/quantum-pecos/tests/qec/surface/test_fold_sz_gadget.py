@@ -11,12 +11,11 @@ from pathlib import Path
 import pytest
 import stim
 from pecos.guppy_gen.gadget_render import render_gadget_function
+from pecos.qec.circuit_steps import CircuitStep, OpType
 from pecos.qec.surface import SurfacePatch, gadgets
 from pecos.qec.surface.circuit_builder import (
-    CircuitStep,
     DagCircuitRenderer,
     GuppyRenderer,
-    OpType,
     QubitAllocation,
     StimRenderer,
     TickCircuitRenderer,

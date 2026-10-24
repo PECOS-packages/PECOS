@@ -471,7 +471,7 @@ assert tc.num_measurements() == 8
 assert {gate.gate_type.name for gate in tc.get_tick(4).gate_batches()} == {"CZ", "SZ", "SZdg"}
 assert tc.get_meta("detectors") is None
 
-from pecos.qec.surface.circuit_builder import OpType
+from pecos.qec.circuit_steps import OpType
 
 d = patch.dx
 fold_ops = [step for step in gadget.steps if step.op_type in {OpType.CZ, OpType.SZ, OpType.SZDG}]
@@ -1620,7 +1620,7 @@ agreement, and a DEM fault-distance test. The following counts the operations
 of the default distance-3 extraction round; it does not validate the schedule.
 
 ```python
-from pecos.qec.surface.circuit_builder import OpType
+from pecos.qec.circuit_steps import OpType
 
 round_gadget = gadgets.syndrome_round_gadget(patch, allocation, round_index=0)
 assert sum(step.op_type == OpType.CX for step in round_gadget.steps) == 24

@@ -12,7 +12,8 @@ seed error is not suppressed by increasing the patch distance.
 from dataclasses import dataclass
 from itertools import pairwise
 
-from pecos.qec.surface.circuit_builder import CircuitStep, OpType, QubitAllocation
+from pecos.qec.circuit_steps import CircuitStep, OpType
+from pecos.qec.surface.circuit_builder import QubitAllocation
 from pecos.qec.surface.gadgets import Gadget, GadgetKind, default_allocation, syndrome_round_gadget
 from pecos.qec.surface.patch import SurfacePatch
 

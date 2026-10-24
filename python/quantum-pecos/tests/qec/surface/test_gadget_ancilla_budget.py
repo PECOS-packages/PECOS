@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 from pecos.guppy_gen import get_num_qubits
 from pecos.guppy_gen.gadget_render import render_gadget_function, render_surface_gadget_module
+from pecos.qec.circuit_steps import CircuitStep, OpType
 from pecos.qec.surface import SurfacePatch, TwirlConfig, gadgets
 from pecos.qec.surface._check_plan import (
     ancilla_schedule_for_check_plan,
@@ -20,9 +21,7 @@ from pecos.qec.surface._check_plan import (
     resolve_surface_check_plan,
 )
 from pecos.qec.surface.circuit_builder import (
-    CircuitStep,
     GuppyRenderer,
-    OpType,
     QubitAllocation,
     TickCircuitRenderer,
     build_surface_code_circuit,

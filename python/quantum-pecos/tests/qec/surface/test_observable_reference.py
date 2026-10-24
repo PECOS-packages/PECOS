@@ -12,6 +12,7 @@ import pytest
 import stim
 from pecos.qec import MissingObservableReferenceError, empirical_correlation_table, fit_dem_from_simulation
 from pecos.qec._replay import _replay_tick_circuit
+from pecos.qec.circuit_steps import CircuitStep, OpType
 from pecos.qec.surface import (
     LogicalCircuitBuilder,
     SurfacePatch,
@@ -21,13 +22,7 @@ from pecos.qec.surface import (
     get_observable_descriptors_from_tick_circuit,
 )
 from pecos.qec.surface._twirl_config import TwirlConfig
-from pecos.qec.surface.circuit_builder import (
-    CircuitStep,
-    OpType,
-    TickCircuitRenderer,
-    build_surface_code_circuit,
-    tick_circuit_to_stim,
-)
+from pecos.qec.surface.circuit_builder import TickCircuitRenderer, build_surface_code_circuit, tick_circuit_to_stim
 from pecos.qec.surface.logical_circuit import LogicalGateType
 from pecos.testing import simulate_tick_circuit
 from pecos_rslib.quantum import TickCircuit

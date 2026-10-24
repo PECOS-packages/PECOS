@@ -8,12 +8,13 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Literal
 
+from pecos.qec.circuit_steps import CircuitStep, OpType
 from pecos.qec.surface._ancilla_batching import (
     batched_stabilizers,
     normalize_ancilla_budget,
     normalize_ancilla_schedule,
 )
-from pecos.qec.surface.circuit_builder import CircuitStep, OpType, QubitAllocation
+from pecos.qec.surface.circuit_builder import QubitAllocation
 from pecos.qec.surface.layouts.rotated_lattice import rotated_id_to_position
 from pecos.qec.surface.patch import Stabilizer, SurfacePatch
 from pecos.qec.surface.schedule import compute_cnot_schedule

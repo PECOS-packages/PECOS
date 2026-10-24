@@ -5,13 +5,14 @@
 
 from pecos.guppy_gen._certificate import certify_surface_measurement_layout
 from pecos.guppy_gen._module_loader import load_cached_guppy_source
+from pecos.qec.circuit_steps import OpType
 from pecos.qec.surface._check_plan import (
     ancilla_schedule_for_check_plan,
     cnot_round_order_for_check_plan,
     require_current_surface_check_plan_renderer,
     resolve_surface_check_plan,
 )
-from pecos.qec.surface.circuit_builder import OpType, generate_tick_circuit_from_patch
+from pecos.qec.surface.circuit_builder import generate_tick_circuit_from_patch
 from pecos.qec.surface.gadgets import (
     Gadget,
     GadgetKind,

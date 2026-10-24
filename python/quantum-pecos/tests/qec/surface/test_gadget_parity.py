@@ -13,11 +13,10 @@ import pytest
 from pecos.guppy_gen.gadget_render import render_gadget_function, render_surface_gadget_module
 from pecos.guppy_gen.protocol_render import render_surface_protocol_module
 from pecos.guppy_gen.surface import generate_guppy_source
+from pecos.qec.circuit_steps import CircuitStep, OpType
 from pecos.qec.surface import SurfacePatch, TwirlConfig
 from pecos.qec.surface.circuit_builder import (
-    CircuitStep,
     GuppyRenderer,
-    OpType,
     QubitAllocation,
     TickCircuitRenderer,
     build_surface_code_circuit,

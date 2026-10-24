@@ -14,8 +14,9 @@ import pytest
 import stim
 from pecos.guppy_gen.gadget_render import render_gadget_function
 from pecos.qec import DetectorErrorModel
+from pecos.qec.circuit_steps import CircuitStep, OpType
 from pecos.qec.surface import LogicalCircuitBuilder, SurfacePatch, gadgets, logical_circuit
-from pecos.qec.surface.circuit_builder import CircuitStep, OpType, QubitAllocation, tick_circuit_to_stim
+from pecos.qec.surface.circuit_builder import QubitAllocation, tick_circuit_to_stim
 from pecos.qec.surface.logical_circuit import (
     LogicalGateType,
     LogicalOp,

@@ -16,7 +16,8 @@ not implemented here. Undetectable single faults remain at the injection site.
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from pecos.qec.surface.circuit_builder import CircuitStep, OpType, QubitAllocation
+from pecos.qec.circuit_steps import CircuitStep, OpType
+from pecos.qec.surface.circuit_builder import QubitAllocation
 from pecos.qec.surface.gadgets import Gadget, GadgetKind, default_allocation
 from pecos.qec.surface.injection import _validate_injection_allocation, injection_correction_supports
 from pecos.qec.surface.patch import SurfacePatch

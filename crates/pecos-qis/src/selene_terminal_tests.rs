@@ -19,6 +19,30 @@ use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
+type InitFn =
+    unsafe extern "C" fn(*mut *mut c_void, u64, u64, u32, *const *const std::ffi::c_char) -> i32;
+type DelayFn = unsafe extern "C" fn(*mut c_void, u64) -> i32;
+static REAL_INIT: Mutex<Option<InitFn>> = Mutex::new(None);
+static REAL_DELAY: Mutex<Option<DelayFn>> = Mutex::new(None);
+static CLOCKS: Mutex<BTreeMap<usize, u64>> = Mutex::new(BTreeMap::new());
+
+unsafe extern "C" fn init(
+    instance: *mut *mut c_void,
+    capacity: u64,
+    time: u64,
+    argc: u32,
+    argv: *const *const std::ffi::c_char,
+) -> i32 {
+    let errno = unsafe { REAL_INIT.lock().unwrap().unwrap()(instance, capacity, time, argc, argv) };
+    if errno == 0 {
+        CLOCKS
+            .lock()
+            .unwrap()
+            .insert(unsafe { *instance } as usize, time);
+    }
+    errno
+}
+
 type EndFn = unsafe extern "C" fn(*mut c_void) -> i32;
 type StartFn = unsafe extern "C" fn(*mut c_void, u64, u64) -> i32;
 static REAL_START: Mutex<Option<StartFn>> = Mutex::new(None);
@@ -81,7 +105,16 @@ unsafe extern "C" fn next(instance: *mut c_void, out: SeleneRuntimeGetOperationH
         }
         if !EMITTED.swap(true, Ordering::SeqCst) {
             unsafe {
-                (out.interface.set_batch_time)(out.instance, 123, 17);
+                // The terminal batch advances the same per-instance clock as
+                // ordinary batches, including the wrapped runtime's next shot.
+                let mut clocks = CLOCKS.lock().unwrap();
+                let clock = clocks.get_mut(&(instance as usize)).unwrap();
+                (out.interface.set_batch_time)(out.instance, *clock + 123, 17);
+                *clock += 140;
+                let errno = REAL_DELAY.lock().unwrap().unwrap()(instance, 140);
+                if errno != 0 {
+                    return errno;
+                }
                 if MODE.load(Ordering::SeqCst) == 1 {
                     (out.interface.custom)(out.instance, 7301, std::ptr::null(), 0);
                 } else if MODE.load(Ordering::SeqCst) == 3 {
@@ -114,7 +147,17 @@ unsafe extern "C" fn next(instance: *mut c_void, out: SeleneRuntimeGetOperationH
         }
         return 0;
     }
-    unsafe { REAL_NEXT.lock().unwrap().unwrap()(instance, out) }
+    let batch = out.instance.cast::<RuntimeOperationBatch>();
+    let errno = unsafe { REAL_NEXT.lock().unwrap().unwrap()(instance, out) };
+    // This fixture receives the same batch pointer as the production callbacks.
+    let batch = unsafe { &*batch };
+    if errno == 0 && batch.timing_set {
+        CLOCKS
+            .lock()
+            .unwrap()
+            .insert(instance as usize, batch.end_time_nanos());
+    }
+    errno
 }
 unsafe extern "C" fn barrier(instance: *mut c_void, duration: u64) -> i32 {
     if ENDED.load(Ordering::SeqCst) {
@@ -142,6 +185,9 @@ fn install_descriptor() -> (
     let library = unsafe { libloading::Library::new(&public.plugin_path).unwrap() };
     let mut descriptor =
         Box::new(unsafe { SeleneRuntime::runtime_plugin_descriptor(&library).unwrap() });
+    *REAL_INIT.lock().unwrap() = Some(descriptor.init_fn);
+    *REAL_DELAY.lock().unwrap() = descriptor.simulate_delay_fn;
+    descriptor.init_fn = init;
     *REAL_END.lock().unwrap() = Some(descriptor.shot_end_fn);
     *REAL_START.lock().unwrap() = Some(descriptor.shot_start_fn);
     descriptor.shot_start_fn = start;
@@ -459,5 +505,48 @@ fn native_end_tail_executes_before_engine_completion() {
             assert_eq!(CALLS.load(Ordering::SeqCst), 1);
             assert!(!BARRIER_AFTER_END.load(Ordering::SeqCst));
         }
+    }
+}
+
+#[test]
+fn custom_event_times_are_relative_across_reused_shots() {
+    const CHILD: &str = "PECOS_TEST_REUSED_CUSTOM_EVENT_TIME";
+    if std::env::var_os(CHILD).is_none() {
+        crate::test_env::run_test_in_child(
+            "selene_runtime::terminal_tests::custom_event_times_are_relative_across_reused_shots",
+            &[(CHILD, "1".as_ref())],
+        );
+        return;
+    }
+    let (_library, _fixture, _descriptor, path, public) = install_descriptor();
+    let make_runtime = || {
+        let mut runtime =
+            SeleneRuntime::with_plugin_config(&path, public.init_args.clone(), Vec::new());
+        runtime.set_num_qubits(1);
+        runtime.set_custom_event_policy(RuntimeCustomEventPolicy::Capture);
+        runtime
+    };
+    let run = |runtime: &mut SeleneRuntime, shot| {
+        reset_shim(1);
+        runtime.shot_start(shot, None).unwrap();
+        runtime
+            .lower_operations(&[Operation::AllocateQubit { id: 0 }])
+            .unwrap();
+        runtime.drain_pending_operations().unwrap();
+        runtime.finish_operations().unwrap();
+        runtime.custom_events().to_vec()
+    };
+    let expected = run(&mut make_runtime(), 0);
+    assert_eq!(expected.len(), 1);
+    assert_eq!(
+        (expected[0].start_time_nanos, expected[0].duration_nanos),
+        (123, 17)
+    );
+    let mut runtime = make_runtime();
+    let mut instance = None;
+    for shot in 0..3 {
+        runtime.reset().unwrap();
+        assert_eq!(run(&mut runtime, shot), expected);
+        assert_eq!(*instance.get_or_insert(runtime.instance), runtime.instance);
     }
 }

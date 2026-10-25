@@ -86,11 +86,20 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   `cvar_spec` and the named destinations, and a measurement without a
   destination stays bare, so SLR -> `QuantumCircuit` -> SLR keeps every
   destination. A circuit with no destinations and no `cvar_spec` still writes
-  its measurements in order to a single `c` register. Other gate parameters,
-  malformed destinations, malformed one- or two-qubit locations, negative
+  its measurements in order to a single `c` register. SLR codegen always emits
+  `cvar_spec`, including an empty mapping when no classical registers are
+  declared, so bare-only programs round-trip without gaining destinations.
+  Classical register names must match `[A-Za-z_][A-Za-z0-9_]*` and must not be
+  `q`, which is reserved for the converter's quantum register; invalid names
+  raise `ValueError` with a renaming instruction before emission. Other gate
+  parameters, malformed destinations, malformed one- or two-qubit locations, negative
   qubit indices and two-qubit gates on one qubit raise `ValueError`. The
   `ParallelOptimizer` also keeps two measurements that write the same bit in
-  order.
+  order. Symbolic result indices conservatively write every bit of their
+  register, preserving the clean Guppy/HUGR rejection of symbolic LoopVar
+  indexing. Classical operations and operations without qubits act as ordering
+  barriers inside `Parallel`, so assignments cannot move ahead of their input
+  measurements or past later operations.
 
 - Live scheduled simulation now admits `StabilizerEngine` (`pr.stabilizer()`) with
   checked stochastic noise. Coherent idle rates and unsupported rotations reject

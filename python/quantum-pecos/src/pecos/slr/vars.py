@@ -12,7 +12,11 @@
 
 from __future__ import annotations
 
+import re
+
 from pecos.slr.cops import SET, PyCOp
+
+IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 # TODO: Make it a VarDef
 

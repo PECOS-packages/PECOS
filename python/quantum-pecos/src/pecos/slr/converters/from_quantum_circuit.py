@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 
 from pecos.slr import Barrier, CReg, Main, Parallel, QReg
 from pecos.slr.qeclib import qubit
+from pecos.slr.vars import IDENTIFIER_PATTERN
 
 if TYPE_CHECKING:
     from pecos.circuits.quantum_circuit import QuantumCircuit
@@ -91,6 +92,22 @@ def _two_qubit_location(symbol, location):
     raise ValueError(msg)
 
 
+def _validate_classical_register_name(name, context):
+    """Require an SLR identifier distinct from the converter's quantum register."""
+    if name == "q":
+        msg = (
+            f"Classical register {name!r} in {context} conflicts with the converter's quantum register; "
+            "rename it to a different identifier, such as 'c'"
+        )
+        raise ValueError(msg)
+    if not isinstance(name, str) or not IDENTIFIER_PATTERN.fullmatch(name):
+        msg = (
+            f"Invalid classical register name {name!r} in {context}; "
+            "rename it to match [A-Za-z_][A-Za-z0-9_]*, such as 'c'"
+        )
+        raise ValueError(msg)
+
+
 def _validate_destination(symbol, key, location, value, declared_sizes, register_sizes):
     """Validate a destination and size its register before any SLR emission."""
     pair_type = (tuple, list) if key == "var" else tuple
@@ -99,6 +116,10 @@ def _validate_destination(symbol, key, location, value, declared_sizes, register
         msg = f"Invalid {key} for QuantumCircuit gate {symbol} at location {location!r}: {value!r}"
         raise ValueError(msg)
     name, index = value
+    _validate_classical_register_name(
+        name,
+        f"{key} for QuantumCircuit gate {symbol} at location {location!r}: {value!r}",
+    )
     if name in declared_sizes and index >= declared_sizes[name]:
         msg = (
             f"Invalid {key} for QuantumCircuit gate {symbol} at location {location!r}: "
@@ -146,7 +167,8 @@ def _classical_register_sizes(metadata):
         msg = f"Invalid QuantumCircuit cvar_spec: {sizes!r}; expected a register-to-size mapping"
         raise TypeError(msg)
     for name, size in sizes.items():
-        if not isinstance(name, str) or not _is_qubit_index(size):
+        _validate_classical_register_name(name, "cvar_spec")
+        if not _is_qubit_index(size):
             msg = f"Invalid QuantumCircuit cvar_spec entry {name!r}: {size!r}; expected a non-negative integer width"
             raise ValueError(msg)
     return dict(sizes)
@@ -166,6 +188,8 @@ def quantum_circuit_to_slr(qc: QuantumCircuit) -> Main:
         - Assumes standard gate names from PECOS
         - Destinations or cvar_spec select explicit classical registers; otherwise
           measurement results are allocated sequentially in a single c register
+        - Gate groups within a tick are unordered, so bare measurements can move
+          relative to destination measurements in Stim records without changing register contents.
     """
     # Size both registers from the same validated source operations.
     max_qubit = -1

@@ -24,7 +24,7 @@ from pecos.slr.cond_block import If, Repeat
 from pecos.slr.loop_block import For
 from pecos.slr.main import Main
 from pecos.slr.misc import Parallel
-from pecos.slr.vars import CReg
+from pecos.slr.vars import CReg, SymbolicBit
 
 
 class ParallelOptimizer:
@@ -229,7 +229,7 @@ class ParallelOptimizer:
         return operations
 
     def _build_dependency_graph(self, operations: list[Node]) -> dict[int, set[int]]:
-        """Build dependencies from qubit usage and classical result writes.
+        """Build dependencies from qubits, result writes and non-quantum barriers.
 
         Returns a dict mapping operation index to set of indices it depends on.
         """
@@ -238,15 +238,23 @@ class ParallelOptimizer:
         # Track which qubits are used by each operation
         qubit_usage = {}
         result_usage = {}
+        barriers = set()
         for i, op in enumerate(operations):
             qubits = self._get_qubits(op)
             qubit_usage[i] = qubits
             result_usage[i] = self._get_result_bits(op)
+            if not getattr(op, "is_qgate", False) or not qubits:
+                barriers.add(i)
 
-        # Preserve repeated writes even when measurements use different qubits.
+        # A non-quantum operation or one without qubits separates all surrounding operations.
         for i in range(len(operations)):
             for j in range(i):
-                if qubit_usage[i] & qubit_usage[j] or result_usage[i] & result_usage[j]:
+                if (
+                    i in barriers
+                    or j in barriers
+                    or qubit_usage[i] & qubit_usage[j]
+                    or result_usage[i] & result_usage[j]
+                ):
                     dep_graph[i].add(j)
 
         return dict(dep_graph)
@@ -259,6 +267,9 @@ class ParallelOptimizer:
             result = pending.pop()
             if isinstance(result, CReg):
                 pending.extend(result.elems)
+            elif isinstance(result, SymbolicBit):
+                # Its unresolved index may name any concrete bit of this register.
+                pending.extend(result.reg.elems)
             elif isinstance(result, list):
                 pending.extend(result)
             else:

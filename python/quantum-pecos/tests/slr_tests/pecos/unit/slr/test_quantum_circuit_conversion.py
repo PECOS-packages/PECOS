@@ -806,6 +806,51 @@ def test_unknown_parameter_with_destination(params: dict) -> None:
         SlrConverter.from_quantum_circuit([("M", {0}, params)])
 
 
+@pytest.mark.parametrize("name", ["q", "", "a b", "c[0]", "2c", "c-d", "c\n", "é"])
+@pytest.mark.parametrize("source", ["cvar_spec", "zero_size", "var", "var_output"])
+def test_invalid_classical_register_name(name: str, source: str) -> None:
+    """Reject colliding or invalid names before creating any SLR output."""
+    qc = QuantumCircuit()
+    qc.append("X", {0})
+    if source in {"cvar_spec", "zero_size"}:
+        qc.metadata["cvar_spec"] = {name: 0 if source == "zero_size" else 2}
+    else:
+        qc.append("M", {0}, **{source: {0: (name, 1)} if source == "var_output" else (name, 1)})
+    with pytest.raises(ValueError, match="rename") as exc:
+        SlrConverter.from_quantum_circuit(qc)
+    assert repr(name) in str(exc.value)
+    if name == "q":
+        assert "quantum register" in str(exc.value)
+    else:
+        assert "[A-Za-z_][A-Za-z0-9_]*" in str(exc.value)
+
+
+@pytest.mark.parametrize("name", ["c0", "Bits_2", "_bits"])
+def test_valid_classical_register_name(name: str) -> None:
+    qc = QuantumCircuit(cvar_spec={name: 2})
+    qc.append("X", {0})
+    qc.append("M", {0}, var=(name, 1))
+    program = SlrConverter.from_quantum_circuit(qc)
+    _assert_classical_samples(program, {name: [0, 1]})
+
+
+@pytest.mark.parametrize("json_round_trip", [False, True])
+def test_bare_measurement_round_trip_without_registers(*, json_round_trip: bool) -> None:
+    q = QReg("q", 2)
+    original = Main(q, qubit.X(q[0]), Measure(q[0]), Measure(q[1]))
+    qc = SlrConverter(original).quantum_circuit()
+    if json_round_trip:
+        qc = QuantumCircuit.from_json_str(qc.to_json_str())
+    reconstructed = SlrConverter.from_quantum_circuit(qc)
+    qasm = SlrConverter(reconstructed).qasm()
+    assert "creg" not in qasm
+    assert re.findall(r"measure .*;", qasm) == ["measure q[0];", "measure q[1];"]
+    assert qc.metadata["cvar_spec"] == {}
+    circuit, records = SlrConverter(reconstructed).stim_with_records()
+    assert records == (None, None)
+    assert (circuit.compile_sampler(seed=7).sample(10) == [1, 0]).all()
+
+
 @pytest.mark.parametrize("basis", ["X", "Y"])
 @pytest.mark.parametrize("source", ["quantum_circuit", "slr_bit", "slr_register", "slr_slice"])
 def test_parallel_measurement_overwrite(basis: str, source: str) -> None:

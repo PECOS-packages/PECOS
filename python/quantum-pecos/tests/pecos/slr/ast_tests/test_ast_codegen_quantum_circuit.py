@@ -650,6 +650,27 @@ def test_measurement_registers_execute_in_phir() -> None:
     assert declarations == circuit.metadata["cvar_spec"]
 
 
+@pytest.mark.parametrize("empty", [False, True])
+def test_codegen_declares_empty_classical_spec(*, empty: bool) -> None:
+    program = Main() if empty else Main(q := QReg("q", 1), qb.X(q[0]))
+    assert SlrConverter(program).quantum_circuit().metadata["cvar_spec"] == {}
+
+
+@pytest.mark.parametrize("semantics", ["default", "unsigned"])
+def test_empty_classical_spec_reader_compatibility(semantics: str) -> None:
+    """Explicitly empty metadata and omitted metadata initialize identical storage."""
+    from types import SimpleNamespace
+
+    from pecos.engines.cvm.semantics import DefaultClassicalSemantics, UnsignedClassicalSemantics
+
+    reader = DefaultClassicalSemantics() if semantics == "default" else UnsignedClassicalSemantics()
+    state = SimpleNamespace(num_qubits=2)
+    omitted = reader.set_output(state, QuantumCircuit(), None, None)
+    explicit = reader.set_output(state, QuantumCircuit(cvar_spec={}), None, None)
+    assert explicit.keys() == omitted.keys() == {"__pecos_scratch"}
+    assert int(explicit["__pecos_scratch"]) == int(omitted["__pecos_scratch"]) == 0
+
+
 def test_return_preserves_measurement_results() -> None:
     """Return declares outputs without adding circuit operations."""
     q, c = QReg("q", 1), CReg("c", 1)

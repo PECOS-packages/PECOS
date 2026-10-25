@@ -1114,14 +1114,41 @@ pub fn build_fault_catalog(
 
 fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, FaultCatalogError> {
     validate_tick_circuit(tc)?;
-    let (gates, meas_positions) = flatten_tick_circuit(tc);
-
     let definitions = definitions_from_tick_circuit(tc)?;
+    structural_fault_catalog(tc, &definitions)
+}
+
+/// Structural single faults with their measurement-record effects only.
+///
+/// The circuit's detector and observable definitions are neither read nor
+/// validated, so every `affected_detectors` and `affected_observables` is empty.
+pub(crate) fn record_effect_fault_catalog(
+    tc: &TickCircuit,
+) -> Result<FaultCatalog, FaultCatalogError> {
+    validate_tick_circuit(tc)?;
+    let num_measurements = tc
+        .iter_gate_batches()
+        .filter(|gate| gate.gate_type.consumes_measurement_record())
+        .map(|gate| gate.qubits.len())
+        .sum();
+    let definitions = CircuitDefinitions {
+        detectors: Vec::new(),
+        observables: Vec::new(),
+        num_measurements,
+    };
+    structural_fault_catalog(tc, &definitions)
+}
+
+fn structural_fault_catalog(
+    tc: &TickCircuit,
+    definitions: &CircuitDefinitions,
+) -> Result<FaultCatalog, FaultCatalogError> {
+    let (gates, meas_positions) = flatten_tick_circuit(tc);
     // Validated record-consuming gates have arity one. Both walks visit ticks,
     // batches and instances in storage order, so these are the same positions.
     assert_eq!(meas_positions.len(), definitions.num_measurements);
     let tracked_pauli_annotations = parse_tracked_pauli_annotations(tc);
-    let record_effect_index = RecordEffectIndex::new(&definitions);
+    let record_effect_index = RecordEffectIndex::new(definitions);
 
     let mut locations = Vec::new();
 
@@ -1566,19 +1593,37 @@ impl From<UnsupportedGateError> for MeasurementHistoryError {
 pub fn symbolic_measurement_history(
     tc: &TickCircuit,
 ) -> Result<MeasurementHistory, MeasurementHistoryError> {
-    use super::symbolic_replay::{Dispatch, apply_lowered_clifford, apply_unitary_clifford};
-    use pecos_simulators::SymbolicSparseStab;
+    let sim = pecos_simulators::SymbolicSparseStab::new(measurement_history_num_qubits(tc));
+    replay_measurement_history(tc, 0..tc.num_ticks(), sim)
+}
 
-    let num_qubits = tc
-        .iter_gate_batches()
+/// Use the full circuit, including qubits first touched after a replay window.
+pub(crate) fn measurement_history_num_qubits(tc: &TickCircuit) -> usize {
+    tc.iter_gate_batches()
         .flat_map(|g| g.as_gate().qubits.iter())
         .map(|q| q.index() + 1)
         .max()
-        .unwrap_or(0);
+        .unwrap_or(0)
+}
 
-    let mut sim = SymbolicSparseStab::new(num_qubits);
+/// Record-aligned replay shared by full histories and detector suffix probes.
+/// The supplied simulator has no measurements yet; it may be Bell-purified.
+/// Tick locations in errors remain absolute, while record columns start at zero.
+pub(crate) fn replay_measurement_history(
+    tc: &TickCircuit,
+    ticks: std::ops::Range<usize>,
+    mut sim: pecos_simulators::SymbolicSparseStab,
+) -> Result<MeasurementHistory, MeasurementHistoryError> {
+    use super::symbolic_replay::{Dispatch, apply_lowered_clifford, apply_unitary_clifford};
 
-    for (tick_idx, tick) in tc.iter_ticks() {
+    debug_assert_eq!(
+        sim.measurement_count(),
+        0,
+        "replay columns start at zero, so the supplied simulator must not have measured yet"
+    );
+
+    for (offset, tick) in tc.ticks()[ticks.clone()].iter().enumerate() {
+        let tick_idx = ticks.start + offset;
         for gate in tick.iter_gate_batches() {
             let gate_idx = gate.batch_index();
             let qs: Vec<usize> = gate.qubits.iter().map(pecos_core::QubitId::index).collect();

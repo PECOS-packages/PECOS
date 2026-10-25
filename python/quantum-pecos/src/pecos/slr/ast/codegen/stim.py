@@ -157,6 +157,9 @@ class StimCodeGenContext:
     # Number of measurements in the current record frame: the top-level
     # circuit, or one iteration of the innermost REPEAT body.
     measurement_count: int = 0
+    # Optional history in record order, with one entry per measured target.
+    # Unlike bit_records, these destinations never change after a write.
+    record_bits: list[tuple[str, int] | None] = field(default_factory=list)
     # Measurement-record provenance of classical bits in the current frame:
     # (register, index) -> position of the measurement that last wrote the
     # bit. None marks a bit whose value no longer comes from a tracked
@@ -220,10 +223,11 @@ class AstToStim:
         circuit = generator.generate(ast_program)
     """
 
-    def __init__(self) -> None:
-        """Initialize the generator."""
+    def __init__(self, *, collect_records: bool = False) -> None:
+        """Initialize the generator, optionally collecting measurement destinations."""
         self.context = StimCodeGenContext()
         self.circuit: stim.Circuit | None = None
+        self._collect_records = collect_records
 
     def generate(self, program: Program) -> stim.Circuit:
         """Generate a Stim circuit for a program.
@@ -414,6 +418,11 @@ class AstToStim:
         # Result bits pair with targets by position, as in the QIR backend.
         for offset, bit in enumerate(node.results[: len(qubits)]):
             self.context.bit_records[bit.register, bit.index] = self.context.measurement_count + offset
+        if self._collect_records:
+            # QASM's visit_measure writes the result BitRef directly, even
+            # after a classical Permute. Block flattening has resolved aliases.
+            self.context.record_bits.extend((bit.register, bit.index) for bit in node.results[: len(qubits)])
+            self.context.record_bits.extend([None] * (len(qubits) - len(node.results)))
         self.circuit.append_operation("M", qubits)
         self.context.measurement_count += len(qubits)
 
@@ -634,10 +643,12 @@ class AstToStim:
         # current iteration are visible to conditions inside the body.
         original_circuit = self.circuit
         outer_records = self.context.bit_records
+        outer_record_bits = self.context.record_bits
         outer_count = self.context.measurement_count
         outer_invalidated = self.context.invalidated_registers
         self.circuit = stim.Circuit()
         self.context.bit_records = {}
+        self.context.record_bits = []
         self.context.measurement_count = 0
         self.context.invalidated_registers = set()
 
@@ -646,10 +657,12 @@ class AstToStim:
 
         sub_circuit = self.circuit
         body_records = self.context.bit_records
+        body_record_bits = self.context.record_bits
         body_count = self.context.measurement_count
         body_invalidated = self.context.invalidated_registers
         self.circuit = original_circuit
         self.context.bit_records = outer_records
+        self.context.record_bits = outer_record_bits
         self.context.measurement_count = outer_count
         self.context.invalidated_registers = outer_invalidated
 
@@ -661,6 +674,8 @@ class AstToStim:
         for bit, position in body_records.items():
             outer_records[bit] = None if position is None else last_iteration_start + position
         self.context.measurement_count = outer_count + node.count * body_count
+        if self._collect_records:
+            self.context.record_bits.extend(body_record_bits * node.count)
 
         # Add repeat block if sub-circuit has content
         if len(sub_circuit) > 0:
@@ -744,7 +759,10 @@ class AstToStim:
 def ast_to_stim(program: Program) -> stim.Circuit:
     """Convert an AST Program to a Stim circuit.
 
-    Convenience function for simple code generation.
+    Sample columns are measurement records in program order (REPEAT bodies
+    counted per iteration), not classical-register bits. Use
+    ast_to_stim_with_records(), or SlrConverter.stim_with_records(), for the
+    mapping to bits written at measurement time.
 
     Args:
         program: The AST Program to convert.
@@ -754,6 +772,27 @@ def ast_to_stim(program: Program) -> stim.Circuit:
     """
     generator = AstToStim()
     return generator.generate(program)
+
+
+def ast_to_stim_with_records(program: Program) -> tuple[stim.Circuit, tuple[tuple[str, int] | None, ...]]:
+    """Convert an AST Program to a Stim circuit and its measurement destinations.
+
+    Args:
+        program: The AST Program to convert.
+
+    Returns:
+        The circuit and a tuple with exactly one entry per measurement record,
+        in program order with REPEAT bodies counted per iteration. Each entry
+        is the (register_name, index) bit written by that measurement, or None
+        when the target has no result bit. A later classical assignment or
+        permutation does not change the entry: it names the bit written at
+        measurement time, as in the QASM backend. REPEAT blocks are expanded,
+        so the tuple has circuit.num_measurements entries even where the
+        circuit itself stays compact.
+    """
+    generator = AstToStim(collect_records=True)
+    circuit = generator.generate(program)
+    return circuit, tuple(generator.context.record_bits)
 
 
 def ast_to_stim_str(program: Program) -> str:

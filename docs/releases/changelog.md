@@ -6,6 +6,11 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- SLR adds `SlrConverter.stim_with_records()` and `ast_to_stim_with_records()`
+  to map Stim sample columns to the classical bits written at measurement time,
+  including repeated measurements and unstored results. Existing Stim output
+  is unchanged (#1465).
+
 - MX leaves the measured qubit in its X-basis eigenstate everywhere, as
   `CliffordGateable::mx` specifies. The stabilizer, sparse-stabilizer, stab-vec,
   density-matrix and state-vector engines, `CircuitExecutor`, the `pecos-qec`

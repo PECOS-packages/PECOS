@@ -450,7 +450,7 @@ class SlrToAst:
 
         inputs_spec = type(block).block_inputs  # type: ignore[attr-defined]
         cls_name = type(block).__name__
-        remap = BodyRemap()
+        remap = BodyRemap(block_name=cls_name)
         block_inputs: list[BlockInput] = []
         arg_bindings: list[BlockArg] = []
         out_bindings: list[BlockArg] = []

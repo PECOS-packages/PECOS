@@ -448,13 +448,14 @@ class AstToStim:
     def _process_prepare(self, node: PrepareOp) -> None:
         """Process a prepare/reset operation (Z-reset + canonical basis tail)."""
         tail = prep_tail(node.basis)
-        if node.slots is None:
-            if tail:
-                msg = f"Stim codegen: prepare_all with non-PZ basis {node.basis!r} is not supported"
-                raise NotImplementedError(msg)
-            return
-
-        qubits = [self.context.get_qubit(node.allocator, slot) for slot in node.slots]
+        if node.slots is None and node.allocator not in self.context.qreg_sizes:
+            msg = (
+                f"Stim codegen: prepare_all references unknown allocator {node.allocator!r}; "
+                "declare the allocator before preparing it."
+            )
+            raise NotImplementedError(msg)
+        slots = range(self.context.qreg_sizes[node.allocator]) if node.slots is None else node.slots
+        qubits = [self.context.get_qubit(node.allocator, slot) for slot in slots]
         self.circuit.append_operation("R", qubits)
         for gk in tail:
             self.circuit.append_operation(GATE_TO_STIM[gk], qubits)

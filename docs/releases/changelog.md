@@ -81,9 +81,16 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   (`measure X`, `Measure +Y`, ...) are measured in their basis and advance the
   bit offset. Unsupported symbols raise `NotImplementedError`, including `RX`,
   `RY` and `RZ`, which are rotations, and `R`, which is `SY`; all four were
-  previously converted to resets. Gate parameters, malformed one- or two-qubit
-  locations, negative qubit indices and two-qubit gates on one qubit raise
-  `ValueError`.
+  previously converted to resets. Measurement destinations are honoured: a
+  measurement with `var_output` or `var` writes that bit, registers come from
+  `cvar_spec` and the named destinations, and a measurement without a
+  destination stays bare, so SLR -> `QuantumCircuit` -> SLR keeps every
+  destination. A circuit with no destinations and no `cvar_spec` still writes
+  its measurements in order to a single `c` register. Other gate parameters,
+  malformed destinations, malformed one- or two-qubit locations, negative
+  qubit indices and two-qubit gates on one qubit raise `ValueError`. The
+  `ParallelOptimizer` also keeps two measurements that write the same bit in
+  order.
 
 - Live scheduled simulation now admits `StabilizerEngine` (`pr.stabilizer()`) with
   checked stochastic noise. Coherent idle rates and unsupported rotations reject

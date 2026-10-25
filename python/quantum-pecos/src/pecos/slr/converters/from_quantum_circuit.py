@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 from pecos.slr import Barrier, CReg, Main, Parallel, QReg
@@ -90,6 +91,67 @@ def _two_qubit_location(symbol, location):
     raise ValueError(msg)
 
 
+def _validate_destination(symbol, key, location, value, declared_sizes, register_sizes):
+    """Validate a destination and size its register before any SLR emission."""
+    pair_type = (tuple, list) if key == "var" else tuple
+    valid = isinstance(value, pair_type) and len(value) == 2 and isinstance(value[0], str) and _is_qubit_index(value[1])
+    if not valid:
+        msg = f"Invalid {key} for QuantumCircuit gate {symbol} at location {location!r}: {value!r}"
+        raise ValueError(msg)
+    name, index = value
+    if name in declared_sizes and index >= declared_sizes[name]:
+        msg = (
+            f"Invalid {key} for QuantumCircuit gate {symbol} at location {location!r}: "
+            f"{(name, index)!r} exceeds cvar_spec width {declared_sizes[name]}"
+        )
+        raise ValueError(msg)
+    register_sizes[name] = max(register_sizes.get(name, 0), index + 1)
+    return name, index
+
+
+def _measurement_destinations(symbol, locations, params, declared_sizes, register_sizes):
+    """Validate both destination fields; var takes precedence as in qc2phir."""
+    destinations = {}
+    if "var_output" in params:
+        output = params["var_output"]
+        if not isinstance(output, Mapping):
+            msg = f"Invalid var_output for QuantumCircuit gate {symbol} at locations {locations!r}: {output!r}"
+            raise ValueError(msg)
+        for loc, value in output.items():
+            if loc not in locations:
+                msg = f"Extra var_output location for QuantumCircuit gate {symbol} at location {loc!r}: {value!r}"
+                raise ValueError(msg)
+            destinations[loc] = _validate_destination(symbol, "var_output", loc, value, declared_sizes, register_sizes)
+        for loc in locations:
+            if loc not in output:
+                msg = f"Missing var_output for QuantumCircuit gate {symbol} at location {loc!r}: None"
+                raise ValueError(msg)
+    if "var" in params:
+        value = params["var"]
+        if len(locations) != 1:
+            msg = (
+                f"Invalid var for QuantumCircuit gate {symbol} at locations {locations!r}: "
+                f"{value!r}; expected one location"
+            )
+            raise ValueError(msg)
+        loc = next(iter(locations))
+        destinations[loc] = _validate_destination(symbol, "var", loc, value, declared_sizes, register_sizes)
+    return destinations
+
+
+def _classical_register_sizes(metadata):
+    """Read declared widths before emission, retaining zero widths for bounds checks."""
+    sizes = metadata.get("cvar_spec", {})
+    if not isinstance(sizes, Mapping):
+        msg = f"Invalid QuantumCircuit cvar_spec: {sizes!r}; expected a register-to-size mapping"
+        raise TypeError(msg)
+    for name, size in sizes.items():
+        if not isinstance(name, str) or not _is_qubit_index(size):
+            msg = f"Invalid QuantumCircuit cvar_spec entry {name!r}: {size!r}; expected a non-negative integer width"
+            raise ValueError(msg)
+    return dict(sizes)
+
+
 def quantum_circuit_to_slr(qc: QuantumCircuit) -> Main:
     """Convert a PECOS QuantumCircuit to SLR format.
 
@@ -102,18 +164,29 @@ def quantum_circuit_to_slr(qc: QuantumCircuit) -> Main:
     Note:
         - QuantumCircuit's parallel gate structure is preserved
         - Assumes standard gate names from PECOS
+        - Destinations or cvar_spec select explicit classical registers; otherwise
+          measurement results are allocated sequentially in a single c register
     """
     # Size both registers from the same validated source operations.
     max_qubit = -1
     measurement_count = 0
+    metadata = getattr(qc, "metadata", {})
+    destination_mode = "cvar_spec" in metadata
+    declared_sizes = _classical_register_sizes(metadata)
+    register_sizes = dict(declared_sizes)
+    gate_destinations = []
     for gate_symbol, locations, params in qc:
-        if params:
-            msg = f"Unsupported parameters for QuantumCircuit gate {gate_symbol}: {list(params)}"
-            raise ValueError(msg)
         basis = _measurement_basis(gate_symbol)
+        unsupported = [key for key in params if basis is None or key not in {"var_output", "var"}]
+        if unsupported:
+            msg = f"Unsupported parameters for QuantumCircuit gate {gate_symbol}: {unsupported}"
+            raise ValueError(msg)
         gate_upper = gate_symbol.upper()
+        destinations = _measurement_destinations(gate_symbol, locations, params, declared_sizes, register_sizes)
+        gate_destinations.append(destinations)
         if basis is not None:
             measurement_count += len(locations)
+            destination_mode |= "var_output" in params or "var" in params
         if basis is not None or gate_upper in _ONE_QUBIT_GATES:
             for loc in locations:
                 max_qubit = max(max_qubit, _one_qubit_location(gate_symbol, loc))
@@ -126,23 +199,21 @@ def quantum_circuit_to_slr(qc: QuantumCircuit) -> Main:
 
     num_qubits = max_qubit + 1 if max_qubit >= 0 else 0
 
+    if not destination_mode and measurement_count:
+        register_sizes["c"] = measurement_count
+    cregs = {name: CReg(name, size) for name, size in register_sizes.items() if size}
+
     if num_qubits == 0:
-        # Empty circuit
-        return Main()
+        return Main(*cregs.values())
 
     # Create quantum register
     ops = []
     q = QReg("q", num_qubits)
     ops.append(q)
 
-    # Create classical register if needed
-    if measurement_count:
-        c = CReg("c", measurement_count)
-        ops.append(c)
-        current_measurement = 0
-    else:
-        c = None
-        current_measurement = 0
+    ops.extend(cregs.values())
+    current_measurement = 0
+    validated_destinations = iter(gate_destinations)
 
     # Process each tick (time slice)
     for tick_idx in range(len(qc)):
@@ -157,36 +228,14 @@ def quantum_circuit_to_slr(qc: QuantumCircuit) -> Main:
         parallel_ops = []
 
         # Handle different tick formats
-        if hasattr(tick, "items"):
-            # Dictionary-like format
-            for gate_symbol, locations, _params in tick.items():
-                gate_ops = _convert_gate_set(
-                    gate_symbol,
-                    locations,
-                    q,
-                    c,
-                    current_measurement,
-                )
-                parallel_ops.extend(gate_ops)
-
-                # Update measurement counter
-                if _measurement_basis(gate_symbol) is not None:
-                    current_measurement += len(locations)
-        else:
-            # Tuple format (symbol, locations, params)
-            gate_symbol, locations, _params = tick
-            gate_ops = _convert_gate_set(
-                gate_symbol,
-                locations,
-                q,
-                c,
-                current_measurement,
-            )
-            parallel_ops.extend(gate_ops)
-
-            # Update measurement counter
+        gate_sets = tick.items() if hasattr(tick, "items") else (tick,)
+        for gate_symbol, locations, _params in gate_sets:
+            destinations = next(validated_destinations)
             if _measurement_basis(gate_symbol) is not None:
+                if not destination_mode:
+                    destinations = {loc: ("c", current_measurement + i) for i, loc in enumerate(locations)}
                 current_measurement += len(locations)
+            parallel_ops.extend(_convert_gate_set(gate_symbol, locations, q, cregs, destinations))
 
         # Add operations for this tick
         if len(parallel_ops) > 1:
@@ -203,15 +252,15 @@ def quantum_circuit_to_slr(qc: QuantumCircuit) -> Main:
     return Main(*ops)
 
 
-def _convert_gate_set(gate_symbol, locations, q, c, measurement_offset):
+def _convert_gate_set(gate_symbol, locations, q, cregs, destinations):
     """Convert a set of gates with the same symbol to SLR operations.
 
     Args:
         gate_symbol: The gate symbol/name
         locations: Set of qubit locations where the gate is applied
         q: Quantum register
-        c: Classical register (may be None)
-        measurement_offset: Current offset for measurements
+        cregs: Classical registers by name
+        destinations: Validated measurement destinations by location (empty for bare measurements)
 
     Returns:
         List of SLR operations
@@ -237,13 +286,17 @@ def _convert_gate_set(gate_symbol, locations, q, c, measurement_offset):
             ops.append(qubit.CX(q[second], q[first]))
             ops.append(qubit.CX(q[first], q[second]))
     elif basis is not None:
-        for i, loc in enumerate(locations):
+        for loc in locations:
             idx = _one_qubit_location(gate_symbol, loc)
             if basis == "Y":
                 ops.append(qubit.SZdg(q[idx]))
             if basis in ["X", "Y"]:
                 ops.append(qubit.H(q[idx]))
-            ops.append(qubit.Measure(q[idx]) > c[measurement_offset + i])
+            measurement = qubit.Measure(q[idx])
+            if loc in destinations:
+                name, index = destinations[loc]
+                measurement = measurement > cregs[name][index]
+            ops.append(measurement)
             if basis in ["X", "Y"]:
                 ops.append(qubit.H(q[idx]))
             if basis == "Y":

@@ -24,6 +24,7 @@ from pecos.slr.cond_block import If, Repeat
 from pecos.slr.loop_block import For
 from pecos.slr.main import Main
 from pecos.slr.misc import Parallel
+from pecos.slr.vars import CReg
 
 
 class ParallelOptimizer:
@@ -228,7 +229,7 @@ class ParallelOptimizer:
         return operations
 
     def _build_dependency_graph(self, operations: list[Node]) -> dict[int, set[int]]:
-        """Build a dependency graph based on qubit usage.
+        """Build dependencies from qubit usage and classical result writes.
 
         Returns a dict mapping operation index to set of indices it depends on.
         """
@@ -236,17 +237,33 @@ class ParallelOptimizer:
 
         # Track which qubits are used by each operation
         qubit_usage = {}
+        result_usage = {}
         for i, op in enumerate(operations):
             qubits = self._get_qubits(op)
             qubit_usage[i] = qubits
+            result_usage[i] = self._get_result_bits(op)
 
-        # Build dependencies: op_i depends on op_j if they share qubits and j < i
+        # Preserve repeated writes even when measurements use different qubits.
         for i in range(len(operations)):
             for j in range(i):
-                if qubit_usage[i] & qubit_usage[j]:  # Intersection of qubit sets
+                if qubit_usage[i] & qubit_usage[j] or result_usage[i] & result_usage[j]:
                     dep_graph[i].add(j)
 
         return dict(dep_graph)
+
+    def _get_result_bits(self, op: Node) -> set:
+        """Expand measurement outputs so register, slice and individual-bit writes overlap."""
+        bits = set()
+        pending = list(getattr(op, "cout", None) or ())
+        while pending:
+            result = pending.pop()
+            if isinstance(result, CReg):
+                pending.extend(result.elems)
+            elif isinstance(result, list):
+                pending.extend(result)
+            else:
+                bits.add((result.reg.sym, result.index))
+        return bits
 
     def _get_qubits(self, op: Node) -> set:
         """Extract the set of qubits an operation acts on."""

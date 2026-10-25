@@ -574,19 +574,264 @@ def test_unknown_symbol_rejected(symbol: str) -> None:
     assert "{0}" in str(exc.value)
 
 
-@pytest.mark.parametrize("key", ["Pauli", "var_output", "var"])
+@pytest.mark.parametrize("key", ["Pauli", "other", "var_output", "var"])
 @pytest.mark.parametrize("tuple_ticks", [False, True])
 def test_measurement_params_rejected(key: str, *, tuple_ticks: bool) -> None:
-    """Measurement parameters cannot silently change basis or destination."""
-    params = {key: {0: ("c", 0)} if key == "var_output" else "X"}
+    """Unknown parameters and malformed destinations must fail explicitly."""
+    params = {key: {0: ("c", -1)} if key == "var_output" else "X"}
     qc = [("measure Z", {0}, params)]
     if not tuple_ticks:
         qc = QuantumCircuit()
         qc.append({"measure Z": {0}}, **params)
-    with pytest.raises(ValueError, match="Unsupported parameters") as exc:
+    with pytest.raises(ValueError, match="measure Z") as exc:
         SlrConverter.from_quantum_circuit(qc)
     assert "measure Z" in str(exc.value)
     assert key in str(exc.value)
+
+
+def _assert_classical_samples(program: Main, expected: dict) -> None:
+    """Scatter deterministic measurement records, including overwrites and bare results."""
+    circuit, records = SlrConverter(program).stim_with_records()
+    assert len(records) == circuit.num_measurements
+    for row in circuit.compile_sampler(seed=7).sample(10):
+        values = {name: [0] * len(bits) for name, bits in expected.items()}
+        for bit, value in zip(records, row, strict=True):
+            if bit is not None:
+                name, index = bit
+                values[name][index] = int(value)
+        assert values == expected
+
+
+@pytest.mark.parametrize("optimize_parallel", [False, True])
+@pytest.mark.parametrize("json_round_trip", [False, True])
+@pytest.mark.parametrize(
+    "case",
+    ["out_of_order", "two_registers", "overwritten", "bare", "short_results", "bases", "parallel", "unmeasured"],
+)
+def test_destination_round_trip(case: str, *, optimize_parallel: bool, json_round_trip: bool) -> None:
+    """Destinations, declarations and deterministic values survive both conversions."""
+    q, c, d = QReg("q", 2), CReg("c", 2), CReg("d", 3)
+    measurements = (Measure(q[1]) > c[1], Measure(q[0]) > c[0])
+    cases = {
+        "out_of_order": (measurements, {"c": [1, 0], "d": [0, 0, 0]}),
+        "two_registers": ((Measure(q[0]) > d[2], Measure(q[1]) > c[0]), {"c": [0, 0], "d": [0, 0, 1]}),
+        "overwritten": ((Measure(q[1]) > c[0], Measure(q[0]) > c[0]), {"c": [1, 0], "d": [0, 0, 0]}),
+        "bare": ((Measure(q[1]), Measure(q[0])), {"c": [0, 0], "d": [0, 0, 0]}),
+        "short_results": ((Measure(q[1]), Measure(q[0], q[1]) > c[0]), {"c": [1, 0], "d": [0, 0, 0]}),
+        # Prepare and measure the -X and -Y eigenstates using the existing basis decomposition.
+        "bases": (
+            (
+                qubit.H(q[0]),
+                qubit.H(q[0]),
+                Measure(q[0]) > c[1],
+                qubit.H(q[0]),
+                qubit.H(q[1]),
+                qubit.SZ(q[1]),
+                qubit.Z(q[1]),
+                qubit.SZdg(q[1]),
+                qubit.H(q[1]),
+                Measure(q[1]) > c[0],
+                qubit.H(q[1]),
+                qubit.SZ(q[1]),
+            ),
+            {"c": [1, 1], "d": [0, 0, 0]},
+        ),
+        "parallel": ((Parallel(*measurements),), {"c": [1, 0], "d": [0, 0, 0]}),
+        "unmeasured": ((), {"c": [0, 0], "d": [0, 0, 0]}),
+    }
+    body, expected = cases[case]
+    original = Main(q, c, d, qubit.X(q[0]), *body)
+    converter = SlrConverter(original, optimize_parallel=optimize_parallel)
+    qc = converter.quantum_circuit()
+    if json_round_trip:
+        qc = QuantumCircuit.from_json_str(qc.to_json_str())
+    reconstructed = SlrConverter.from_quantum_circuit(qc, optimize_parallel=optimize_parallel)
+    original_qasm = converter.qasm()
+    reconstructed_qasm = SlrConverter(reconstructed, optimize_parallel=optimize_parallel).qasm()
+    assert re.findall(r"measure q\[\d+\](?: -> \w+\[\d+\])?;", reconstructed_qasm) == re.findall(
+        r"measure q\[\d+\](?: -> \w+\[\d+\])?;",
+        original_qasm,
+    )
+    assert re.findall(r"creg \w+\[\d+\];", reconstructed_qasm) == re.findall(r"creg \w+\[\d+\];", original_qasm)
+    _assert_classical_samples(original, expected)
+    _assert_classical_samples(reconstructed, expected)
+
+
+@pytest.mark.parametrize("tuple_ticks", [False, True])
+@pytest.mark.parametrize("key", ["var_output", "var"])
+@pytest.mark.parametrize(
+    "symbol",
+    ["M", "MZ", "MX", "MY", "Measure", "Measure Z", "Measure +Z", "Measure X", "Measure +X", "Measure Y", "Measure +Y"],
+)
+def test_measurement_destinations(symbol: str, key: str, *, tuple_ticks: bool) -> None:
+    """Every alias accepts destinations, infers sizes and leaves mixed bare results unassigned."""
+    basis = "X" if "X" in symbol else "Y" if "Y" in symbol else "Z"
+    preparation = {"Z": ["X"], "X": ["H", "Z"], "Y": ["H", "S", "Z"]}[basis]
+    params = {key: {0: ("result", 2)} if key == "var_output" else ("result", 2)}
+    ticks = [(gate, {0}, {}) for gate in preparation]
+    ticks += [("M", {1}, {}), (symbol, {0}, params), (symbol, {0}, params), ("M", {1}, {})]
+    qc = ticks
+    if not tuple_ticks:
+        qc = QuantumCircuit()
+        for gate, locations, metadata in ticks:
+            qc.append({gate: locations}, **metadata)
+        qc = QuantumCircuit.from_json_str(qc.to_json_str())
+    program = SlrConverter.from_quantum_circuit(qc)
+    assert re.findall(r"creg (\w+)\[(\d+)\];", SlrConverter(program).qasm()) == [("result", "3")]
+    circuit, records = SlrConverter(program).stim_with_records()
+    assert records == (None, ("result", 2), ("result", 2), None)
+    assert (circuit.compile_sampler(seed=7).sample(10) == [0, 1, 1, 0]).all()
+    _assert_classical_samples(program, {"result": [0, 0, 1]})
+
+
+@pytest.mark.parametrize("tuple_ticks", [False, True])
+def test_multiple_measurement_destinations(*, tuple_ticks: bool) -> None:
+    """One gate group can write multiple registers in location order."""
+    ticks = [("X", {1}, {}), ("M", {0, 1}, {"var_output": {0: ("b", 2), 1: ("a", 1)}})]
+    qc = ticks
+    if not tuple_ticks:
+        qc = QuantumCircuit(cvar_spec={"a": 3, "unused": 2, "empty": 0})
+        for gate, locations, params in ticks:
+            qc.append({gate: locations}, **params)
+    program = SlrConverter.from_quantum_circuit(qc)
+    declarations = dict(re.findall(r"creg (\w+)\[(\d+)\];", SlrConverter(program).qasm()))
+    assert declarations == ({"b": "3", "a": "2"} if tuple_ticks else {"a": "3", "unused": "2", "b": "3"})
+    expected = {"b": [0, 0, 0], "a": [0, 1] if tuple_ticks else [0, 1, 0]}
+    if not tuple_ticks:
+        expected["unused"] = [0, 0]
+    _assert_classical_samples(program, expected)
+
+
+@pytest.mark.parametrize("spec", [{}, {"unused": 3, "empty": 0}])
+@pytest.mark.parametrize("measure", [False, True])
+def test_metadata_selects_destination_mode(spec: dict, *, measure: bool) -> None:
+    """Even an empty spec disables auto allocation; declarations survive empty circuits."""
+    qc = QuantumCircuit(cvar_spec=spec)
+    if measure:
+        qc.append("M", {0})
+    program = SlrConverter.from_quantum_circuit(qc)
+    assert {var.sym: len(var) for var in program.vars if isinstance(var, CReg)} == {
+        name: size for name, size in spec.items() if size
+    }
+    _circuit, records = SlrConverter(program).stim_with_records()
+    assert records == ((None,) if measure else ())
+
+
+@pytest.mark.parametrize(
+    ("locations", "params", "location", "value"),
+    [
+        ({0, 1}, {"var_output": {0: ("c", 0)}}, 1, None),
+        ({0}, {"var_output": {0: ("c", 0), 1: ("c", 1)}}, 1, ("c", 1)),
+        ({0}, {"var_output": {0: "bad"}}, 0, "bad"),
+        ({0}, {"var_output": {0: ("c", -1)}}, 0, ("c", -1)),
+        ({0}, {"var_output": {0: (3, 0)}}, 0, (3, 0)),
+        ({0}, {"var_output": {0: ("c", 0.5)}}, 0, ("c", 0.5)),
+        ({0}, {"var_output": {0: ("c", 0, 1)}}, 0, ("c", 0, 1)),
+        ({0}, {"var_output": {0: ["c", 0]}}, 0, ["c", 0]),
+        ({0}, {"var_output": {"0": ("c", 0)}}, "0", ("c", 0)),
+        ({0}, {"var_output": None}, 0, None),
+        ({0}, {"var": "c0"}, 0, "c0"),
+        ({0}, {"var": ["c", -1]}, 0, ["c", -1]),
+        ({0, 1}, {"var": ("c", 0)}, 1, ("c", 0)),
+    ],
+)
+def test_invalid_measurement_destinations(locations: set, params: dict, location: object, value: object) -> None:
+    """Errors identify the gate, offending location and destination value before emission."""
+    with pytest.raises(ValueError, match="MX") as exc:
+        SlrConverter.from_quantum_circuit([("X", {0}, {}), ("MX", locations, params)])
+    message = str(exc.value)
+    assert "MX" in message
+    assert next(iter(params)) in message
+    assert repr(location) in message
+    assert repr(value) in message
+
+
+@pytest.mark.parametrize("size", [0, 1])
+@pytest.mark.parametrize("key", ["var_output", "var"])
+def test_destination_outside_declared_register(size: int, key: str) -> None:
+    qc = QuantumCircuit(cvar_spec={"c": size})
+    qc.append("Measure", {0}, **{key: {0: ("c", size)} if key == "var_output" else ("c", size)})
+    with pytest.raises(ValueError, match="cvar_spec") as exc:
+        SlrConverter.from_quantum_circuit(qc)
+    assert "Measure" in str(exc.value)
+    assert repr(("c", size)) in str(exc.value)
+
+
+@pytest.mark.parametrize("key", ["var_output", "var"])
+def test_native_tuple_location_destination(key: str) -> None:
+    """Tuple ticks keep their existing one-tuple locations; var also accepts JSON lists."""
+    params = {key: {(0,): ("bits", 1)} if key == "var_output" else ["bits", 1]}
+    program = SlrConverter.from_quantum_circuit([("X", {(0,)}, {}), ("M", {(0,)}, params)])
+    assert "measure q[0] -> bits[1];" in SlrConverter(program).qasm()
+    _assert_classical_samples(program, {"bits": [0, 1]})
+
+
+def test_both_destination_fields() -> None:
+    """Validate and size both fields, matching existing readers' var precedence."""
+    qc = QuantumCircuit()
+    qc.append("X", {0})
+    qc.append("M", {0}, var_output={0: ("other", 2)}, var=("chosen", 1))
+    program = SlrConverter.from_quantum_circuit(qc)
+    _assert_classical_samples(program, {"other": [0, 0, 0], "chosen": [0, 1]})
+    assert re.findall(r"creg (\w+)\[(\d+)\];", SlrConverter(program).qasm()) == [("other", "3"), ("chosen", "2")]
+    assert SlrConverter(program).stim_with_records()[1] == (("chosen", 1),)
+
+
+def test_both_destination_fields_are_validated() -> None:
+    qc = QuantumCircuit(cvar_spec={"c": 1})
+    qc.append("M", {0}, var_output={0: ("c", 1)}, var=("c", 0))
+    with pytest.raises(ValueError, match="cvar_spec"):
+        SlrConverter.from_quantum_circuit(qc)
+
+
+def test_destination_validation_precedes_emission(monkeypatch) -> None:
+    from pecos.slr.converters import from_quantum_circuit
+
+    def unexpected_emission(*_args):
+        pytest.fail("No SLR register or operation should be emitted before validation completes")
+
+    monkeypatch.setattr(from_quantum_circuit, "QReg", unexpected_emission)
+    monkeypatch.setattr(from_quantum_circuit, "CReg", unexpected_emission)
+    qc = QuantumCircuit(cvar_spec={"c": 1})
+    qc.append("X", {0})
+    qc.append("M", {0}, var=("c", 0))
+    qc.append("M", {1}, var=("c", 1))
+    with pytest.raises(ValueError, match="cvar_spec"):
+        SlrConverter.from_quantum_circuit(qc)
+
+
+@pytest.mark.parametrize("params", [{"var_output": {0: ("c", 0)}, "Pauli": "X"}, {"var": ("c", 0), "other": 1}])
+def test_unknown_parameter_with_destination(params: dict) -> None:
+    with pytest.raises(ValueError, match="Unsupported parameters"):
+        SlrConverter.from_quantum_circuit([("M", {0}, params)])
+
+
+@pytest.mark.parametrize("basis", ["X", "Y"])
+@pytest.mark.parametrize("source", ["quantum_circuit", "slr_bit", "slr_register", "slr_slice"])
+def test_parallel_measurement_overwrite(basis: str, source: str) -> None:
+    """Basis rotations cannot move an earlier write past a later write on another qubit."""
+    q, c = QReg("q", 2), CReg("c", 1)
+    prepare = [qubit.H(q[0])]
+    rotate = [qubit.H(q[0])]
+    restore = [qubit.H(q[0])]
+    if basis == "Y":
+        prepare.append(qubit.SZ(q[0]))
+        rotate.insert(0, qubit.SZdg(q[0]))
+        restore.append(qubit.SZ(q[0]))
+    prepare.append(qubit.Z(q[0]))
+    result = {"slr_register": c, "slr_slice": c[:]}.get(source, c[0])
+    original = Main(q, c, *prepare, Parallel(*rotate, Measure(q[0]) > result, *restore, Measure(q[1]) > c[0]))
+    program = original
+    if source == "quantum_circuit":
+        qc = SlrConverter(Main(q, c, *prepare)).quantum_circuit()
+        tick = len(qc)
+        qc.append(f"M{basis}", {0}, var=("c", 0))
+        qc.update("M", {1}, tick=tick, var_output={1: ("c", 0)})
+        program = SlrConverter.from_quantum_circuit(qc)
+    qasm = SlrConverter(program).qasm()
+    oracle = SlrConverter(original, optimize_parallel=False).qasm()
+    assert re.findall(r"measure q\[\d+\] -> c\[0\];", qasm) == re.findall(r"measure q\[\d+\] -> c\[0\];", oracle)
+    _assert_classical_samples(program, {"c": [0]})
 
 
 @pytest.mark.parametrize("symbol", ["RZ", "RX", "RY"])

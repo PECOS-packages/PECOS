@@ -64,7 +64,7 @@
 
 use crate::fault_tolerance::propagator::{DagFaultInfluenceMap, Pauli};
 use pecos_core::prelude::GateType;
-use pecos_random::{PecosRng, RngProbabilityExt};
+use pecos_random::{PecosRng, RngProbabilityExt, nth_derived_seed};
 use rand_core::Rng;
 use rayon::prelude::*;
 use smallvec::SmallVec;
@@ -1802,9 +1802,10 @@ impl SamplingEngine {
                     return SamplingStatistics::new(0);
                 }
 
-                // Create thread-local RNG with deterministic seed based on chunk
-                let chunk_seed =
-                    seed.wrapping_add((chunk_idx as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
+                // Create thread-local RNG with deterministic seed based on chunk. Seeds
+                // a multiple of the SplitMix64 increment apart would share PecosRng
+                // lanes, so derive each one through SplitMix64 instead.
+                let chunk_seed = nth_derived_seed(seed, chunk_idx as u64);
                 let mut rng = PecosRng::seed_from_u64(chunk_seed);
 
                 // Use geometric sampling for this chunk
@@ -3630,6 +3631,52 @@ mod tests {
         assert!(
             relative_diff < 0.3,
             "Parallel syndrome rates differ too much: {rate_seq} vs {rate_par} (rel diff: {relative_diff})"
+        );
+    }
+
+    /// Parallel chunks must draw independent shots: across seeds, each detector's
+    /// count must vary like a binomial. Chunk seeds whose `PecosRng` lanes overlap
+    /// inflate this variance (about 2.6x when chunk seeds stepped by the
+    /// `SplitMix64` increment).
+    #[test]
+    #[allow(clippy::cast_precision_loss)]
+    fn test_parallel_statistics_chunks_are_independent() {
+        let (num_mechanisms, p, num_shots, num_seeds) = (100usize, 0.02, 100_000, 200u64);
+        let engine = SamplingEngine::from_mechanisms(
+            (0..num_mechanisms).map(|i| (p, vec![u32::try_from(i).unwrap()], vec![])),
+            num_mechanisms,
+            0,
+        );
+        // A fixed pool keeps the chunk count independent of the machine's core count.
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(8)
+            .build()
+            .unwrap();
+        let counts: Vec<Vec<usize>> = pool.install(|| {
+            (0..num_seeds)
+                .map(|seed| {
+                    engine
+                        .sample_statistics_parallel(num_shots, seed)
+                        .per_detector
+                })
+                .collect()
+        });
+
+        let binomial_variance = num_shots as f64 * p * (1.0 - p);
+        let mean_variance_ratio = (0..num_mechanisms)
+            .map(|d| {
+                let samples: Vec<f64> = counts.iter().map(|c| c[d] as f64).collect();
+                let mean = samples.iter().sum::<f64>() / samples.len() as f64;
+                let variance = samples.iter().map(|x| (x - mean).powi(2)).sum::<f64>()
+                    / (samples.len() - 1) as f64;
+                variance / binomial_variance
+            })
+            .sum::<f64>()
+            / num_mechanisms as f64;
+        assert!(
+            (0.8..1.25).contains(&mean_variance_ratio),
+            "per-detector count variance is {mean_variance_ratio:.3}x the binomial variance; \
+             parallel chunks are not drawing independent shots"
         );
     }
 

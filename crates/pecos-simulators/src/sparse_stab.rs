@@ -29,6 +29,53 @@ pub enum MeasurementRule {
     RefactorDecouple,
 }
 
+/// Processing order within one `mz` batch. Measurement and preparation in every
+/// basis go through `mz`, so they use the same order.
+///
+/// Bit-reversed order reverses the bits of positions in the next power-of-two
+/// range, then filters out positions beyond the batch length. It is deterministic
+/// and consumes no randomness. When the caller lists checks in spatial order, as
+/// syndrome-extraction circuits usually do, the round-0 projection of `|0>^n` onto
+/// a topological code then processes far-apart checks first, so destabilizers do
+/// not merge across the patch.
+///
+/// The joint outcome distribution is unchanged. Seeded outcomes can differ from
+/// `AsGiven`, and so can which positions are flagged nondeterministic: for a Bell
+/// pair, it is whichever qubit is processed first. Batches of one or two qubits
+/// are unaffected, since their bit-reversed order is the identity. Results are
+/// returned in caller order. Any duplicate qubit makes the entire batch use
+/// `AsGiven`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MeasurementBatchOrder {
+    /// Preserve the caller's order and the existing measurement trajectory.
+    #[default]
+    AsGiven,
+    /// Reverse the bits of positions in the next power-of-two range, filtering
+    /// out positions beyond the batch length. Does not consume randomness.
+    BitReversed,
+}
+
+impl MeasurementBatchOrder {
+    /// Return processing positions for a distinct-qubit batch. This pure function
+    /// depends only on the supplied length and mode.
+    #[must_use]
+    pub fn permutation(self, len: usize) -> Vec<usize> {
+        if len < 2 {
+            return (0..len).collect();
+        }
+        match self {
+            Self::AsGiven => (0..len).collect(),
+            Self::BitReversed => {
+                let bits = (len - 1).bit_width();
+                (0..len.next_power_of_two())
+                    .map(|i| i.reverse_bits() >> (usize::BITS - bits))
+                    .filter(|&i| i < len)
+                    .collect()
+            }
+        }
+    }
+}
+
 /// A sparse representation of a stabilizer state using the stabilizer/destabilizer formalism.
 ///
 /// This implementation is based on the work found in the thesis "Quantum Algorithms, Architecture,
@@ -122,6 +169,7 @@ pub struct SparseStabGeneric<S: IndexSet = SparseStabSet, R: SeedableRng + Rng +
     /// Required for STN-style decomposition that uses destabilizer phases.
     track_destab_signs: bool,
     measurement_rule: MeasurementRule,
+    measurement_batch_order: MeasurementBatchOrder,
 }
 
 /// Default row, column and sign storage for `SparseStab` and `Gens`.
@@ -311,9 +359,45 @@ where
             rng,
             track_destab_signs: false,
             measurement_rule: MeasurementRule::default(),
+            measurement_batch_order: MeasurementBatchOrder::default(),
         };
         stab.reset();
         stab
+    }
+
+    /// Select the batch processing order. The setting survives reset and clone.
+    ///
+    /// See [`MeasurementBatchOrder`] for what changes and what does not. Results
+    /// are returned in caller order. Batches containing duplicates use caller
+    /// order; forced measurement paths are unchanged.
+    #[must_use]
+    pub fn with_measurement_batch_order(mut self, order: MeasurementBatchOrder) -> Self {
+        self.measurement_batch_order = order;
+        self
+    }
+
+    /// Return the selected batch processing order.
+    #[must_use]
+    pub fn measurement_batch_order(&self) -> MeasurementBatchOrder {
+        self.measurement_batch_order
+    }
+
+    /// Return the batch processing permutation, including duplicate fallback.
+    /// Also used by instrumentation that executes the batch one qubit at a time.
+    #[must_use]
+    pub fn measurement_batch_permutation(&self, qubits: &[QubitId]) -> Vec<usize> {
+        if self.measurement_batch_order == MeasurementBatchOrder::AsGiven || qubits.len() < 2 {
+            return (0..qubits.len()).collect();
+        }
+        let mut sorted = qubits.to_vec();
+        sorted.sort_unstable();
+        let duplicate = sorted.windows(2).any(|pair| pair[0] == pair[1]);
+        let order = if duplicate {
+            MeasurementBatchOrder::AsGiven
+        } else {
+            self.measurement_batch_order
+        };
+        order.permutation(qubits.len())
     }
 
     /// Select the measurement update. The setting survives simulator reset.
@@ -2314,20 +2398,23 @@ where
     /// - Non-deterministic: The outcome is random with 50% probability for each result
     #[inline]
     fn mz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
-        let mut results = Vec::with_capacity(qubits.len());
-
-        for &q in qubits {
-            let qu = q.index();
+        let mut results: Vec<_> = (0..qubits.len())
+            .map(|_| MeasurementResult {
+                outcome: false,
+                is_deterministic: false,
+            })
+            .collect();
+        for i in self.measurement_batch_permutation(qubits) {
+            let qu = qubits[i].index();
             let deterministic = self.stabs.col_x[qu].is_empty();
 
-            let result = if deterministic {
+            results[i] = if deterministic {
                 // There are no stabilizers that anti-commute with Z_q
                 self.deterministic_meas(qu)
             } else {
                 let outcome = self.rng.coin_flip();
                 self.nondeterministic_meas(qu, outcome)
             };
-            results.push(result);
         }
 
         results
@@ -2787,6 +2874,7 @@ where
             rng: self.rng,
             track_destab_signs: false,
             measurement_rule: MeasurementRule::default(),
+            measurement_batch_order: MeasurementBatchOrder::default(),
         }
     }
 }

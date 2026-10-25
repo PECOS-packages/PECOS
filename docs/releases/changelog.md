@@ -16,7 +16,9 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   that many distinct targets. These rules also apply to the deprecated QASM,
   Stim, QuantumCircuit and QIR generators, including `QGate.gen("qasm")`.
   Parallel optimization now tracks register and tuple operands by individual
-  qubit, preserving dependencies with gates on their elements. Single-qubit
+  qubit, preserving dependencies with gates on their elements; a loop-variable
+  qubit counts as its whole register, leaving its rejection to the code
+  generators. Single-qubit
   gates expand whole `QAlloc` operands into their available qubits and reject
   non-qubit or empty arguments. Unsupported loop-variable qubit indices now
   raise a `ValueError` naming the gate instead of failing with an attribute

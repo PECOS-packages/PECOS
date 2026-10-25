@@ -25,7 +25,7 @@ from pecos.slr.cond_block import If, Repeat
 from pecos.slr.loop_block import For
 from pecos.slr.main import Main
 from pecos.slr.misc import Parallel
-from pecos.slr.vars import CReg, SymbolicBit
+from pecos.slr.vars import CReg, SymbolicBit, SymbolicElem
 
 
 class ParallelOptimizer:
@@ -285,7 +285,23 @@ class ParallelOptimizer:
             args = op.qin
         else:
             return set()
-        return {qubit_key(qubit) for qubit in expand_qubit_args(args, type(op).__name__)}
+        return {qubit_key(qubit) for qubit in expand_qubit_args(self._widen_symbolic(args), type(op).__name__)}
+
+    def _widen_symbolic(self, args):
+        """Replace loop-variable elements by their register, as for symbolic result bits.
+
+        The optimizer only orders operations; rejecting symbolic indices is left
+        to the code generators, which report it with their own error.
+        """
+        widened = []
+        for arg in args:
+            if isinstance(arg, SymbolicElem):
+                widened.append(arg.reg)
+            elif isinstance(arg, tuple | list):
+                widened.append(type(arg)(self._widen_symbolic(arg)))
+            else:
+                widened.append(arg)
+        return widened
 
     def _group_operations(
         self,

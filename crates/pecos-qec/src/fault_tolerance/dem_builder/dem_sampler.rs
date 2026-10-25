@@ -850,7 +850,9 @@ impl SamplingEngine {
     ///
     /// # Arguments
     /// * `num_shots` - Number of shots to sample
-    /// * `seed` - Random seed for reproducibility
+    /// * `seed` - Random seed for reproducibility. Results reproduce for a fixed
+    ///   Rayon thread count: the parallel path splits shots into chunks sized by
+    ///   the thread count, so results can differ between thread counts.
     #[must_use]
     pub fn sample_statistics(&self, num_shots: usize, seed: u64) -> SamplingStatistics {
         if num_shots == 0 || self.thresholds.is_empty() {
@@ -1789,6 +1791,12 @@ impl SamplingEngine {
         let shots_per_chunk = cache_optimal.min(thread_based).max(1_000);
         let num_chunks = num_shots.div_ceil(shots_per_chunk);
 
+        // Chunk seeds are indexed from a root drawn from `seed`, as the Monte Carlo
+        // engine does, not from `seed` itself: `nth_derived_seed(s + increment, i)`
+        // equals `nth_derived_seed(s, i + 1)` for the SplitMix64 increment, so runs
+        // seeded that far apart would share chunks.
+        let chunk_root = PecosRng::seed_from_u64(seed).next_u64();
+
         // Process shot chunks in parallel
         let partial_stats: Vec<SamplingStatistics> = (0..num_chunks)
             .into_par_iter()
@@ -1802,10 +1810,11 @@ impl SamplingEngine {
                     return SamplingStatistics::new(0);
                 }
 
-                // Create thread-local RNG with deterministic seed based on chunk. Seeds
-                // a multiple of the SplitMix64 increment apart would share PecosRng
-                // lanes, so derive each one through SplitMix64 instead.
-                let chunk_seed = nth_derived_seed(seed, chunk_idx as u64);
+                // Create thread-local RNG with deterministic seed based on chunk. The
+                // SplitMix64 mix leaves no systematic relation between chunk seeds;
+                // stepping seeds by its increment made neighbouring chunks share
+                // `PecosRng` lanes.
+                let chunk_seed = nth_derived_seed(chunk_root, chunk_idx as u64);
                 let mut rng = PecosRng::seed_from_u64(chunk_seed);
 
                 // Use geometric sampling for this chunk
@@ -3677,6 +3686,67 @@ mod tests {
             (0.8..1.25).contains(&mean_variance_ratio),
             "per-detector count variance is {mean_variance_ratio:.3}x the binomial variance; \
              parallel chunks are not drawing independent shots"
+        );
+    }
+
+    /// Runs seeded `s` and `s` plus the `SplitMix64` increment must be unrelated.
+    /// Indexing chunk seeds from `seed` itself made such runs share all but one
+    /// chunk (per-detector counts correlated at about 7/8 with 8 chunks).
+    #[test]
+    #[allow(clippy::cast_precision_loss)]
+    fn test_parallel_statistics_related_seeds_are_independent() {
+        const SPLITMIX64_INCREMENT: u64 = 0x9E37_79B9_7F4A_7C15;
+        let (num_mechanisms, num_shots, num_seeds) = (100usize, 100_000, 200u64);
+        let engine = SamplingEngine::from_mechanisms(
+            (0..num_mechanisms).map(|i| (0.02, vec![u32::try_from(i).unwrap()], vec![])),
+            num_mechanisms,
+            0,
+        );
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(8)
+            .build()
+            .unwrap();
+        let (first, second): (Vec<Vec<usize>>, Vec<Vec<usize>>) = pool.install(|| {
+            (0..num_seeds)
+                .map(|seed| {
+                    (
+                        engine
+                            .sample_statistics_parallel(num_shots, seed)
+                            .per_detector,
+                        engine
+                            .sample_statistics_parallel(
+                                num_shots,
+                                seed.wrapping_add(SPLITMIX64_INCREMENT),
+                            )
+                            .per_detector,
+                    )
+                })
+                .unzip()
+        });
+
+        let mean_correlation = (0..num_mechanisms)
+            .map(|d| {
+                let a: Vec<f64> = first.iter().map(|c| c[d] as f64).collect();
+                let b: Vec<f64> = second.iter().map(|c| c[d] as f64).collect();
+                let (mean_a, mean_b) = (
+                    a.iter().sum::<f64>() / a.len() as f64,
+                    b.iter().sum::<f64>() / b.len() as f64,
+                );
+                let covariance: f64 = a
+                    .iter()
+                    .zip(&b)
+                    .map(|(x, y)| (x - mean_a) * (y - mean_b))
+                    .sum();
+                let spread_a: f64 = a.iter().map(|x| (x - mean_a).powi(2)).sum();
+                let spread_b: f64 = b.iter().map(|y| (y - mean_b).powi(2)).sum();
+                covariance / (spread_a * spread_b).sqrt()
+            })
+            .sum::<f64>()
+            / num_mechanisms as f64;
+        assert!(
+            mean_correlation.abs() < 0.1,
+            "per-detector counts of runs seeded s and s + SplitMix64 increment correlate at \
+             {mean_correlation:.3}; they should be independent"
         );
     }
 

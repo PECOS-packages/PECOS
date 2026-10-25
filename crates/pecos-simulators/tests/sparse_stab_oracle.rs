@@ -301,7 +301,6 @@ impl<S: IndexSet> Candidate for SparseStabGeneric<S> {
         let same_rule = match self.measurement_rule() {
             MeasurementRule::AaronsonGottesman => reference,
             MeasurementRule::RefactorDecouple => refactored,
-            _ => panic!("unhandled measurement rule"),
         };
         assert!(
             same_tableau(same_rule, self),
@@ -1028,6 +1027,28 @@ fn tracked_default_random_dual_product_phase() {
     // the two i factors and the Z1/X1 crossing each contribute -1.
     assert_eq!(h.step(Op::Measure(1, true)), Some((false, true)));
     assert_signed_destabs(&h.reference, &[(3, 2, false, true), (1, 0, false, false)]);
+}
+
+#[test]
+fn tracked_default_random_carries_pivot_minus() {
+    let mut h = Harness::new(2, 0, true, true);
+    for op in [Op::H(0), Op::Z(0), Op::Cx(0, 1)] {
+        h.step(op);
+    }
+    // S0=-X0 X1, S1=Z0 Z1; D0=Z0, D1=X1. MZ1 pivots on S0:
+    // D1*S0 = X1*(-X0 X1) = -X0, and D0 takes the old S0 = -X0 X1.
+    assert_eq!(h.step(Op::Measure(1, false)), Some((false, false)));
+    assert_signed_destabs(&h.reference, &[(3, 0, true, false), (1, 0, true, false)]);
+}
+
+#[test]
+fn tracked_isolated_measurement_resets_partner_phase() {
+    let mut h = Harness::new(1, 0, true, true);
+    h.step(Op::Z(0));
+    // S0=Z0, D0=-X0. MZ0 is deterministic and already isolated; the partner
+    // is rewritten as a fresh +X0.
+    assert_eq!(h.step(Op::Measure(0, false)), Some((true, false)));
+    assert_signed_destabs(&h.refactored, &[(1, 0, false, false)]);
 }
 
 #[test]

@@ -19,8 +19,8 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   `GensVecSet::refactor`.
 
 - `SparseStab` has an opt-in measurement rule,
-  `with_measurement_rule(MeasurementRule::RefactorDecouple)`. The default
-  (`AaronsonGottesman`) remains the default. The rule has two parts:
+  `with_measurement_rule(MeasurementRule::RefactorDecouple)`. The default rule,
+  `AaronsonGottesman`, is unchanged. The new rule has two parts:
   - on a deterministic Z measurement with source rows R, it chooses r0 by
     maximizing |S_r| - (|R|-1)|D_r| (ties go to the lowest id) and replaces
     S_r0 by the measured signed Z; with |R| = 1 nothing is replaced;
@@ -30,7 +30,7 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   Outcomes and the stabilizer group are identical to the default rule; only the
   generators and destabilizers differ. Measured gains:
   - surface-code syndrome extraction does about 2.5x less work per gate, and
-    deterministic measurement work becomes constant;
+    deterministic measurement work becomes nearly constant;
   - a round at 522k qubits runs 2.4x faster;
   - on the 6.6.6 color code at 98k qubits, a round runs about 2.6x faster.
 
@@ -39,7 +39,9 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 - With destabilizer sign tracking enabled, `SparseStab` now maintains full
   destabilizer phases through measurement, including the default rule's random
-  measurement path.
+  measurement path. `SparseStabGeneric::mz_with_work` measures one qubit and
+  also returns `MeasurementWork`, the refactor and decouple work that
+  measurement executed, for benchmarking.
 
 - Live scheduled simulation now admits `StabilizerEngine` (`pr.stabilizer()`) with
   checked stochastic noise. Coherent idle rates and unsupported rotations reject

@@ -676,8 +676,6 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pecos_simulators::SparseStabBitSet;
-    use std::hint::black_box;
 
     #[test]
     fn bell_pair_work_includes_reset_measurements() {
@@ -864,24 +862,5 @@ mod tests {
                 }
             }
         }
-    }
-
-    #[test]
-    fn reset_timing_at_7937() {
-        // Identically initialized simulators; construction is outside both timers.
-        // A separate release test keeps the scaling process's peak RSS comparable.
-        let mut adaptive =
-            SparseStabGeneric::<AdaptiveIndexSet>::with_rng(7937, PecosRng::seed_from_u64(1434));
-        let mut bitset = SparseStabBitSet::with_rng(7937, PecosRng::seed_from_u64(1434));
-        let start = Instant::now();
-        black_box(&mut adaptive).reset();
-        let adaptive_seconds = start.elapsed().as_secs_f64();
-        let start = Instant::now();
-        black_box(&mut bitset).reset();
-        let bitset_seconds = start.elapsed().as_secs_f64();
-        black_box((&adaptive, &bitset));
-        println!(
-            "reset_n=7937 adaptive_seconds={adaptive_seconds:.9} bitset_seconds={bitset_seconds:.9}"
-        );
     }
 }

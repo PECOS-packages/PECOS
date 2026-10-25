@@ -21,7 +21,6 @@ use pecos_random::{PecosRng, Rng, SeedableRng};
 
 /// Tableau update performed by Z measurement, including measurement during reset.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum MeasurementRule {
     /// Preserve the existing Aaronson-Gottesman update.
     #[default]
@@ -528,26 +527,6 @@ where
         (&mut self.stabs, &mut self.destabs)
     }
 
-    // Refactor/decouple algebra (binary symplectic pairing <S_i,D_j> = delta_ij):
-    // 1. If every S commutes with Z_q, its unique expansion is the product of
-    //    S_r for R = {r : <Z_q,D_r> = 1} = destabs.col_x[q]. R is nonempty.
-    //    The existing deterministic calculation supplies that product's sign.
-    // 2. Replacing S_r0 by this product is invertible since r0 is in R. Updating
-    //    D_r <- D_r D_r0 for every other r in R is the inverse-transpose basis
-    //    change: it restores the dual pairings and preserves D-D commutation.
-    //    Only D_r0 then has X_q. The score chooses a basis, not a different state.
-    // 3. On a random measurement, the existing AG update already leaves
-    //    S_r0 = (-1)^outcome Z_q with the same dual-pairing properties.
-    // 4. Multiply each other S containing Z_q by S_r0. No S has X_q, so there
-    //    is no crossing phase; remove Z_q and toggle its minus sign by outcome.
-    // 5. All D except D_r0 have no X_q. Removing their Z_q leaves their mutual
-    //    pairings and pairings with the stripped S unchanged. Removing Z_q
-    //    from D_r0 is harmless because that entire row is replaced next.
-    // 6. Now every row except S_r0 and D_r0 is identity on q. Setting D_r0=X_q
-    //    restores precisely its required pairings and isolates the measured qubit.
-    // With tracking enabled, dual products retain their full W phase, stripping
-    // multiplies by the measured signed Z, and fresh X partners have phase +1.
-
     // Multiply each target phase by the source phase, including i*i = -1.
     // The crossing update below must run before changing the target X support.
     fn product_phase(gens: &mut GensGeneric<S>, targets: &S, minus: bool, imaginary: bool) {
@@ -570,11 +549,12 @@ where
     fn dual_product_phases(&mut self, r0: usize, targets: &S) {
         let minus = self.destabs.signs_minus.contains(r0);
         let imaginary = self.destabs.signs_i.contains(r0);
-        Self::product_phase(&mut self.destabs, targets, minus, imaginary);
-        // Copy the source Z support before mutating the phase sets.
-        let source_z = self.destabs.row_z[r0].clone();
+        let destabs = &mut self.destabs;
+        Self::product_phase(destabs, targets, minus, imaginary);
         for r in targets.iter() {
-            Self::product_crossing(&mut self.destabs, r, &source_z);
+            if destabs.row_z[r0].intersection_count(&destabs.row_x[r]) & 1 != 0 {
+                destabs.signs_minus.toggle(r);
+            }
         }
     }
 
@@ -582,6 +562,26 @@ where
         gens.signs_minus.remove(r);
         gens.signs_i.remove(r);
     }
+
+    // Refactor/decouple algebra (binary symplectic pairing <S_i,D_j> = delta_ij):
+    // 1. If every S commutes with Z_q, its unique expansion is the product of
+    //    S_r for R = {r : <Z_q,D_r> = 1} = destabs.col_x[q]. R is nonempty.
+    //    The existing deterministic calculation supplies that product's sign.
+    // 2. Replacing S_r0 by this product is invertible since r0 is in R. Updating
+    //    D_r <- D_r D_r0 for every other r in R is the inverse-transpose basis
+    //    change: it restores the dual pairings and preserves D-D commutation.
+    //    Only D_r0 then has X_q. The score chooses a basis, not a different state.
+    // 3. On a random measurement, the existing AG update already leaves
+    //    S_r0 = (-1)^outcome Z_q with the same dual-pairing properties.
+    // 4. Multiply each other S containing Z_q by S_r0. No S has X_q, so there
+    //    is no crossing phase; remove Z_q and toggle its minus sign by outcome.
+    // 5. All D except D_r0 have no X_q. Removing their Z_q leaves their mutual
+    //    pairings and pairings with the stripped S unchanged. Removing Z_q
+    //    from D_r0 is harmless because that entire row is replaced next.
+    // 6. Now every row except S_r0 and D_r0 is identity on q. Setting D_r0=X_q
+    //    restores precisely its required pairings and isolates the measured qubit.
+    // With tracking enabled, dual products retain their full W phase, stripping
+    // multiplies by the measured signed Z, and fresh X partners have phase +1.
 
     fn refactor_measured_z<const COUNT: bool>(
         &mut self,
@@ -723,9 +723,11 @@ where
             work.refactor += self.stabs.generator_weight(r0) + 1;
         }
         if self.track_destab_signs {
-            let mut targets = S::new();
-            targets.insert(other);
-            self.dual_product_phases(r0, &targets);
+            // D_r0 = +-X_q: Hermitian with no Z support, so the dual product
+            // D_other * D_r0 only takes D_r0's minus sign.
+            if self.destabs.signs_minus.contains(r0) {
+                self.destabs.signs_minus.toggle(other);
+            }
             Self::clear_phase(&mut self.destabs, r0);
         }
         self.set_measured_stabilizer(r0, q, outcome);
@@ -1031,7 +1033,15 @@ where
     /// Measure Z and count support visits in the executed refactor/decouple path.
     /// Normal measurement compiles out these counters. Counted measurements use
     /// the same random stream and tableau updates as [`CliffordGateable::mz`].
+    ///
+    /// # Panics
+    /// Panics if `q` is outside the register.
     pub fn mz_with_work(&mut self, q: usize) -> (MeasurementResult, MeasurementWork) {
+        assert!(
+            q < self.num_qubits,
+            "mz_with_work: qubit {q} is outside the {}-qubit register",
+            self.num_qubits
+        );
         let mut work = MeasurementWork::default();
         let result = if self.stabs.col_x[q].is_empty() {
             self.deterministic_meas::<true>(q, &mut work)

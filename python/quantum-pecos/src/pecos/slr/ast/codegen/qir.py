@@ -895,19 +895,18 @@ class AstToQir:
     def _process_prepare(self, node: PrepareOp) -> None:
         """Process a prepare/reset operation (Z-reset + canonical basis tail)."""
         tail = prep_tail(node.basis)
-        if node.slots is None:
-            # prepare_all is a pre-existing no-op gap; a NON-PZ
-            # prepare_all silently doing nothing would be a basis
-            # miscompile -- fail loud rather than extend the gap.
-            if tail:
-                msg = f"QIR codegen: prepare_all with non-PZ basis {node.basis!r} is not supported"
-                raise NotImplementedError(msg)
-            return
+        if node.slots is None and node.allocator not in self.context.qreg_sizes:
+            msg = (
+                f"QIR codegen: prepare_all references unknown allocator {node.allocator!r}; "
+                "declare the allocator before preparing it."
+            )
+            raise NotImplementedError(msg)
+        slots = range(self.context.qreg_sizes[node.allocator]) if node.slots is None else node.slots
 
         reset_func = self._get_or_create_gate("reset", has_params=False, num_qubits=1)
         tail_funcs = [(self._get_or_create_gate(GATE_TO_QIR[gk], has_params=False, num_qubits=1)) for gk in tail]
 
-        for slot in node.slots:
+        for slot in slots:
             qubit_ptr = self._get_qubit_ptr(
                 SlotRef(allocator=node.allocator, index=slot),
             )

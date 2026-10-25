@@ -3005,3 +3005,169 @@ class TestScratchCheck1FlagS5ProductionLockIn:
         assert "reset q[4];" in qasm
         assert "measure q[3] -> c[0];" in qasm
         assert "measure q[4] -> c[1];" in qasm
+
+
+class TestBlockInputCapture:
+    """Block inputs must not capture direct references to unrelated outer state."""
+
+    def test_partial_binding_error_precedes_capture(self) -> None:
+        from pecos.slr import Barrier, Block, Main, QReg
+        from pecos.slr.ast import slr_to_ast
+
+        q = QReg("q", 2)
+
+        class Partial(Block):
+            block_inputs: ClassVar[dict[str, str]] = {"q": "live_preserved"}
+
+            def __init__(self) -> None:
+                super().__init__()
+                self.q = q[0]
+                self.extend(Barrier(q))
+
+        with pytest.raises(ValueError, match=r"Barrier.*'q'.*only partially bound"):
+            slr_to_ast(Main(q, Partial()))
+
+    def test_measurement_result_capture(self) -> None:
+        from pecos.slr import Block, CReg, Main, QReg
+        from pecos.slr.ast import slr_to_ast
+        from pecos.slr.qeclib import qubit as qb
+
+        q, c, d = QReg("q", 2), CReg("c", 2), CReg("d", 1)
+
+        class Meas(Block):
+            block_inputs: ClassVar[dict[str, str]] = {"a": "live_preserved", "c": "live_preserved"}
+
+            def __init__(self, a, bit) -> None:
+                super().__init__()
+                self.a = a
+                self.c = bit
+                self.extend(qb.Measure(a[0]) > bit, qb.Measure(a[1]) > c[0])
+
+        with pytest.raises(ValueError, match=r"Block 'Meas'.*input 'c'.*c\[0\].*rename.*input"):
+            slr_to_ast(Main(q, c, d, qb.X(q[0]), Meas(q, d[0])))
+
+    @pytest.mark.parametrize("binding", ["same_element", "other_element", "other_register"])
+    @pytest.mark.parametrize("nested", [False, True])
+    def test_qubit_capture(self, binding, nested) -> None:
+        from pecos.slr import Block, Main, QReg, Repeat
+        from pecos.slr.ast import slr_to_ast
+        from pecos.slr.qeclib import qubit as qb
+
+        q, r = QReg("q", 2), QReg("r", 2)
+
+        class UsesOuter(Block):
+            block_inputs: ClassVar[dict[str, str]] = {"q": "live_preserved"}
+
+            def __init__(self, bound) -> None:
+                super().__init__()
+                self.q = bound
+                op = qb.X(q[1])
+                self.extend(Repeat(2).block(Block(op)) if nested else op)
+
+        bound = {"same_element": q[0], "other_element": r[0], "other_register": r}[binding]
+        with pytest.raises(ValueError, match=r"Block 'UsesOuter'.*input 'q'.*q\[1\].*rename.*input"):
+            slr_to_ast(Main(q, r, UsesOuter(bound)))
+
+    @pytest.mark.parametrize(
+        "reference",
+        [
+            "assign_bit",
+            "assign_register",
+            "condition_bit",
+            "condition_register",
+            "permute_bit",
+            "permute_register",
+            "nested_bit",
+            "nested_register",
+            "prepare",
+            "barrier",
+            "print_bit",
+            "print_register",
+            "return_register",
+        ],
+    )
+    def test_capture_reference_forms(self, reference) -> None:
+        from pecos.slr import Barrier, Block, CReg, If, Main, Permute, Print, QReg, Return
+        from pecos.slr.ast import slr_to_ast
+        from pecos.slr.qeclib import qubit as qb
+
+        c, d = CReg("c", 2), CReg("d", 2)
+        q, r = QReg("q", 2), QReg("r", 2)
+
+        class Inner(Block):
+            block_inputs: ClassVar[dict[str, str]] = {"value": "live_preserved"}
+
+            def __init__(self, value) -> None:
+                super().__init__()
+                self.value = value
+
+        operations = {
+            "assign_bit": c[0].set(1),
+            "assign_register": c.set(1),
+            "condition_bit": If(c[0]).Then(qb.X(q[0])),
+            "condition_register": If(c == 0).Then(qb.X(q[0])),
+            "permute_bit": Permute([c[0], c[1]], [c[1], c[0]]),
+            "permute_register": Permute(c, d),
+            "nested_bit": Inner(c[0]),
+            "nested_register": Inner(q),
+            "prepare": qb.PZ(q[1]),
+            "barrier": Barrier(q),
+            "print_bit": Print(c[0]),
+            "print_register": Print(c),
+            "return_register": Return(c),
+        }
+
+        class Captures(Block):
+            block_inputs: ClassVar[dict[str, str]] = {"c": "live_preserved", "q": "live_preserved"}
+
+            def __init__(self) -> None:
+                super().__init__()
+                self.c = d[0]
+                self.q = r
+                self.extend(operations[reference])
+
+        with pytest.raises(ValueError, match=r"Block 'Captures'.*input '[cq]'.*[cq].*rename.*input"):
+            slr_to_ast(Main(q, r, c, d, Captures()))
+
+    @pytest.mark.parametrize("reference", ["bit", "register"])
+    def test_classical_capture_despite_same_named_qubit_binding(self, reference) -> None:
+        from pecos.slr import Block, CReg, Main, QReg
+        from pecos.slr.ast import slr_to_ast
+        from pecos.slr.qeclib import qubit as qb
+
+        q, c = QReg("q", 2), CReg("q", 2)
+
+        class MixedNames(Block):
+            block_inputs: ClassVar[dict[str, str]] = {"q": "live_preserved"}
+
+            def __init__(self) -> None:
+                super().__init__()
+                self.q = q
+                self.extend(qb.Measure(q[0]) > c[0] if reference == "bit" else c.set(1))
+
+        with pytest.raises(ValueError, match=r"Block 'MixedNames'.*input 'q'.*q.*rename.*input"):
+            slr_to_ast(Main(q, c, MixedNames()))
+
+    @pytest.mark.parametrize("binding", ["whole", "element", "unrelated"])
+    def test_non_capturing_bindings_still_work(self, binding) -> None:
+        from pecos.slr import Block, CReg, Main, QReg, SlrConverter
+        from pecos.slr.qeclib import qubit as qb
+
+        q, r, c = QReg("q", 2), QReg("r", 2), CReg("c", 2)
+
+        class Safe(Block):
+            block_inputs: ClassVar[dict[str, str]] = {"q": "live_preserved", "c": "live_preserved"}
+
+            def __init__(self, bound) -> None:
+                super().__init__()
+                self.q = bound
+                self.c = c[1]
+                target = bound[0] if isinstance(bound, QReg) else bound
+                self.extend(qb.X(target), qb.Measure(target) > self.c)
+                self.extend(qb.X(r[1]))
+
+        bound = q if binding == "whole" else (r[0] if binding == "unrelated" else q[1])
+        text = SlrConverter(Main(q, r, c, Safe(bound))).qasm()
+        target = "q[0]" if binding == "whole" else ("r[0]" if binding == "unrelated" else "q[1]")
+        assert f"measure {target} -> c[1];" in text
+        assert "x r[1];" in text

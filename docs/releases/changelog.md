@@ -34,16 +34,17 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   including repeated measurements and unstored results. Existing Stim output
   is unchanged (#1465).
 
-- `pecos.qec.discover_detectors(tc, observables=())` (Rust:
-  `pecos_qec::fault_tolerance::detector_discovery::discover_detectors`) finds the
-  detectors of a Clifford `TickCircuit` without code metadata. Each detector is
-  the relation of a deterministic record within the latest tick suffix in which
-  that record stays deterministic from an unknown input. Declared observables are
-  completed with random-source records. Each replaces one detector it is built
-  from, chosen so that every structural single fault that flips a declared
-  observable still flips a kept detector; an observable for which no such
-  detector exists is refused with an error naming the undetected fault. A
-  deterministic logical parity that is not declared becomes a detector.
+- `pecos.qec.discover_detectors(tc, observables=(), conjugates=())` (Rust:
+  `pecos_qec::fault_tolerance::detector_discovery::discover_detectors`) finds
+  detectors of a Clifford `TickCircuit` from latest deterministic tick suffixes.
+  Declared observables are completed with random-source records and require
+  conjugate logical operators supplied at tick boundaries. Each conjugate must
+  flip only its own completed observable, rejecting dependent declarations.
+  Detectors are cleaned of declared logical content relative to those conjugates,
+  retaining an independent set that prefers unflipped local detectors. Undeclared
+  deterministic logicals remain detectors. Conjugates must commute with every
+  measured check: records alone cannot verify this, and a wrong conjugate can
+  silently lower the fault distance even when pairing passes.
 
 - `SymbolicSparseStab` and `SymbolicSparseStabVecSet` reset a qubit that is
   entangled with others instead of postselecting it (#1360). Its partners now

@@ -446,7 +446,7 @@ fn xor_sorted_unique_indices(left: &[usize], right: &[usize]) -> Vec<usize> {
 }
 
 /// Core forward propagation: evolve a Pauli through gates, collecting affected measurements.
-fn propagate_forward(
+pub(crate) fn propagate_forward(
     prop: &mut BitmaskPauliProp,
     start: usize,
     gates: &[GateLoc],
@@ -1114,41 +1114,14 @@ pub fn build_fault_catalog(
 
 fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, FaultCatalogError> {
     validate_tick_circuit(tc)?;
-    let definitions = definitions_from_tick_circuit(tc)?;
-    structural_fault_catalog(tc, &definitions)
-}
-
-/// Structural single faults with their measurement-record effects only.
-///
-/// The circuit's detector and observable definitions are neither read nor
-/// validated, so every `affected_detectors` and `affected_observables` is empty.
-pub(crate) fn record_effect_fault_catalog(
-    tc: &TickCircuit,
-) -> Result<FaultCatalog, FaultCatalogError> {
-    validate_tick_circuit(tc)?;
-    let num_measurements = tc
-        .iter_gate_batches()
-        .filter(|gate| gate.gate_type.consumes_measurement_record())
-        .map(|gate| gate.qubits.len())
-        .sum();
-    let definitions = CircuitDefinitions {
-        detectors: Vec::new(),
-        observables: Vec::new(),
-        num_measurements,
-    };
-    structural_fault_catalog(tc, &definitions)
-}
-
-fn structural_fault_catalog(
-    tc: &TickCircuit,
-    definitions: &CircuitDefinitions,
-) -> Result<FaultCatalog, FaultCatalogError> {
     let (gates, meas_positions) = flatten_tick_circuit(tc);
+
+    let definitions = definitions_from_tick_circuit(tc)?;
     // Validated record-consuming gates have arity one. Both walks visit ticks,
     // batches and instances in storage order, so these are the same positions.
     assert_eq!(meas_positions.len(), definitions.num_measurements);
     let tracked_pauli_annotations = parse_tracked_pauli_annotations(tc);
-    let record_effect_index = RecordEffectIndex::new(definitions);
+    let record_effect_index = RecordEffectIndex::new(&definitions);
 
     let mut locations = Vec::new();
 

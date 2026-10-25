@@ -3,12 +3,14 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy at https://www.apache.org/licenses/LICENSE-2.0
 
-use pecos_core::Gate;
-use pecos_qec::fault_tolerance::detector_discovery::{DetectorDiscoveryError, discover_detectors};
+use pecos_core::{Gate, Pauli};
+use pecos_qec::fault_tolerance::detector_discovery::{
+    Conjugate, DetectorDiscoveryError, DiscoveredDetectors, discover_detectors as discover,
+};
 use pecos_qec::fault_tolerance::fault_sampler::{
     MeasurementHistoryError, symbolic_measurement_history,
 };
-use pecos_quantum::{Attribute, TickCircuit};
+use pecos_quantum::TickCircuit;
 use pecos_simulators::{CircuitExecutor, SparseStab};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -24,7 +26,7 @@ fn repeated_z_check_includes_final_data_readout() -> TestResult {
         tc.tick().mz(&[2]);
     }
     tc.tick().mz(&[0, 1]);
-    let discovered = discover_detectors(&tc, &[])?;
+    let discovered = discover_detectors(&tc, &[], &[])?;
     assert_eq!(
         discovered.detectors,
         vec![
@@ -41,11 +43,17 @@ fn repeated_z_check_includes_final_data_readout() -> TestResult {
         .into_iter()
         .filter(|(r, _)| r != &[4])
         .collect::<Vec<_>>();
-    // Records 4, 5 and 3^5 are equivalent logical representatives. Each replaces
-    // the fixed-logical detector, never the boundary detector [3, 4, 5].
+    // Records 4, 5 and 3^5 are equivalent logical representatives. With the
+    // conjugate X0 X1, each cleans away the fixed-logical detector [4] and keeps
+    // the boundary detector [3, 4, 5].
     for observable in [vec![4], vec![5], vec![3, 5]] {
         assert_eq!(
-            discover_detectors(&tc, std::slice::from_ref(&observable))?.detectors,
+            discover_detectors(
+                &tc,
+                std::slice::from_ref(&observable),
+                &[conjugate(1, "X0 X1")]
+            )?
+            .detectors,
             expected,
             "declared {observable:?}"
         );
@@ -104,11 +112,11 @@ fn c4_swapout_checks_and_undeclared_logicals() -> TestResult {
     let mut with_logicals = checks.clone();
     with_logicals.insert(7, (vec![1, 8, 9], false));
     with_logicals.insert(8, (vec![9, 10], false));
-    assert_eq!(discover_detectors(&tc, &[])?.detectors, with_logicals);
-    let declared = discover_detectors(&tc, &[vec![8, 9], vec![9, 10]])?;
+    assert_eq!(discover_detectors(&tc, &[], &[])?.detectors, with_logicals);
+    let declared = discover_detectors(&tc, &[vec![8, 9], vec![9, 10]], &c4_conjugates())?;
     assert_eq!(declared.detectors, checks);
     assert_eq!(
-        discover_detectors(&tc, &[vec![1, 8, 9], vec![9, 10]])?.detectors,
+        discover_detectors(&tc, &[vec![1, 8, 9], vec![9, 10]], &c4_conjugates())?.detectors,
         checks
     );
     assert_eq!(
@@ -131,7 +139,7 @@ fn substituted_deterministic_member_contributes_its_nonzero_constant() -> TestRe
     let full = symbolic_measurement_history(&tc)?;
     assert!(full.as_slice()[1].is_deterministic && full.as_slice()[1].flip);
     assert!(!full.as_slice()[2].flip);
-    let found = discover_detectors(&tc, &[])?;
+    let found = discover_detectors(&tc, &[], &[])?;
     assert_eq!(
         found.detectors,
         vec![(vec![0, 1], true), (vec![1, 2], true)]
@@ -157,18 +165,18 @@ fn implicit_zero_initialization_is_the_search_lower_bound() -> TestResult {
     }
     tc.tick().mz(&[0]);
     assert_eq!(
-        discover_detectors(&tc, &[])?.detectors,
+        discover_detectors(&tc, &[], &[])?.detectors,
         vec![(vec![0], false), (vec![1], false)]
     );
     assert_eq!(
-        discover_detectors(&TickCircuit::new(), &[])?.detectors,
+        discover_detectors(&TickCircuit::new(), &[], &[])?.detectors,
         vec![]
     );
     Ok(())
 }
 
 #[test]
-fn observable_completion_and_replacement() -> TestResult {
+fn observable_completion_and_cleaning() -> TestResult {
     // Data prepared by measurement, then two Z0Z1 rounds: the final d0 readout
     // is deterministic only together with its random preparation record.
     let mut tc = TickCircuit::new();
@@ -182,7 +190,7 @@ fn observable_completion_and_replacement() -> TestResult {
     }
     tc.tick().mz(&[0, 1]);
     assert_eq!(
-        discover_detectors(&tc, &[])?.detectors,
+        discover_detectors(&tc, &[], &[])?.detectors,
         vec![
             (vec![0, 1, 2], false),
             (vec![2, 3], false),
@@ -197,13 +205,17 @@ fn observable_completion_and_replacement() -> TestResult {
     ];
     // Completion adds each readout's random preparation record; a declared
     // random record cancels against the readout that depends on it. Every
-    // representative replaces the fixed logical.
+    // representative cleans away the fixed-logical detector.
     for (declared, completed) in [
         (vec![4], vec![0, 4]),
         (vec![0, 4], vec![0, 4]),
         (vec![5], vec![1, 5]),
     ] {
-        let found = discover_detectors(&tc, std::slice::from_ref(&declared))?;
+        let found = discover_detectors(
+            &tc,
+            std::slice::from_ref(&declared),
+            &[conjugate(2, "X0 X1")],
+        )?;
         assert_eq!(
             found.observables,
             vec![(completed, false)],
@@ -211,10 +223,11 @@ fn observable_completion_and_replacement() -> TestResult {
         );
         assert_eq!(found.detectors, checks, "declared {declared:?}");
     }
-    // The second declaration repeats the first, so only one detector goes.
-    let found = discover_detectors(&tc, &[vec![4], vec![4]])?;
-    assert_eq!(found.observables, vec![(vec![0, 4], false); 2]);
-    assert_eq!(found.detectors, checks);
+    assert!(matches!(
+        discover_detectors(&tc, &[vec![4], vec![4]], &[conjugate(2, "X0 X1"), conjugate(2, "X0 X1")]),
+        Err(DetectorDiscoveryError::ConjugatePairing { conjugate: 0, flipped_observables })
+            if flipped_observables == [0, 1]
+    ));
     Ok(())
 }
 
@@ -241,15 +254,12 @@ fn two_patches() -> TickCircuit {
     tc
 }
 
-/// Patch A's boundary detector [0, 3, 4] has a longer window than patch B's
-/// fixed logical [5]. Declaring B's logical times that detector must still
-/// replace [5]: dropping [0, 3, 4] would leave X on qubit 1 before readout
-/// flipping the observable and no kept detector.
+/// Moving B's logical by A's boundary check must retain that local check.
 #[test]
-fn replacement_keeps_every_single_fault_on_the_observable_detected() -> TestResult {
+fn cleaning_preserves_unflipped_checks_across_patches() -> TestResult {
     let tc = two_patches();
     assert_eq!(
-        discover_detectors(&tc, &[])?.detectors,
+        discover_detectors(&tc, &[], &[])?.detectors,
         vec![
             (vec![0], false),
             (vec![1], false),
@@ -270,7 +280,12 @@ fn replacement_keeps_every_single_fault_on_the_observable_detected() -> TestResu
     ];
     for observable in [vec![5], vec![0, 3, 4, 5]] {
         assert_eq!(
-            discover_detectors(&tc, std::slice::from_ref(&observable))?.detectors,
+            discover_detectors(
+                &tc,
+                std::slice::from_ref(&observable),
+                &[conjugate(12, "X3 X4")]
+            )?
+            .detectors,
             expected,
             "declared {observable:?}"
         );
@@ -278,30 +293,26 @@ fn replacement_keeps_every_single_fault_on_the_observable_detected() -> TestResu
     Ok(())
 }
 
-/// Without a check round every discovered detector is a single readout, and
-/// any replacement leaves a single X undetected; the protecting checks Z0Z1 and
-/// Z1Z2 are not discovered relations, so this is refused, not returned.
 #[test]
-fn an_observable_no_replacement_can_protect_is_refused() {
+fn zero_check_rounds_clean_single_readouts() -> TestResult {
     let mut tc = TickCircuit::new();
     tc.tick().pz(&[0, 1, 2]);
     tc.tick().mz(&[0, 1, 2]);
-    let error = discover_detectors(&tc, &[vec![0]]);
-    assert!(
-        matches!(
-            &error,
-            Err(DetectorDiscoveryError::UndetectableObservableFault {
-                observable: 0,
-                detector,
-                ..
-            }) if detector == &[0]
-        ),
-        "{error:?}"
+    let found = discover_detectors(&tc, &[vec![0]], &[conjugate(1, "X0 X1 X2")])?;
+    assert_eq!(
+        found.detectors,
+        vec![(vec![0, 1], false), (vec![0, 2], false)]
     );
-    if let Err(error) = error {
-        let message = error.to_string();
-        assert!(message.contains("observable 0") && message.contains("supply detectors by hand"));
-    }
+    // An unflipped detector is kept before the cleaned ones but must still be
+    // returned in newest-record order, after them.
+    tc.tick().pz(&[3]);
+    tc.tick().mz(&[3]);
+    let found = discover_detectors(&tc, &[vec![0]], &[conjugate(1, "X0 X1 X2")])?;
+    assert_eq!(
+        found.detectors,
+        vec![(vec![0, 1], false), (vec![0, 2], false), (vec![3], false)]
+    );
+    Ok(())
 }
 
 #[test]
@@ -310,7 +321,7 @@ fn observable_errors_name_bad_values() {
     tc.tick().h(&[0]);
     tc.tick().mz(&[0]);
     tc.tick().mz(&[0]);
-    let nondeterministic = discover_detectors(&tc, &[vec![1], vec![0]]);
+    let nondeterministic = discover_detectors(&tc, &[vec![1], vec![0]], &[]);
     assert!(matches!(
         nondeterministic,
         Err(DetectorDiscoveryError::NonDeterministicObservable {
@@ -332,17 +343,17 @@ fn observable_errors_name_bad_values() {
     tc2.tick().mz(&[0]);
     tc2.tick().mz(&[1]);
     assert!(matches!(
-        discover_detectors(&tc2, &[vec![1, 2]]),
+        discover_detectors(&tc2, &[vec![1, 2]], &[]),
         Err(DetectorDiscoveryError::NonDeterministicObservable {
             observable: 0,
             record: 2
         })
     ));
     assert!(matches!(
-        discover_detectors(&tc, &[vec![]]),
+        discover_detectors(&tc, &[vec![]], &[]),
         Err(DetectorDiscoveryError::EmptyObservable { observable: 0 })
     ));
-    let duplicate = discover_detectors(&tc, &[vec![1], vec![1, 0, 1]]);
+    let duplicate = discover_detectors(&tc, &[vec![1], vec![1, 0, 1]], &[]);
     assert!(matches!(
         duplicate,
         Err(DetectorDiscoveryError::DuplicateRecord {
@@ -350,7 +361,7 @@ fn observable_errors_name_bad_values() {
             record: 1
         })
     ));
-    let error = discover_detectors(&tc, &[vec![usize::MAX]]);
+    let error = discover_detectors(&tc, &[vec![usize::MAX]], &[]);
     assert!(matches!(
         error,
         Err(DetectorDiscoveryError::RecordOutOfRange {
@@ -362,12 +373,10 @@ fn observable_errors_name_bad_values() {
     if let Err(error) = error {
         assert!(error.to_string().contains(&usize::MAX.to_string()));
     }
-    // Completion accepts this parity (record 0's source cancels), but nothing
-    // protects it, so no detector can be replaced for it.
-    assert!(matches!(
-        discover_detectors(&tc, &[vec![0, 1]]),
-        Err(DetectorDiscoveryError::UndetectableObservableFault { observable: 0, .. })
-    ));
+    for observable in [vec![1], vec![0, 1]] {
+        let found = discover_detectors(&tc, &[observable], &[conjugate(2, "X0")]).unwrap();
+        assert_eq!(found.detectors, vec![]);
+    }
 }
 
 #[test]
@@ -382,7 +391,7 @@ fn shared_replay_measurements_and_error_classification() -> TestResult {
     tc.tick().mpz(&[1]);
     tc.tick().mz(&[1]);
     assert_eq!(
-        discover_detectors(&tc, &[])?.detectors,
+        discover_detectors(&tc, &[], &[])?.detectors,
         vec![
             (vec![0], false),
             (vec![0, 1], false),
@@ -393,7 +402,7 @@ fn shared_replay_measurements_and_error_classification() -> TestResult {
     );
     tc.tick().try_add_gate(Gate::t(&[17]))?;
     assert!(matches!(
-        discover_detectors(&tc, &[]),
+        discover_detectors(&tc, &[], &[]),
         Err(DetectorDiscoveryError::MeasurementHistory(
             MeasurementHistoryError::UnsupportedGate(_)
         ))
@@ -411,12 +420,12 @@ fn later_qubits_and_long_gaps_do_not_change_local_relations() -> TestResult {
     }
     tc.tick().mz(&[0]);
     let expected = vec![(vec![0, 1], false)];
-    assert_eq!(discover_detectors(&tc, &[])?.detectors, expected);
+    assert_eq!(discover_detectors(&tc, &[], &[])?.detectors, expected);
     // Ticks after the target measurement are never replayed for it.
     tc.tick().h(&[31]);
     tc.tick().cx(&[(0, 31)]);
     tc.tick().mz(&[31]);
-    assert_eq!(discover_detectors(&tc, &[])?.detectors, expected);
+    assert_eq!(discover_detectors(&tc, &[], &[])?.detectors, expected);
 
     // A high-index qubit first used inside the search window: the purified
     // reference register must cover every qubit the window replays, or this
@@ -426,7 +435,7 @@ fn later_qubits_and_long_gaps_do_not_change_local_relations() -> TestResult {
     tc.tick().mz(&[0]);
     tc.tick().h(&[31]);
     tc.tick().mz(&[0]);
-    assert_eq!(discover_detectors(&tc, &[])?.detectors, expected);
+    assert_eq!(discover_detectors(&tc, &[], &[])?.detectors, expected);
     Ok(())
 }
 
@@ -439,7 +448,7 @@ fn unrecorded_measure_leaked_outcomes_are_hidden_random_sources() -> TestResult 
     // Every suffix after tick 0 turns the leaked outcome into an unobserved
     // random source, so the record is deterministic only from the real input.
     assert_eq!(
-        discover_detectors(&tc, &[])?.detectors,
+        discover_detectors(&tc, &[], &[])?.detectors,
         vec![(vec![0], false)]
     );
     tc.tick_at(0).h(&[1]);
@@ -451,7 +460,7 @@ fn unrecorded_measure_leaked_outcomes_are_hidden_random_sources() -> TestResult 
     // deterministic relative to it.
     assert!(!symbolic_measurement_history(&tc)?.as_slice()[1].is_deterministic);
     assert_eq!(
-        discover_detectors(&tc, &[])?.detectors,
+        discover_detectors(&tc, &[], &[])?.detectors,
         vec![(vec![0], false), (vec![1, 2], false)]
     );
     Ok(())
@@ -470,7 +479,7 @@ fn reset_after_a_measured_control_inside_a_probe_window() -> TestResult {
     tc.tick().cx(&[(0, 1)]);
     tc.tick().pz(&[0]);
     tc.tick().mz(&[1]);
-    let found = discover_detectors(&tc, &[])?;
+    let found = discover_detectors(&tc, &[], &[])?;
     assert_eq!(
         found.detectors,
         vec![(vec![1], false), (vec![0, 1, 2], false)]
@@ -485,46 +494,135 @@ fn reset_after_a_measured_control_inside_a_probe_window() -> TestResult {
     Ok(())
 }
 
-/// Replacing [4] for the first observable leaves the second with only pinned
-/// candidates, although replacing [0] and [4] jointly protects both; the search
-/// must find that choice whatever the declaration order.
-#[test]
-fn replacement_is_chosen_jointly_not_in_declaration_order() -> TestResult {
-    let mut tc = TickCircuit::new();
-    tc.tick().pz(&[0, 1, 2, 3, 4]);
-    tc.tick().mz(&[3]);
-    tc.tick().cx(&[(2, 3)]);
-    tc.tick().cx(&[(0, 1)]);
-    tc.tick().cx(&[(3, 4)]);
-    tc.tick().mz(&[4]);
-    tc.tick().pz(&[4]);
-    tc.tick().cx(&[(1, 2)]);
-    tc.tick().mz(&[0, 1, 2, 3, 4]);
-    let expected = vec![
-        (vec![1], false),
-        (vec![2], false),
-        (vec![3], false),
-        (vec![0, 3, 4, 5], false),
-        (vec![6], false),
-    ];
-    for observables in [vec![vec![4, 5], vec![4, 6]], vec![vec![4, 6], vec![4, 5]]] {
-        assert_eq!(
-            discover_detectors(&tc, &observables)?.detectors,
-            expected,
-            "declared {observables:?}"
-        );
+fn conjugate(before_tick: usize, pauli: &str) -> Conjugate {
+    Conjugate {
+        before_tick,
+        pauli: pauli.parse().unwrap(),
     }
-    Ok(())
 }
 
-/// Replacement needs only record effects, so the circuit's own detector and
-/// observable metadata, stale or not, must not block discovery.
+fn c4_conjugates() -> [Conjugate; 2] {
+    [conjugate(4, "X1 X2"), conjugate(4, "X0 X1")]
+}
+
+/// Every successful declaration is also checked by independent concrete simulation.
+fn discover_detectors(
+    tc: &TickCircuit,
+    observables: &[Vec<usize>],
+    conjugates: &[Conjugate],
+) -> Result<DiscoveredDetectors, DetectorDiscoveryError> {
+    let found = discover(tc, observables, conjugates)?;
+    let num_qubits = tc
+        .all_qubits()
+        .iter()
+        .map(|q| q.index() + 1)
+        .max()
+        .unwrap_or(0);
+    for (i, operator) in conjugates.iter().enumerate() {
+        let mut injected = tc.clone();
+        let mut tick = injected.insert_tick(operator.before_tick);
+        for (pauli, qubit) in operator.pauli.iter_pairs() {
+            match pauli {
+                Pauli::X => {
+                    tick.x(&[qubit]);
+                }
+                Pauli::Y => {
+                    tick.y(&[qubit]);
+                }
+                Pauli::Z => {
+                    tick.z(&[qubit]);
+                }
+                Pauli::I => {}
+            }
+        }
+        for _ in 0..32 {
+            let shots = CircuitExecutor::new(&injected)
+                .run(&mut SparseStab::new(num_qubits))
+                .unwrap();
+            for (records, reference) in &found.detectors {
+                assert_eq!(
+                    records.iter().fold(false, |p, &r| p ^ shots[r].outcome),
+                    *reference,
+                    "conjugate {i} fired detector {records:?}"
+                );
+            }
+            for (j, (records, reference)) in found.observables.iter().enumerate() {
+                assert_eq!(
+                    records.iter().fold(false, |p, &r| p ^ shots[r].outcome),
+                    *reference ^ (i == j),
+                    "conjugate {i}, observable {j}"
+                );
+            }
+        }
+    }
+    Ok(found)
+}
+
 #[test]
-fn replacement_ignores_the_circuits_own_definitions() -> TestResult {
-    let mut tc = c4_swapout();
-    let observables = [vec![8, 9], vec![9, 10]];
-    let expected = discover_detectors(&tc, &observables)?;
-    tc.set_meta("num_measurements", Attribute::String("99".into()));
-    assert_eq!(discover_detectors(&tc, &observables)?, expected);
+fn conjugate_errors_name_values_and_follow_validation_order() {
+    let mut tc = TickCircuit::new();
+    tc.tick().pz(&[0, 1]);
+    tc.tick().mz(&[0, 1]);
+    let observables = [vec![0], vec![1]];
+    assert!(matches!(
+        discover_detectors(&tc, &observables, &[]),
+        Err(DetectorDiscoveryError::ConjugateCountMismatch {
+            observables: 2,
+            conjugates: 0
+        })
+    ));
+    assert!(matches!(
+        discover_detectors(&tc, &[], &[conjugate(1, "X0")]),
+        Err(DetectorDiscoveryError::ConjugateCountMismatch {
+            observables: 0,
+            conjugates: 1
+        })
+    ));
+    // Validate all ticks before any qubits, and all qubits before pairing.
+    assert!(matches!(
+        discover_detectors(&tc, &observables, &[conjugate(1, "X2"), conjugate(2, "X1")]),
+        Err(DetectorDiscoveryError::ConjugateTickOutOfRange {
+            conjugate: 1,
+            before_tick: 2,
+            num_ticks: 2
+        })
+    ));
+    assert!(matches!(
+        discover_detectors(&tc, &observables, &[conjugate(1, "Z0"), conjugate(1, "X2")]),
+        Err(DetectorDiscoveryError::ConjugateQubitOutOfRange {
+            conjugate: 1,
+            qubit: 2,
+            num_qubits: 2
+        })
+    ));
+    for (pauli, expected) in [("Z0", vec![]), ("X0 X1", vec![0, 1]), ("X1", vec![1])] {
+        let error = discover_detectors(
+            &tc,
+            &observables,
+            &[conjugate(1, pauli), conjugate(1, "X1")],
+        );
+        assert!(
+            matches!(error, Err(DetectorDiscoveryError::ConjugatePairing { conjugate: 0, flipped_observables })
+            if flipped_observables == expected)
+        );
+    }
+    assert!(
+        matches!(discover_detectors(&tc, &[vec![0], vec![0]], &[conjugate(1, "X0"), conjugate(1, "X0")]),
+        Err(DetectorDiscoveryError::ConjugatePairing { conjugate: 0, flipped_observables }) if flipped_observables == [0, 1])
+    );
+}
+
+#[test]
+fn cleaning_xors_nonzero_observable_references_and_ignores_phase() -> TestResult {
+    let mut tc = TickCircuit::new();
+    tc.tick().pz(&[0, 1, 2]);
+    tc.tick().x(&[0]);
+    tc.tick().mz(&[0, 1, 2]);
+    let found = discover_detectors(&tc, &[vec![0]], &[conjugate(2, "-XXX")])?;
+    assert_eq!(found.observables, vec![(vec![0], true)]);
+    assert_eq!(
+        found.detectors,
+        vec![(vec![0, 1], true), (vec![0, 2], true)]
+    );
     Ok(())
 }

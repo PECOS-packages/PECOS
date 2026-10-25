@@ -5,28 +5,35 @@
 
 //! Code-agnostic detector discovery from latest deterministic tick suffixes.
 
-use std::cmp::Reverse;
 use std::collections::BTreeMap;
 
-use pecos_core::BitSet;
-use pecos_core::gate_type::GateType;
+use pecos_core::{BitSet, Pauli, PauliString};
 use pecos_quantum::TickCircuit;
-use pecos_simulators::SymbolicSparseStab;
 use pecos_simulators::symbolic_sparse_stab::{MeasurementHistory, SymbolicMeasurementResult};
+use pecos_simulators::{BitmaskPauliProp, SymbolicSparseStab};
 
 use super::fault_sampler::{
-    FaultCatalog, FaultCatalogError, FaultLocation, MeasurementHistoryError,
-    measurement_history_num_qubits, record_effect_fault_catalog, replay_measurement_history,
-    symbolic_measurement_history,
+    MeasurementHistoryError, flatten_tick_circuit, measurement_history_num_qubits,
+    propagate_forward, replay_measurement_history, symbolic_measurement_history,
 };
 
 /// Record parities and their noiseless reference values.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct DiscoveredDetectors {
-    /// Ascending absolute records and reference, ordered by newest record.
+    /// Ascending absolute records and reference, ordered by newest record after cleaning.
     pub detectors: Vec<(Vec<usize>, bool)>,
     /// Completed observables, with ascending absolute records, in input order.
     pub observables: Vec<(Vec<usize>, bool)>,
+}
+
+/// A conjugate logical applied just before `before_tick` (1 means after tick 0).
+/// Its phase is ignored; only its Pauli support affects record flips.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Conjugate {
+    /// Tick boundary at which the operator is injected, less than `num_ticks`.
+    pub before_tick: usize,
+    /// Logical operator conjugate to the corresponding declared observable.
+    pub pauli: PauliString,
 }
 
 /// Invalid observable declarations or a circuit that cannot be replayed.
@@ -53,28 +60,39 @@ pub enum DetectorDiscoveryError {
         "observable {observable} is non-deterministic: declared record {record} is a random source of its own parity"
     )]
     NonDeterministicObservable { observable: usize, record: usize },
-    /// The structural single-fault catalog, used to choose replaced detectors,
-    /// cannot be built for this circuit.
-    #[error("{0}")]
-    FaultCatalog(#[from] FaultCatalogError),
-    /// No joint choice of replaced detectors exists: every detector this
-    /// observable could replace is the only kept detector that some single fault
-    /// on a declared observable flips.
+    /// Every observable needs exactly one conjugate.
     #[error(
-        "observable {observable} cannot replace any detector it is built from without leaving a \
-         single fault undetected: a fault on {gate_type:?} at tick {tick}, qubits {qubits:?}, flips \
-         a declared observable and, of the kept detectors, only {detector:?}. Either no check \
-         protects the observable against this fault, its protecting checks are not relations of \
-         single deterministic records (for example, no check round before the readout), or it \
-         differs from another declared observable by a check; add such a check round, declare \
-         independent observables, or supply detectors by hand"
+        "{observables} observables but {conjugates} conjugates; supply one conjugate per observable"
     )]
-    UndetectableObservableFault {
-        observable: usize,
-        tick: usize,
-        gate_type: GateType,
-        qubits: Vec<usize>,
-        detector: Vec<usize>,
+    ConjugateCountMismatch {
+        observables: usize,
+        conjugates: usize,
+    },
+    /// Injection must precede a tick in the circuit.
+    #[error(
+        "conjugate {conjugate} before_tick {before_tick} is out of range for {num_ticks} ticks; choose a boundary less than {num_ticks}"
+    )]
+    ConjugateTickOutOfRange {
+        conjugate: usize,
+        before_tick: usize,
+        num_ticks: usize,
+    },
+    /// Pauli support must be within the circuit's qubit register.
+    #[error(
+        "conjugate {conjugate} qubit {qubit} is out of range for {num_qubits} qubits; use qubits less than {num_qubits}"
+    )]
+    ConjugateQubitOutOfRange {
+        conjugate: usize,
+        qubit: usize,
+        num_qubits: usize,
+    },
+    /// A conjugate must flip precisely its own completed observable.
+    #[error(
+        "conjugate {conjugate} flips observables {flipped_observables:?}; supply a logical conjugate that flips only observable {conjugate}"
+    )]
+    ConjugatePairing {
+        conjugate: usize,
+        flipped_observables: Vec<usize>,
     },
 }
 
@@ -82,12 +100,22 @@ pub enum DetectorDiscoveryError {
 ///
 /// `observables[i]` is the set of absolute terminal readout records for observable
 /// `i`, in the same record order as [`symbolic_measurement_history`]. Observables
-/// are completed using the full history's random sources. Each independent
-/// observable replaces one detector of its expansion over the detectors. The
-/// replaced detectors are chosen jointly so that every structural single fault
-/// that flips a declared observable still flips a kept detector; each observable
-/// prefers, in declaration order, the longest window, then the newest record. **A deterministic logical parity that is not declared
-/// becomes a detector.** No detector is added to a completed observable.
+/// are completed using the full history's random sources. `conjugates[i]` is
+/// propagated from its tick boundary and must flip only completed observable i.
+/// This pairing check also rejects dependent observables. Each canonical detector
+/// is cleaned by taking the XOR with the completed observables whose conjugates flip it,
+/// including their references. Independent cleaned detectors are retained, giving
+/// priority to unchanged canonical detectors to preserve locality.
+/// **Undeclared deterministic logical parities still become detectors.**
+///
+/// # Preconditions
+///
+/// Each conjugate must be a genuine logical operator: it commutes with every
+/// check the circuit measures and anticommutes with its own observable only.
+/// Records alone cannot identify logical content or verify this precondition.
+/// A wrong conjugate can pass pairing and silently lower the fault distance.
+/// The Pauli phase is ignored. With no observables, supply no conjugates; all
+/// canonical detectors are returned.
 ///
 /// Full-history determinism uses the real implicit |0^n> initial state. Each
 /// detector uses the latest tick boundary at which its newest record remains
@@ -98,18 +126,18 @@ pub enum DetectorDiscoveryError {
 /// # Errors
 ///
 /// Returns an actionable [`DetectorDiscoveryError`] for an empty, out-of-range,
-/// duplicated, or non-deterministic observable, or one that cannot replace a
-/// detector without leaving a single fault undetected; a shared
-/// [`MeasurementHistoryError`] if replay cannot represent the circuit; or a
-/// [`FaultCatalogError`] if observables are declared and the single-fault
-/// catalog cannot be built.
+/// duplicated, or non-deterministic observable; then a conjugate count mismatch,
+/// out-of-range tick, out-of-range qubit, or invalid pairing, in that order.
+/// Returns a shared [`MeasurementHistoryError`] if replay cannot represent the circuit.
 pub fn discover_detectors(
     tc: &TickCircuit,
     observables: &[Vec<usize>],
+    conjugates: &[Conjugate],
 ) -> Result<DiscoveredDetectors, DetectorDiscoveryError> {
     let full = symbolic_measurement_history(tc)?;
     let completed = complete_observables(&full, observables)?;
     let num_qubits = measurement_history_num_qubits(tc);
+    let flips = conjugate_record_flips(tc, conjugates, &completed, num_qubits)?;
     let mut bases = Vec::with_capacity(tc.num_ticks());
     let mut record_ticks = Vec::with_capacity(full.len());
     for (tick_idx, tick) in tc.iter_ticks() {
@@ -125,8 +153,8 @@ pub fn discover_detectors(
         full.len(),
         "record-consuming gates and replayed record columns must agree"
     );
-    // Newest record -> (records, reference, ticks spanned by the window).
-    let mut detectors: BTreeMap<usize, (Vec<usize>, bool, usize)> = BTreeMap::new();
+    // Canonical order is ascending newest record before cleaning.
+    let mut detectors = Vec::new();
     for result in full.iter().filter(|result| result.is_deterministic) {
         let j = result.index;
         let end = record_ticks[j];
@@ -134,16 +162,10 @@ pub fn discover_detectors(
         let history = suffix.as_ref().unwrap_or(&full);
         let base = bases[start];
         let (records, reference) = canonical_relation(history, j - base, base);
-        detectors.insert(j, (records, reference, end - start));
-    }
-    for j in replaced_detectors(tc, &detectors, &completed)? {
-        detectors.remove(&j);
+        detectors.push((records, reference));
     }
     Ok(DiscoveredDetectors {
-        detectors: detectors
-            .into_values()
-            .map(|(records, reference, _)| (records, reference))
-            .collect(),
+        detectors: clean_detectors(detectors, &completed, &flips),
         observables: completed,
     })
 }
@@ -203,189 +225,120 @@ fn complete_observables(
         .collect()
 }
 
-/// Choose the detector each independent observable replaces, so that no
-/// observable lies in the span of the kept detectors.
-///
-/// Which member of an observable's expansion is the logical one is not
-/// determined by the records alone, so the choice is checked against the
-/// circuit's structural single faults: a detector that is the only kept detector
-/// flipped by some fault on a declared observable must stay. The joint choice is
-/// searched depth-first in declaration order, trying each observable's
-/// candidates least local first (longest window, then newest record), so the
-/// first choice is kept whenever it leads to a full assignment.
-fn replaced_detectors(
+fn conjugate_record_flips(
     tc: &TickCircuit,
-    detectors: &BTreeMap<usize, (Vec<usize>, bool, usize)>,
+    conjugates: &[Conjugate],
     completed: &[(Vec<usize>, bool)],
-) -> Result<Vec<usize>, DetectorDiscoveryError> {
-    if completed.is_empty() {
-        return Ok(Vec::new());
+    num_qubits: usize,
+) -> Result<Vec<BitSet>, DetectorDiscoveryError> {
+    if completed.len() != conjugates.len() {
+        return Err(DetectorDiscoveryError::ConjugateCountMismatch {
+            observables: completed.len(),
+            conjugates: conjugates.len(),
+        });
     }
-    let catalog = record_effect_fault_catalog(tc)?;
-    let exposures = observable_fault_exposures(&catalog, detectors, completed);
-    let expansions: Vec<BitSet> = completed
-        .iter()
-        .map(|(records, _)| expansion_over_detectors(detectors, records))
-        .collect();
-    let mut chosen = Vec::new();
-    let mut refusal = None;
-    if choose_replacements(
-        0,
-        &expansions,
-        &exposures,
-        detectors,
-        &mut chosen,
-        &mut refusal,
-    ) {
-        Ok(chosen.into_iter().map(|(detector, _)| detector).collect())
-    } else {
-        Err(refusal.expect("a failed search records the dead end that ended it"))
-    }
-}
-
-/// Every detector ends at a distinct newest record, so reducing a deterministic
-/// parity by newest record expands it exactly over the detectors.
-fn expansion_over_detectors(
-    detectors: &BTreeMap<usize, (Vec<usize>, bool, usize)>,
-    records: &[usize],
-) -> BitSet {
-    let mut vector: BitSet = records.iter().copied().collect();
-    let mut expansion = BitSet::new();
-    while let Some(newest) = vector.iter().last() {
-        let (relation, _, _) = detectors.get(&newest).expect(
-            "a deterministic parity's newest record is deterministic, so a detector ends there",
-        );
-        for &record in relation {
-            vector.toggle(record);
-        }
-        expansion.insert(newest);
-    }
-    expansion
-}
-
-/// Assign replaced detectors to observables `observable..`, given `chosen`
-/// (each earlier replaced detector with its observable's reduced expansion).
-/// Earlier observables stand in for the detectors they replaced. Records the
-/// first dead end in `refusal` and returns whether a full assignment exists.
-fn choose_replacements(
-    observable: usize,
-    expansions: &[BitSet],
-    exposures: &[(&FaultLocation, BitSet)],
-    detectors: &BTreeMap<usize, (Vec<usize>, bool, usize)>,
-    chosen: &mut Vec<(usize, BitSet)>,
-    refusal: &mut Option<DetectorDiscoveryError>,
-) -> bool {
-    let Some(original) = expansions.get(observable) else {
-        return true;
-    };
-    let mut expansion = original.clone();
-    for (detector, earlier) in chosen.iter() {
-        if expansion.contains(*detector) {
-            expansion ^= earlier;
-        }
-    }
-    if expansion.is_empty() {
-        // Dependent on earlier observables: nothing to replace.
-        return choose_replacements(
-            observable + 1,
-            expansions,
-            exposures,
-            detectors,
-            chosen,
-            refusal,
-        );
-    }
-    let replaced: BitSet = chosen.iter().map(|(detector, _)| *detector).collect();
-    // A fault seen by exactly one kept detector pins that detector.
-    let mut pinned: BTreeMap<usize, &FaultLocation> = BTreeMap::new();
-    for (location, flipped) in exposures {
-        let mut kept = flipped.iter().filter(|&k| !replaced.contains(k));
-        if let (Some(j), None) = (kept.next(), kept.next()) {
-            pinned.entry(j).or_insert(location);
-        }
-    }
-    let rank = |&j: &usize| (detectors[&j].2, j);
-    let mut candidates: Vec<usize> = expansion
-        .iter()
-        .filter(|j| !pinned.contains_key(j))
-        .collect();
-    if candidates.is_empty() {
-        if refusal.is_none() {
-            let best = expansion
-                .iter()
-                .max_by_key(rank)
-                .expect("the expansion is not empty");
-            let location = pinned[&best];
-            *refusal = Some(DetectorDiscoveryError::UndetectableObservableFault {
-                observable,
-                tick: location.tick,
-                gate_type: location.gate_type,
-                qubits: location.qubits.clone(),
-                detector: detectors[&best].0.clone(),
+    for (conjugate, operator) in conjugates.iter().enumerate() {
+        if operator.before_tick >= tc.num_ticks() {
+            return Err(DetectorDiscoveryError::ConjugateTickOutOfRange {
+                conjugate,
+                before_tick: operator.before_tick,
+                num_ticks: tc.num_ticks(),
             });
         }
-        return false;
     }
-    candidates.sort_by_key(|j| Reverse(rank(j)));
-    for detector in candidates {
-        chosen.push((detector, expansion.clone()));
-        if choose_replacements(
-            observable + 1,
-            expansions,
-            exposures,
-            detectors,
-            chosen,
-            refusal,
-        ) {
-            return true;
+    for (conjugate, operator) in conjugates.iter().enumerate() {
+        for (_, qubit) in operator.pauli.iter_pairs() {
+            if qubit.index() >= num_qubits {
+                return Err(DetectorDiscoveryError::ConjugateQubitOutOfRange {
+                    conjugate,
+                    qubit: qubit.index(),
+                    num_qubits,
+                });
+            }
         }
-        chosen.pop();
     }
-    false
+    let (gates, measurements) = flatten_tick_circuit(tc);
+    conjugates
+        .iter()
+        .enumerate()
+        .map(|(conjugate, operator)| {
+            let mut prop = BitmaskPauliProp::new();
+            for (pauli, qubit) in operator.pauli.iter_pairs() {
+                match pauli {
+                    Pauli::X => prop.track_x(&[qubit.index()]),
+                    Pauli::Y => prop.track_y(&[qubit.index()]),
+                    Pauli::Z => prop.track_z(&[qubit.index()]),
+                    Pauli::I => {}
+                }
+            }
+            let start = gates.partition_point(|gate| gate.tick < operator.before_tick);
+            let flipped: BitSet = propagate_forward(&mut prop, start, &gates, &measurements)
+                .into_iter()
+                .collect();
+            let flipped_observables: Vec<_> = completed
+                .iter()
+                .enumerate()
+                .filter_map(|(i, (records, _))| flips_parity(&flipped, records).then_some(i))
+                .collect();
+            if flipped_observables != [conjugate] {
+                return Err(DetectorDiscoveryError::ConjugatePairing {
+                    conjugate,
+                    flipped_observables,
+                });
+            }
+            Ok(flipped)
+        })
+        .collect()
 }
 
-/// Detectors flipped by each structural single fault that flips an observable.
-fn observable_fault_exposures<'a>(
-    catalog: &'a FaultCatalog,
-    detectors: &BTreeMap<usize, (Vec<usize>, bool, usize)>,
+fn flips_parity(flipped: &BitSet, records: &[usize]) -> bool {
+    records
+        .iter()
+        .fold(false, |parity, &record| parity ^ flipped.contains(record))
+}
+
+fn clean_detectors(
+    detectors: Vec<(Vec<usize>, bool)>,
     completed: &[(Vec<usize>, bool)],
-) -> Vec<(&'a FaultLocation, BitSet)> {
-    let mut record_detectors: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
-    for (&j, (records, _, _)) in detectors {
-        for &record in records {
-            record_detectors.entry(record).or_default().push(j);
-        }
-    }
-    let mut record_observables: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
-    for (observable, (records, _)) in completed.iter().enumerate() {
-        for &record in records {
-            record_observables
-                .entry(record)
-                .or_default()
-                .push(observable);
-        }
-    }
-    let toggled = |index: &BTreeMap<usize, Vec<usize>>, flipped: &[usize]| {
-        let mut set = BitSet::new();
-        for record in flipped {
-            for &member in index.get(record).into_iter().flatten() {
-                set.toggle(member);
+    flips: &[BitSet],
+) -> Vec<(Vec<usize>, bool)> {
+    let mut unchanged = Vec::new();
+    let mut cleaned = Vec::new();
+    for (records, mut reference) in detectors {
+        let mut vector: BitSet = records.iter().copied().collect();
+        let mut changed = false;
+        for (flipped, (observable, obs_reference)) in flips.iter().zip(completed) {
+            if flips_parity(flipped, &records) {
+                changed = true;
+                for &record in observable {
+                    vector.toggle(record);
+                }
+                reference ^= obs_reference;
             }
         }
-        set
-    };
-    let mut exposures = Vec::new();
-    for location in &catalog.locations {
-        for fault in &location.faults {
-            if !toggled(&record_observables, &fault.affected_measurements).is_empty() {
-                exposures.push((
-                    location,
-                    toggled(&record_detectors, &fault.affected_measurements),
-                ));
+        if changed {
+            cleaned.push((vector.iter().collect(), reference));
+        } else {
+            unchanged.push((records, reference));
+        }
+    }
+    let mut basis: BTreeMap<usize, BitSet> = BTreeMap::new();
+    let mut kept = Vec::new();
+    // Seed with every unflipped canonical detector before considering cleaned ones.
+    for (records, reference) in unchanged.into_iter().chain(cleaned) {
+        let mut vector: BitSet = records.iter().copied().collect();
+        while let Some(pivot) = vector.iter().next() {
+            if let Some(row) = basis.get(&pivot) {
+                vector ^= row;
+            } else {
+                basis.insert(pivot, vector);
+                kept.push((records, reference));
+                break;
             }
         }
     }
-    exposures
+    kept.sort_by_key(|(records, _)| records.last().copied());
+    kept
 }
 
 /// Search backwards exponentially, then bisect the deterministic/unknown bracket.

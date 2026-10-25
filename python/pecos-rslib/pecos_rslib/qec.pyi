@@ -32,11 +32,27 @@ class DiscoveredDetectors:
     @property
     def observables(self) -> list[tuple[list[int], int]]: ...
 
-def discover_detectors(tc: TickCircuit, observables: Sequence[Sequence[int]] = ()) -> DiscoveredDetectors:
-    """Discover detectors; undeclared deterministic logical parities become detectors.
+def discover_detectors(
+    tc: TickCircuit,
+    observables: Sequence[Sequence[int]] = (),
+    conjugates: Sequence[tuple[int, str]] = (),
+) -> DiscoveredDetectors:
+    """Discover logical-free detectors relative to the supplied conjugates.
 
-    Each declared observable replaces a detector so that every single fault on it
-    stays detected; an observable with no such detector raises ``ValueError``.
+    Each observable requires a (before_tick, pauli) conjugate. The string is
+    parsed as a sparse ("X0 X3") or dense PauliString; phase is ignored.
+    before_tick=1 means after tick 0. Pairing requires each conjugate to flip
+    only its own completed observable and rejects dependent observables.
+    Cleaning XORs completed observables and their references into detectors;
+    independent detectors are selected with unflipped canonical ones preferred,
+    then sorted by their newest record. Undeclared logicals remain detectors.
+
+    Precondition: each conjugate must be a genuine logical, commuting with every
+    measured check and anticommuting with its own observable only. Records alone
+    cannot identify logical content or verify this; a wrong conjugate may pass
+    pairing and silently lower the fault distance. Invalid declarations, counts,
+    tick/qubit bounds, pairing and Pauli strings raise ValueError; conjugate
+    arguments are parsed before the observables are validated.
     """
     ...
 

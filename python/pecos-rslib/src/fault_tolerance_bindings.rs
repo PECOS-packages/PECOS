@@ -8233,16 +8233,28 @@ impl PyDiscoveredDetectors {
     }
 }
 
-/// Discover Clifford circuit detectors and complete declared terminal observables.
-/// Undeclared deterministic logical parities become detectors. Each declared
-/// observable replaces a detector so that every single fault on it stays
-/// detected; an observable with no such detector raises `ValueError`.
+/// Discover Clifford detectors, completing observables with random-source records.
+/// Supply one conjugate (before_tick, pauli_string) per observable. The string
+/// uses `PauliString`'s sparse ("X0 X3") or dense syntax; its phase is ignored.
+/// `before_tick=1` injects after tick 0. Each conjugate must flip only its own
+/// completed observable; pairing also rejects dependent observables.
+/// Detectors are cleaned by taking the XOR with the observables whose conjugates flip them,
+/// including reference bits, then selected independently with unflipped detectors
+/// preferred. Undeclared deterministic logical parities still become detectors.
+///
+/// Precondition: each conjugate is a genuine logical operator, commuting with
+/// every measured check and anticommuting with its own observable only. Records
+/// alone cannot identify logical content or verify this: a wrong conjugate can
+/// pass pairing and silently lower the fault distance.
+/// Invalid observables, counts, tick/qubit bounds, pairing or strings raise `ValueError`;
+/// conjugate arguments are parsed before the observables are validated.
 #[pyfunction]
-#[pyo3(signature = (tc, observables = Vec::new()), text_signature = "(tc, observables=())")]
+#[pyo3(signature = (tc, observables = Vec::new(), conjugates = Vec::new()), text_signature = "(tc, observables=(), conjugates=())")]
 fn discover_detectors(
     py: Python<'_>,
     tc: &PyTickCircuit,
     observables: Vec<Vec<Py<PyAny>>>,
+    conjugates: Vec<(Py<PyAny>, String)>,
 ) -> PyResult<PyDiscoveredDetectors> {
     let observables = observables
         .iter()
@@ -8260,9 +8272,26 @@ fn discover_detectors(
                 .collect::<PyResult<Vec<_>>>()
         })
         .collect::<PyResult<Vec<_>>>()?;
-    let discovered =
-        pecos_qec::fault_tolerance::detector_discovery::discover_detectors(&tc.inner, &observables)
-            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+    let conjugates = conjugates.iter().enumerate().map(|(conjugate, (tick, pauli))| {
+        let Ok(before_tick) = tick.extract::<usize>(py) else {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "conjugate {conjugate} before_tick {} must be a nonnegative integer that fits a tick index",
+                tick.bind(py).repr()?
+            )));
+        };
+        let pauli = pauli.parse::<pecos_core::PauliString>().map_err(|error| {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "conjugate {conjugate} pauli {pauli:?} is invalid: {error}; supply a sparse or dense Pauli string"
+            ))
+        })?;
+        Ok(pecos_qec::fault_tolerance::detector_discovery::Conjugate { before_tick, pauli })
+    }).collect::<PyResult<Vec<_>>>()?;
+    let discovered = pecos_qec::fault_tolerance::detector_discovery::discover_detectors(
+        &tc.inner,
+        &observables,
+        &conjugates,
+    )
+    .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
     let convert = |relations: Vec<(Vec<usize>, bool)>| {
         relations
             .into_iter()

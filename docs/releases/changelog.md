@@ -6,6 +6,17 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- `pecos.qec.discover_detectors(tc, observables=())` (Rust:
+  `pecos_qec::fault_tolerance::detector_discovery::discover_detectors`) finds the
+  detectors of a Clifford `TickCircuit` without code metadata. Each detector is
+  the relation of a deterministic record within the latest tick suffix in which
+  that record stays deterministic from an unknown input. Declared observables are
+  completed with random-source records. Each replaces one detector it is built
+  from, chosen so that every structural single fault that flips a declared
+  observable still flips a kept detector; an observable for which no such
+  detector exists is refused with an error naming the undetected fault. A
+  deterministic logical parity that is not declared becomes a detector.
+
 - `SymbolicSparseStab` and `SymbolicSparseStabVecSet` reset a qubit that is
   entangled with others instead of postselecting it (#1360). Its partners now
   carry the reset's hidden random outcome, so a Bell partner measured later is

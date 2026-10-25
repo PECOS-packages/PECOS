@@ -46,9 +46,14 @@ def test_surface_memory_matches_hand_detectors(distance: int, basis: str, rounds
     assert isinstance(found, DiscoveredDetectors)
     assert isinstance(found.detectors, list)
     assert isinstance(found.observables, list)
-    assert {tuple(records) for records, _ in found.detectors} == {
-        tuple(sorted(entry["measurements"])) for entry in definitions["detectors"]
-    }
+    hand = {tuple(sorted(entry["measurements"])) for entry in definitions["detectors"]}
+    assert {tuple(records) for records, _ in found.detectors} == hand
+    # The observable times any detector it overlaps is an equivalent representative
+    # and must replace the same detector.
+    for records in [records for records in hand if set(records) & set(observables[0])]:
+        alternative = sorted(set(observables[0]) ^ set(records))
+        moved = discover_detectors(tc, [alternative])
+        assert {tuple(found_records) for found_records, _ in moved.detectors} == hand, alternative
     assert len(found.detectors) == len(definitions["detectors"])
     assert [records for records, _ in found.observables] == observables
     assert [max(records) for records, _ in found.detectors] == sorted(max(records) for records, _ in found.detectors)
@@ -81,11 +86,13 @@ def test_binding_defaults_sequences_and_errors() -> None:
     tc.tick().x([0])
     tc.tick().mz([0])
     assert discover_detectors(tc).detectors == [([0, 1], 1)]
-    declared = discover_detectors(tc, ((1,),))
-    assert declared.detectors == []
-    assert declared.observables == [([0, 1], 1)]
+    # Nothing protects this observable, so no detector can be replaced for it.
+    with pytest.raises(ValueError, match="observable 0 cannot replace any detector"):
+        discover_detectors(tc, ((1,),))
     with pytest.raises(ValueError, match="observable 1 is non-deterministic: declared record 0"):
         discover_detectors(tc, ((1,), (0,)))
+    with pytest.raises(ValueError, match="observable 0 lists record 1 more than once"):
+        discover_detectors(tc, ((1, 1),))
     with pytest.raises(ValueError, match="observable 0 is empty"):
         discover_detectors(tc, ((),))
     with pytest.raises(ValueError, match="observable 0 record 2 is out of range for 2 records"):

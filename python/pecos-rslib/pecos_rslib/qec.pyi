@@ -33,7 +33,11 @@ class DiscoveredDetectors:
     def observables(self) -> list[tuple[list[int], int]]: ...
 
 def discover_detectors(tc: TickCircuit, observables: Sequence[Sequence[int]] = ()) -> DiscoveredDetectors:
-    """Discover detectors; undeclared deterministic logical parities become detectors."""
+    """Discover detectors; undeclared deterministic logical parities become detectors.
+
+    Each declared observable replaces a detector so that every single fault on it
+    stays detected; an observable with no such detector raises ``ValueError``.
+    """
     ...
 
 class BivariateBicycleCode:

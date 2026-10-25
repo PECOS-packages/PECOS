@@ -108,7 +108,7 @@ from .audit_runner import _curated_cases  # noqa: TID252
 # LLVM text backslash-escapes embedded quotes, so a quote-bearing
 # fragment would not match; the bare identifier/head is stable.
 _EXPECTED_BUILD_FAILED: dict[str, tuple[str, str]] = {
-    "docs.for_loopvar_symbolic": ("AttributeError", "SymbolicQubit"),
+    "docs.for_loopvar_symbolic": ("ValueError", "loop-variable qubit indices are not supported"),
     # Angle-first SLR API: `docs.rotation_rx` was BUILD_FAILED only
     # because the doc-test probe used the malformed `RX(q, 0.5)` form
     # (0.5 treated as a stray qarg). With `RX(theta, q)` the probe is

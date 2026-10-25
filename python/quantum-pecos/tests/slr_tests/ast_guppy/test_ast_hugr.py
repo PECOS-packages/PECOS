@@ -114,30 +114,22 @@ def test_angle_first_misuse_fails_loud_at_call() -> None:
 
 
 def test_codegen_arity_guard_rejects_malformed_param_gate() -> None:
-    # Even if a malformed
-    # parameterized GateOp reaches a codegen from a non-SLR path
-    # (the SLR `__call__` guard above blocks the user-facing route),
-    # QIR and QASM must FAIL LOUD on too-few-targets rather than
-    # silently emitting no operation (the pre-fold behavior: the
-    # single-qubit emit loop iterated zero targets; the two-qubit
-    # path was gated on `len(targets) >= 2`; the QIR decomposition
-    # path raised a raw IndexError).
+    # Multi-qubit arity is enforced by GateOp itself, including non-SLR
+    # producers. Single-qubit parameterized gates retain their codegen guard.
     from pecos.slr.ast.codegen.qasm import AstToQasm
     from pecos.slr.ast.codegen.qir import AstToQir
     from pecos.slr.ast.nodes import GateKind, GateOp, LiteralExpr, SlotRef
 
     one = (SlotRef(allocator="q", index=0),)
-    malformed = [
-        ("RX", GateOp(gate=GateKind.RX, targets=(), params=(LiteralExpr(value=0.5),))),
-        ("RZZ", GateOp(gate=GateKind.RZZ, targets=one, params=(LiteralExpr(value=0.5),))),
-        ("CRX", GateOp(gate=GateKind.CRX, targets=one, params=(LiteralExpr(value=0.5),))),
-        ("CRZ", GateOp(gate=GateKind.CRZ, targets=one, params=(LiteralExpr(value=0.5),))),
-    ]
-    for name, node in malformed:
-        with pytest.raises(NotImplementedError, match=f"QIR codegen: parameterized gate {name!r}"):
-            AstToQir()._process_gate(node)  # noqa: SLF001
-        with pytest.raises(NotImplementedError, match=f"QASM codegen: parameterized gate {name!r}"):
-            AstToQasm().visit_gate(node)
+    for kind in (GateKind.RZZ, GateKind.CRX, GateKind.CRZ):
+        with pytest.raises(ValueError, match=rf"{kind.name} expects 2 qubit\(s\), got 1"):
+            GateOp(gate=kind, targets=one, params=(LiteralExpr(value=0.5),))
+
+    node = GateOp(gate=GateKind.RX, targets=(), params=(LiteralExpr(value=0.5),))
+    with pytest.raises(NotImplementedError, match="QIR codegen: parameterized gate 'RX'"):
+        AstToQir()._process_gate(node)  # noqa: SLF001
+    with pytest.raises(NotImplementedError, match="QASM codegen: parameterized gate 'RX'"):
+        AstToQasm().visit_gate(node)
 
 
 def test_hugr_accepts_inline_measure_creg_result() -> None:

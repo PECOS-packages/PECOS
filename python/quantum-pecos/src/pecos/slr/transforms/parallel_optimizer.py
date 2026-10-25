@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pecos.slr.fund import Node
 
+from pecos.slr._qubit_args import expand_qubit_args, qubit_key
 from pecos.slr.block import Block
 from pecos.slr.cond_block import If, Repeat
 from pecos.slr.loop_block import For
@@ -250,27 +251,13 @@ class ParallelOptimizer:
 
     def _get_qubits(self, op: Node) -> set:
         """Extract the set of qubits an operation acts on."""
-        qubits = set()
-
-        # Handle quantum gates with qargs
         if hasattr(op, "qargs"):
-            for qarg in op.qargs:
-                qubits.add(self._qubit_to_key(qarg))
-
-        # Handle measurements
+            args = op.qargs
         elif hasattr(op, "qin"):
-            for q in op.qin:
-                qubits.add(self._qubit_to_key(q))
-
-        return qubits
-
-    def _qubit_to_key(self, qubit) -> tuple:
-        """Convert a qubit to a hashable key."""
-        if hasattr(qubit, "reg") and hasattr(qubit, "index"):
-            return (qubit.reg.sym, qubit.index)
-        if hasattr(qubit, "sym"):
-            return (qubit.sym,)
-        return (str(qubit),)
+            args = op.qin
+        else:
+            return set()
+        return {qubit_key(qubit) for qubit in expand_qubit_args(args, type(op).__name__)}
 
     def _group_operations(
         self,

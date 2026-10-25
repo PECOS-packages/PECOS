@@ -68,6 +68,40 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   converters, MY) without a reset: such reuse now gives the correct outcomes
   and detectors.
 
+- **Breaking:** the SLR converters from Stim and `QuantumCircuit` no longer
+  drop, alter or shift gates and measurement records silently (#1370); input
+  they cannot convert now raises instead of becoming a comment. From Stim,
+  `MR`, `MRX`, `MRY` and inverted targets (`M !0`) are converted, and a
+  `REPEAT` block that measures is unrolled so each iteration writes its own
+  bits. Unsupported gates (for example `SQRT_X`, `ISWAP`, `MPP`, `MXX`, `MPAD`
+  and the heralded channels) and classical-feedback or sweep-bit targets
+  (`CX rec[-1] 1`) raise `NotImplementedError`. Noise channels, and the noise
+  argument of a measurement, become `// Noise:` comments with the full
+  instruction text, and annotations such as `DETECTOR` stay comments with
+  their arguments. From `QuantumCircuit`, the long-form measurement symbols
+  (`measure X`, `Measure +Y`, ...) are measured in their basis and advance the
+  bit offset. Unsupported symbols raise `NotImplementedError`, including `RX`,
+  `RY` and `RZ`, which are rotations, and `R`, which is `SY`; all four were
+  previously converted to resets. Measurement destinations are honoured: a
+  measurement with `var_output` or `var` writes that bit, registers come from
+  `cvar_spec` and the named destinations, and a measurement without a
+  destination stays bare, so SLR -> `QuantumCircuit` -> SLR keeps every
+  destination. A circuit with no destinations and no `cvar_spec` still writes
+  its measurements in order to a single `c` register. SLR codegen always emits
+  `cvar_spec`, including an empty mapping when no classical registers are
+  declared, so bare-only programs round-trip without gaining destinations.
+  Classical register names must match `[A-Za-z_][A-Za-z0-9_]*` and must not be
+  `q`, which is reserved for the converter's quantum register; invalid names
+  raise `ValueError` with a renaming instruction before emission. Other gate
+  parameters, malformed destinations, malformed one- or two-qubit locations, negative
+  qubit indices and two-qubit gates on one qubit raise `ValueError`. The
+  `ParallelOptimizer` also keeps two measurements that write the same bit in
+  order. Symbolic result indices conservatively write every bit of their
+  register, preserving the clean Guppy/HUGR rejection of symbolic LoopVar
+  indexing. Classical operations and operations without qubits act as ordering
+  barriers inside `Parallel`, so assignments cannot move ahead of their input
+  measurements or past later operations.
+
 - Live scheduled simulation now admits `StabilizerEngine` (`pr.stabilizer()`) with
   checked stochastic noise. Coherent idle rates and unsupported rotations reject
   before current-input execution. Scheduled profiles no longer cap the qubit

@@ -193,7 +193,7 @@ class AstToQuantumCircuit:
         program = flatten_block_calls(program)
 
         self.context = QCCodeGenContext()
-        self.circuit = QuantumCircuit()
+        self.circuit = QuantumCircuit(cvar_spec={})
         self._in_parallel = False
 
         # Process declarations to allocate qubits
@@ -235,7 +235,7 @@ class AstToQuantumCircuit:
                     for i in range(decl.capacity):
                         self.context.get_qubit(decl.name, i)
             elif isinstance(decl, RegisterDecl):
-                self.circuit.metadata.setdefault("cvar_spec", {})[decl.name] = decl.size
+                self.circuit.metadata["cvar_spec"][decl.name] = decl.size
 
         if program.allocator:
             self.context.qreg_sizes[program.allocator.name] = program.allocator.capacity

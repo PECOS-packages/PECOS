@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from pecos.slr import CReg, For, LoopVar, Main, QReg, Repeat, Return, SlrConverter, While, rad
+from pecos.slr import CReg, For, LoopVar, Main, Parallel, QReg, Repeat, Return, SlrConverter, While, rad
 from pecos.slr.ast.codegen.guppy import GuppyCodegenError
 from pecos.slr.qeclib import qubit as qb
 from pecos.slr.qeclib.qubit.measures import Measure
@@ -64,6 +64,15 @@ def test_hugr_rejects_symbolic_loopvar_indexing_cleanly() -> None:
 
     with pytest.raises(GuppyCodegenError, match="symbolic LoopVar indexing"):
         SlrConverter(prog).hugr()
+
+
+@pytest.mark.parametrize("target", ["guppy", "hugr"])
+def test_parallel_symbolic_measurement_rejected_cleanly(target: str) -> None:
+    i = LoopVar("i")
+    q, c = QReg("q", 2), CReg("c", 2)
+    program = Main(q, c, For(i, 0, 2).Do(Parallel(qb.H(q[i]), Measure(q[i]) > c[i])))
+    with pytest.raises(GuppyCodegenError, match="does not support symbolic LoopVar indexing"):
+        getattr(SlrConverter(program), target)()
 
 
 def test_angle_first_misuse_fails_loud_at_call() -> None:

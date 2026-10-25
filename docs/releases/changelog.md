@@ -50,16 +50,17 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   including repeated measurements and unstored results. Existing Stim output
   is unchanged (#1465).
 
-- `pecos.qec.discover_detectors(tc, observables=())` (Rust:
-  `pecos_qec::fault_tolerance::detector_discovery::discover_detectors`) finds the
-  detectors of a Clifford `TickCircuit` without code metadata. Each detector is
-  the relation of a deterministic record within the latest tick suffix in which
-  that record stays deterministic from an unknown input. Declared observables are
-  completed with random-source records. Each replaces one detector it is built
-  from, chosen so that every structural single fault that flips a declared
-  observable still flips a kept detector; an observable for which no such
-  detector exists is refused with an error naming the undetected fault. A
-  deterministic logical parity that is not declared becomes a detector.
+- `pecos.qec.discover_detectors(tc, observables=(), conjugates=())` (Rust:
+  `pecos_qec::fault_tolerance::detector_discovery::discover_detectors`) finds
+  detectors of a Clifford `TickCircuit` from latest deterministic tick suffixes.
+  Declared observables are completed with random-source records and require
+  conjugate logical operators supplied at tick boundaries. Each conjugate must
+  flip only its own completed observable, rejecting dependent declarations.
+  Detectors are cleaned of declared logical content relative to those conjugates,
+  retaining an independent set that prefers unflipped local detectors. Undeclared
+  deterministic logicals remain detectors. Conjugates must commute with every
+  measured check: records alone cannot verify this, and a wrong conjugate can
+  silently lower the fault distance even when pairing passes.
 
 - `SymbolicSparseStab` and `SymbolicSparseStabVecSet` reset a qubit that is
   entangled with others instead of postselecting it (#1360). Its partners now
@@ -82,6 +83,40 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   change only for circuits that reuse a qubit after MX (or, in the SLR
   converters, MY) without a reset: such reuse now gives the correct outcomes
   and detectors.
+
+- **Breaking:** the SLR converters from Stim and `QuantumCircuit` no longer
+  drop, alter or shift gates and measurement records silently (#1370); input
+  they cannot convert now raises instead of becoming a comment. From Stim,
+  `MR`, `MRX`, `MRY` and inverted targets (`M !0`) are converted, and a
+  `REPEAT` block that measures is unrolled so each iteration writes its own
+  bits. Unsupported gates (for example `SQRT_X`, `ISWAP`, `MPP`, `MXX`, `MPAD`
+  and the heralded channels) and classical-feedback or sweep-bit targets
+  (`CX rec[-1] 1`) raise `NotImplementedError`. Noise channels, and the noise
+  argument of a measurement, become `// Noise:` comments with the full
+  instruction text, and annotations such as `DETECTOR` stay comments with
+  their arguments. From `QuantumCircuit`, the long-form measurement symbols
+  (`measure X`, `Measure +Y`, ...) are measured in their basis and advance the
+  bit offset. Unsupported symbols raise `NotImplementedError`, including `RX`,
+  `RY` and `RZ`, which are rotations, and `R`, which is `SY`; all four were
+  previously converted to resets. Measurement destinations are honoured: a
+  measurement with `var_output` or `var` writes that bit, registers come from
+  `cvar_spec` and the named destinations, and a measurement without a
+  destination stays bare, so SLR -> `QuantumCircuit` -> SLR keeps every
+  destination. A circuit with no destinations and no `cvar_spec` still writes
+  its measurements in order to a single `c` register. SLR codegen always emits
+  `cvar_spec`, including an empty mapping when no classical registers are
+  declared, so bare-only programs round-trip without gaining destinations.
+  Classical register names must match `[A-Za-z_][A-Za-z0-9_]*` and must not be
+  `q`, which is reserved for the converter's quantum register; invalid names
+  raise `ValueError` with a renaming instruction before emission. Other gate
+  parameters, malformed destinations, malformed one- or two-qubit locations, negative
+  qubit indices and two-qubit gates on one qubit raise `ValueError`. The
+  `ParallelOptimizer` also keeps two measurements that write the same bit in
+  order. Symbolic result indices conservatively write every bit of their
+  register, preserving the clean Guppy/HUGR rejection of symbolic LoopVar
+  indexing. Classical operations and operations without qubits act as ordering
+  barriers inside `Parallel`, so assignments cannot move ahead of their input
+  measurements or past later operations.
 
 - Live scheduled simulation now admits `StabilizerEngine` (`pr.stabilizer()`) with
   checked stochastic noise. Coherent idle rates and unsupported rotations reject

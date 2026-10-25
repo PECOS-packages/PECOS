@@ -35,7 +35,7 @@ fn scalar_rng_seed_42_stream_is_stable() {
     assert_eq!(out, GOLDEN_SCALAR_SEED_42);
 }
 
-// Captured from the rapidhash 4.4 implementation (pre-rapidrand migration).
+// Captured from the rapidhash 4.4 implementation (before the rapidrand migration and the in-crate port).
 // Regenerate ONLY for a deliberate, release-noted reproducibility break.
 const GOLDEN_PARALLEL_SEED_42: [u64; 8] = [
     15_898_102_487_349_570_925,

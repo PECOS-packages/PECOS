@@ -11,6 +11,7 @@ use pecos_cuquantum_sys::{
     cudaMemcpyKind_cudaMemcpyHostToDevice, custatevecCollapseOp_t, custatevecComputeType_t,
     custatevecHandle_t, custatevecMatrixLayout_t,
 };
+use pecos_random::{PecosRng, RngExt};
 use pecos_simulators::{
     ArbitraryRotationGateable, CliffordGateable, MeasurementResult, QuantumSimulator,
 };
@@ -68,7 +69,7 @@ pub struct CuStateVec {
     /// Device pointer to the state vector (2^n complex doubles)
     state_vector: *mut c_void,
     /// Random number generator for non-deterministic measurements
-    rng: fastrand::Rng,
+    rng: PecosRng,
 }
 
 impl CuStateVec {
@@ -138,7 +139,7 @@ impl CuStateVec {
             )));
         }
 
-        let rng = fastrand::Rng::with_seed(seed);
+        let rng = PecosRng::seed_from_u64(seed);
 
         let mut sim = Self {
             backend,
@@ -402,7 +403,7 @@ impl CuStateVec {
     fn measure_single(&mut self, qubit: usize) -> MeasurementResult {
         let basis_bits = [qubit as i32];
         let mut parity: i32 = 0;
-        let rand_num = self.rng.f64();
+        let rand_num = self.rng.random::<f64>();
 
         // SAFETY: All pointers are valid
         let status = unsafe {
@@ -449,7 +450,7 @@ impl CuStateVec {
         let mut bit_string = vec![0i32; self.num_qubits];
 
         for _ in 0..num_samples {
-            let rand_num = self.rng.f64();
+            let rand_num = self.rng.random::<f64>();
 
             // SAFETY: All pointers are valid
             let status = unsafe {
@@ -562,7 +563,7 @@ impl TryClone for CuStateVec {
             )));
         }
 
-        // Clone the RNG with a derived seed to ensure independent random streams
+        // The clone continues the same RNG stream, as the CPU StateVec clone does
         let rng = self.rng.clone();
 
         Ok(Self {

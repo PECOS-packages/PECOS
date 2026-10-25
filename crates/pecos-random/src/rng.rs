@@ -12,9 +12,10 @@
 
 //! High-performance random number generator using `RapidRng`.
 //!
-//! [`PecosRng`], an alternative RNG for PECOS simulations
-//! based on the `RapidHash` mixing function. It provides the same interface as
-//! [`PecosRng`](crate::quality_rng::PecosQualityRng) for easy comparison and drop-in replacement.
+//! [`PecosRng`], the default RNG for PECOS simulations, based on the rapidhash
+//! mixing function. It has the same interface as
+//! [`PecosQualityRng`](crate::quality_rng::PecosQualityRng), the Xoshiro256++
+//! alternative, so either can be dropped in for the other.
 //!
 //! # Usage
 //!
@@ -39,8 +40,13 @@
 //!
 //! # Implementation
 //!
-//! Backed by 4 parallel `RapidRng` instances, providing similar bulk generation
-//! capabilities to [`PecosRng`](crate::quality_rng::PecosQualityRng).
+//! Backed by 4 parallel `RapidRng` instances, seeded from four successive
+//! `SplitMix64` outputs of the seed. Seeds that differ by a multiple of the
+//! `SplitMix64` increment (`0x9e37_79b9_7f4a_7c15`) therefore share lanes:
+//! seeds `s` and `s + increment` share three of their four. To give parallel
+//! workers their own streams, derive their seeds with
+//! [`nth_derived_seed`](crate::nth_derived_seed) instead of adding multiples
+//! of that increment.
 
 use crate::rapid_rng::RapidRng;
 use core::convert::Infallible;
@@ -119,10 +125,10 @@ impl ParallelRapidRng {
     #[inline]
     pub fn next_u64x4(&mut self) -> u64x4 {
         u64x4::new([
-            self.rngs[0].next(),
-            self.rngs[1].next(),
-            self.rngs[2].next(),
-            self.rngs[3].next(),
+            self.rngs[0].next_u64(),
+            self.rngs[1].next_u64(),
+            self.rngs[2].next_u64(),
+            self.rngs[3].next_u64(),
         ])
     }
 

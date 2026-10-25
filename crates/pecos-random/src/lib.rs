@@ -1,6 +1,6 @@
 pub mod prelude;
 pub mod quality_rng;
-mod rapid_rng;
+pub mod rapid_rng;
 pub mod rng;
 pub mod rng_ext;
 pub mod rng_manageable;
@@ -9,6 +9,7 @@ pub mod scalar_rng;
 
 // Re-export key types at crate root for convenience
 pub use quality_rng::{PecosQualityRng, SimdXoshiro256PlusPlus, nth_derived_seed};
+pub use rapid_rng::RapidRng;
 pub use rng::{ParallelRapidRng, PecosRng};
 pub use rng_ext::{RngBulkExt, RngProbabilityExt};
 pub use rng_manageable::{RngManageable, derive_seed, resolve_seed, time_seed};

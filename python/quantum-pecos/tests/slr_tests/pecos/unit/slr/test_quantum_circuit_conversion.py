@@ -440,7 +440,7 @@ def _ast_quantum_circuit(prog: Main) -> QuantumCircuit:
 
 
 class TestQuantumCircuitIf:
-    """The circuit records no classical results, so an If cannot be conditioned.
+    """Classical conditions are not lowered to QuantumCircuit branches.
 
     Both generators used to emit If branches without their condition: the AST
     one ran both branches, and the deprecated one dropped the then-branch and
@@ -460,8 +460,8 @@ class TestQuantumCircuitIf:
             generate(prog)
 
     @pytest.mark.parametrize("generate", [_ast_quantum_circuit, _legacy_quantum_circuit], ids=["ast", "legacy"])
-    def test_classical_assignments_without_if_still_convert(self, generate) -> None:
-        """Classical values cannot reach a quantum operation without an If, so the circuit stays exact."""
+    def test_classical_assignment_support(self, generate) -> None:
+        """The AST backend rejects assignments that would change stored results."""
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 2),
@@ -470,7 +470,11 @@ class TestQuantumCircuitIf:
             qubit.H(q[0]),
             Return(c),
         )
-        assert "{'H': {0}}" in str(generate(prog))
+        if generate is _ast_quantum_circuit:
+            with pytest.raises(NotImplementedError, match=r"does not yet support AssignOp"):
+                generate(prog)
+        else:
+            assert "{'H': {0}}" in str(generate(prog))
 
 
 def test_repeated_mx_and_my_agree() -> None:

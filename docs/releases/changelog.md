@@ -6,6 +6,57 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Breaking:** SLR block conversion rejects input names that capture unbound
+  outer references in the block body. The error identifies the block, input
+  and reference; rename the block input to avoid the collision (#1472).
+
+- **Breaking:** SLR to `QuantumCircuit` conversion preserves measurement
+  destinations in `var_output` and declares classical register sizes in
+  `cvar_spec`, while `qvars` and `qvar_spec` preserve root qubit-register names
+  and sizes in PHIR. Running the legacy hybrid engine leaves `cvar_spec` unchanged.
+  Unsupported classical assignments, permutations of unknown or classical
+  registers (including Block-local CRegs), and unresolved block calls now raise
+  instead of being silently dropped. Preparing an undeclared allocator reports
+  an actionable error.
+  Whole-register preparation resets every slot and applies its basis gates;
+  PHIR conversion translates `RESET` to `Init`.
+  Operations sharing any qubit use separate ticks, including nested Parallel
+  blocks; disjoint operations retain parallel grouping. PHIR conversion reads
+  destinations from `Measure` gates and rejects a single `var` for multiple
+  targets or incomplete `var_output` metadata (#1473).
+
+- Stim and QIR generation now prepare every slot for allocator-wide preparations,
+  applying the same basis gates as explicit-slot preparations instead of silently
+  dropping PZ resets (#1473).
+
+- SLR adds `SlrConverter.stim_with_records()` and `ast_to_stim_with_records()`
+  to map Stim sample columns to the classical bits written at measurement time,
+  including repeated measurements and unstored results. Existing Stim output
+  is unchanged (#1465).
+
+- `pecos.qec.discover_detectors(tc, observables=())` (Rust:
+  `pecos_qec::fault_tolerance::detector_discovery::discover_detectors`) finds the
+  detectors of a Clifford `TickCircuit` without code metadata. Each detector is
+  the relation of a deterministic record within the latest tick suffix in which
+  that record stays deterministic from an unknown input. Declared observables are
+  completed with random-source records. Each replaces one detector it is built
+  from, chosen so that every structural single fault that flips a declared
+  observable still flips a kept detector; an observable for which no such
+  detector exists is refused with an error naming the undetected fault. A
+  deterministic logical parity that is not declared becomes a detector.
+
+- `SymbolicSparseStab` and `SymbolicSparseStabVecSet` reset a qubit that is
+  entangled with others instead of postselecting it (#1360). Its partners now
+  carry the reset's hidden random outcome, so a Bell partner measured later is
+  random rather than reported deterministic. `symbolic_measurement_history`,
+  `InfluenceBuilder`, the DEM builders and the samplers built on them give
+  correct determinism and detectors for such circuits. `MeasureLeaked` is now
+  supported in these record-aligned replays: its outcome stays hidden until a
+  recorded measurement observes it. Breaking:
+  `MeasurementHistoryError::LeakedMeasurementNotRepresentable` is removed, and
+  `SymbolicSign` gains a public `hidden` field (struct literals must set it, and
+  equality compares it).
+
 - MX leaves the measured qubit in its X-basis eigenstate everywhere, as
   `CliffordGateable::mx` specifies. The stabilizer, sparse-stabilizer, stab-vec,
   density-matrix and state-vector engines, `CircuitExecutor`, the `pecos-qec`

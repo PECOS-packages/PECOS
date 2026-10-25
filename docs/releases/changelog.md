@@ -6,6 +6,18 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- `SymbolicSparseStab` and `SymbolicSparseStabVecSet` reset a qubit that is
+  entangled with others instead of postselecting it (#1360). Its partners now
+  carry the reset's hidden random outcome, so a Bell partner measured later is
+  random rather than reported deterministic. `symbolic_measurement_history`,
+  `InfluenceBuilder`, the DEM builders and the samplers built on them give
+  correct determinism and detectors for such circuits. `MeasureLeaked` is now
+  supported in these record-aligned replays: its outcome stays hidden until a
+  recorded measurement observes it. Breaking:
+  `MeasurementHistoryError::LeakedMeasurementNotRepresentable` is removed, and
+  `SymbolicSign` gains a public `hidden` field (struct literals must set it, and
+  equality compares it).
+
 - MX leaves the measured qubit in its X-basis eigenstate everywhere, as
   `CliffordGateable::mx` specifies. The stabilizer, sparse-stabilizer, stab-vec,
   density-matrix and state-vector engines, `CircuitExecutor`, the `pecos-qec`

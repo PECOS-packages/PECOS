@@ -117,7 +117,6 @@ batsat = "0.5"
 smallvec = "1"
 
 # --- Concurrency ---
-crossbeam-channel = "0.5"
 parking_lot = "0.12"
 rayon = "1"
 
@@ -160,7 +159,6 @@ anyhow = "1"
 thiserror = "2"
 
 # --- Filesystem ---
-dirs = "6"
 tempfile = "3"
 
 # --- Testing ---

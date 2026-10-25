@@ -164,7 +164,7 @@ fn setup_cuda_library_path() {
             .ok()
             .and_then(|p| p.parent().map(|d| d.join(cuda_backend_name))),
         // 2. ~/.pecos/lib/
-        dirs::home_dir().map(|h| h.join(".pecos").join("lib").join(cuda_backend_name)),
+        std::env::home_dir().map(|h| h.join(".pecos").join("lib").join(cuda_backend_name)),
         // 3. Cargo target directory (for development)
         Some(std::path::PathBuf::from("target/release").join(cuda_backend_name)),
     ];

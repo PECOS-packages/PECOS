@@ -32,7 +32,7 @@ pub fn get_pecos_cuquantum_dir() -> Result<PathBuf> {
 
 /// Get the legacy cuQuantum installation directory (`~/.pecos/cuquantum/`)
 fn get_legacy_cuquantum_dir() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".pecos").join("cuquantum"))
+    std::env::home_dir().map(|h| h.join(".pecos").join("cuquantum"))
 }
 
 /// Find cuQuantum installation, checking local first, then system

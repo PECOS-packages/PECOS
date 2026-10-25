@@ -425,8 +425,18 @@ fn seed_reset_and_preparation() {
     assert_state(&first, &StateVec::new(4).state(), "pz");
 }
 
-pecos_simulators::rotation_test_suite!(StabActive, 4, StabActive::with_seed(4, 42));
-pecos_simulators::measurement_stress_test_suite!(StabActive, 4, StabActive::with_seed(4, 42));
+pecos_simulators::rotation_test_suite!(
+    stab_active_rotation,
+    StabActive,
+    4,
+    StabActive::with_seed(4, 42)
+);
+pecos_simulators::measurement_stress_test_suite!(
+    stab_active_measurement_stress,
+    StabActive,
+    4,
+    StabActive::with_seed(4, 42)
+);
 
 #[test]
 fn full_stabilizer_suite() {

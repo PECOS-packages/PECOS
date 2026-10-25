@@ -32,7 +32,6 @@ rayon = { version = "1.10", optional = true }
 
 [dev-dependencies]
 rand.workspace = true
-paste.workspace = true
 
 [lints]
 workspace = true

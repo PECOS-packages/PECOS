@@ -19,6 +19,16 @@ use pecos_core::{
 use pecos_random::rng_ext::RngProbabilityExt;
 use pecos_random::{PecosRng, Rng, SeedableRng};
 
+/// Tableau update performed by Z measurement, including measurement during reset.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MeasurementRule {
+    /// Preserve the existing Aaronson-Gottesman update.
+    #[default]
+    AaronsonGottesman,
+    /// Refactor deterministic measurements and isolate every measured qubit.
+    RefactorDecouple,
+}
+
 /// A sparse representation of a stabilizer state using the stabilizer/destabilizer formalism.
 ///
 /// This implementation is based on the work found in the thesis "Quantum Algorithms, Architecture,
@@ -111,6 +121,7 @@ pub struct SparseStabGeneric<S: IndexSet = SparseStabSet, R: SeedableRng + Rng +
     /// Off by default (not needed for standard stabilizer simulation).
     /// Required for STN-style decomposition that uses destabilizer phases.
     track_destab_signs: bool,
+    measurement_rule: MeasurementRule,
 }
 
 /// Default row, column and sign storage for `SparseStab` and `Gens`.
@@ -299,9 +310,23 @@ where
             destabs: GensGeneric::<S>::new(num_qubits),
             rng,
             track_destab_signs: false,
+            measurement_rule: MeasurementRule::default(),
         };
         stab.reset();
         stab
+    }
+
+    /// Select the measurement update. The setting survives simulator reset.
+    #[must_use]
+    pub fn with_measurement_rule(mut self, rule: MeasurementRule) -> Self {
+        self.measurement_rule = rule;
+        self
+    }
+
+    /// Return the selected measurement update.
+    #[must_use]
+    pub fn measurement_rule(&self) -> MeasurementRule {
+        self.measurement_rule
     }
 
     /// Enable tracking of destabilizer signs through Clifford gates.
@@ -492,8 +517,198 @@ where
         (&mut self.stabs, &mut self.destabs)
     }
 
+    // Refactor/decouple algebra (binary symplectic pairing <S_i,D_j> = delta_ij):
+    // 1. If every S commutes with Z_q, its unique expansion is the product of
+    //    S_r for R = {r : <Z_q,D_r> = 1} = destabs.col_x[q]. R is nonempty.
+    //    The existing deterministic calculation supplies that product's sign.
+    // 2. Replacing S_r0 by this product is invertible since r0 is in R. Updating
+    //    D_r <- D_r D_r0 for every other r in R is the inverse-transpose basis
+    //    change: it restores the dual pairings and preserves D-D commutation.
+    //    Only D_r0 then has X_q. The score chooses a basis, not a different state.
+    // 3. On a random measurement, the existing AG update already leaves
+    //    S_r0 = (-1)^outcome Z_q with the same dual-pairing properties.
+    // 4. Multiply each other S containing Z_q by S_r0. No S has X_q, so there
+    //    is no crossing phase; remove Z_q and toggle its minus sign by outcome.
+    // 5. All D except D_r0 have no X_q. Removing their Z_q leaves their mutual
+    //    pairings and pairings with the stripped S unchanged. Removing Z_q
+    //    from D_r0 is harmless because that entire row is replaced next.
+    // 6. Now every row except S_r0 and D_r0 is identity on q. Setting D_r0=X_q
+    //    restores precisely its required pairings and isolates the measured qubit.
+    // Measurement does not maintain destabilizer signs, even when
+    // track_destab_signs is enabled; retain that existing convention here.
+
+    fn refactor_measured_z(&mut self, q: usize) -> (usize, bool) {
+        // Reuse this column's allocation as the source set. Its final value is
+        // {r0}; while it is detached, handle the q-column dual update explicitly.
+        let mut sources = mem::take(&mut self.destabs.col_x[q]);
+        let partners = sources.len() as i128 - 1;
+        let mut num_minuses = sources.intersection_count(&self.stabs.signs_minus);
+        let num_is = sources.intersection_count(&self.stabs.signs_i);
+        let mut measurement_scratch = S::new();
+        let mut best_score = i128::MIN;
+        let mut r0 = usize::MAX;
+        let mut partner_weight = 0;
+        let mut product_may_have_x = false;
+        for r in sources.iter() {
+            // Compute the same signed product as deterministic_outcome, while
+            // visiting each candidate once for both its phase and its score.
+            let x_weight = self.stabs.row_x[r].len();
+            let z_weight = self.stabs.row_z[r].len();
+            if product_may_have_x {
+                num_minuses += self.stabs.row_z[r].intersection_count(&measurement_scratch);
+            }
+            if x_weight != 0 {
+                measurement_scratch.xor_assign(&self.stabs.row_x[r]);
+                product_may_have_x = true;
+            }
+            let d_weight = self.destabs.generator_weight(r);
+            let score = (x_weight + z_weight) as i128 - partners * d_weight as i128;
+            if (score, std::cmp::Reverse(r)) > (best_score, std::cmp::Reverse(r0)) {
+                best_score = score;
+                r0 = r;
+                partner_weight = d_weight;
+            }
+        }
+        if num_is & 3 != 0 {
+            num_minuses += 1;
+        }
+        let outcome = num_minuses & 1 != 0;
+
+        self.set_measured_stabilizer(r0, q, outcome);
+
+        sources.remove(r0);
+        if partner_weight == 1 {
+            // r0 is in R, hence D_r0 contains X_q. Weight one forces D_r0=X_q:
+            // the dual products are single-bit toggles, and its replacement is
+            // already done. This is the usual steady-state syndrome case.
+            for r in sources.iter() {
+                self.destabs.row_x[r].toggle(q);
+            }
+        } else {
+            Self::xor_partner_rows(&mut self.destabs.row_x, r0, &sources);
+            Self::xor_partner_rows(&mut self.destabs.row_z, r0, &sources);
+            // Fuse the dual column update with removal of D_r0's old support;
+            // the decoupling step replaces D_r0 by X_q in any case.
+            for i in self.destabs.row_x[r0].iter() {
+                if i != q {
+                    self.destabs.col_x[i].xor_assign(&sources);
+                    self.destabs.col_x[i].remove(r0);
+                }
+            }
+            for i in self.destabs.row_z[r0].iter() {
+                self.destabs.col_z[i].xor_assign(&sources);
+                self.destabs.col_z[i].remove(r0);
+            }
+            self.destabs.row_x[r0].set_single(q);
+            self.destabs.row_z[r0].clear();
+        }
+        sources.set_single(r0);
+        self.destabs.col_x[q] = sources;
+        (r0, outcome)
+    }
+
+    fn set_measured_stabilizer(&mut self, r0: usize, q: usize, outcome: bool) {
+        for i in self.stabs.row_x[r0].iter() {
+            self.stabs.col_x[i].remove(r0);
+        }
+        for i in self.stabs.row_z[r0].iter() {
+            self.stabs.col_z[i].remove(r0);
+        }
+        self.stabs.row_x[r0].clear();
+        self.stabs.row_z[r0].set_single(q);
+        self.stabs.col_z[q].insert(r0);
+        self.stabs.signs_i.remove(r0);
+        self.apply_outcome(r0, outcome);
+    }
+
+    fn single_index(set: &S) -> Option<usize> {
+        let mut iter = set.iter();
+        let first = iter.next()?;
+        iter.next().is_none().then_some(first)
+    }
+
+    fn refactor_two_sources(&mut self, q: usize, first: usize, second: usize) -> Option<bool> {
+        let r0 = Self::single_index(&self.stabs.col_z[q])?;
+        if !self.destabs.col_z[q].is_empty() {
+            return None;
+        }
+        // X_q pairs with just S_r0 and no D, so the dual basis forces D_r0=X_q.
+        // With R={r0,r1}, S_r0 and S_r1 differ only by Z_q. Thus |S_r0|=|S_r1|+1,
+        // while |D_r0|=1 and |D_r1|>=2 (independent D rows cannot both be X_q).
+        // The mandated score strictly favors r0: no weight scans are needed.
+        // Both S rows have identical XZ overlaps, so their i phases and crossing
+        // minus cancel; the product's minus sign is just the XOR of stored signs.
+        debug_assert!(r0 == first || r0 == second);
+        let other = if r0 == first { second } else { first };
+        let outcome =
+            self.stabs.signs_minus.contains(first) ^ self.stabs.signs_minus.contains(second);
+        debug_assert_eq!(outcome, self.deterministic_outcome(q));
+        debug_assert_eq!(self.destabs.generator_weight(r0), 1);
+        debug_assert_eq!(
+            self.stabs.generator_weight(r0),
+            self.stabs.generator_weight(other) + 1
+        );
+        self.set_measured_stabilizer(r0, q, outcome);
+        self.destabs.row_x[other].toggle(q);
+        self.destabs.col_x[q].remove(other);
+        // S_r0 was the only S with Z_q and no D had Z_q. D_r0 was already X_q:
+        // the stripping and partner replacement steps are consequently no-ops.
+        Some(outcome)
+    }
+
+    fn xor_partner_rows(rows: &mut [S], r0: usize, sources: &S) {
+        let (before, rest) = rows.split_at_mut(r0);
+        let (pivot, after) = rest.split_first_mut().expect("pivot is a generator");
+        for r in sources.iter() {
+            let row = if r < r0 {
+                &mut before[r]
+            } else {
+                &mut after[r - r0 - 1]
+            };
+            row.xor_assign(pivot);
+        }
+    }
+
+    fn clear_generator(gens: &mut GensGeneric<S>, r: usize) {
+        for q in gens.row_x[r].iter() {
+            gens.col_x[q].remove(r);
+        }
+        for q in gens.row_z[r].iter() {
+            gens.col_z[q].remove(r);
+        }
+        gens.row_x[r].clear();
+        gens.row_z[r].clear();
+    }
+
+    fn strip_measured_z(&mut self, r0: usize, q: usize, outcome: bool) {
+        if self.stabs.col_z[q].len() != 1 {
+            for r in self.stabs.col_z[q].iter() {
+                if r != r0 {
+                    self.stabs.row_z[r].remove(q);
+                    if outcome {
+                        self.stabs.signs_minus.toggle(r);
+                    }
+                }
+            }
+            self.stabs.col_z[q].set_single(r0);
+        }
+        if !self.destabs.col_z[q].is_empty() {
+            for r in self.destabs.col_z[q].iter() {
+                self.destabs.row_z[r].remove(q);
+            }
+            self.destabs.col_z[q].clear();
+        }
+    }
+
+    fn decouple_measured_z(&mut self, r0: usize, q: usize, outcome: bool) {
+        self.strip_measured_z(r0, q, outcome);
+        Self::clear_generator(&mut self.destabs, r0);
+        self.destabs.row_x[r0].insert(q);
+        self.destabs.col_x[q].insert(r0);
+    }
+
     #[inline]
-    fn deterministic_meas(&mut self, q: usize) -> MeasurementResult {
+    fn deterministic_outcome(&self, q: usize) -> bool {
         // Use optimized intersection_count to avoid iterator creation overhead
         let mut num_minuses = self.destabs.col_x[q].intersection_count(&self.stabs.signs_minus);
 
@@ -508,7 +723,57 @@ where
             // num_is % 4 != 0
             num_minuses += 1;
         }
-        let outcome = num_minuses & 1 != 0; // num_minuses % 2 != 0 (is odd)
+        num_minuses & 1 != 0
+    }
+
+    #[inline]
+    fn deterministic_meas(&mut self, q: usize) -> MeasurementResult {
+        if self.measurement_rule == MeasurementRule::RefactorDecouple {
+            let mut sources = self.destabs.col_x[q].iter();
+            let r0 = sources
+                .next()
+                .expect("deterministic Z has a stabilizer expansion");
+            let second = sources.next();
+            let third = sources.next();
+            drop(sources);
+            if second.is_none() {
+                // R={r0} means S_r0 is already +/-Z_q, so refactoring is the
+                // identity basis change. Compute its outcome directly and check
+                // it against the general product-sign calculation in debug.
+                let outcome = self.stabs.signs_minus.contains(r0);
+                debug_assert_eq!(outcome, self.deterministic_outcome(q));
+                debug_assert!(!self.stabs.signs_i.contains(r0));
+                if self.stabs.col_z[q].len() != 1 || !self.destabs.col_z[q].is_empty() {
+                    self.decouple_measured_z(r0, q, outcome);
+                } else {
+                    // All other rows are identity on q. Symplectic duality then
+                    // forces D_r0=X_q: any rest-qubit support would anticommute
+                    // with a row in the complementary symplectic basis.
+                    debug_assert_eq!(self.destabs.row_x[r0].len(), 1);
+                    debug_assert!(self.destabs.row_x[r0].contains(q));
+                    debug_assert!(self.destabs.row_z[r0].is_empty());
+                }
+                return MeasurementResult {
+                    outcome,
+                    is_deterministic: true,
+                };
+            } else if third.is_none()
+                && let Some(second) = second
+                && let Some(outcome) = self.refactor_two_sources(q, r0, second)
+            {
+                return MeasurementResult {
+                    outcome,
+                    is_deterministic: true,
+                };
+            }
+        }
+        let outcome = if self.measurement_rule == MeasurementRule::RefactorDecouple {
+            let (r0, outcome) = self.refactor_measured_z(q);
+            self.strip_measured_z(r0, q, outcome);
+            outcome
+        } else {
+            self.deterministic_outcome(q)
+        };
         MeasurementResult {
             outcome,
             is_deterministic: true,
@@ -621,6 +886,9 @@ where
         self.destabs.row_z[id] = removed_row_z;
 
         let outcome = self.apply_outcome(id, result);
+        if self.measurement_rule == MeasurementRule::RefactorDecouple {
+            self.decouple_measured_z(id, q, outcome);
+        }
         MeasurementResult {
             outcome,
             is_deterministic: false,
@@ -2518,6 +2786,7 @@ where
             destabs,
             rng: self.rng,
             track_destab_signs: false,
+            measurement_rule: MeasurementRule::default(),
         }
     }
 }

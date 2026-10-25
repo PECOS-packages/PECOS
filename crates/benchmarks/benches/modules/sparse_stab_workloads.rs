@@ -3,6 +3,7 @@
 
 //! Repeated memory shots, including ancilla reset.
 
+use benchmarks::color_code::color_code;
 use criterion::{BenchmarkId, Criterion};
 use pecos_core::{BitSet, IndexSet, PauliOperator};
 use pecos_qec::{
@@ -12,9 +13,11 @@ use pecos_qec::{
 };
 use pecos_quantum::{AnnotationKind, GateType, TickCircuit};
 use pecos_random::PecosRng;
-use pecos_simulators::{CircuitExecutor, CliffordGateable, SparseStabGeneric, SparseStabSet};
+use pecos_simulators::{
+    CircuitExecutor, CliffordGateable, MeasurementRule, SparseStabGeneric, SparseStabSet,
+};
 use rand::seq::SliceRandom;
-use std::{collections::BTreeMap, hint::black_box, ops::Range, time::Duration};
+use std::{hint::black_box, ops::Range, time::Duration};
 
 const SEED: u64 = 1434;
 
@@ -47,87 +50,21 @@ fn css(
     }
 }
 
-// Triangular hexagonal patch of arXiv:1911.00355, Fig. 1(a), using the
-// integer-coordinate convention documented at https://qecsim.github.io/api/models/color.html.
-// Inside 0 <= column <= row <= 3(d-1)/2, sites with (row+column) mod 3 = 2
-// are face centres; the remaining sites are data qubits. The six neighbouring
-// sites form each hexagon, clipped to four vertices at the three boundaries.
 fn color_checks(d: usize) -> ParityCheckMatrix {
-    assert!(d >= 3 && d % 2 == 1, "color666 d{d}: odd distance >= 3");
-    let bound = i32::try_from(3 * (d - 1) / 2).expect("color666 coordinate bound fits i32");
-    let mut qubits = BTreeMap::new();
-    let mut centres = Vec::new();
-    for row in 0..=bound {
-        for col in 0..=row {
-            if (row + col) % 3 == 2 {
-                centres.push((row, col));
-            } else {
-                qubits.insert((row, col), qubits.len());
-            }
-        }
-    }
-    let n = qubits.len();
-    assert_eq!(n, (3 * d * d + 1) / 4, "color666 d{d}: data count");
-    assert_eq!(
-        centres.len(),
-        (3 * d * d - 3) / 8,
-        "color666 d{d}: face count"
-    );
-    for side in 0..3 {
-        let count = qubits
-            .keys()
-            .filter(|&&(r, c)| match side {
-                0 => c == 0,
-                1 => r == c,
-                _ => r == bound,
-            })
-            .count();
-        assert_eq!(count, d, "color666 d{d}: boundary {side} length");
-    }
-    let mut incidence = vec![0; n];
-    let mut colours_at_qubit = vec![0u8; n];
-    let rows = centres
+    let code = color_code(d);
+    let n = code.num_data_qubits;
+    let rows = code
+        .faces
         .iter()
-        .map(|&(r, c)| {
+        .map(|face| {
             let mut row = vec![0u8; n];
-            let colour = 1u8 << (r % 3);
-            for (dr, dc) in [(-1, -1), (-1, 0), (0, -1), (0, 1), (1, 0), (1, 1)] {
-                if let Some(&q) = qubits.get(&(r + dr, c + dc)) {
-                    row[q] = 1;
-                    incidence[q] += 1;
-                    assert_eq!(
-                        colours_at_qubit[q] & colour,
-                        0,
-                        "color666 d{d}: adjacent faces share a colour at qubit {q}"
-                    );
-                    colours_at_qubit[q] |= colour;
-                }
+            for &q in &face.qubits {
+                row[q] = 1;
             }
-            let weight: usize = row.iter().copied().map(usize::from).sum();
-            assert!(
-                matches!(weight, 4 | 6),
-                "color666 d{d}: face ({r},{c}) weight {weight}"
-            );
             row
         })
-        .collect::<Vec<_>>();
-    assert!(
-        incidence.iter().all(|&count| (1..=3).contains(&count)),
-        "color666 d{d}: qubit incidence"
-    );
-    assert_eq!(
-        incidence.iter().filter(|&&count| count == 1).count(),
-        3,
-        "color666 d{d}: corner count"
-    );
-    for (i, a) in rows.iter().enumerate() {
-        for (j, b) in rows.iter().enumerate() {
-            let overlap = a.iter().zip(b).fold(0, |parity, (x, z)| parity ^ (x & z));
-            assert_eq!(overlap, 0, "color666 d{d}: Hx Hz^T at ({i},{j})");
-        }
-    }
+        .collect();
     let h = ParityCheckMatrix::from_dense(rows).expect("color666 binary incidence matrix");
-    assert_eq!(n - 2 * h.rank(), 1, "color666 d{d}: logical count");
     if d <= 7 {
         color_distance(&h, d);
     }
@@ -357,8 +294,16 @@ fn reset_arm(work: &Workload) -> TickCircuit {
     circuit
 }
 
-fn outcomes<S: IndexSet>(circuit: &TickCircuit, n: usize) -> Vec<(bool, bool)> {
-    let mut sim = SparseStabGeneric::<S>::with_rng(n, PecosRng::seed_from_u64(SEED));
+fn simulator<S: IndexSet>(n: usize, rule: MeasurementRule) -> SparseStabGeneric<S> {
+    SparseStabGeneric::<S>::with_rng(n, PecosRng::seed_from_u64(SEED)).with_measurement_rule(rule)
+}
+
+fn outcomes<S: IndexSet>(
+    circuit: &TickCircuit,
+    n: usize,
+    rule: MeasurementRule,
+) -> Vec<(bool, bool)> {
+    let mut sim = simulator::<S>(n, rule);
     CircuitExecutor::new(circuit)
         .run(&mut sim)
         .expect("supported workload circuit")
@@ -418,13 +363,14 @@ fn bench_set<S: IndexSet>(
     circuit: &TickCircuit,
     arm: &str,
     set: &str,
+    rule: MeasurementRule,
 ) {
     let mut group = c.benchmark_group(format!("SparseStab Workloads/{}", work.family));
     group
         .sample_size(10)
         .measurement_time(Duration::from_secs(2))
         .warm_up_time(Duration::from_millis(500));
-    let mut sim = SparseStabGeneric::<S>::with_rng(work.n, PecosRng::seed_from_u64(SEED));
+    let mut sim = simulator::<S>(work.n, rule);
     let executor = CircuitExecutor::new(circuit);
     group.bench_function(
         BenchmarkId::new(&work.instance, format!("f={arm}/{set}")),
@@ -442,7 +388,7 @@ fn bench_set<S: IndexSet>(
     if (work.family == "surface" && work.instance == "d3")
         || (work.family == "bb" && work.instance == "n144")
     {
-        let mut direct = SparseStabGeneric::<S>::with_rng(work.n, PecosRng::seed_from_u64(SEED));
+        let mut direct = simulator::<S>(work.n, rule);
         group.bench_function(
             BenchmarkId::new(&work.instance, format!("f={arm}/{set}/direct")),
             |b| {
@@ -456,9 +402,14 @@ fn bench_set<S: IndexSet>(
     group.finish();
 }
 
-fn validate<S: IndexSet>(work: &Workload, circuit: &TickCircuit, expected: &[(bool, bool)]) {
+fn validate<S: IndexSet>(
+    work: &Workload,
+    circuit: &TickCircuit,
+    expected: &[(bool, bool)],
+    rule: MeasurementRule,
+) {
     assert_eq!(
-        outcomes::<S>(circuit, work.n),
+        outcomes::<S>(circuit, work.n, rule),
         expected,
         "{}/{}: outcomes differ",
         work.family,
@@ -467,7 +418,7 @@ fn validate<S: IndexSet>(work: &Workload, circuit: &TickCircuit, expected: &[(bo
     if (work.family == "surface" && work.instance == "d3")
         || (work.family == "bb" && work.instance == "n144")
     {
-        let mut direct = SparseStabGeneric::<S>::with_rng(work.n, PecosRng::seed_from_u64(SEED));
+        let mut direct = simulator::<S>(work.n, rule);
         assert_eq!(replay(&mut direct, circuit), expected);
     }
 }
@@ -477,7 +428,7 @@ pub fn benchmarks(c: &mut Criterion) {
     let workloads = corpus();
     let mut prepared = Vec::new();
     for work in &workloads {
-        let clean = outcomes::<BitSet>(&work.circuit, work.n);
+        let clean = outcomes::<BitSet>(&work.circuit, work.n, MeasurementRule::AaronsonGottesman);
         for annotation in work.circuit.annotations() {
             if let AnnotationKind::Detector {
                 measurement_ids, ..
@@ -494,9 +445,11 @@ pub fn benchmarks(c: &mut Criterion) {
             }
         }
         for (arm, circuit) in [("0", work.circuit.clone()), ("0.01", reset_arm(work))] {
-            let expected = outcomes::<BitSet>(&circuit, work.n);
-            validate::<BitSet>(work, &circuit, &expected);
-            validate::<SparseStabSet>(work, &circuit, &expected);
+            let ag = MeasurementRule::AaronsonGottesman;
+            let expected = outcomes::<BitSet>(&circuit, work.n, ag);
+            validate::<BitSet>(work, &circuit, &expected, ag);
+            validate::<SparseStabSet>(work, &circuit, &expected, ag);
+            validate::<SparseStabSet>(work, &circuit, &expected, MeasurementRule::RefactorDecouple);
             prepared.push((work, arm, circuit));
         }
     }
@@ -505,8 +458,17 @@ pub fn benchmarks(c: &mut Criterion) {
         start.elapsed().as_secs_f64()
     );
     for (work, arm, circuit) in prepared {
-        bench_set::<BitSet>(c, work, &circuit, arm, "bitset");
-        bench_set::<SparseStabSet>(c, work, &circuit, arm, "adaptive");
+        let ag = MeasurementRule::AaronsonGottesman;
+        bench_set::<BitSet>(c, work, &circuit, arm, "bitset", ag);
+        bench_set::<SparseStabSet>(c, work, &circuit, arm, "adaptive", ag);
+        bench_set::<SparseStabSet>(
+            c,
+            work,
+            &circuit,
+            arm,
+            "adaptive+refactor",
+            MeasurementRule::RefactorDecouple,
+        );
     }
     eprintln!(
         "SparseStab Workloads module wall time: {:.3}s",

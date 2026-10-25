@@ -3,7 +3,9 @@
 
 use pecos_core::{AdaptiveIndexSet, BitSet, IndexSet, PauliBitmask, QubitId, SortedVecSet, VecSet};
 use pecos_random::PecosRng;
-use pecos_simulators::{CliffordGateable, GensGeneric, SparseStabGeneric, SparseStabVecSet};
+use pecos_simulators::{
+    CliffordGateable, GensGeneric, MeasurementRule, SparseStabGeneric, SparseStabVecSet,
+};
 use rand::RngExt;
 
 #[derive(Clone, Copy, Debug)]
@@ -247,7 +249,14 @@ fn simulator<S: IndexSet>(n: usize, seed: u64, tracking: bool) -> SparseStabGene
 
 trait Candidate {
     fn apply(&mut self, op: Op) -> Option<(bool, bool)>;
-    fn check(&self, reference: &SparseStabVecSet, deep: bool, context: &str);
+    fn check(
+        &self,
+        reference: &SparseStabVecSet,
+        refactored: &SparseStabVecSet,
+        deep: bool,
+        context: &str,
+    );
+    fn check_decoupled(&self, q: usize, context: &str);
 }
 
 impl<S: IndexSet> Candidate for SparseStabGeneric<S> {
@@ -255,11 +264,17 @@ impl<S: IndexSet> Candidate for SparseStabGeneric<S> {
         apply(self, op)
     }
 
-    fn check(&self, reference: &SparseStabVecSet, deep: bool, context: &str) {
-        let name = std::any::type_name::<S>();
-        assert!(
-            same_tableau(reference, self),
-            "(b) tableau: {name}; {context}"
+    fn check(
+        &self,
+        reference: &SparseStabVecSet,
+        refactored: &SparseStabVecSet,
+        deep: bool,
+        context: &str,
+    ) {
+        let name = format!(
+            "{} / {:?}",
+            std::any::type_name::<S>(),
+            self.measurement_rule()
         );
         if deep {
             assert!(valid_structure(self), "(c) structure: {name}; {context}");
@@ -268,11 +283,52 @@ impl<S: IndexSet> Candidate for SparseStabGeneric<S> {
                 "(d) signed group: {name}; {context}"
             );
         }
+        let same_rule = match self.measurement_rule() {
+            MeasurementRule::AaronsonGottesman => reference,
+            MeasurementRule::RefactorDecouple => refactored,
+        };
+        assert!(
+            same_tableau(same_rule, self),
+            "(b) tableau: {name}; {context}"
+        );
     }
+
+    fn check_decoupled(&self, q: usize, context: &str) {
+        if self.measurement_rule() == MeasurementRule::RefactorDecouple {
+            assert_decoupled(self, q, context);
+        }
+    }
+}
+
+fn assert_decoupled<S: IndexSet>(sim: &SparseStabGeneric<S>, q: usize, context: &str) {
+    let (s, d) = (sim.stabs(), sim.destabs());
+    assert_eq!(d.col_x[q].len(), 1, "self-check: unique partner; {context}");
+    let r0 = d.col_x[q].iter().next().unwrap();
+    assert_eq!(
+        d.row_x[r0].iter().collect::<Vec<_>>(),
+        [q],
+        "self-check: X_q partner; {context}"
+    );
+    assert!(
+        d.row_z[r0].is_empty(),
+        "self-check: partner has no Z; {context}"
+    );
+    assert!(s.row_x[r0].is_empty() && !s.signs_i.contains(r0));
+    assert_eq!(s.row_z[r0].iter().collect::<Vec<_>>(), [q]);
+    // Both views have already been checked by (c). These columns prove no other
+    // row touches q: the measured qubit is an exact tensor factor, including
+    // every deterministic check measurement in noiseless surface rounds 1 onward.
+    assert!(s.col_x[q].is_empty() && d.col_z[q].is_empty());
+    assert_eq!(
+        s.col_z[q].iter().collect::<Vec<_>>(),
+        [r0],
+        "self-check: isolated Z_q; {context}"
+    );
 }
 
 struct Harness {
     reference: SparseStabVecSet,
+    refactored: SparseStabVecSet,
     candidates: Vec<Box<dyn Candidate>>,
     context: String,
     step: usize,
@@ -284,14 +340,28 @@ impl Harness {
         let mut candidates: Vec<Box<dyn Candidate>> = vec![
             Box::new(simulator::<BitSet>(n, seed, tracking)),
             Box::new(simulator::<AdaptiveIndexSet>(n, seed, tracking)),
+            Box::new(
+                simulator::<BitSet>(n, seed, tracking)
+                    .with_measurement_rule(MeasurementRule::RefactorDecouple),
+            ),
+            Box::new(
+                simulator::<AdaptiveIndexSet>(n, seed, tracking)
+                    .with_measurement_rule(MeasurementRule::RefactorDecouple),
+            ),
         ];
         // The large-ID regression targets adaptive mode transitions; keep the
-        // slower unsorted candidate in the existing small-circuit corpus.
+        // slower unsorted candidates for both rules in the small-circuit corpus.
         if n <= 128 {
             candidates.push(Box::new(simulator::<VecSet<usize>>(n, seed, tracking)));
+            candidates.push(Box::new(
+                simulator::<VecSet<usize>>(n, seed, tracking)
+                    .with_measurement_rule(MeasurementRule::RefactorDecouple),
+            ));
         }
         Self {
             reference: simulator(n, seed, tracking),
+            refactored: simulator(n, seed, tracking)
+                .with_measurement_rule(MeasurementRule::RefactorDecouple),
             candidates,
             context: format!("seed={seed}, n={n}, tracking={tracking}"),
             step: 0,
@@ -307,11 +377,22 @@ impl Harness {
             );
         let result = apply(&mut self.reference, op);
         let context = format!("{}, step={}, {op:?}", self.context, self.step);
+        assert_eq!(
+            apply(&mut self.refactored, op),
+            result,
+            "(a) refactor measurement: {context}"
+        );
         for candidate in &mut self.candidates {
             assert_eq!(candidate.apply(op), result, "(a) measurement: {context}");
         }
         if deep || self.reference.num_qubits() <= 128 {
             self.check(deep, &context);
+        }
+        if let Op::Measure(q, _) | Op::RandomMeasure(q) | Op::Prepare(q, _) = op {
+            assert_decoupled(&self.refactored, q, &context);
+            for candidate in &self.candidates {
+                candidate.check_decoupled(q, &context);
+            }
         }
         self.step += 1;
         result
@@ -325,8 +406,10 @@ impl Harness {
         if deep {
             assert!(valid_structure(&self.reference), "(c) reference: {context}");
         }
+        self.refactored
+            .check(&self.reference, &self.refactored, deep, context);
         for candidate in &self.candidates {
-            candidate.check(&self.reference, deep, context);
+            candidate.check(&self.reference, &self.refactored, deep, context);
         }
     }
 
@@ -341,6 +424,140 @@ impl Harness {
         }
         result
     }
+}
+
+#[test]
+fn deterministic_refactor_dual_update_and_sign() {
+    for tracking in [false, true] {
+        let mut harness = Harness::new(2, 0, tracking, true);
+        // S=(Z0,Z0 Z1), D=(X0 X1,X1). R={0,1}, stabs.col_z[1]={1},
+        // and destabs.col_z[1] is empty: this exercises refactor_two_sources.
+        // Scores (-1,1) select row 1; the shortcut applies D0 <- D0 D1.
+        // X1 below makes the deterministic measurement outcome 1.
+        harness.step(Op::Cx(0, 1));
+        harness.step(Op::X(1));
+        assert_eq!(harness.step(Op::Measure(1, false)), Some((true, true)));
+        assert!(harness.refactored.stabs().signs_minus.contains(1));
+        assert_eq!(
+            harness.refactored.destabs().row_x[0]
+                .iter()
+                .collect::<Vec<_>>(),
+            [0]
+        );
+        assert!(harness.refactored.destabs().col_x[1].contains(1));
+    }
+}
+
+// Assert the complete CSS supports used to establish each branch's entry state
+// and the resulting dual basis. Harness still checks signed groups and phases.
+fn assert_css_supports(sim: &SparseStabVecSet, stabs: &[u128], destabs: &[u128]) {
+    assert!(sim.stabs().row_x.iter().all(IndexSet::is_empty));
+    assert!(sim.destabs().row_z.iter().all(IndexSet::is_empty));
+    assert_eq!(
+        sim.stabs().row_z.iter().map(bits).collect::<Vec<_>>(),
+        stabs
+    );
+    assert_eq!(
+        sim.destabs().row_x.iter().map(bits).collect::<Vec<_>>(),
+        destabs
+    );
+}
+
+#[test]
+fn deterministic_refactor_general_two_sources() {
+    for tracking in [false, true] {
+        let mut harness = Harness::new(3, 0, tracking, true);
+        harness.step(Op::Cx(0, 1));
+        harness.step(Op::Cx(1, 2));
+        assert_css_supports(
+            &harness.refactored,
+            &[0b001, 0b011, 0b110],
+            &[0b111, 0b110, 0b100],
+        );
+        assert_eq!(bits(&harness.refactored.destabs().col_x[1]), 0b011);
+        assert_eq!(bits(&harness.refactored.stabs().col_z[1]), 0b110);
+        // Inspection: R={0,1}, but stabs.col_z[1]={1,2}, so the two-source
+        // shortcut declines. The asserted supports give scores (-2,0), hence
+        // r0=1 with |D1|=2: refactor_measured_z takes the fused column branch.
+        // Z1 is deterministic with outcome 0; the forced true coin is ignored.
+        assert_eq!(harness.step(Op::Measure(1, true)), Some((true, false)));
+        // The dual update and stripping leave D=(X0,X1,X2), S=(Z0,Z1,Z2).
+        assert_css_supports(
+            &harness.refactored,
+            &[0b001, 0b010, 0b100],
+            &[0b001, 0b010, 0b100],
+        );
+    }
+}
+
+#[test]
+fn deterministic_refactor_general_three_sources_and_strip() {
+    for tracking in [false, true] {
+        let mut harness = Harness::new(4, 0, tracking, true);
+        harness.step(Op::Cx(0, 1));
+        harness.step(Op::Cx(1, 2));
+        harness.step(Op::Cx(2, 3));
+        assert_css_supports(
+            &harness.refactored,
+            &[0b0001, 0b0011, 0b0110, 0b1100],
+            &[0b1111, 0b1110, 0b1100, 0b1000],
+        );
+        assert_eq!(bits(&harness.refactored.destabs().col_x[2]), 0b0111);
+        assert_eq!(bits(&harness.refactored.stabs().col_z[2]), 0b1100);
+        // Inspection: |R|=3 bypasses both shortcuts. Scores (-7,-4,-2) select
+        // r0=2 with |D2|=2, so the fused column branch updates partners {0,1}.
+        // S3=Z2 Z3 must then be stripped to Z3 by decoupling.
+        assert_eq!(harness.step(Op::Measure(2, true)), Some((true, false)));
+        assert_css_supports(
+            &harness.refactored,
+            &[0b0001, 0b0011, 0b0100, 0b1000],
+            &[0b0011, 0b0010, 0b0100, 0b1000],
+        );
+    }
+}
+
+#[test]
+fn deterministic_refactor_general_weight_one_partner() {
+    for tracking in [false, true] {
+        let mut harness = Harness::new(3, 0, tracking, true);
+        harness.step(Op::Cx(0, 1));
+        harness.step(Op::Cx(1, 2));
+        assert_css_supports(
+            &harness.refactored,
+            &[0b001, 0b011, 0b110],
+            &[0b111, 0b110, 0b100],
+        );
+        assert_eq!(bits(&harness.refactored.destabs().col_x[2]), 0b111);
+        assert_eq!(bits(&harness.refactored.stabs().col_z[2]), 0b100);
+        // Inspection: |R|=3 bypasses both shortcuts even though only S2 has Z2.
+        // Scores (-5,-2,0) select r0=2 with D2=X2: refactor_measured_z takes
+        // the weight-one branch (A), toggling X2 in both partners {0,1}.
+        assert_eq!(harness.step(Op::Measure(2, true)), Some((true, false)));
+        assert_css_supports(
+            &harness.refactored,
+            &[0b001, 0b011, 0b100],
+            &[0b011, 0b010, 0b100],
+        );
+    }
+}
+
+#[test]
+fn random_measurement_decouples_bell_pair() {
+    let mut harness = Harness::new(2, 0, false, true);
+    harness.step(Op::H(0));
+    harness.step(Op::Cx(0, 1));
+    assert_eq!(harness.step(Op::Measure(0, true)), Some((false, true)));
+    assert_eq!(harness.step(Op::Measure(1, false)), Some((true, true)));
+}
+
+#[test]
+fn measurement_rule_survives_clone_and_reset() {
+    let sim = simulator::<SortedVecSet>(2, 0, false);
+    assert_eq!(sim.measurement_rule(), MeasurementRule::AaronsonGottesman);
+    let sim = sim.with_measurement_rule(MeasurementRule::RefactorDecouple);
+    let mut cloned = sim.clone();
+    cloned.reset();
+    assert_eq!(cloned.measurement_rule(), MeasurementRule::RefactorDecouple);
 }
 
 #[test]

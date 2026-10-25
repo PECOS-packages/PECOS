@@ -107,8 +107,8 @@ pub use qudit::{
 };
 pub use sign_algebra::{PhaseSign, SignAlgebra, SymbolicSign};
 pub use sparse_stab::{
-    SparseStab, SparseStabBitSet, SparseStabGeneric, SparseStabHybrid, SparseStabSet,
-    SparseStabSortedVecSet, SparseStabUnsortedVecSet, SparseStabVecSet,
+    MeasurementRule, SparseStab, SparseStabBitSet, SparseStabGeneric, SparseStabHybrid,
+    SparseStabSet, SparseStabSortedVecSet, SparseStabUnsortedVecSet, SparseStabVecSet,
 };
 pub use sparse_stab_y::{
     SparseStabY, SparseStabYBitSet, SparseStabYGeneric, SparseStabYUnsortedVecSet,

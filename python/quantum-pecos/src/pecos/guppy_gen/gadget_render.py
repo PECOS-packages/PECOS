@@ -56,6 +56,9 @@ def _allocation_epochs(
     epochs = {}
     results: dict[str, list[tuple[int, str]]] = {"X": [], "Z": []}
     for step_index, step in enumerate(gadget.steps):
+        if step.op_type == OpType.RELABEL:
+            msg = f"render_gadget_function does not support RELABEL step {step!r}; use pecos.qec.helix.lower_steps"
+            raise ValueError(msg)
         if not step.qubits or step.qubits[0] in data_names:
             continue
         qubit = step.qubits[0]

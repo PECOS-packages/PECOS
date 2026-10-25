@@ -1752,6 +1752,12 @@ for before_preparation in (True, False):
 | `measurement_partition_from_builder`, `measurement_partition_from_trace`, `assert_same_measurement_partition` | `pecos.testing` | Measurement-partition agreement, not circuit or state-action equivalence |
 | `DetectorErrorModel.from_circuit` | `pecos.qec` | Circuit fault analysis and observable distances |
 
+`OpType.RELABEL` in `pecos.qec.circuit_steps` exchanges the physical qubits
+named by two distinct slots without applying a gate or recording a measurement.
+`pecos.qec.helix.lower_steps` supports it; surface and Guppy renderers reject
+these steps and direct callers to that lowering. Invalid slot lists are rejected
+when a `CircuitStep` is constructed and checked again during Helix lowering.
+
 ## Next steps
 
 - [QEC with Guppy](qec-guppy.md) covers memory generation and simulation.

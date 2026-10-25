@@ -24,6 +24,11 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   raise a `ValueError` naming the gate instead of failing with an attribute
   error or a generic argument-count error.
 
+- Python: `pecos.qec.helix` adds C4-Helix [[20,2,6]] memory gadgets,
+  slot-aware ASAP lowering, and memory circuits with discovered detectors and
+  two logical observables. `OpType.RELABEL` exchanges two slot bindings without
+  applying a gate; surface and Guppy renderers reject it explicitly.
+
 - **Breaking:** SLR block conversion rejects input names that capture unbound
   outer references in the block body. The error identifies the block, input
   and reference; rename the block input to avoid the collision (#1472).

@@ -109,7 +109,6 @@ rand_xoshiro = "0.8"
 rapidrand = { version = "0.1", features = ["rand"] }
 
 # --- Data structures ---
-bitflags = "2"
 bitvec = { version = "1", features = ["serde"] }
 bytemuck = { version = "1", features = ["derive"] }
 dyn-clone = "1"

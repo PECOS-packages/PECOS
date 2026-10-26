@@ -64,6 +64,9 @@ class SparseStabPy(Stabilizer):
         gens (Tuple[Gens, Gens]):
     """
 
+    # Clifford lowering accepts singleton sequences, including the U1q alias.
+    _singleton_symbols = frozenset({"RX", "RY", "RZ", "RXY1Q", "R1XY", "U1q"})
+
     def __init__(self, num_qubits: int) -> None:
         """Initializes the stabilizer state.
 

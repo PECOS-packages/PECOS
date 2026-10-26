@@ -320,7 +320,7 @@ def test_hybrid_cointoss_preserves_output_and_rng():
     fresh = simulators.CoinToss(4, prob=0.5, seed=42)
     output = {"m": pecos.BitInt(2, 3)}
     with pytest.raises(ValueError, match="Measure"):
-        pecos.HybridEngine.run_gate(state, output, "Measure", {0, 4}, var=("m", 0))
+        pecos.HybridEngine.run_gate(state, output, "Measure", [0, 4], var=("m", 0))
     assert int(output["m"]) == 3
     assert [state.bindings["Measure"](state, 0) for _ in range(32)] == [
         fresh.bindings["Measure"](fresh, 0) for _ in range(32)
@@ -417,16 +417,30 @@ def test_cointoss_hybrid_nonmeasurement_policy(symbol):
     pecos.HybridEngine.run_gate(state, {}, symbol, {5})
 
 
-@pytest.mark.parametrize("symbol", ["Measure", "Measure -Z", "measure X", "MEASURE custom"])
-def test_cointoss_measurement_predicate(symbol):
+@pytest.mark.parametrize(
+    "symbol",
+    ["Measure", "measure Z", "MX", "MY", "MZ", *[f"Measure {sign}{axis}" for sign in "+-" for axis in "XYZ"]],
+)
+@pytest.mark.parametrize("container", [list, tuple, set, frozenset, iter])
+@pytest.mark.parametrize("prob", [0.5, 1])
+def test_cointoss_measurement_predicate(symbol, container, prob):
+    state = simulators.CoinToss(4, prob=prob, seed=42)
+    fresh = simulators.CoinToss(4, prob=prob, seed=42)
+    output = {"m": pecos.BitInt(2, 0)}
+    with pytest.raises(ValueError, match="out of bounds") as error:
+        pecos.HybridEngine.run_gate(state, output, symbol, container([0, 9]), var=("m", 0))
+    assert symbol in str(error.value)
+    assert int(output["m"]) == 0
+    # Switch deterministic measurements back to random ones to observe RNG position.
+    state.prob = fresh.prob = 0.5
+    assert [state.mz(0) for _ in range(32)] == [fresh.mz(0) for _ in range(32)]
+
+
+def test_cointoss_policy_uses_binding_symbols():
     state = simulators.CoinToss(2, seed=42)
-    for locations in ({0, 5}, 5):
-        with pytest.raises(ValueError, match=symbol):
-            state.validate_gate_batch(symbol, locations)
-    # Lists, tuples, generators, and frozensets are outside the circuit predicate.
-    for locations in ([0, 5], (0, 5), iter([0, 5]), frozenset({0, 5})):
-        state.validate_gate_batch(symbol, locations)
-    state.validate_gate_batch("MZ", {0, 5})
+    # These prefix spellings are not measurement bindings in HybridEngine.
+    for symbol in ("measure X", "MEASURE custom"):
+        state.validate_gate_batch(symbol, [0, 9])
 
 
 @pytest.mark.parametrize("pair", [(-1, 1), (4, 1)])
@@ -444,19 +458,52 @@ def test_fast_pair_first_operand_bounds(pair):
 
 @pytest.mark.parametrize("name", ["StateVec", "SparseStabPy", "PauliProp"])
 @pytest.mark.parametrize("route", ["gate", "hybrid"])
-def test_disabled_numpy_invalid_batch(name, route):
-    np = pytest.importorskip("numpy")
+def test_disabled_sized_invalid_batch(name, route, sized_sequence):
     state = _make(name)
     with pytest.raises(ValueError, match="X"):
-        _dispatch(state, route, "X", np.array([0, -1]), {}, simulate_gate=False)
+        _dispatch(state, route, "X", sized_sequence([0, -1]), {}, simulate_gate=False)
 
 
 @pytest.mark.parametrize("name", ["SparseStabPy", "CuStateVec", "MPS", "CudaStateVec"])
-def test_numpy_pair_tail_is_atomic(name):
-    np = pytest.importorskip("numpy")
+def test_sized_pair_tail_is_atomic(name, sized_sequence):
     state = _make(name)
     state.run_gate("X", [0])
     before = _snapshot(state)
-    with pytest.raises(ValueError, match="CX"):
-        state.run_gate("CX", [np.array([0, 1]), np.array([2, 2])])
+    with pytest.raises(ValueError, match="CX requires distinct qubits; repeated qubit 2"):
+        state.run_gate("CX", [sized_sequence([0, 1]), sized_sequence([2, 2])])
     assert _snapshot(state) == before
+    # Also prove the first location is accepted and actually changes the state.
+    state.run_gate("CX", [sized_sequence([0, 1])])
+    assert state.run_gate("Measure", [0, 1]) == {0: 1, 1: 1}
+
+
+@pytest.mark.parametrize("allow_sequences", [False, True])
+def test_index_scalar_precedes_sequence_policy(index_scalar, allow_sequences):
+    validate_batch("X", [index_scalar(1)], 2, allow_singletons=False, allow_sequences=allow_sequences)
+    with pytest.raises(ValueError, match=r"X.*out of bounds"):
+        validate_batch("X", [index_scalar(2)], 2, allow_sequences=allow_sequences)
+
+
+def test_index_scalar_dispatch_keeps_original_location(index_scalar):
+    state = DefaultSimulator()
+    state.gate_capacity = 2
+    calls = []
+    state.bindings["X"] = lambda _state, location, **_params: calls.append(location)
+    location = index_scalar(1)
+    state.run_gate("X", [location])
+    assert calls == [location]
+
+
+@pytest.mark.parametrize("symbol", ["RX", "RY", "RZ", "RXY1Q", "R1XY", "U1q"])
+def test_sparse_rotation_bad_scalar_tail_is_atomic(symbol, index_scalar):
+    state = simulators.SparseStabPy(2)
+    state.run_gate("H", [0, 1])
+    before = _snapshot(state)
+    with pytest.raises(ValueError, match=symbol):
+        state.run_gate(symbol, [0, index_scalar(2)], angle=1.5707963267948966, angles=[1.5707963267948966, 0])
+    assert _snapshot(state) == before
+
+
+def test_noninteger_unsized_location_is_gate_named(index_scalar):
+    with pytest.raises(ValueError, match="CX"):
+        validate_batch("CX", [index_scalar(1.5)], 2, allow_sequences=True)

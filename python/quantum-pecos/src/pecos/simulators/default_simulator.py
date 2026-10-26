@@ -39,9 +39,10 @@ class DefaultSimulator:
     """
 
     gate_capacity: int | None = None
-    # Generic user bindings retain their tuple/list location contract. Concrete
-    # quantum wrappers restrict one-qubit locations to scalars.
+    # Generic user bindings accept sized, indexable locations except strings and
+    # mappings. Concrete wrappers restrict this policy to match their dispatch.
     _allow_singletons = True
+    _singleton_symbols = frozenset()
     _allow_sequence_locations = True
 
     def __init__(self) -> None:
@@ -57,7 +58,7 @@ class DefaultSimulator:
             symbol,
             locations,
             self.gate_capacity,
-            allow_singletons=self._allow_singletons,
+            allow_singletons=self._allow_singletons or symbol in self._singleton_symbols,
             allow_sequences=self._allow_sequence_locations,
         )
 

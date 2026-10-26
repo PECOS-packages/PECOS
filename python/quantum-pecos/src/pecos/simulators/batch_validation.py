@@ -70,9 +70,11 @@ def is_empty_batch(locations: object) -> bool:
     Preserve the historical falsey bare-zero/None shortcut. Iterators have no
     length and are truthy, so their replay buffer determines whether they run.
     """
-    if isinstance(locations, Sized):
+    try:
         return len(locations) == 0
-    return not locations
+    except TypeError:
+        # Zero-dimensional arrays advertise __len__ but have no usable length.
+        return not locations
 
 
 def validate_batch(
@@ -143,18 +145,28 @@ def _validate_each(
     allow_sequences: bool,
 ) -> None:
     for location in locations:
-        is_sequence = isinstance(location, (tuple, list)) or (
-            allow_sequences
-            and isinstance(location, Sized)
-            and hasattr(location, "__getitem__")
-            and not isinstance(location, (str, bytes, bytearray, Mapping))
-        )
-        if arity == 1 and is_sequence and not allow_singletons:
-            hint = "; use II for the two-qubit identity" if symbol == "I" else ""
-            msg = f"{symbol}: expected a scalar qubit index, got {location!r}{hint}"
+        try:
+            index(location)
+        except TypeError:
+            is_sequence = isinstance(location, (tuple, list)) or (
+                allow_sequences
+                and isinstance(location, Sized)
+                and hasattr(location, "__getitem__")
+                and not isinstance(location, (str, bytes, bytearray, Mapping))
+            )
+        else:
+            # Integer-like objects take precedence over their sequence methods.
+            is_sequence = False
+        if arity == 1 and is_sequence and not allow_singletons and len(location) == 1:
+            msg = f"{symbol}: expected a scalar qubit index, got {location!r}"
             raise ValueError(msg)
         qubits = location if is_sequence else (location,)
-        if len(qubits) != arity:
+        try:
+            size = len(qubits)
+        except TypeError as exc:
+            msg = f"{symbol}: expected a qubit index or a sized sequence, got {location!r}"
+            raise ValueError(msg) from exc
+        if size != arity:
             hint = "; use II for the two-qubit identity" if symbol == "I" else ""
             msg = f"{symbol}: expected {arity} qubit(s) per location, got {location!r}{hint}"
             raise ValueError(msg)

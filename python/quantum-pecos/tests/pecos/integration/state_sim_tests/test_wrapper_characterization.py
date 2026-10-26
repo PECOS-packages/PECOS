@@ -548,16 +548,14 @@ def test_error_set_string_rejection():
 
 @pytest.mark.parametrize("state", [*WRAPPERS, "DefaultSimulator"], indirect=True)
 @pytest.mark.parametrize("values", [[], [0, 1]])
-def test_disabled_numpy_batch(state, values):
-    np = pytest.importorskip("numpy")
-    assert state.run_gate("X", np.array(values, dtype=int), simulate_gate=False) == {}
+def test_disabled_sized_batch(state, values, sized_sequence):
+    assert state.run_gate("X", sized_sequence(values), simulate_gate=False) == {}
 
 
 @pytest.mark.parametrize("state", ["SparseStabPy", "CuStateVec", "MPS", "CudaStateVec"], indirect=True)
-@pytest.mark.parametrize("container", ["numpy", "range"])
-def test_sized_sequence_pair(state, container):
-    np = pytest.importorskip("numpy")
-    location = np.array([0, 1]) if container == "numpy" else range(2)
+@pytest.mark.parametrize("container", ["custom", "range"])
+def test_sized_sequence_pair(state, container, sized_sequence):
+    location = sized_sequence([0, 1]) if container == "custom" else range(2)
     state.run_gate("X", [0])
     assert state.run_gate("CX", [location]) == {}
     assert state.run_gate("Measure", [0, 1]) == {0: 1, 1: 1}
@@ -571,3 +569,58 @@ def test_pauli_list_locations_with_removal(identity):
     # Both frames use the existing set subtraction contract; inner lists are unhashable.
     with pytest.raises(TypeError, match="unhashable type: 'list'"):
         state.run_circuit(_items("CX", [[0, 1]]), removed_locations=set())
+
+
+@pytest.mark.parametrize("symbol", ["RX", "RY", "RZ", "RXY1Q", "R1XY", "U1q"])
+@pytest.mark.parametrize("shape", ["tuple", "list", "scalar"])
+def test_sparse_rotation_location_protocol(symbol, shape, index_scalar):
+    state, fresh = simulators.SparseStabPy(2), simulators.SparseStabPy(2)
+    for sim in (state, fresh):
+        sim.run_gate("H", [0, 1])
+    location = {"tuple": (1,), "list": [1], "scalar": index_scalar(1)}[shape]
+    params = {"angle": pi / 2} if symbol in {"RX", "RY", "RZ"} else {"angles": [pi / 2, 0]}
+    state.run_gate(symbol, [0, location], **params)
+    fresh.run_gate(symbol, [0, 1], **params)
+    assert state.stabs.row_string() == fresh.stabs.row_string()
+    assert state.destabs.row_string() == fresh.destabs.row_string()
+
+
+@pytest.mark.parametrize("state", [*WRAPPERS, "DefaultSimulator"], indirect=True)
+def test_zero_dimensional_empty_batch(state, index_scalar):
+    assert state.run_gate("unknown-private-gate", index_scalar(0)) == {}
+
+
+@pytest.mark.parametrize("state", ["SparseStabPy", "CudaStateVec"], indirect=True)
+@pytest.mark.parametrize("container", [set, frozenset])
+def test_unordered_pair_rejected(state, container):
+    with pytest.raises(ValueError, match="CX"):
+        state.run_gate("CX", [container({0, 1})])
+
+
+@pytest.mark.parametrize("state", QUANTUM, indirect=True)
+@pytest.mark.parametrize("location", [(0,), [0]])
+def test_identity_singleton_follows_state_policy(state, location):
+    # "I" is a single-qubit gate: a singleton location follows the same
+    # per-state policy as X; these wrappers take scalar locations only.
+    with pytest.raises(ValueError, match="I: expected a scalar qubit index"):
+        state.run_gate("I", [location])
+
+
+@pytest.mark.parametrize("state", PAULI, indirect=True)
+@pytest.mark.parametrize("location", [(0,), [0]])
+def test_identity_singleton_accepted_where_singletons_are(state, location):
+    assert state.run_gate("I", [location]) == {}
+
+
+def test_numpy_location_compatibility():
+    # NumPy is explicitly declared in the root numpy-compat test dependency group.
+    # The dependency-free protocol tests above remain mandatory without that group.
+    np = pytest.importorskip("numpy")
+    state = simulators.SparseStabPy(2)
+    assert state.run_gate("X", np.array([0, 1]), simulate_gate=False) == {}
+    assert state.run_gate("unknown-private-gate", np.array(0)) == {}
+    for scalar in (np.int64(1), np.array(1)):
+        state.run_gate("RZ", [0, scalar], angle=pi / 2)
+    state.run_gate("X", [0])
+    state.run_gate("CX", [np.array([0, 1])])
+    assert state.run_gate("Measure", [0, 1]) == {0: 1, 1: 1}

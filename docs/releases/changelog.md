@@ -11,14 +11,23 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   before changing state, including when `simulate_gate=False`. Registered-gate
   decomposition is still validated per step until a later PR. Malformed locations,
   repeated operands within a location, and out-of-range qubits raise gate-named
-  `ValueError`s; some errors previously raised `TypeError`. One-qubit singleton
-  tuples/lists are accepted only by states whose bindings support them. `I` is
-  single-qubit; use `II` for a pair location. Batches may still repeat or overlap
-  qubits and execute sequentially. Native SparseStab, Stabilizer, StateVec,
-  StabVec, CoinToss and PauliProp expose a read-only `gate_capacity` property;
-  PauliProp returns `None` and remains growable. CoinToss's no-op `run_gate`
-  is unchanged; its HybridEngine validation checks only measurement-prefix
-  symbols with set or integer location containers.
+  `ValueError`s; some errors previously raised `TypeError`.
+  StateVec, CuStateVec, MPS and CudaStateVec require scalar one-qubit locations.
+  SparseStabPy accepts singleton sequences for RX, RY, RZ, RXY1Q, R1XY and U1q;
+  its other one-qubit gates require scalars. PauliProp/PauliFaultProp accept
+  singleton tuples/lists, and DefaultSimulator accepts singleton sized, indexable
+  sequences. `I` is a single-qubit gate and follows the same per-state rule as
+  `X`; a pair location for `I` is rejected (use `II`).
+  Integer-like scalars (including zero-dimensional integer arrays) are classified
+  before sequences. Multi-qubit locations must be ordered: set/frozenset pairs
+  are rejected, including in SparseStabPy and CudaStateVec where they previously
+  ran. Batches may still repeat or overlap qubits and execute sequentially.
+  Native SparseStab, Stabilizer, StateVec, StabVec, CoinToss and PauliProp expose
+  a read-only `gate_capacity` property; PauliProp returns `None` and remains
+  growable. CoinToss's own no-op `run_gate` and its `run_circuit` are unchanged.
+  Through HybridEngine, every CoinToss measurement binding (including MX/MY/MZ)
+  is validated for every iterable batch container; other CoinToss gates remain
+  no-ops.
 
 - **Breaking:** two-qubit gates in `pecos-simulators` now reject repeated-qubit
   pairs in debug and release builds. Such inputs could previously cause undefined

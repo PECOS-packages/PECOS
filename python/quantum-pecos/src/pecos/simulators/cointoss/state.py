@@ -95,14 +95,9 @@ class CoinToss:
         return next(iter(result.values())) if result else 0
 
     def validate_gate_batch(self, symbol: str, locations: object) -> None:
-        """Check exactly the measurements/containers recognized by run_circuit."""
-        if symbol.lower().startswith("measure") and isinstance(locations, (set, int)):
-            batch = (locations,) if isinstance(locations, int) else locations
-            try:
-                validate_batch("Measure", batch, self.gate_capacity, allow_singletons=False)
-            except ValueError as exc:
-                # Prefix dispatch also recognizes spellings outside the arity map.
-                raise ValueError(str(exc).replace("Measure", symbol, 1)) from exc
+        """Check measurement spellings over every batch HybridEngine dispatches."""
+        if gate_dict.get(symbol) is _measure_gate:
+            validate_batch(symbol, locations, self.gate_capacity, allow_singletons=False)
 
     def run_gate(
         self,

@@ -43,9 +43,8 @@ pub enum MeasurementRule {
 /// `AsGiven`, and so can which positions are flagged nondeterministic: for a Bell
 /// pair within a larger batch, it is whichever qubit is processed first. Batches
 /// of one or two qubits are unaffected, since their bit-reversed order is the
-/// identity. Results are
-/// returned in caller order. Any duplicate qubit makes the entire batch use
-/// `AsGiven`.
+/// identity. Results are returned in caller order. Any duplicate qubit makes the
+/// entire batch use `AsGiven`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum MeasurementBatchOrder {
     /// Preserve the caller's order and the existing measurement trajectory.
@@ -1117,7 +1116,9 @@ where
 
     /// Measure Z and count support visits in the executed refactor/decouple path.
     /// Normal measurement compiles out these counters. Counted measurements use
-    /// the same random stream and tableau updates as [`CliffordGateable::mz`].
+    /// the same random stream and tableau updates as a single-qubit
+    /// [`CliffordGateable::mz`]; to reproduce a batch, measure its qubits in
+    /// [`Self::measurement_batch_permutation`] order.
     ///
     /// # Panics
     /// Panics if `q` is outside the register.
@@ -1128,24 +1129,23 @@ where
             self.num_qubits
         );
         let mut work = MeasurementWork::default();
-        let result = if self.stabs.col_x[q].is_empty() {
-            self.deterministic_meas::<true>(q, &mut work)
-        } else {
-            let outcome = self.rng.coin_flip();
-            self.nondeterministic_meas::<true>(q, outcome, &mut work)
-        };
+        let result = self.measure_z::<true>(q, &mut work);
         (result, work)
     }
 
     /// Measure Z on one qubit, drawing a coin only for a random outcome.
     #[inline]
-    fn mz_sampled(&mut self, q: usize) -> MeasurementResult {
+    fn measure_z<const COUNT: bool>(
+        &mut self,
+        q: usize,
+        work: &mut MeasurementWork,
+    ) -> MeasurementResult {
         if self.stabs.col_x[q].is_empty() {
             // There are no stabilizers that anti-commute with Z_q
-            self.deterministic_meas::<false>(q, &mut MeasurementWork::default())
+            self.deterministic_meas::<COUNT>(q, work)
         } else {
             let outcome = self.rng.coin_flip();
-            self.nondeterministic_meas::<false>(q, outcome, &mut MeasurementWork::default())
+            self.nondeterministic_meas::<COUNT>(q, outcome, work)
         }
     }
 
@@ -2569,7 +2569,10 @@ where
     #[inline]
     fn mz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
         if self.measurement_batch_order == MeasurementBatchOrder::AsGiven || qubits.len() < 2 {
-            return qubits.iter().map(|q| self.mz_sampled(q.index())).collect();
+            return qubits
+                .iter()
+                .map(|q| self.measure_z::<false>(q.index(), &mut MeasurementWork::default()))
+                .collect();
         }
         let mut results: Vec<_> = (0..qubits.len())
             .map(|_| MeasurementResult {
@@ -2578,7 +2581,8 @@ where
             })
             .collect();
         for i in self.measurement_batch_permutation(qubits) {
-            results[i] = self.mz_sampled(qubits[i].index());
+            results[i] =
+                self.measure_z::<false>(qubits[i].index(), &mut MeasurementWork::default());
         }
         results
     }

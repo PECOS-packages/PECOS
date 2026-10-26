@@ -1333,6 +1333,16 @@ impl<S: IndexSet> BatchHarness<S> {
             "(d) batch signed group: {}",
             self.context
         );
+        assert_hermitian(&self.candidate, &self.context);
+        if self.candidate.measurement_rule() == MeasurementRule::AaronsonGottesman {
+            // Same rule, same single-qubit sequence: the tableaux, including any
+            // tracked destabilizer signs, must agree exactly.
+            assert!(
+                same_tableau(&self.candidate, &self.reference),
+                "(b) batch tableau: {}",
+                self.context
+            );
+        }
     }
 }
 

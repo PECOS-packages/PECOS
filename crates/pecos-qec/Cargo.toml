@@ -37,7 +37,7 @@ pecos-engines = { workspace = true, optional = true }
 pecos-programs = { workspace = true, optional = true }
 pecos-qis = { workspace = true, optional = true }
 pecos-qis-ffi-types = { workspace = true, optional = true }
-selene-hugr-qis-compiler = { git = "https://github.com/Quantinuum/tket2", rev = "6ab584d4544552bf22c9428ad1247e8d70e55fcb", default-features = false, optional = true }
+selene-hugr-qis-compiler = { git = "https://github.com/Quantinuum/tket2", rev = "96865e910db4ddfe90f2900cbab3e2841e7e4272", default-features = false, optional = true }
 
 # Select the workspace LLVM link mode for the compiler's inkwell.
 inkwell = { workspace = true, optional = true }

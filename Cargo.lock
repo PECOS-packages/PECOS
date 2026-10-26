@@ -474,7 +474,7 @@ dependencies = [
  "pecos-simulators",
  "pecos-stab-tn",
  "quizx",
- "rand 0.10.3",
+ "rand 0.10.2",
  "rand_xoshiro 0.8.1",
  "rapidrand",
  "wide",
@@ -1359,16 +1359,6 @@ version = "0.9.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2d6914041f254d6e9176c01941b21115dcfb7089e55135a35411081bd106ef3f"
 dependencies = [
- "crossbeam-utils",
-]
-
-[[package]]
-name = "crossbeam-skiplist"
-version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df29de440c58ca2cc6e587ec3d22347551a32435fbde9d2bff64e78a9ffa151b"
-dependencies = [
- "crossbeam-epoch",
  "crossbeam-utils",
 ]
 
@@ -2620,7 +2610,7 @@ dependencies = [
  "itertools 0.15.0",
  "petgraph 0.8.3",
  "portgraph",
- "rand 0.10.3",
+ "rand 0.10.2",
  "rstest 0.27.0",
  "strum 0.28.0",
 ]
@@ -4245,7 +4235,7 @@ dependencies = [
  "num-complex 0.4.6",
  "num-traits",
  "pecos-random",
- "rand 0.10.3",
+ "rand 0.10.2",
  "rand_core 0.10.1",
  "rand_xoshiro 0.8.1",
  "serde",
@@ -4353,7 +4343,7 @@ dependencies = [
  "pecos-random",
  "pecos-results",
  "pecos-simulators",
- "rand 0.10.3",
+ "rand 0.10.2",
  "rayon",
  "serde",
  "serde_json",
@@ -4368,7 +4358,7 @@ dependencies = [
  "pecos-quantum",
  "pecos-random",
  "pecos-simulators",
- "rand 0.10.3",
+ "rand 0.10.2",
  "wide",
 ]
 
@@ -4402,7 +4392,7 @@ version = "0.2.0-dev.0"
 dependencies = [
  "pecos-decoder-core",
  "pecos-trellis",
- "rand 0.10.3",
+ "rand 0.10.2",
  "rand_xoshiro 0.8.1",
  "serde",
  "serde_json",
@@ -4443,7 +4433,7 @@ dependencies = [
  "pecos-random",
  "pecos-simulators",
  "pollster",
- "rand 0.10.3",
+ "rand 0.10.2",
  "rand_core 0.10.1",
  "serde_json",
  "wgpu",
@@ -4467,7 +4457,7 @@ dependencies = [
  "ndarray 0.17.2",
  "pecos-build",
  "pecos-decoder-core",
- "rand 0.10.3",
+ "rand 0.10.2",
  "thiserror 2.0.18",
 ]
 
@@ -4480,7 +4470,7 @@ dependencies = [
  "pecos-qec",
  "pecos-quantum",
  "proptest",
- "rand 0.10.3",
+ "rand 0.10.2",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -4529,7 +4519,7 @@ dependencies = [
  "pecos-results",
  "pecos-simulators",
  "proptest",
- "rand 0.10.3",
+ "rand 0.10.2",
  "rand_core 0.10.1",
  "rayon",
  "smallvec",
@@ -4548,7 +4538,7 @@ dependencies = [
  "num-traits",
  "pecos-random",
  "puruspe",
- "rand 0.10.3",
+ "rand 0.10.2",
  "rand_distr",
  "rustworkx-core",
  "serde",
@@ -4636,7 +4626,7 @@ dependencies = [
  "pecos-random",
  "pecos-uf-decoder",
  "petgraph 0.8.3",
- "rand 0.10.3",
+ "rand 0.10.2",
  "thiserror 2.0.18",
 ]
 
@@ -4686,7 +4676,7 @@ dependencies = [
  "pecos-quantum",
  "pecos-random",
  "pecos-simulators",
- "rand 0.10.3",
+ "rand 0.10.2",
  "rand_core 0.10.1",
  "rayon",
  "selene-hugr-qis-compiler",
@@ -4718,7 +4708,7 @@ dependencies = [
  "pecos-qis-test-runtime",
  "pecos-random",
  "pecos-simulators",
- "rand 0.10.3",
+ "rand 0.10.2",
  "selene-core",
  "selene-simple-runtime",
  "selene-soft-rz-runtime",
@@ -4772,7 +4762,7 @@ dependencies = [
 name = "pecos-random"
 version = "0.2.0-dev.0"
 dependencies = [
- "rand 0.10.3",
+ "rand 0.10.2",
  "rand_core 0.10.1",
  "rand_xoshiro 0.8.1",
  "random_tester",
@@ -4833,7 +4823,7 @@ dependencies = [
  "pecos-simulators",
  "pecos-wasm",
  "pyo3",
- "rand 0.10.3",
+ "rand 0.10.2",
  "rayon",
  "serde_json",
  "sha2 0.11.0",
@@ -4989,7 +4979,7 @@ dependencies = [
  "pecos-core",
  "pecos-quantum",
  "pecos-random",
- "rand 0.10.3",
+ "rand 0.10.2",
  "rayon",
  "smallvec",
  "wide",
@@ -5057,7 +5047,7 @@ dependencies = [
  "libm",
  "pecos-bp",
  "pecos-decoder-core",
- "rand 0.10.3",
+ "rand 0.10.2",
  "rand_xoshiro 0.8.1",
  "rayon",
  "serde",
@@ -5745,9 +5735,9 @@ dependencies = [
 
 [[package]]
 name = "rand"
-version = "0.10.3"
+version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "65c9fb96cbc91e3478eaae79a69fcd3f1ae4ad052e471fe6732fff548984b4af"
+checksum = "c7f5fa3a058cd35567ef9bfa5e75732bee0f9e4c55fa90477bef2dfcdbc4be80"
 dependencies = [
  "chacha20",
  "getrandom 0.4.3",
@@ -5806,7 +5796,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4d431c2703ccf129de4d45253c03f49ebb22b97d6ad79ee3ecfc7e3f4862c1d8"
 dependencies = [
  "num-traits",
- "rand 0.10.3",
+ "rand 0.10.2",
 ]
 
 [[package]]
@@ -6412,7 +6402,7 @@ dependencies = [
  "num-traits",
  "petgraph 0.8.3",
  "priority-queue 2.7.0",
- "rand 0.10.3",
+ "rand 0.10.2",
  "rand_distr",
  "rand_pcg",
  "rayon",
@@ -6551,7 +6541,7 @@ dependencies = [
 [[package]]
 name = "selene-hugr-qis-compiler"
 version = "0.0.0"
-source = "git+https://github.com/Quantinuum/tket2?rev=6ab584d4544552bf22c9428ad1247e8d70e55fcb#6ab584d4544552bf22c9428ad1247e8d70e55fcb"
+source = "git+https://github.com/Quantinuum/tket2?rev=96865e910db4ddfe90f2900cbab3e2841e7e4272#96865e910db4ddfe90f2900cbab3e2841e7e4272"
 dependencies = [
  "anyhow",
  "cbindgen",
@@ -6559,7 +6549,7 @@ dependencies = [
  "pyo3-build-config",
  "serde_json",
  "strum 0.28.0",
- "tket 0.22.0 (git+https://github.com/Quantinuum/tket2?rev=6ab584d4544552bf22c9428ad1247e8d70e55fcb)",
+ "tket 0.22.0 (git+https://github.com/Quantinuum/tket2?rev=96865e910db4ddfe90f2900cbab3e2841e7e4272)",
  "tket-qsystem",
  "tracing",
 ]
@@ -7353,111 +7343,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
-name = "tk-pg-bitpacked"
-version = "0.1.1"
-source = "git+https://github.com/Quantinuum/tket2?rev=6ab584d4544552bf22c9428ad1247e8d70e55fcb#6ab584d4544552bf22c9428ad1247e8d70e55fcb"
-dependencies = [
- "rand 0.10.3",
- "tk-pg-core",
-]
-
-[[package]]
-name = "tk-pg-canonical-form"
-version = "0.1.1"
-source = "git+https://github.com/Quantinuum/tket2?rev=6ab584d4544552bf22c9428ad1247e8d70e55fcb#6ab584d4544552bf22c9428ad1247e8d70e55fcb"
-dependencies = [
- "tk-pg-core",
- "tk-pg-ir-kernels",
- "tk-pg-qm-tableau",
- "tk-pg-utils",
-]
-
-[[package]]
-name = "tk-pg-core"
-version = "0.1.1"
-source = "git+https://github.com/Quantinuum/tket2?rev=6ab584d4544552bf22c9428ad1247e8d70e55fcb#6ab584d4544552bf22c9428ad1247e8d70e55fcb"
-dependencies = [
- "serde",
- "serde_json",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "tk-pg-greedy-synth"
-version = "0.1.1"
-source = "git+https://github.com/Quantinuum/tket2?rev=6ab584d4544552bf22c9428ad1247e8d70e55fcb#6ab584d4544552bf22c9428ad1247e8d70e55fcb"
-dependencies = [
- "crossbeam-skiplist",
- "indexmap 2.14.0",
- "indicatif",
- "rand 0.10.3",
- "rayon",
- "tk-pg-bitpacked",
- "tk-pg-canonical-form",
- "tk-pg-core",
- "tk-pg-optimize",
- "tk-pg-qm-tableau",
-]
-
-[[package]]
-name = "tk-pg-ir-kernels"
-version = "0.1.1"
-source = "git+https://github.com/Quantinuum/tket2?rev=6ab584d4544552bf22c9428ad1247e8d70e55fcb#6ab584d4544552bf22c9428ad1247e8d70e55fcb"
-dependencies = [
- "tk-pg-core",
- "tk-pg-utils",
-]
-
-[[package]]
-name = "tk-pg-optimize"
-version = "0.1.1"
-source = "git+https://github.com/Quantinuum/tket2?rev=6ab584d4544552bf22c9428ad1247e8d70e55fcb#6ab584d4544552bf22c9428ad1247e8d70e55fcb"
-dependencies = [
- "tk-pg-core",
- "tk-pg-ir-kernels",
- "tk-pg-qm-tableau",
- "tk-pg-utils",
-]
-
-[[package]]
-name = "tk-pg-qm-tableau"
-version = "0.1.1"
-source = "git+https://github.com/Quantinuum/tket2?rev=6ab584d4544552bf22c9428ad1247e8d70e55fcb#6ab584d4544552bf22c9428ad1247e8d70e55fcb"
-dependencies = [
- "rand 0.10.3",
- "rayon",
- "tk-pg-bitpacked",
- "tk-pg-core",
- "tk-pg-ir-kernels",
- "tk-pg-utils",
-]
-
-[[package]]
-name = "tk-pg-rebase"
-version = "0.1.1"
-source = "git+https://github.com/Quantinuum/tket2?rev=6ab584d4544552bf22c9428ad1247e8d70e55fcb#6ab584d4544552bf22c9428ad1247e8d70e55fcb"
-dependencies = [
- "tk-pg-core",
-]
-
-[[package]]
-name = "tk-pg-t-optimize"
-version = "0.1.1"
-source = "git+https://github.com/Quantinuum/tket2?rev=6ab584d4544552bf22c9428ad1247e8d70e55fcb#6ab584d4544552bf22c9428ad1247e8d70e55fcb"
-dependencies = [
- "bitvec",
- "tk-pg-canonical-form",
- "tk-pg-core",
- "tk-pg-ir-kernels",
- "tk-pg-qm-tableau",
-]
-
-[[package]]
-name = "tk-pg-utils"
-version = "0.1.1"
-source = "git+https://github.com/Quantinuum/tket2?rev=6ab584d4544552bf22c9428ad1247e8d70e55fcb#6ab584d4544552bf22c9428ad1247e8d70e55fcb"
-
-[[package]]
 name = "tket"
 version = "0.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7499,7 +7384,7 @@ dependencies = [
 [[package]]
 name = "tket"
 version = "0.22.0"
-source = "git+https://github.com/Quantinuum/tket2?rev=6ab584d4544552bf22c9428ad1247e8d70e55fcb#6ab584d4544552bf22c9428ad1247e8d70e55fcb"
+source = "git+https://github.com/Quantinuum/tket2?rev=96865e910db4ddfe90f2900cbab3e2841e7e4272#96865e910db4ddfe90f2900cbab3e2841e7e4272"
 dependencies = [
  "anyhow",
  "ascent",
@@ -7530,12 +7415,6 @@ dependencies = [
  "smol_str",
  "strum 0.28.0",
  "thiserror 2.0.18",
- "tk-pg-canonical-form",
- "tk-pg-core",
- "tk-pg-greedy-synth",
- "tk-pg-optimize",
- "tk-pg-rebase",
- "tk-pg-t-optimize",
  "tket-json-rs",
  "tracing",
  "typetag",
@@ -7558,7 +7437,7 @@ dependencies = [
 [[package]]
 name = "tket-qsystem"
 version = "0.29.0"
-source = "git+https://github.com/Quantinuum/tket2?rev=6ab584d4544552bf22c9428ad1247e8d70e55fcb#6ab584d4544552bf22c9428ad1247e8d70e55fcb"
+source = "git+https://github.com/Quantinuum/tket2?rev=96865e910db4ddfe90f2900cbab3e2841e7e4272#96865e910db4ddfe90f2900cbab3e2841e7e4272"
 dependencies = [
  "anyhow",
  "clap 4.6.1",
@@ -7573,7 +7452,7 @@ dependencies = [
  "serde",
  "smol_str",
  "strum 0.28.0",
- "tket 0.22.0 (git+https://github.com/Quantinuum/tket2?rev=6ab584d4544552bf22c9428ad1247e8d70e55fcb)",
+ "tket 0.22.0 (git+https://github.com/Quantinuum/tket2?rev=96865e910db4ddfe90f2900cbab3e2841e7e4272)",
  "tket-json-rs",
  "typetag",
 ]

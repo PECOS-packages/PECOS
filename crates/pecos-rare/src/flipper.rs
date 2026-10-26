@@ -133,11 +133,10 @@ impl BasicSingleFaultFlipper {
             .find(|fault| fault.site_uid() == site_uid)
             .map_or("NoFault", |fault| fault.outcome_label());
 
-        // Grab all the outcomes (except the current one)
+        // Grab all the outcomes
         let outcomes = site
             .outcomes()
             .into_iter()
-            .filter(|outcome| outcome.label() != current_label)
             .collect::<Vec<_>>();
         assert!(!outcomes.is_empty(), "Fault site has no alternative outcome");
 
@@ -208,8 +207,14 @@ impl BasicSubregionFaultFlipper {
     }
 
     pub fn set_seed(&mut self, seed: u64) {
-        self.rng = Some(PecosRng::seed_from_u64(seed));
-        self.site_flipper.set_seed(seed);
+    // Generate seeds for the two random streams.
+    let mut seed_rng = PecosRng::seed_from_u64(seed);
+
+    let region_seed = seed_rng.next_u64();
+    let outcome_seed = seed_rng.next_u64();
+
+    self.rng = Some(PecosRng::seed_from_u64(region_seed));
+    self.site_flipper.set_seed(outcome_seed);
     }
 
     pub fn random_flip_and_ratio(&mut self, history: &FaultHistory) -> (FaultHistory, f64) {
@@ -292,11 +297,10 @@ impl WeightedSingleFaultFlipper {
             .find(|fault| fault.site_uid() == site_uid)
             .map_or("NoFault", |fault| fault.outcome_label());
 
-        // Grab all the outcomes (except the current one)
+        // Grab all the outcomes
         let outcomes = site
             .outcomes()
             .into_iter()
-            .filter(|outcome| outcome.label() != current_label)
             .collect::<Vec<_>>();
         assert!(!outcomes.is_empty(), "Fault site has no alternative outcome");
 
@@ -322,18 +326,8 @@ impl WeightedSingleFaultFlipper {
         // Get the new history with the randomly selected outcome
         let new_history = history.with_outcome(&site, chosen_outcome.label());
 
-        // Compute the acceptance probability ratio
-        // (with the hastings correction term)
-        // p(x')/p(x) * p(x|x')/p(x'|x) =
-        // (1 - p(x)) / (1 - p(x'))
-        let prev_prob = site
-            .outcome_label_probability(current_label)
-            .expect("Current outcome must belong to its fault site");
-        let new_prob = site
-            .outcome_label_probability(chosen_outcome.label())
-            .expect("Selected outcome must belong to its fault site");
-
-        let ratio = (1.0 - prev_prob) / (1.0 - new_prob);
+        // Acceptance ratio is always 1 now with resampling.
+        let ratio = 1.0;
 
         (new_history, ratio)
     }
@@ -379,8 +373,14 @@ impl WeightedSubregionFaultFlipper {
     }
 
     pub fn set_seed(&mut self, seed: u64) {
-        self.rng = Some(PecosRng::seed_from_u64(seed));
-        self.site_flipper.set_seed(seed);
+    // Generate seeds for the two random streams.
+    let mut seed_rng = PecosRng::seed_from_u64(seed);
+
+    let region_seed = seed_rng.next_u64();
+    let outcome_seed = seed_rng.next_u64();
+
+    self.rng = Some(PecosRng::seed_from_u64(region_seed));
+    self.site_flipper.set_seed(outcome_seed);
     }
 
     /// Flips a whole region according to `region_probability`

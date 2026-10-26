@@ -396,6 +396,13 @@ pub trait QisRuntime: Send + Sync + dyn_clone::DynClone {
         ))
     }
 
+    /// Whether every custom event in this shot has been modeled or explicitly
+    /// acknowledged as metadata. Capture-only histories must return false, even
+    /// after those histories have been drained.
+    fn runtime_events_complete(&self) -> bool {
+        true
+    }
+
     /// Lower freshly collected program operations through the runtime with provenance.
     ///
     /// Runtimes that can preserve source/scheduler metadata should override this

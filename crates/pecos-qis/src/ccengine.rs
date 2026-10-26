@@ -85,6 +85,8 @@ pub struct OperationTraceChunk {
     pub operations: Vec<Operation>,
     pub lowered_quantum_ops: Vec<LoweredQuantumGateTrace>,
     pub lowered_quantum_ops_complete: bool,
+    /// False if opaque events were captured without interpretation.
+    pub runtime_events_complete: bool,
     pub named_result_traces: Vec<NamedResultTrace>,
     /// Complete typed outputs for this shot, on the `named_results` chunk only.
     pub named_results: BTreeMap<String, pecos_qis_ffi_types::NamedResult>,
@@ -1490,6 +1492,7 @@ impl QisEngine {
             operations: ops.to_vec(),
             lowered_quantum_ops: lowered_trace,
             lowered_quantum_ops_complete,
+            runtime_events_complete: self.runtime.runtime_events_complete(),
             named_result_traces: Vec::new(),
             named_results: BTreeMap::new(),
             measurement_results: if stage == "trace_complete" {
@@ -1570,6 +1573,7 @@ impl QisEngine {
             operations: Vec::new(),
             lowered_quantum_ops: Vec::new(),
             lowered_quantum_ops_complete: true,
+            runtime_events_complete: self.runtime.runtime_events_complete(),
             named_result_traces: named_result_traces.to_vec(),
             named_results,
             measurement_results: BTreeMap::new(),

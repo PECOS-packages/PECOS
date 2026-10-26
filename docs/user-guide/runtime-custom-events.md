@@ -62,11 +62,94 @@ Unknown policy values raise `ValueError` before runtime discovery or configurati
 
 The default `"reject_unhandled"` stops execution with the event tag, runtime,
 and batch/operation/timing context. Explicit `"capture"` retains the old behavior:
-custom events do not change the simulated physics. Python does not expose a metadata handler or a
-physical-effect adapter here, so this policy rejects **every** custom event,
-including metadata. A successful run in capture mode is not a fidelity check;
+custom events do not change the simulated physics. Without the batch adapter
+described below, strict policy rejects **every** custom event, including metadata.
+A successful run in capture mode is not a fidelity check;
 strict rejection identifies missing integration, rather than implementing it.
 Selecting the policy does not enable the separate bounded runtime-frame executor.
+
+## Shared simulation and tracing adapters
+
+A Selene-compatible runtime integration can provide `batch_adapter_factory` on
+its plugin object, or callers can pass that keyword to `selene_engine()`,
+`qis_engine().selene_runtime(...)`, `capture_qis_operation_trace()`, or
+`trace_program_to_tick_circuit()`. PECOS treats all runtime plugins alike and
+contains no private event tags or schemas.
+
+The zero-argument factory returns a fresh object with `normalize(batch)` for
+each shot. The method receives an owned dictionary containing `shot_id`,
+`batch_index`, `num_qubits`, `start_time_nanos`, `duration_nanos`, and
+`operations`. Operations use the following representation:
+
+```python
+{"Rxy": {"qubit_id": 0, "theta": 1.57, "phi": 0.0}}
+{"Rz": {"qubit_id": 0, "theta": 0.5}}
+{"Rzz": {"qubit_id_1": 0, "qubit_id_2": 1, "theta": 0.5}}
+{"Rpp": {"qubit_id_1": 0, "qubit_id_2": 1, "theta": 0.5, "phi": 0.0}}
+{"Reset": {"qubit_id": 0}}
+{"Measure": {"qubit_id": 0, "result_id": 7}}
+{"MeasureLeaked": {"qubit_id": 0, "result_id": 7}}
+{"Custom": {"tag": 7301, "data": [1]}}
+```
+
+Return a list of ordinary operations in the same representation. Every custom
+event must be understood: metadata may produce no gate, whereas physical effects
+must be represented by gates. If a payload duplicates ordinary gates or timing,
+the integration must verify that relationship rather than emit them twice.
+Unknown schemas, stochastic channels, repumping, or other effects outside the
+adapter's supported semantics must raise. PECOS cannot verify an arbitrary
+adapter's physical interpretation; installing it is an explicit trust boundary.
+
+PECOS validates finite angles, qubit bounds, output shapes, expansion limits, and
+unchanged measurement order, kind, targets, and native result IDs. Output cannot
+contain custom events. Native batches and expansions are limited to 4096 operations,
+with at most 256 KiB of source payload per batch. Errors poison the shot until
+reset. Adapters are fresh across shots and worker clones. Clean native runtime
+instances remain reusable across shots, whether or not an adapter is configured.
+Callbacks must not call back into built simulations or share mutable shot state.
+
+Both ordinary simulation and tracing use this normalization **before** idle
+insertion. The runtime's integer nanosecond timestamps remain authoritative, relative to
+the current shot's origin when a native instance is reused.
+Each normalized qubit receives one gap before its first touching operation in a
+batch, except before reset; all operations on it share the original batch's busy
+interval. Adapters cannot retime batches or invent idle durations. Empty batches
+still reach the adapter, allowing persistent bookkeeping without creating idle
+sites. No final idle tail is added. This shared-interval rule applies only to
+adapter-normalized output. Without an adapter, ordinary native batches retain
+per-operation timing checks: multiple timed operations touching the same qubit,
+including a gate after reset, still reject if their busy intervals overlap.
+
+For Rust integrations, use `SeleneRuntime::set_batch_adapter_factory` with
+`RuntimeBatchAdapter`. The Python factory is the equivalent bridge. This is an
+ordinary QIS runtime normalizer, separate from the scheduled-noise adapter
+factory. Combining it with scheduled transport is rejected before extraction;
+that route uses its own scheduled adapter and does not support operation tracing.
+
+Capture-only traces now carry `runtime_events_complete=false` once an unhandled
+event occurs. Draining the event history cannot clear that flag. Audited replay
+rejects such traces, so enabling capture cannot silently certify a DEM.
+
+## Native clock convention
+
+Clock convention and event interpretation are independent settings. Set
+`clock_model="continuous"` (the default) for a native clock that runs across
+shots, or `clock_model="shot_relative"` for a runtime whose native `shot_start`
+hook restarts its clock at zero. Select the convention explicitly on
+`selene_engine(...)`, `qis_engine().selene_runtime(...)`, or the tracing helpers;
+a runtime plugin may instead expose a `clock_model` property. An explicit
+argument overrides that property. Rust integrations use
+`SeleneRuntime::with_clock_model(RuntimeClockModel::ShotRelative)`.
+
+Both conventions reuse clean native instances, with or without an event adapter.
+Continuous timestamps are rebased by the collected end of the previous shot;
+shot-relative timestamps are already in the trace's time base. A clean host
+`reset()` does not restart the native clock: the shot-relative convention takes
+effect when the next native shot starts. Neither mode guesses an offset from
+observed timestamps, changes a batch duration, or changes idle-noise parameters.
+A clock that moves behind the previous shot's origin still fails under the
+default continuous convention, even when an adapter is installed. Declare the
+runtime's actual contract rather than selecting a mode to suppress that error.
 
 ## Rust handler and lifecycle contract
 
@@ -101,7 +184,7 @@ owned by the engine, the runtime history accessors are not exposed through
 `QisRuntime`; use the configured handler for external observation. A handler
 does not drain the retained history or provide bounded-memory streaming.
 
-This is a Rust runtime transport and metadata-handling interface. It does not
+The per-event Rust handler is a runtime transport and metadata-handling interface. It does not
 serialize events into operation traces, expose Python handler configuration, or
 translate custom events into quantum operations or noise channels. Events carry
 no inferred qubit targets. Metadata acknowledgement never advances a qubit clock

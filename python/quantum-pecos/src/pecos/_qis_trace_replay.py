@@ -530,6 +530,9 @@ def _reject_partially_lowered_trace(chunks: list[dict[str, Any]]) -> None:
     the trace replay regressions.
     """
     for idx, chunk in enumerate(chunks):
+        if chunk.get("runtime_events_complete", True) is not True:
+            msg = "Audited trace replay rejects unhandled runtime custom events; configure a batch adapter"
+            raise ValueError(msg)
         if _chunk_has_lowerable_op(chunk) and chunk.get("lowered_quantum_ops_complete") is not True:
             msg = (
                 f"Traced chunk {idx} does not attest a complete lowered gate stream. "

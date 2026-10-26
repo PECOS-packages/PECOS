@@ -147,6 +147,11 @@ fn validate_shot(shot: &[OperationTraceChunk]) -> Result<(), DemBuildError> {
                 chunk.lowered_quantum_ops_complete
             )));
         }
+        if !chunk.runtime_events_complete {
+            return Err(preparation(format!(
+                "runtime trace chunk {index} captured unhandled runtime custom events; configure a runtime batch adapter"
+            )));
+        }
         if chunk
             .operations
             .iter()
@@ -859,6 +864,7 @@ mod tests {
             operations: vec![],
             lowered_quantum_ops: vec![],
             lowered_quantum_ops_complete: true,
+            runtime_events_complete: true,
             named_result_traces: vec![],
             named_results: BTreeMap::new(),
             measurement_results: BTreeMap::new(),
@@ -1275,6 +1281,14 @@ mod tests {
         let mut shot = trace();
         shot[0].lowered_quantum_ops_complete = false;
         assert!(replay(&shot, 1, &[7]).is_err());
+        let mut shot = trace();
+        shot[1].runtime_events_complete = false;
+        assert!(
+            replay(&shot, 1, &[7])
+                .unwrap_err()
+                .to_string()
+                .contains("unhandled runtime custom events")
+        );
         let mut shot = trace();
         shot[0].lowered_quantum_ops[0]
             .measurement_result_ids

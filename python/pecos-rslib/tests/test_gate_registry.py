@@ -64,3 +64,14 @@ def test_builder_rejects_step_arity_mismatch(method, gate, indices, message):
     # Rejection preserves the prefix and does not append the malformed step.
     builder.register_into(registry)
     assert registry.decompose("HR", [0], []) == [("H", [0], [], {})]
+
+
+def test_registry_quantum_arity_comes_from_definition():
+    registry = GateRegistry()
+    assert registry.quantum_arity("PARTIAL") is None
+    registry.define("PARTIAL", 3).step("H", [0]).register_into(registry)
+    assert registry.quantum_arity("PARTIAL") == 3
+    registry.define("EMPTY", 0).register_into(registry)
+    assert registry.quantum_arity("EMPTY") == 0
+    registry.define("PARTIAL", 2).step("H", [0]).register_into(registry)
+    assert registry.quantum_arity("PARTIAL") == 2

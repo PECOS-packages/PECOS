@@ -84,7 +84,7 @@ class StateVec:
         self.backend.reset()
         return self
 
-    def validate_gate_batch(self, symbol: str, locations: object) -> None:
+    def validate_gate_batch(self, symbol: str, locations: object, **_params: object) -> None:
         """Validate scalar one-qubit and tuple/list multi-qubit locations."""
         validate_batch(symbol, locations, self.gate_capacity, allow_singletons=False)
 
@@ -109,7 +109,7 @@ class StateVec:
         if is_empty_batch(locations):
             return output
         locations = replayable_locations(locations)
-        self.validate_gate_batch(symbol, locations)
+        self.validate_gate_batch(symbol, locations, **params)
 
         if params.get("simulate_gate", True):
             for location in locations:

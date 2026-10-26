@@ -84,17 +84,20 @@ def validate_batch(
     *,
     allow_singletons: bool = True,
     allow_sequences: bool = False,
+    arity: int | None = None,
 ) -> None:
     """Check all locations without changing their container or dispatching gates.
 
     States select whether singleton locations and general sized sequences are
     accepted by their bindings. Unknown spellings and location-free operations skip
     checks. None capacity means growable, but indices must still be nonnegative.
-    Only qubits within a single location must be distinct.
+    Only qubits within a single location must be distinct. An explicit arity
+    checks a registered definition, including zero-qubit definitions.
     """
-    arity = GATE_ARITIES.get(symbol)
-    if arity is None or arity == 0:
-        return
+    if arity is None:
+        arity = GATE_ARITIES.get(symbol)
+        if arity is None or arity == 0:
+            return
     if _plain_batch_is_valid(arity, locations, capacity):
         return
     _validate_each(

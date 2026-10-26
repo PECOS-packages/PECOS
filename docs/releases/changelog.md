@@ -9,8 +9,16 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 - **Breaking:** Python simulator wrappers and the public `pecos.HybridEngine`
   validate whole known-gate batches per `run_gate` call and per circuit item
   before changing state, including when `simulate_gate=False`. Registered-gate
-  batches are fully decomposed and every step's binding and qubits validated
-  before any step runs; failures name the registered gate and failing step.
+  batches are fully decomposed before any step runs. The pre-pass checks each
+  step's binding, qubits, and parameters where the state validates them, plus
+  every outer location's arity from the registry definition, distinct operands,
+  and bounds against the state's capacity (including unused operands).
+  Step failures name the registered gate and failing step; outer-location failures
+  name the registered gate. SparseStabPy uses the same pure Clifford rotation
+  lowering check for parameter validation and dispatch, including through plain
+  `run_gate` and HybridEngine; other states retain their parameter policies.
+  An unbound registered step now raises even with `simulate_gate=False`, where
+  it was previously silently skipped.
   Malformed locations,
   repeated operands within a location, and out-of-range qubits raise gate-named
   `ValueError`s; some errors previously raised `TypeError`.

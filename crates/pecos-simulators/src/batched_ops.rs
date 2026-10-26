@@ -67,9 +67,17 @@ pub trait BatchedOps {
     /// Applies CX gates to multiple qubit pairs in a single optimized pass.
     ///
     /// Qubits are provided as pairs: [c0, t0, c1, t1, ...]
+    ///
+    /// # Panics
+    /// Pairs must name two distinct qubits. The simulators in this crate panic before
+    /// mutation if a pair repeats a qubit or an operand is out of bounds.
     fn cx_batched(&mut self, qubits: &[usize]) -> &mut Self;
 
     /// Applies CZ gates to multiple qubit pairs in a single optimized pass.
+    ///
+    /// # Panics
+    /// Pairs must name two distinct qubits. The simulators in this crate panic before
+    /// mutation if a pair repeats a qubit or an operand is out of bounds.
     fn cz_batched(&mut self, qubits: &[usize]) -> &mut Self;
 }
 
@@ -133,6 +141,19 @@ impl<R: SeedableRng + Rng + Debug> BatchedOps for SparseStabGeneric<BitSet, R> {
 
     #[inline]
     fn cx_batched(&mut self, qubits: &[usize]) -> &mut Self {
+        for &[a, b] in qubits.as_chunks::<2>().0 {
+            assert_ne!(
+                a, b,
+                "CX requires distinct qubits; repeated qubit {a} appears twice in a pair"
+            );
+            for qubit in [a, b] {
+                assert!(
+                    qubit < self.num_qubits,
+                    "CX: qubit {qubit} is outside the {}-qubit register",
+                    self.num_qubits
+                );
+            }
+        }
         // CX: IX->IX, IZ->ZZ, XI->XX, ZI->ZI
         // Process pairs
         for pair in qubits.as_chunks::<2>().0 {
@@ -166,6 +187,19 @@ impl<R: SeedableRng + Rng + Debug> BatchedOps for SparseStabGeneric<BitSet, R> {
 
     #[inline]
     fn cz_batched(&mut self, qubits: &[usize]) -> &mut Self {
+        for &[a, b] in qubits.as_chunks::<2>().0 {
+            assert_ne!(
+                a, b,
+                "CZ requires distinct qubits; repeated qubit {a} appears twice in a pair"
+            );
+            for qubit in [a, b] {
+                assert!(
+                    qubit < self.num_qubits,
+                    "CZ: qubit {qubit} is outside the {}-qubit register",
+                    self.num_qubits
+                );
+            }
+        }
         // CZ: IX->ZX, IZ->IZ, XI->XZ, ZI->ZI
         for pair in qubits.as_chunks::<2>().0 {
             let q1 = pair[0];
@@ -449,8 +483,17 @@ impl CommandBuffer {
     }
 
     /// Adds CX gates to the buffer.
+    ///
+    /// # Panics
+    /// Panics before buffering any gates if a pair repeats a qubit.
     #[inline]
     pub fn cx(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
+        for &(a, b) in pairs {
+            assert_ne!(
+                a, b,
+                "CX requires distinct qubits; repeated qubit {a} appears twice in a pair"
+            );
+        }
         for &(c, t) in pairs {
             self.cx_qubits.push(c);
             self.cx_qubits.push(t);
@@ -459,8 +502,17 @@ impl CommandBuffer {
     }
 
     /// Adds CZ gates to the buffer.
+    ///
+    /// # Panics
+    /// Panics before buffering any gates if a pair repeats a qubit.
     #[inline]
     pub fn cz(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
+        for &(a, b) in pairs {
+            assert_ne!(
+                a, b,
+                "CZ requires distinct qubits; repeated qubit {a} appears twice in a pair"
+            );
+        }
         for &(q1, q2) in pairs {
             self.cz_qubits.push(q1);
             self.cz_qubits.push(q2);
@@ -497,7 +549,27 @@ impl CommandBuffer {
     /// 1. Single-qubit Pauli gates (X, Z) - pure phase updates
     /// 2. Single-qubit Clifford gates (H, SZ) - column operations
     /// 3. Two-qubit gates (CX, CZ) - cross-column operations
+    ///
+    /// # Panics
+    /// Panics before changing the simulator or clearing any buffer if a buffered
+    /// qubit is outside the simulator's register.
     pub fn flush<R: SeedableRng + Rng + Debug>(&mut self, sim: &mut SparseStabGeneric<BitSet, R>) {
+        for qubits in [
+            &self.x_qubits,
+            &self.z_qubits,
+            &self.sz_qubits,
+            &self.h_qubits,
+            &self.cx_qubits,
+            &self.cz_qubits,
+        ] {
+            for &qubit in qubits {
+                assert!(
+                    qubit < sim.num_qubits,
+                    "CommandBuffer::flush: qubit {qubit} is outside the {}-qubit register",
+                    sim.num_qubits
+                );
+            }
+        }
         // Phase 1: Pauli gates (only affect signs)
         if !self.x_qubits.is_empty() {
             sim.x_batched(&self.x_qubits);

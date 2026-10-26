@@ -95,18 +95,19 @@ impl PyCoinToss {
     ///
     /// # Arguments
     /// * `symbol` - The gate symbol (e.g., "X", "H", "Z") - ignored
-    /// * `location` - The qubit index to apply the gate to - ignored
+    /// * `location` - The qubit index (must be within the register)
     /// * `params` - Optional parameters for parameterized gates - ignored
     ///
     /// # Returns
     /// Always returns an empty dictionary since all gates are no-ops
-    #[allow(clippy::unused_self)]
     fn run_gate_1(
         &mut self,
-        _symbol: &str,
-        _location: usize,
+        symbol: &str,
+        location: &Bound<'_, PyAny>,
         _params: Option<Py<PyAny>>,
     ) -> PyResult<Py<PyAny>> {
+        let location = crate::simulator_utils::extract_qubit(symbol, location)?;
+        crate::simulator_utils::validate_qubit(symbol, location, self.inner.qubit_capacity())?;
         // All gates are no-ops in coin toss simulator
         Python::attach(|py| Ok(PyDict::new(py).into()))
     }
@@ -116,22 +117,32 @@ impl PyCoinToss {
     /// All gates are no-ops in the coin toss simulator.
     ///
     /// # Arguments
-    /// * `symbol` - The gate symbol (e.g., "CX", "CZ", "SWAP") - ignored
-    /// * `location_1` - First qubit index - ignored
-    /// * `location_2` - Second qubit index - ignored
-    /// * `params` - Optional parameters for parameterized gates - ignored
+    /// * `symbol` - The gate symbol (e.g., "CX", "CZ", "SWAP")
+    /// * `location_1` - First qubit index
+    /// * `location_2` - Second qubit index
+    /// * `params` - Optional parameters for parameterized gates
     ///
     /// # Returns
     /// Always returns an empty dictionary since all gates are no-ops
-    #[allow(clippy::unused_self)]
+    ///
+    /// # Errors
+    /// Raises `ValueError` for repeated or out-of-range operands.
     fn run_gate_2(
         &mut self,
-        _symbol: &str,
-        _location_1: usize,
-        _location_2: usize,
+        symbol: &str,
+        location_1: &Bound<'_, PyAny>,
+        location_2: &Bound<'_, PyAny>,
         _params: Option<Py<PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        // All gates are no-ops in coin toss simulator
+        let location_1 = crate::simulator_utils::extract_qubit(symbol, location_1)?;
+        let location_2 = crate::simulator_utils::extract_qubit(symbol, location_2)?;
+        crate::simulator_utils::validate_pair(
+            symbol,
+            location_1,
+            location_2,
+            self.inner.qubit_capacity(),
+        )?;
+        // Valid gates are no-ops in coin toss simulator
         Python::attach(|py| Ok(PyDict::new(py).into()))
     }
 
@@ -140,12 +151,14 @@ impl PyCoinToss {
     /// Returns a random result (0 or 1) based on the configured probability.
     ///
     /// # Arguments
-    /// * `location` - The qubit index to measure (ignored - result is always random)
+    /// * `location` - The qubit index to measure (must be within the register)
     ///
     /// # Returns
     /// Dictionary containing the measurement result: {location: outcome}
     /// where outcome is 0 or 1 based on the probability
-    fn run_measure(&mut self, location: usize) -> PyResult<Py<PyAny>> {
+    fn run_measure(&mut self, location: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let location = crate::simulator_utils::extract_qubit("MZ", location)?;
+        crate::simulator_utils::validate_qubit("MZ", location, self.inner.qubit_capacity())?;
         let results = self.inner.mz(&[QubitId(location)]);
         let outcome = i32::from(results[0].outcome);
 

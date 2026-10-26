@@ -17,7 +17,7 @@ use pyo3::types::{PyAny, PyBytes, PyDict, PySet, PyTuple};
 
 use crate::pecos_array::Array;
 use crate::simulator_utils::{
-    SymbolEntry, extract_angle, extract_angles, supports_exact, validate_supported_symbol,
+    SymbolEntry, extract_angle, extract_angles, supports_exact, validate_gate_locations,
 };
 
 /// The struct represents the state-vector simulator exposed to Python
@@ -147,6 +147,7 @@ impl PyStateVec {
         location: usize,
         params: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Option<u8>> {
+        crate::simulator_utils::validate_qubit(symbol, location, self.inner.qubit_capacity())?;
         let q = &[QubitId(location)];
         match symbol {
             "X" => {
@@ -343,24 +344,324 @@ impl PyStateVec {
     /// `params`: Optional parameters for parameterized gates (currently unused here)
     ///
     /// Returns an optional result, usually `None` unless a measurement is performed
-    #[allow(clippy::too_many_lines)]
     #[pyo3(signature = (symbol, location, params))]
     fn run_2q_gate(
+        &mut self,
+        symbol: &str,
+        location: &Bound<'_, PyAny>,
+        params: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Option<u8>> {
+        let pair = crate::simulator_utils::extract_pair(symbol, location)?;
+        crate::simulator_utils::validate_pair(
+            symbol,
+            pair.0.0,
+            pair.1.0,
+            self.inner.qubit_capacity(),
+        )?;
+        self.dispatch_2q_gate(symbol, pair, params)
+    }
+
+    /// Internal gate dispatcher (tuple-based) - for internal use
+    ///
+    /// `symbol`: The gate symbol
+    /// `location`: A tuple specifying the qubits to apply the gate to
+    /// `params`: Optional parameters for parameterized gates
+    #[pyo3(signature = (symbol, location, params=None))]
+    fn run_gate_internal(
         &mut self,
         symbol: &str,
         location: &Bound<'_, PyTuple>,
         params: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Option<u8>> {
-        if location.len() != 2 {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "Two-qubit gate requires exactly 2 qubit locations",
-            ));
+        match location.len() {
+            1 => {
+                let qubit: usize = location.get_item(0)?.extract()?;
+                self.run_1q_gate(symbol, qubit, params)
+            }
+            2 => self.run_2q_gate(symbol, location, params),
+            _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Gate location must be specified for either 1 or 2 qubits",
+            )),
+        }
+    }
+
+    /// High-level `run_gate` that accepts a set of locations (Python wrapper compatible)
+    ///
+    /// This is the main API that matches the Python wrapper behavior
+    /// Unsupported symbols raise for empty locations; supported symbols return an empty result.
+    #[pyo3(signature = (symbol, locations, **params))]
+    fn run_gate(
+        &mut self,
+        symbol: &str,
+        locations: &Bound<'_, PyAny>,
+        params: Option<&Bound<'_, PyDict>>,
+        py: Python<'_>,
+    ) -> PyResult<Py<PyDict>> {
+        self.run_gate_highlevel(symbol, locations, params, py)
+    }
+
+    /// Provides direct access to the current state vector as a Python property
+    #[getter]
+    #[allow(clippy::items_after_statements)] // Use statements for type imports are clearer when near usage
+    fn vector(&mut self, py: Python<'_>) -> PyResult<Py<Array>> {
+        // Convert the state vector to a 1D complex ndarray
+        use ndarray::Array1;
+        let state = self.inner.state();
+        let complex_array: Vec<num_complex::Complex64> = state.clone();
+        let nd_array = Array1::from(complex_array);
+
+        // Create ArrayData from the ndarray
+        use crate::pecos_array::ArrayData;
+        let array_data = ArrayData::Complex128(nd_array.into_dyn());
+
+        // Create Array and wrap it as a Python object
+        let pecos_array = Array::new(array_data);
+        Py::new(py, pecos_array)
+    }
+
+    /// Returns the probability of each computational basis state as a real-valued array.
+    ///
+    /// Each entry is |amplitude|^2 for the corresponding basis state.
+    #[getter]
+    #[allow(clippy::items_after_statements)]
+    fn probabilities(&mut self, py: Python<'_>) -> PyResult<Py<Array>> {
+        use ndarray::Array1;
+
+        let state = self.inner.state();
+        let probs: Vec<f64> = state.iter().map(num_complex::Complex::norm_sqr).collect();
+        let nd_array = Array1::from(probs);
+
+        use crate::pecos_array::ArrayData;
+        let array_data = ArrayData::F64(nd_array.into_dyn());
+        let pecos_array = Array::new(array_data);
+        Py::new(py, pecos_array)
+    }
+
+    /// Get the probability of measuring a specific basis state.
+    fn probability(&mut self, basis_state: usize) -> PyResult<f64> {
+        let state = self.inner.state();
+        if basis_state >= state.len() {
+            return Err(pyo3::exceptions::PyIndexError::new_err(format!(
+                "basis_state {basis_state} out of range for {} qubits",
+                self.inner.num_qubits()
+            )));
+        }
+        Ok(state[basis_state].norm_sqr())
+    }
+
+    /// Get state vector with big-endian qubit ordering (PECOS convention)
+    ///
+    /// Converts the state vector from little-endian (Rust/hardware convention) to
+    /// big-endian (PECOS convention) by reversing the bit order of indices.
+    ///
+    /// This is significantly faster than doing the conversion in Python as it:
+    /// 1. Uses Rust's built-in `reverse_bits()` (often a single CPU instruction)
+    /// 2. Avoids Python string formatting and parsing
+    /// 3. Performs all indexing operations in contiguous Rust memory
+    fn vector_big_endian(&mut self, py: Python<'_>) -> PyResult<Py<Array>> {
+        use crate::pecos_array::ArrayData;
+        use ndarray::Array1;
+
+        let state = self.inner.state();
+        let num_qubits = self.inner.num_qubits();
+        let length = state.len();
+
+        // Pre-allocate result vector
+        let mut reordered = Vec::with_capacity(length);
+        reordered.resize(length, num_complex::Complex64::new(0.0, 0.0));
+
+        // Compute bit-reversed indices and reorder
+        // This is much faster than Python's string-based approach
+        for (idx, &value) in state.iter().enumerate() {
+            // Reverse the bits and shift to keep only num_qubits bits
+            // The cast is intentional - num_qubits is always small (< 64)
+            #[allow(clippy::cast_possible_truncation)]
+            let reversed_idx = idx.reverse_bits() >> (usize::BITS - num_qubits as u32);
+            reordered[reversed_idx] = value;
         }
 
-        let q1: usize = location.get_item(0)?.extract()?;
-        let q2: usize = location.get_item(1)?.extract()?;
-        let pair = &[(QubitId(q1), QubitId(q2))];
+        // Convert to ndarray
+        let nd_array = Array1::from(reordered);
+        let array_data = ArrayData::Complex128(nd_array.into_dyn());
 
+        // Create Array and wrap it as a Python object
+        let pecos_array = Array::new(array_data);
+        Py::new(py, pecos_array)
+    }
+
+    #[getter]
+    fn num_qubits(&self) -> usize {
+        self.inner.num_qubits()
+    }
+
+    /// High-level `run_gate` method that accepts a set of locations
+    #[pyo3(signature = (symbol, locations, **params))]
+    fn run_gate_highlevel(
+        &mut self,
+        symbol: &str,
+        locations: &Bound<'_, PyAny>,
+        params: Option<&Bound<'_, PyDict>>,
+        py: Python<'_>,
+    ) -> PyResult<Py<PyDict>> {
+        let output = PyDict::new(py);
+        let locations_set: Bound<PySet> = locations.clone().cast_into()?;
+        let crate::simulator_utils::ValidatedLocations { qubits, pairs } = validate_gate_locations(
+            symbol,
+            &locations_set,
+            supports,
+            self.inner.qubit_capacity(),
+        )?;
+
+        // Check if simulate_gate is False
+        if let Some(p) = params
+            && let Ok(Some(sg)) = p.get_item("simulate_gate")
+            && let Ok(false) = sg.extract::<bool>()
+        {
+            return Ok(output.into());
+        }
+
+        if let Some(pairs) = pairs {
+            for pair in pairs {
+                if let Some(value) = self.dispatch_2q_gate(symbol, pair, params)? {
+                    output.set_item((pair.0.0, pair.1.0), value)?;
+                }
+            }
+            return Ok(output.into());
+        }
+
+        for (&qubit, location) in qubits.iter().zip(locations_set.iter()) {
+            let result = self.run_1q_gate(symbol, qubit, params)?;
+
+            if let Some(value) = result {
+                output.set_item(location, value)?;
+            }
+        }
+
+        Ok(output.into())
+    }
+
+    /// Execute a quantum circuit
+    #[pyo3(signature = (circuit, removed_locations=None))]
+    fn run_circuit(
+        &mut self,
+        circuit: &Bound<'_, PyAny>,
+        removed_locations: Option<&Bound<'_, PySet>>,
+        py: Python<'_>,
+    ) -> PyResult<Py<PyDict>> {
+        let results = PyDict::new(py);
+
+        // Iterate over circuit items
+        for item in circuit.call_method0("items")?.try_iter()? {
+            let item = item?;
+            let tuple: Bound<PyTuple> = item.clone().cast_into()?;
+
+            let symbol: String = tuple.get_item(0)?.extract()?;
+            let locations_item = tuple.get_item(1)?;
+            let locations: Bound<PySet> = locations_item.clone().cast_into()?;
+            let params_item = tuple.get_item(2)?;
+            let params: Bound<PyDict> = params_item.clone().cast_into()?;
+
+            // Subtract removed_locations if provided
+            let final_locations = if let Some(removed) = removed_locations {
+                locations.call_method1("__sub__", (removed,))?
+            } else {
+                locations.clone().into_any()
+            };
+
+            // Run the gate
+            let gate_results =
+                self.run_gate_highlevel(&symbol, &final_locations, Some(&params), py)?;
+
+            // Update results
+            results.call_method1("update", (gate_results,))?;
+        }
+
+        Ok(results.into())
+    }
+
+    fn __reduce__<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        let state = self.inner.state();
+        // Serialize state vector as raw little-endian bytes (16 bytes per Complex64: 2 x f64)
+        let mut bytes = Vec::with_capacity(state.len() * 16);
+        for c in state {
+            bytes.extend_from_slice(&c.re.to_le_bytes());
+            bytes.extend_from_slice(&c.im.to_le_bytes());
+        }
+        let state_bytes = PyBytes::new(py, &bytes);
+        let num_qubits = self.inner.num_qubits();
+
+        // Return (StateVec._from_pickle, (num_qubits, state_bytes))
+        let cls = py.get_type::<PyStateVec>();
+        let from_pickle = cls.getattr("_from_pickle")?;
+        PyTuple::new(
+            py,
+            &[
+                from_pickle.into_any(),
+                PyTuple::new(
+                    py,
+                    &[
+                        num_qubits.into_pyobject(py)?.into_any(),
+                        state_bytes.into_any(),
+                    ],
+                )?
+                .into_any(),
+            ],
+        )
+    }
+
+    #[staticmethod]
+    fn _from_pickle(num_qubits: usize, state_bytes: &Bound<'_, PyBytes>) -> PyResult<Self> {
+        let bytes = state_bytes.as_bytes();
+        let expected_len = (1usize << num_qubits) * 16;
+        if bytes.len() != expected_len {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "Invalid state bytes length: expected {expected_len}, got {}",
+                bytes.len()
+            )));
+        }
+
+        let mut state = Vec::with_capacity(1 << num_qubits);
+        for chunk in bytes.as_chunks::<16>().0 {
+            let re = f64::from_le_bytes(
+                chunk[..8]
+                    .try_into()
+                    .expect("16-byte chunks contain an 8-byte prefix"),
+            );
+            let im = f64::from_le_bytes(
+                chunk[8..16]
+                    .try_into()
+                    .expect("16-byte chunks contain an 8-byte suffix"),
+            );
+            state.push(num_complex::Complex64::new(re, im));
+        }
+
+        let rng: PecosRng = rand::make_rng();
+        Ok(PyStateVec {
+            inner: StateVec::from_state(&state, rng),
+        })
+    }
+
+    #[getter]
+    fn bindings(slf: PyRef<'_, Self>) -> PyResult<crate::simulator_utils::GateBindingsDict> {
+        // Create a Rust GateBindingsDict directly
+        let py = slf.py();
+        let sim_obj: Py<PyAny> = slf.into_bound_py_any(py)?.unbind();
+        Ok(crate::simulator_utils::GateBindingsDict::new(
+            sim_obj, supports,
+        ))
+    }
+}
+
+impl PyStateVec {
+    // Operands have already been extracted and validated for the entire batch.
+    #[allow(clippy::too_many_lines)]
+    fn dispatch_2q_gate(
+        &mut self,
+        symbol: &str,
+        operands: (QubitId, QubitId),
+        params: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Option<u8>> {
+        let pair = &[operands];
         match symbol {
             "CX" | "CNOT" => {
                 self.inner.cx(pair);
@@ -513,291 +814,5 @@ impl PyStateVec {
                 "Unsupported two-qubit gate",
             )),
         }
-    }
-
-    /// Internal gate dispatcher (tuple-based) - for internal use
-    ///
-    /// `symbol`: The gate symbol
-    /// `location`: A tuple specifying the qubits to apply the gate to
-    /// `params`: Optional parameters for parameterized gates
-    #[pyo3(signature = (symbol, location, params=None))]
-    fn run_gate_internal(
-        &mut self,
-        symbol: &str,
-        location: &Bound<'_, PyTuple>,
-        params: Option<&Bound<'_, PyDict>>,
-    ) -> PyResult<Option<u8>> {
-        match location.len() {
-            1 => {
-                let qubit: usize = location.get_item(0)?.extract()?;
-                self.run_1q_gate(symbol, qubit, params)
-            }
-            2 => self.run_2q_gate(symbol, location, params),
-            _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "Gate location must be specified for either 1 or 2 qubits",
-            )),
-        }
-    }
-
-    /// High-level `run_gate` that accepts a set of locations (Python wrapper compatible)
-    ///
-    /// This is the main API that matches the Python wrapper behavior
-    /// Unsupported symbols raise for empty locations; supported symbols return an empty result.
-    #[pyo3(signature = (symbol, locations, **params))]
-    fn run_gate(
-        &mut self,
-        symbol: &str,
-        locations: &Bound<'_, PyAny>,
-        params: Option<&Bound<'_, PyDict>>,
-        py: Python<'_>,
-    ) -> PyResult<Py<PyDict>> {
-        self.run_gate_highlevel(symbol, locations, params, py)
-    }
-
-    /// Provides direct access to the current state vector as a Python property
-    #[getter]
-    #[allow(clippy::items_after_statements)] // Use statements for type imports are clearer when near usage
-    fn vector(&mut self, py: Python<'_>) -> PyResult<Py<Array>> {
-        // Convert the state vector to a 1D complex ndarray
-        use ndarray::Array1;
-        let state = self.inner.state();
-        let complex_array: Vec<num_complex::Complex64> = state.clone();
-        let nd_array = Array1::from(complex_array);
-
-        // Create ArrayData from the ndarray
-        use crate::pecos_array::ArrayData;
-        let array_data = ArrayData::Complex128(nd_array.into_dyn());
-
-        // Create Array and wrap it as a Python object
-        let pecos_array = Array::new(array_data);
-        Py::new(py, pecos_array)
-    }
-
-    /// Returns the probability of each computational basis state as a real-valued array.
-    ///
-    /// Each entry is |amplitude|^2 for the corresponding basis state.
-    #[getter]
-    #[allow(clippy::items_after_statements)]
-    fn probabilities(&mut self, py: Python<'_>) -> PyResult<Py<Array>> {
-        use ndarray::Array1;
-
-        let state = self.inner.state();
-        let probs: Vec<f64> = state.iter().map(num_complex::Complex::norm_sqr).collect();
-        let nd_array = Array1::from(probs);
-
-        use crate::pecos_array::ArrayData;
-        let array_data = ArrayData::F64(nd_array.into_dyn());
-        let pecos_array = Array::new(array_data);
-        Py::new(py, pecos_array)
-    }
-
-    /// Get the probability of measuring a specific basis state.
-    fn probability(&mut self, basis_state: usize) -> PyResult<f64> {
-        let state = self.inner.state();
-        if basis_state >= state.len() {
-            return Err(pyo3::exceptions::PyIndexError::new_err(format!(
-                "basis_state {basis_state} out of range for {} qubits",
-                self.inner.num_qubits()
-            )));
-        }
-        Ok(state[basis_state].norm_sqr())
-    }
-
-    /// Get state vector with big-endian qubit ordering (PECOS convention)
-    ///
-    /// Converts the state vector from little-endian (Rust/hardware convention) to
-    /// big-endian (PECOS convention) by reversing the bit order of indices.
-    ///
-    /// This is significantly faster than doing the conversion in Python as it:
-    /// 1. Uses Rust's built-in `reverse_bits()` (often a single CPU instruction)
-    /// 2. Avoids Python string formatting and parsing
-    /// 3. Performs all indexing operations in contiguous Rust memory
-    fn vector_big_endian(&mut self, py: Python<'_>) -> PyResult<Py<Array>> {
-        use crate::pecos_array::ArrayData;
-        use ndarray::Array1;
-
-        let state = self.inner.state();
-        let num_qubits = self.inner.num_qubits();
-        let length = state.len();
-
-        // Pre-allocate result vector
-        let mut reordered = Vec::with_capacity(length);
-        reordered.resize(length, num_complex::Complex64::new(0.0, 0.0));
-
-        // Compute bit-reversed indices and reorder
-        // This is much faster than Python's string-based approach
-        for (idx, &value) in state.iter().enumerate() {
-            // Reverse the bits and shift to keep only num_qubits bits
-            // The cast is intentional - num_qubits is always small (< 64)
-            #[allow(clippy::cast_possible_truncation)]
-            let reversed_idx = idx.reverse_bits() >> (usize::BITS - num_qubits as u32);
-            reordered[reversed_idx] = value;
-        }
-
-        // Convert to ndarray
-        let nd_array = Array1::from(reordered);
-        let array_data = ArrayData::Complex128(nd_array.into_dyn());
-
-        // Create Array and wrap it as a Python object
-        let pecos_array = Array::new(array_data);
-        Py::new(py, pecos_array)
-    }
-
-    #[getter]
-    fn num_qubits(&self) -> usize {
-        self.inner.num_qubits()
-    }
-
-    /// High-level `run_gate` method that accepts a set of locations
-    #[pyo3(signature = (symbol, locations, **params))]
-    fn run_gate_highlevel(
-        &mut self,
-        symbol: &str,
-        locations: &Bound<'_, PyAny>,
-        params: Option<&Bound<'_, PyDict>>,
-        py: Python<'_>,
-    ) -> PyResult<Py<PyDict>> {
-        let output = PyDict::new(py);
-        let locations_set: Bound<PySet> = locations.clone().cast_into()?;
-        validate_supported_symbol(symbol, &locations_set, supports)?;
-
-        // Check if simulate_gate is False
-        if let Some(p) = params
-            && let Ok(Some(sg)) = p.get_item("simulate_gate")
-            && let Ok(false) = sg.extract::<bool>()
-        {
-            return Ok(output.into());
-        }
-
-        for location in locations_set.iter() {
-            // Convert location to tuple
-            let loc_tuple: Bound<'_, PyTuple> = if location.is_instance_of::<PyTuple>() {
-                location.clone().cast_into()?
-            } else {
-                // Single qubit - wrap in tuple
-                PyTuple::new(py, std::slice::from_ref(&location))?
-            };
-
-            // Call the underlying run_gate_internal
-            let result = self.run_gate_internal(symbol, &loc_tuple, params)?;
-
-            // Only add to output if result is Some (non-zero measurement)
-            if let Some(value) = result {
-                output.set_item(location, value)?;
-            }
-        }
-
-        Ok(output.into())
-    }
-
-    /// Execute a quantum circuit
-    #[pyo3(signature = (circuit, removed_locations=None))]
-    fn run_circuit(
-        &mut self,
-        circuit: &Bound<'_, PyAny>,
-        removed_locations: Option<&Bound<'_, PySet>>,
-        py: Python<'_>,
-    ) -> PyResult<Py<PyDict>> {
-        let results = PyDict::new(py);
-
-        // Iterate over circuit items
-        for item in circuit.call_method0("items")?.try_iter()? {
-            let item = item?;
-            let tuple: Bound<PyTuple> = item.clone().cast_into()?;
-
-            let symbol: String = tuple.get_item(0)?.extract()?;
-            let locations_item = tuple.get_item(1)?;
-            let locations: Bound<PySet> = locations_item.clone().cast_into()?;
-            let params_item = tuple.get_item(2)?;
-            let params: Bound<PyDict> = params_item.clone().cast_into()?;
-
-            // Subtract removed_locations if provided
-            let final_locations = if let Some(removed) = removed_locations {
-                locations.call_method1("__sub__", (removed,))?
-            } else {
-                locations.clone().into_any()
-            };
-
-            // Run the gate
-            let gate_results =
-                self.run_gate_highlevel(&symbol, &final_locations, Some(&params), py)?;
-
-            // Update results
-            results.call_method1("update", (gate_results,))?;
-        }
-
-        Ok(results.into())
-    }
-
-    fn __reduce__<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
-        let state = self.inner.state();
-        // Serialize state vector as raw little-endian bytes (16 bytes per Complex64: 2 x f64)
-        let mut bytes = Vec::with_capacity(state.len() * 16);
-        for c in state {
-            bytes.extend_from_slice(&c.re.to_le_bytes());
-            bytes.extend_from_slice(&c.im.to_le_bytes());
-        }
-        let state_bytes = PyBytes::new(py, &bytes);
-        let num_qubits = self.inner.num_qubits();
-
-        // Return (StateVec._from_pickle, (num_qubits, state_bytes))
-        let cls = py.get_type::<PyStateVec>();
-        let from_pickle = cls.getattr("_from_pickle")?;
-        PyTuple::new(
-            py,
-            &[
-                from_pickle.into_any(),
-                PyTuple::new(
-                    py,
-                    &[
-                        num_qubits.into_pyobject(py)?.into_any(),
-                        state_bytes.into_any(),
-                    ],
-                )?
-                .into_any(),
-            ],
-        )
-    }
-
-    #[staticmethod]
-    fn _from_pickle(num_qubits: usize, state_bytes: &Bound<'_, PyBytes>) -> PyResult<Self> {
-        let bytes = state_bytes.as_bytes();
-        let expected_len = (1usize << num_qubits) * 16;
-        if bytes.len() != expected_len {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                "Invalid state bytes length: expected {expected_len}, got {}",
-                bytes.len()
-            )));
-        }
-
-        let mut state = Vec::with_capacity(1 << num_qubits);
-        for chunk in bytes.as_chunks::<16>().0 {
-            let re = f64::from_le_bytes(
-                chunk[..8]
-                    .try_into()
-                    .expect("16-byte chunks contain an 8-byte prefix"),
-            );
-            let im = f64::from_le_bytes(
-                chunk[8..16]
-                    .try_into()
-                    .expect("16-byte chunks contain an 8-byte suffix"),
-            );
-            state.push(num_complex::Complex64::new(re, im));
-        }
-
-        let rng: PecosRng = rand::make_rng();
-        Ok(PyStateVec {
-            inner: StateVec::from_state(&state, rng),
-        })
-    }
-
-    #[getter]
-    fn bindings(slf: PyRef<'_, Self>) -> PyResult<crate::simulator_utils::GateBindingsDict> {
-        // Create a Rust GateBindingsDict directly
-        let py = slf.py();
-        let sim_obj: Py<PyAny> = slf.into_bound_py_any(py)?.unbind();
-        Ok(crate::simulator_utils::GateBindingsDict::new(
-            sim_obj, supports,
-        ))
     }
 }

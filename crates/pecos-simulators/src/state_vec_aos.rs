@@ -687,6 +687,7 @@ where
     /// Uses bit manipulation for fast controlled operations.
     #[inline]
     fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "CX");
         for &(qa, qb) in pairs {
             let q1 = qa.index();
             let q2 = qb.index();
@@ -708,6 +709,7 @@ where
     /// Combines bit manipulation with phase updates for controlled-Y operation.
     #[inline]
     fn cy(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "CY");
         for &(qa, qb) in pairs {
             let q1 = qa.index();
             let q2 = qb.index();
@@ -736,6 +738,7 @@ where
     /// Takes advantage of diagonal structure for optimal performance.
     #[inline]
     fn cz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "CZ");
         for &(qa, qb) in pairs {
             let q1 = qa.index();
             let q2 = qb.index();
@@ -758,6 +761,7 @@ where
     /// Uses bit manipulation for efficient state vector updates.
     #[inline]
     fn swap(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SWAP");
         for &(qa, qb) in pairs {
             let q1 = qa.index();
             let q2 = qb.index();
@@ -1072,13 +1076,11 @@ where
     /// state.rxx(Angle64::QUARTER_TURN, &[(QubitId(0), QubitId(1))]);  // Creates (|00> - i|11>)/sqrt(2)
     /// ```
     ///
-    /// # Safety
-    /// This function assumes that:
-    /// - `qubits.len() % 2 == 0` (pairs of qubits).
-    /// - All qubit indices are valid and distinct within each pair.
-    /// - These conditions must be ensured by the caller or a higher-level component.
+    /// # Panics
+    /// Panics before applying any gates if a pair repeats a qubit.
     #[inline]
     fn rxx(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "RXX");
         let theta = theta.to_radians_signed();
         let cos = (theta / 2.0).cos();
         let sin = (theta / 2.0).sin();
@@ -1141,13 +1143,11 @@ where
     /// state.ryy(Angle64::QUARTER_TURN, &[(QubitId(0), QubitId(1))]);
     /// ```
     ///
-    /// # Safety
-    /// This function assumes that:
-    /// - `qubits.len() % 2 == 0` (pairs of qubits).
-    /// - All qubit indices are valid and distinct within each pair.
-    /// - These conditions must be ensured by the caller or a higher-level component.
+    /// # Panics
+    /// Panics before applying any gates if a pair repeats a qubit.
     #[inline]
     fn ryy(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "RYY");
         let theta = theta.to_radians_signed();
         let cos = (theta / 2.0).cos();
         let i_sin = Complex64::new(0.0, 1.0) * (theta / 2.0).sin();
@@ -1205,12 +1205,10 @@ where
     /// state.rzz(Angle64::from_turn_ratio(1, 8), &[(QubitId(0), QubitId(2))]);
     /// ```
     ///
-    /// # Safety
-    /// This function assumes that:
-    /// - `qubits.len() % 2 == 0` (pairs of qubits).
-    /// - All qubit indices are valid and distinct within each pair.
-    /// - These conditions must be ensured by the caller or a higher-level component.
+    /// # Panics
+    /// Panics before applying any gates if a pair repeats a qubit.
     fn rzz(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "RZZ");
         let theta = theta.to_radians_signed();
 
         for &(qa, qb) in pairs {

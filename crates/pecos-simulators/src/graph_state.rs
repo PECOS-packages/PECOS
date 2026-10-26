@@ -584,6 +584,7 @@ impl<R: SeedableRng + Rng + Debug> CliffordGateable for GraphStateSim<R> {
     // -- Two-qubit gates --
 
     fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "CX");
         for &(ctrl, targ) in pairs {
             let ctrl = ctrl.index();
             let targ = targ.index();
@@ -596,6 +597,7 @@ impl<R: SeedableRng + Rng + Debug> CliffordGateable for GraphStateSim<R> {
     }
 
     fn cz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "CZ");
         for &(q0, q1) in pairs {
             self.cz_internal(q0.index(), q1.index());
         }

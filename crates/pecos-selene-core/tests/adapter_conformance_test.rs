@@ -332,3 +332,39 @@ fn adapter_dispatches_rpp_and_checks_targets() {
         );
     }
 }
+
+#[test]
+fn adapter_rejects_repeated_rzz_without_mutation() {
+    use selene_core::operation::{BatchOperation, Operation};
+    use selene_core::simulator::SimulatorInterface;
+
+    let mut adapter = SeleneAdapter {
+        behavior: StateVecBehavior {
+            sim: StateVec::with_seed(2, 0),
+        },
+        num_qubits: 2,
+    };
+    adapter.behavior.sim.h(&[QubitId(0)]);
+    let before = adapter.behavior.sim.state();
+    for theta in [
+        0.0,
+        std::f64::consts::FRAC_PI_2,
+        std::f64::consts::PI,
+        3.0 * std::f64::consts::FRAC_PI_2,
+    ] {
+        let error = adapter
+            .handle_operations(BatchOperation::error_model(vec![Operation::RZZGate {
+                qubit_id_1: 1,
+                qubit_id_2: 1,
+                theta,
+            }]))
+            .err()
+            .expect("repeated operands must return an error");
+        assert!(
+            error
+                .to_string()
+                .contains("RZZ requires distinct qubits; repeated qubit 1")
+        );
+        assert_eq!(adapter.behavior.sim.state(), before);
+    }
+}

@@ -2,7 +2,7 @@
 use crate::prelude::*;
 use crate::simulator_utils::{
     SymbolEntry, extract_angle, extract_angles, extract_forced_outcome, supports_exact,
-    validate_supported_symbol,
+    validate_gate_locations,
 };
 use pecos_core::BitSet;
 use pecos_simulators::clifford_rotation::CliffordRotation;
@@ -183,6 +183,7 @@ impl PySparseStab {
         location: usize,
         params: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Option<u8>> {
+        crate::simulator_utils::validate_qubit(symbol, location, self.inner.qubit_capacity())?;
         let q = &[QubitId(location)];
         match symbol {
             // No-op gates
@@ -414,118 +415,17 @@ impl PySparseStab {
     fn run_2q_gate(
         &mut self,
         symbol: &str,
-        location: &Bound<'_, PyTuple>,
+        location: &Bound<'_, PyAny>,
         params: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Option<u8>> {
-        if location.len() != 2 {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "Two-qubit gate requires exactly 2 qubit locations",
-            ));
-        }
-
-        let q1: usize = location.get_item(0)?.extract()?;
-        let q2: usize = location.get_item(1)?.extract()?;
-        let pair = &[(QubitId(q1), QubitId(q2))];
-
-        match symbol {
-            "CX" | "CNOT" => {
-                self.inner.cx(pair);
-                Ok(None)
-            }
-            "CY" => {
-                self.inner.cy(pair);
-                Ok(None)
-            }
-            "CZ" => {
-                self.inner.cz(pair);
-                Ok(None)
-            }
-            "SXX" | "SqrtXX" => {
-                self.inner.sxx(pair);
-                Ok(None)
-            }
-            "SXXdg" | "SqrtXXd" | "SqrtXXdg" => {
-                self.inner.sxxdg(pair);
-                Ok(None)
-            }
-            "SYY" | "SqrtYY" => {
-                self.inner.syy(pair);
-                Ok(None)
-            }
-            "SYYdg" | "SqrtYYd" | "SqrtYYdg" => {
-                self.inner.syydg(pair);
-                Ok(None)
-            }
-            "SZZ" | "SqrtZZ" => {
-                self.inner.szz(pair);
-                Ok(None)
-            }
-            "SZZdg" | "SqrtZZd" | "SqrtZZdg" => {
-                self.inner.szzdg(pair);
-                Ok(None)
-            }
-            "SWAP" => {
-                self.inner.swap(pair);
-                Ok(None)
-            }
-            "G2" | "G" => {
-                self.inner.g(pair);
-                Ok(None)
-            }
-            "Gdg" => {
-                self.inner.gdg(pair);
-                Ok(None)
-            }
-            "ISWAP" => {
-                self.inner.iswap(pair);
-                Ok(None)
-            }
-            "ISWAPdg" => {
-                self.inner.iswapdg(pair);
-                Ok(None)
-            }
-            "RXX" => {
-                let angle = extract_angle(params, "RXX")?;
-                self.inner
-                    .try_rxx(angle, pair)
-                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
-                Ok(None)
-            }
-            "RYY" => {
-                let angle = extract_angle(params, "RYY")?;
-                self.inner
-                    .try_ryy(angle, pair)
-                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
-                Ok(None)
-            }
-            "RXYXY2Q" => {
-                let angles = extract_angles(params, "RXYXY2Q", GateType::RXYXY2Q.angle_arity())?;
-                self.inner
-                    .try_rxyxy2q(angles[0], angles[1], pair)
-                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
-                Ok(None)
-            }
-            "RZZ" => {
-                let angle = extract_angle(params, "RZZ")?;
-                self.inner
-                    .try_rzz(angle, pair)
-                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
-                Ok(None)
-            }
-            "RXXRYYRZZ" | "RZZRYYRXX" | "R2XXYYZZ" | "RXXYYZZ" => {
-                let angles =
-                    extract_angles(params, "RXXRYYRZZ", GateType::RXXRYYRZZ.angle_arity())?;
-                self.inner
-                    .try_rxxryyrzz(angles[0], angles[1], angles[2], pair)
-                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
-                Ok(None)
-            }
-            // Two-qubit gate aliases
-            "II" => Ok(None), // Two-qubit identity - no operation
-            _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "Unsupported two-qubit gate",
-            )),
-        }
+        let pair = crate::simulator_utils::extract_pair(symbol, location)?;
+        crate::simulator_utils::validate_pair(
+            symbol,
+            pair.0.0,
+            pair.1.0,
+            self.inner.qubit_capacity(),
+        )?;
+        self.dispatch_2q_gate(symbol, pair, params)
     }
 
     /// Internal gate dispatcher (tuple-based) - for internal use
@@ -627,7 +527,12 @@ impl PySparseStab {
     ) -> PyResult<Py<PyDict>> {
         let output = PyDict::new(py);
         let locations_set: Bound<PySet> = locations.clone().cast_into()?;
-        validate_supported_symbol(symbol, &locations_set, supports)?;
+        let crate::simulator_utils::ValidatedLocations { qubits, pairs } = validate_gate_locations(
+            symbol,
+            &locations_set,
+            supports,
+            self.inner.qubit_capacity(),
+        )?;
 
         // Check if simulate_gate is False
         if let Some(p) = params
@@ -651,7 +556,8 @@ impl PySparseStab {
             && let Some(result) = crate::simulator_utils::try_clifford_batch_dispatch(
                 &mut self.inner,
                 symbol,
-                &locations_set,
+                &qubits,
+                pairs.as_deref(),
                 py,
             )?
         {
@@ -659,14 +565,17 @@ impl PySparseStab {
         }
 
         // Fallback: per-location dispatch for parameterized/special gates
-        for location in locations_set.iter() {
-            let loc_tuple: Bound<'_, PyTuple> = if location.is_instance_of::<PyTuple>() {
-                location.clone().cast_into()?
-            } else {
-                PyTuple::new(py, std::slice::from_ref(&location))?
-            };
+        if let Some(pairs) = pairs {
+            for pair in pairs {
+                if let Some(value) = self.dispatch_2q_gate(symbol, pair, params)? {
+                    output.set_item((pair.0.0, pair.1.0), value)?;
+                }
+            }
+            return Ok(output.into());
+        }
 
-            let result = self.run_gate_internal(symbol, &loc_tuple, params)?;
+        for (&qubit, location) in qubits.iter().zip(locations_set.iter()) {
+            let result = self.run_1q_gate(symbol, qubit, params)?;
 
             if let Some(value) = result {
                 output.set_item(location, value)?;
@@ -969,5 +878,116 @@ pub fn adjust_tableau_string(line: &str, is_stab: bool, print_y: bool) -> String
         adjusted
     } else {
         adjusted.replace('Y', "W")
+    }
+}
+
+impl PySparseStab {
+    // Operands have already been extracted and validated for the entire batch.
+    fn dispatch_2q_gate(
+        &mut self,
+        symbol: &str,
+        operands: (QubitId, QubitId),
+        params: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Option<u8>> {
+        let pair = &[operands];
+        match symbol {
+            "CX" | "CNOT" => {
+                self.inner.cx(pair);
+                Ok(None)
+            }
+            "CY" => {
+                self.inner.cy(pair);
+                Ok(None)
+            }
+            "CZ" => {
+                self.inner.cz(pair);
+                Ok(None)
+            }
+            "SXX" | "SqrtXX" => {
+                self.inner.sxx(pair);
+                Ok(None)
+            }
+            "SXXdg" | "SqrtXXd" | "SqrtXXdg" => {
+                self.inner.sxxdg(pair);
+                Ok(None)
+            }
+            "SYY" | "SqrtYY" => {
+                self.inner.syy(pair);
+                Ok(None)
+            }
+            "SYYdg" | "SqrtYYd" | "SqrtYYdg" => {
+                self.inner.syydg(pair);
+                Ok(None)
+            }
+            "SZZ" | "SqrtZZ" => {
+                self.inner.szz(pair);
+                Ok(None)
+            }
+            "SZZdg" | "SqrtZZd" | "SqrtZZdg" => {
+                self.inner.szzdg(pair);
+                Ok(None)
+            }
+            "SWAP" => {
+                self.inner.swap(pair);
+                Ok(None)
+            }
+            "G2" | "G" => {
+                self.inner.g(pair);
+                Ok(None)
+            }
+            "Gdg" => {
+                self.inner.gdg(pair);
+                Ok(None)
+            }
+            "ISWAP" => {
+                self.inner.iswap(pair);
+                Ok(None)
+            }
+            "ISWAPdg" => {
+                self.inner.iswapdg(pair);
+                Ok(None)
+            }
+            "RXX" => {
+                let angle = extract_angle(params, "RXX")?;
+                self.inner
+                    .try_rxx(angle, pair)
+                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                Ok(None)
+            }
+            "RYY" => {
+                let angle = extract_angle(params, "RYY")?;
+                self.inner
+                    .try_ryy(angle, pair)
+                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                Ok(None)
+            }
+            "RXYXY2Q" => {
+                let angles = extract_angles(params, "RXYXY2Q", GateType::RXYXY2Q.angle_arity())?;
+                self.inner
+                    .try_rxyxy2q(angles[0], angles[1], pair)
+                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                Ok(None)
+            }
+            "RZZ" => {
+                let angle = extract_angle(params, "RZZ")?;
+                self.inner
+                    .try_rzz(angle, pair)
+                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                Ok(None)
+            }
+            "RXXRYYRZZ" | "RZZRYYRXX" | "R2XXYYZZ" | "RXXYYZZ" => {
+                let angles =
+                    extract_angles(params, "RXXRYYRZZ", GateType::RXXRYYRZZ.angle_arity())?;
+                self.inner
+                    .try_rxxryyrzz(angles[0], angles[1], angles[2], pair)
+                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                Ok(None)
+            }
+            // Two-qubit gate aliases
+            "II" => Ok(None), // Two-qubit identity - no operation
+            _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Unsupported two-qubit gate",
+            )),
+        }
     }
 }

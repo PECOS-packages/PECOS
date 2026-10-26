@@ -143,6 +143,10 @@ impl QuantumSimulator for Stabilizer {
 }
 
 impl CliffordGateable for Stabilizer {
+    fn validate_qubits(&self, qubits: &[QubitId]) {
+        self.inner.validate_qubits(qubits);
+    }
+
     #[inline]
     fn h(&mut self, qubits: &[QubitId]) -> &mut Self {
         self.inner.h(qubits);

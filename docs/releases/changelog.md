@@ -6,6 +6,41 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Breaking:** two-qubit gates in `pecos-simulators` now reject repeated-qubit
+  pairs in debug and release builds. Such inputs could previously cause undefined
+  behaviour or a wrong state in the sparse stabilizers and `DenseStab`, but were
+  accepted elsewhere, including correct global-phase RZZ operations in
+  `StateVecSoA` and `DensityMatrix` and no-op gates in `CoinToss`.
+  Plain Rust gates panic; `CliffordRotation::try_*` returns `Err`. Selene simulator
+  plugins and `SeleneAdapter` return an error. The Python `SparseStab`, `Stabilizer`,
+  `StateVec`, `StabVec`, and `PauliProp` bindings reject repeated pairs with
+  `ValueError` in direct two-qubit calls and `run_gate`, including gate batches
+  reached through `run_circuit` and `add_faults` where available. Fixed-register
+  versions of these bindings also reject out-of-range qubits in `run_1q_gate`,
+  out-of-range pairs in `run_2q_gate`, and out-of-range locations
+  before applying a `run_gate` batch; growable native `PauliProp` has no fixed
+  register limit. Validation includes `run_gate(..., simulate_gate=False)` and
+  the two-qubit identity `"II"`. Native single-qubit batches are also validated
+  for shape and bounds before mutation. Malformed locations in native-binding
+  `run_gate` batches (including negative indices) raise gate-named `ValueError`s.
+  The native `CoinToss` binding's `run_gate_2` likewise rejects repeated and
+  out-of-range operands; `run_gate_1` and `run_measure` now also reject
+  out-of-range indices.
+  Rust batches are checked for repeated pairs before mutation. `identity` and
+  `apply_global_phase` on the sparse stabilizer types now also reject out-of-range
+  qubits. Sparse and dense stabilizer gates no longer use aliasing `unsafe` borrows.
+
+- PHIR `RZZ(0)` resolves to the two-qubit identity `II`, preserving its pair
+  operands and no-op behaviour across `HybridEngine` backends.
+- Gate registry decomposition rejects incorrect qubit/angle counts and invalid
+  step references with actionable errors instead of panicking. Rust `decompose`
+  and builder `step*` methods now return `Result`; builders reject out-of-arity
+  qubit positions and incorrect step operand/angle-source counts as steps are added.
+  Each step is a single gate (batched operands are rejected); `Custom` steps keep
+  a registry-defined angle count.
+  Python reports these input errors as
+  `ValueError` and reuse of a consumed builder as `RuntimeError`.
+
 - **Breaking:** an SLR multi-qubit gate on whole registers applies element-wise:
   `CX(q, r)` is `CX(q[i], r[i])` for every `i` and requires equally sized
   registers (#1476). It used to become a single gate on the wrong qubits

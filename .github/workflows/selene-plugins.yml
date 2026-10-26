@@ -91,7 +91,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     # Linux also builds the PECOS packages for the cross-runtime parity tests
     # (about 14 min cold), and non-PR Linux runs add the extended semantic suite
-    # (about 31 min); a cold non-PR run measured about 50 min.
+    # (about 6 min); a cold non-PR run measured about 24 min.
     timeout-minutes: ${{ matrix.os != 'ubuntu-latest' && 30 || github.event_name != 'pull_request' && 75 || 60 }}
     strategy:
       fail-fast: false
@@ -99,12 +99,12 @@ jobs:
         os: [ubuntu-latest, macos-latest, macos-15-intel, windows-2022]
 
     steps:
-      - name: Harden the runner (egress audit)
-        if: runner.os == 'Linux'
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
-        with:
-          egress-policy: audit
-
+      # No harden-runner here: its audit agent grows to about 13.5 GB during the
+      # Selene semantic suite and exhausts the runner's memory. The worker then
+      # stops responding, so step timeouts never fire and the job log is lost.
+      # Measured on 2026-10-24: with v2.19.4, v2.22.2 or disable-file-monitoring
+      # the job ran out of memory; without the agent the suite passed with 11.5 GB
+      # still free (runs 40101278752, 40104083813, 40104086962, 40104090440).
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
@@ -125,7 +125,7 @@ jobs:
         run: rustup show
 
       - name: Cache Rust
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
         with:
           cache-bin: false
           # One cache per runner OS/arch, shared with build-wheels. Per-plugin caches
@@ -284,7 +284,7 @@ jobs:
         run: rustup show
 
       - name: Cache Rust
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
         with:
           cache-bin: false
           # Restore the test job's release build of every plugin; only that job saves.

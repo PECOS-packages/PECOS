@@ -12,7 +12,7 @@
 
 use crate::prelude::*;
 use crate::simulator_utils::{
-    SymbolEntry, extract_angle, extract_angles, supports_exact, validate_supported_symbol,
+    SymbolEntry, extract_angle, extract_angles, supports_exact, validate_gate_locations,
 };
 use pecos_simulators::{ArbitraryRotationGateable, StabVec};
 use pyo3::IntoPyObjectExt;
@@ -156,6 +156,7 @@ impl PyStabVec {
         location: usize,
         params: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Option<u8>> {
+        crate::simulator_utils::validate_qubit(symbol, location, self.inner.qubit_capacity())?;
         let q = &[QubitId(location)];
         match symbol {
             "I" => Ok(None),
@@ -353,19 +354,186 @@ impl PyStabVec {
     fn run_2q_gate(
         &mut self,
         symbol: &str,
+        location: &Bound<'_, PyAny>,
+        params: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Option<u8>> {
+        let pair = crate::simulator_utils::extract_pair(symbol, location)?;
+        crate::simulator_utils::validate_pair(
+            symbol,
+            pair.0.0,
+            pair.1.0,
+            self.inner.qubit_capacity(),
+        )?;
+        self.dispatch_2q_gate(symbol, pair, params)
+    }
+
+    #[pyo3(signature = (symbol, location, params=None))]
+    fn run_gate_internal(
+        &mut self,
+        symbol: &str,
         location: &Bound<'_, PyTuple>,
         params: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Option<u8>> {
-        if location.len() != 2 {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "Two-qubit gate requires exactly 2 qubit locations",
-            ));
+        match location.len() {
+            1 => {
+                let qubit: usize = location.get_item(0)?.extract()?;
+                self.run_1q_gate(symbol, qubit, params)
+            }
+            2 => self.run_2q_gate(symbol, location, params),
+            _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Gate location must be specified for either 1 or 2 qubits",
+            )),
+        }
+    }
+
+    /// Unsupported symbols raise for empty locations; supported symbols return an empty result.
+    #[pyo3(signature = (symbol, locations, **params))]
+    fn run_gate(
+        &mut self,
+        symbol: &str,
+        locations: &Bound<'_, PyAny>,
+        params: Option<&Bound<'_, PyDict>>,
+        py: Python<'_>,
+    ) -> PyResult<Py<PyDict>> {
+        self.run_gate_highlevel(symbol, locations, params, py)
+    }
+
+    #[pyo3(signature = (symbol, locations, **params))]
+    fn run_gate_highlevel(
+        &mut self,
+        symbol: &str,
+        locations: &Bound<'_, PyAny>,
+        params: Option<&Bound<'_, PyDict>>,
+        py: Python<'_>,
+    ) -> PyResult<Py<PyDict>> {
+        let output = PyDict::new(py);
+        let locations_set: Bound<PySet> = locations.clone().cast_into()?;
+        let crate::simulator_utils::ValidatedLocations { qubits, pairs } = validate_gate_locations(
+            symbol,
+            &locations_set,
+            supports,
+            self.inner.qubit_capacity(),
+        )?;
+
+        if let Some(p) = params
+            && let Ok(Some(sg)) = p.get_item("simulate_gate")
+            && let Ok(false) = sg.extract::<bool>()
+        {
+            return Ok(output.into());
         }
 
-        let q1: usize = location.get_item(0)?.extract()?;
-        let q2: usize = location.get_item(1)?.extract()?;
-        let pair = &[(QubitId(q1), QubitId(q2))];
+        if locations_set.is_empty() {
+            return Ok(output.into());
+        }
 
+        // Fast path: batch dispatch for common Clifford gates without special params
+        let has_special_params = params.is_some_and(|p| !p.is_empty());
+        if !has_special_params
+            && let Some(result) = crate::simulator_utils::try_clifford_batch_dispatch(
+                &mut self.inner,
+                symbol,
+                &qubits,
+                pairs.as_deref(),
+                py,
+            )?
+        {
+            return Ok(result);
+        }
+
+        // Fallback: per-location dispatch
+        if let Some(pairs) = pairs {
+            for pair in pairs {
+                if let Some(value) = self.dispatch_2q_gate(symbol, pair, params)? {
+                    output.set_item((pair.0.0, pair.1.0), value)?;
+                }
+            }
+            return Ok(output.into());
+        }
+
+        for (&qubit, location) in qubits.iter().zip(locations_set.iter()) {
+            let result = self.run_1q_gate(symbol, qubit, params)?;
+
+            if let Some(value) = result {
+                output.set_item(location, value)?;
+            }
+        }
+
+        Ok(output.into())
+    }
+
+    #[pyo3(signature = (circuit, removed_locations=None))]
+    fn run_circuit(
+        &mut self,
+        circuit: &Bound<'_, PyAny>,
+        removed_locations: Option<&Bound<'_, PySet>>,
+        py: Python<'_>,
+    ) -> PyResult<Py<PyDict>> {
+        let results = PyDict::new(py);
+
+        for item in circuit.call_method0("items")?.try_iter()? {
+            let item = item?;
+            let tuple: Bound<PyTuple> = item.clone().cast_into()?;
+
+            let symbol: String = tuple.get_item(0)?.extract()?;
+            let locations_item = tuple.get_item(1)?;
+            let locations: Bound<PySet> = locations_item.clone().cast_into()?;
+            let params_item = tuple.get_item(2)?;
+            let params: Bound<PyDict> = params_item.clone().cast_into()?;
+
+            let final_locations = if let Some(removed) = removed_locations {
+                locations.call_method1("__sub__", (removed,))?
+            } else {
+                locations.clone().into_any()
+            };
+
+            let gate_results =
+                self.run_gate_highlevel(&symbol, &final_locations, Some(&params), py)?;
+            results.call_method1("update", (gate_results,))?;
+        }
+
+        Ok(results.into())
+    }
+
+    #[pyo3(signature = (circuit, removed_locations=None))]
+    fn add_faults(
+        &mut self,
+        circuit: &Bound<'_, PyAny>,
+        removed_locations: Option<&Bound<'_, PySet>>,
+        py: Python<'_>,
+    ) -> PyResult<()> {
+        self.run_circuit(circuit, removed_locations, py)?;
+        Ok(())
+    }
+
+    #[getter]
+    fn bindings(slf: PyRef<'_, Self>) -> PyResult<crate::simulator_utils::GateBindingsDict> {
+        let py = slf.py();
+        let sim_obj: Py<PyAny> = slf.into_bound_py_any(py)?.unbind();
+        Ok(crate::simulator_utils::GateBindingsDict::new(
+            sim_obj, supports,
+        ))
+    }
+}
+
+#[cfg(test)]
+crate::simulator_utils::direct_surface_test!(
+    direct_surface_matches_predicate,
+    { PyStabVec::new(2, None, None, Some(2048)) },
+    ignored_forcing = (
+        |seed| PyStabVec::new(2, Some(seed), None, Some(2048)),
+        |sim: &mut PyStabVec| sim.inner.state_vector()
+    )
+);
+
+impl PyStabVec {
+    // Operands have already been extracted and validated for the entire batch.
+    fn dispatch_2q_gate(
+        &mut self,
+        symbol: &str,
+        operands: (QubitId, QubitId),
+        params: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Option<u8>> {
+        let pair = &[operands];
         match symbol {
             "CX" | "CNOT" => {
                 self.inner.cx(pair);
@@ -458,152 +626,4 @@ impl PyStabVec {
             ))),
         }
     }
-
-    #[pyo3(signature = (symbol, location, params=None))]
-    fn run_gate_internal(
-        &mut self,
-        symbol: &str,
-        location: &Bound<'_, PyTuple>,
-        params: Option<&Bound<'_, PyDict>>,
-    ) -> PyResult<Option<u8>> {
-        match location.len() {
-            1 => {
-                let qubit: usize = location.get_item(0)?.extract()?;
-                self.run_1q_gate(symbol, qubit, params)
-            }
-            2 => self.run_2q_gate(symbol, location, params),
-            _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "Gate location must be specified for either 1 or 2 qubits",
-            )),
-        }
-    }
-
-    /// Unsupported symbols raise for empty locations; supported symbols return an empty result.
-    #[pyo3(signature = (symbol, locations, **params))]
-    fn run_gate(
-        &mut self,
-        symbol: &str,
-        locations: &Bound<'_, PyAny>,
-        params: Option<&Bound<'_, PyDict>>,
-        py: Python<'_>,
-    ) -> PyResult<Py<PyDict>> {
-        self.run_gate_highlevel(symbol, locations, params, py)
-    }
-
-    #[pyo3(signature = (symbol, locations, **params))]
-    fn run_gate_highlevel(
-        &mut self,
-        symbol: &str,
-        locations: &Bound<'_, PyAny>,
-        params: Option<&Bound<'_, PyDict>>,
-        py: Python<'_>,
-    ) -> PyResult<Py<PyDict>> {
-        let output = PyDict::new(py);
-        let locations_set: Bound<PySet> = locations.clone().cast_into()?;
-        validate_supported_symbol(symbol, &locations_set, supports)?;
-
-        if let Some(p) = params
-            && let Ok(Some(sg)) = p.get_item("simulate_gate")
-            && let Ok(false) = sg.extract::<bool>()
-        {
-            return Ok(output.into());
-        }
-
-        if locations_set.is_empty() {
-            return Ok(output.into());
-        }
-
-        // Fast path: batch dispatch for common Clifford gates without special params
-        let has_special_params = params.is_some_and(|p| !p.is_empty());
-        if !has_special_params
-            && let Some(result) = crate::simulator_utils::try_clifford_batch_dispatch(
-                &mut self.inner,
-                symbol,
-                &locations_set,
-                py,
-            )?
-        {
-            return Ok(result);
-        }
-
-        // Fallback: per-location dispatch
-        for location in locations_set.iter() {
-            let loc_tuple: Bound<'_, PyTuple> = if location.is_instance_of::<PyTuple>() {
-                location.clone().cast_into()?
-            } else {
-                PyTuple::new(py, std::slice::from_ref(&location))?
-            };
-
-            let result = self.run_gate_internal(symbol, &loc_tuple, params)?;
-
-            if let Some(value) = result {
-                output.set_item(location, value)?;
-            }
-        }
-
-        Ok(output.into())
-    }
-
-    #[pyo3(signature = (circuit, removed_locations=None))]
-    fn run_circuit(
-        &mut self,
-        circuit: &Bound<'_, PyAny>,
-        removed_locations: Option<&Bound<'_, PySet>>,
-        py: Python<'_>,
-    ) -> PyResult<Py<PyDict>> {
-        let results = PyDict::new(py);
-
-        for item in circuit.call_method0("items")?.try_iter()? {
-            let item = item?;
-            let tuple: Bound<PyTuple> = item.clone().cast_into()?;
-
-            let symbol: String = tuple.get_item(0)?.extract()?;
-            let locations_item = tuple.get_item(1)?;
-            let locations: Bound<PySet> = locations_item.clone().cast_into()?;
-            let params_item = tuple.get_item(2)?;
-            let params: Bound<PyDict> = params_item.clone().cast_into()?;
-
-            let final_locations = if let Some(removed) = removed_locations {
-                locations.call_method1("__sub__", (removed,))?
-            } else {
-                locations.clone().into_any()
-            };
-
-            let gate_results =
-                self.run_gate_highlevel(&symbol, &final_locations, Some(&params), py)?;
-            results.call_method1("update", (gate_results,))?;
-        }
-
-        Ok(results.into())
-    }
-
-    #[pyo3(signature = (circuit, removed_locations=None))]
-    fn add_faults(
-        &mut self,
-        circuit: &Bound<'_, PyAny>,
-        removed_locations: Option<&Bound<'_, PySet>>,
-        py: Python<'_>,
-    ) -> PyResult<()> {
-        self.run_circuit(circuit, removed_locations, py)?;
-        Ok(())
-    }
-
-    #[getter]
-    fn bindings(slf: PyRef<'_, Self>) -> PyResult<crate::simulator_utils::GateBindingsDict> {
-        let py = slf.py();
-        let sim_obj: Py<PyAny> = slf.into_bound_py_any(py)?.unbind();
-        Ok(crate::simulator_utils::GateBindingsDict::new(
-            sim_obj, supports,
-        ))
-    }
 }
-
-#[cfg(test)]
-crate::simulator_utils::direct_surface_test!(
-    direct_surface_matches_predicate,
-    { PyStabVec::new(2, None, None, Some(2048)) },
-    ignored_forcing = (
-        |seed| PyStabVec::new(2, Some(seed), None, Some(2048)),
-        |sim: &mut PyStabVec| sim.inner.state_vector()
-    )
-);

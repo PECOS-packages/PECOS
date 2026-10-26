@@ -503,27 +503,35 @@ fn qfree_circuit_builds_through_every_dem_entry_point() {
 }
 
 #[test]
-fn leaked_measurement_replay_error_is_an_unsupported_gate() {
+fn leaked_measurement_builds_a_record_aligned_dem() {
     let mut circuit = DagCircuit::new();
     circuit.pz(&[0, 1]);
     circuit.h(&[0]);
-    let node = circuit.add_gate_auto_wire(Gate::measure_leaked(&[1]));
+    circuit.cx(&[(0, 1)]);
+    circuit.add_gate_auto_wire(Gate::measure_leaked(&[0]));
+    circuit.mz(&[1]);
     circuit.mz(&[0]);
-    assert!(
-        DagFaultAnalyzer::new(&circuit)
-            .build_influence_map()
-            .unwrap()
-            .unsupported_gate()
-            .is_none()
+    let map = InfluenceBuilder::new(&circuit).unwrap().build().unwrap();
+    assert_eq!(map.measurements.len(), 2);
+    assert_eq!(detector_records(&map), vec![vec![0, 1]]);
+    let detectors_json = r#"[{"id":0,"records":[-2,-1]}]"#;
+    circuit.set_attr(
+        "detectors",
+        pecos_quantum::Attribute::String(detectors_json.to_string()),
     );
-    let error = DemSampler::from_circuit(&circuit, &NoiseConfig::default()).unwrap_err();
-    if let DetectorValidationError::UnsupportedGate(error) = &error {
-        assert_eq!(error.qubits, vec![1]);
-        assert_eq!(error.gate_type, GateType::MeasureLeaked);
-        assert_eq!(error.location, UnsupportedGateLocation::DagNode { node });
-    } else {
-        panic!("expected UnsupportedGate, got {error:?}");
-    }
+    let dem = DemBuilder::new(&map)
+        .with_detectors_json(detectors_json)
+        .unwrap()
+        .with_noise_config(NoiseConfig::new(0.0, 0.0, 0.1, 0.0))
+        .build()
+        .unwrap();
+    let (mechanisms, _) = dem.to_mechanisms();
+    assert_eq!(mechanisms.len(), 1);
+    let (probability, detectors, observables) = &mechanisms[0];
+    assert!((probability - 0.18).abs() < 1e-12);
+    assert_eq!(detectors, &[0]);
+    assert_eq!(observables, &Vec::<u32>::new());
+    DemSampler::from_circuit(&circuit, &NoiseConfig::default()).unwrap();
 }
 
 fn detector_records(

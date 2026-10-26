@@ -244,6 +244,10 @@ class SlrConverter:
     def stim(self) -> stim.Circuit:
         """Generate a Stim circuit from the SLR block.
 
+        Sample columns are measurement records in program order (REPEAT bodies
+        counted per iteration), not classical-register bits. Use
+        stim_with_records() for the mapping to bits written at measurement time.
+
         Returns:
             stim.Circuit: The generated Stim circuit
         """
@@ -251,6 +255,25 @@ class SlrConverter:
 
         ast = self._to_ast()
         return ast_to_stim(ast)
+
+    def stim_with_records(self) -> tuple[stim.Circuit, tuple[tuple[str, int] | None, ...]]:
+        """Generate a Stim circuit and its measurement destinations.
+
+        Returns:
+            The circuit and a tuple with exactly one entry per measurement
+            record, in program order with REPEAT bodies counted per iteration.
+            Each entry is the (register_name, index) bit written by that
+            measurement, or None when the target has no result bit. A later
+            classical assignment or permutation does not change the entry:
+            it names the bit written at measurement time, as in qasm().
+            REPEAT blocks are expanded, so the tuple has
+            circuit.num_measurements entries even where the circuit itself
+            stays compact.
+        """
+        from pecos.slr.ast.codegen.stim import ast_to_stim_with_records
+
+        ast = self._to_ast()
+        return ast_to_stim_with_records(ast)
 
     def quantum_circuit(self) -> QuantumCircuit:
         """Generate a PECOS QuantumCircuit from the SLR block.

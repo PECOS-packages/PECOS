@@ -20,6 +20,7 @@ Functions:
 import warnings
 
 # Circuit generation from geometry (unified abstraction)
+from pecos.qec.circuit_steps import CircuitStep, OpType
 from pecos.qec.surface._clifford_deformation import (
     LocalCliffordFrame,
     ResolvedPauliCheck,
@@ -38,10 +39,8 @@ from pecos.qec.surface._twirl_config import GuppyRngMaskConfig, TwirlConfig
 from pecos.qec.surface.circuit_builder import (
     DagCircuitRenderer,
     GuppyRenderer,
-    OpType,
     QubitAllocation,
     StimRenderer,
-    SurfaceCircuitStep,
     TickCircuitRenderer,
     build_surface_code_circuit,
     classify_stabilizer_boundary,
@@ -229,7 +228,7 @@ __all__ = [
     "plot_patch",
     "plot_surface_code",
     # Circuit generation (unified abstraction)
-    "SurfaceCircuitStep",
+    "CircuitStep",
     "DagCircuitRenderer",
     "GuppyRenderer",
     "OpType",

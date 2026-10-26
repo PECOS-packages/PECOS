@@ -1127,6 +1127,7 @@ where
     }
 
     fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "CX");
         for &(q0, q1) in pairs {
             let control = q0.index();
             let target = q1.index();
@@ -1190,6 +1191,7 @@ where
     }
 
     fn cz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "CZ");
         for &(qa, qb) in pairs {
             let q1 = qa.index();
             let q2 = qb.index();
@@ -1233,6 +1235,7 @@ where
     }
 
     fn swap(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SWAP");
         for &(qa, qb) in pairs {
             let q1 = qa.index();
             let q2 = qb.index();
@@ -1402,6 +1405,7 @@ where
     }
 
     fn rxx(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "RXX");
         // RXX = exp(-i * theta/2 * XX)
         // Decompose: H-H, CX, RZ, CX, H-H
         for &(q0, q1) in pairs {
@@ -1415,6 +1419,7 @@ where
     }
 
     fn ryy(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "RYY");
         // RYY decomposition
         for &(q0, q1) in pairs {
             self.rx(Angle64::QUARTER_TURN, &[q0, q1]);
@@ -1427,6 +1432,7 @@ where
     }
 
     fn rzz(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "RZZ");
         // RZZ = exp(-i * theta/2 * ZZ)
         for &(q0, q1) in pairs {
             self.cx(&[(q0, q1)]);

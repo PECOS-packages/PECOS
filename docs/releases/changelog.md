@@ -56,6 +56,160 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   refactor plus bit-reversed order is 1.18x slower than the default (geomean),
   so it stays opt-in.
 
+- **Breaking:** two-qubit gates in `pecos-simulators` now reject repeated-qubit
+  pairs in debug and release builds. Such inputs could previously cause undefined
+  behaviour or a wrong state in the sparse stabilizers and `DenseStab`, but were
+  accepted elsewhere, including correct global-phase RZZ operations in
+  `StateVecSoA` and `DensityMatrix` and no-op gates in `CoinToss`.
+  Plain Rust gates panic; `CliffordRotation::try_*` returns `Err`. Selene simulator
+  plugins and `SeleneAdapter` return an error. The Python `SparseStab`, `Stabilizer`,
+  `StateVec`, `StabVec`, and `PauliProp` bindings reject repeated pairs with
+  `ValueError` in direct two-qubit calls and `run_gate`, including gate batches
+  reached through `run_circuit` and `add_faults` where available. Fixed-register
+  versions of these bindings also reject out-of-range qubits in `run_1q_gate`,
+  out-of-range pairs in `run_2q_gate`, and out-of-range locations
+  before applying a `run_gate` batch; growable native `PauliProp` has no fixed
+  register limit. Validation includes `run_gate(..., simulate_gate=False)` and
+  the two-qubit identity `"II"`. Native single-qubit batches are also validated
+  for shape and bounds before mutation. Malformed locations in native-binding
+  `run_gate` batches (including negative indices) raise gate-named `ValueError`s.
+  The native `CoinToss` binding's `run_gate_2` likewise rejects repeated and
+  out-of-range operands; `run_gate_1` and `run_measure` now also reject
+  out-of-range indices.
+  Rust batches are checked for repeated pairs before mutation. `identity` and
+  `apply_global_phase` on the sparse stabilizer types now also reject out-of-range
+  qubits. Sparse and dense stabilizer gates no longer use aliasing `unsafe` borrows.
+
+- PHIR `RZZ(0)` resolves to the two-qubit identity `II`, preserving its pair
+  operands and no-op behaviour across `HybridEngine` backends.
+- Gate registry decomposition rejects incorrect qubit/angle counts and invalid
+  step references with actionable errors instead of panicking. Rust `decompose`
+  and builder `step*` methods now return `Result`; builders reject out-of-arity
+  qubit positions and incorrect step operand/angle-source counts as steps are added.
+  Each step is a single gate (batched operands are rejected); `Custom` steps keep
+  a registry-defined angle count.
+  Python reports these input errors as
+  `ValueError` and reuse of a consumed builder as `RuntimeError`.
+
+- **Breaking:** an SLR multi-qubit gate on whole registers applies element-wise:
+  `CX(q, r)` is `CX(q[i], r[i])` for every `i` and requires equally sized
+  registers (#1476). It used to become a single gate on the wrong qubits
+  (`cx q[0], q[1]`). Arguments that do not define the qubit groups, such as a
+  register mixed with single qubits (`CX(q[0], r)`), lists or slices, or a
+  qubit count that is not the gate's arity, now raise `ValueError` instead of
+  being truncated, and an AST `GateOp` of arity two or more must have exactly
+  that many distinct targets. These rules also apply to the deprecated QASM,
+  Stim, QuantumCircuit and QIR generators, including `QGate.gen("qasm")`.
+  Parallel optimization now tracks register and tuple operands by individual
+  qubit, preserving dependencies with gates on their elements; a loop-variable
+  qubit counts as its whole register, leaving its rejection to the code
+  generators. Single-qubit
+  gates expand whole `QAlloc` operands into their available qubits and reject
+  non-qubit or empty arguments. Unsupported loop-variable qubit indices now
+  raise a `ValueError` naming the gate instead of failing with an attribute
+  error or a generic argument-count error.
+
+- Python: `pecos.qec.helix` adds C4-Helix [[20,2,6]] memory gadgets,
+  slot-aware ASAP lowering, and memory circuits with discovered detectors and
+  two logical observables. `OpType.RELABEL` exchanges two slot bindings without
+  applying a gate; surface and Guppy renderers reject it explicitly.
+
+- **Breaking:** SLR block conversion rejects input names that capture unbound
+  outer references in the block body. The error identifies the block, input
+  and reference; rename the block input to avoid the collision (#1472).
+
+- **Breaking:** SLR to `QuantumCircuit` conversion preserves measurement
+  destinations in `var_output` and declares classical register sizes in
+  `cvar_spec`, while `qvars` and `qvar_spec` preserve root qubit-register names
+  and sizes in PHIR. Running the legacy hybrid engine leaves `cvar_spec` unchanged.
+  Unsupported classical assignments, permutations of unknown or classical
+  registers (including Block-local CRegs), and unresolved block calls now raise
+  instead of being silently dropped. Preparing an undeclared allocator reports
+  an actionable error.
+  Whole-register preparation resets every slot and applies its basis gates;
+  PHIR conversion translates `RESET` to `Init`.
+  Operations sharing any qubit use separate ticks, including nested Parallel
+  blocks; disjoint operations retain parallel grouping. PHIR conversion reads
+  destinations from `Measure` gates and rejects a single `var` for multiple
+  targets or incomplete `var_output` metadata (#1473).
+
+- Stim and QIR generation now prepare every slot for allocator-wide preparations,
+  applying the same basis gates as explicit-slot preparations instead of silently
+  dropping PZ resets (#1473).
+
+- SLR adds `SlrConverter.stim_with_records()` and `ast_to_stim_with_records()`
+  to map Stim sample columns to the classical bits written at measurement time,
+  including repeated measurements and unstored results. Existing Stim output
+  is unchanged (#1465).
+
+- `pecos.qec.discover_detectors(tc, observables=(), conjugates=())` (Rust:
+  `pecos_qec::fault_tolerance::detector_discovery::discover_detectors`) finds
+  detectors of a Clifford `TickCircuit` from latest deterministic tick suffixes.
+  Declared observables are completed with random-source records and require
+  conjugate logical operators supplied at tick boundaries. Each conjugate must
+  flip only its own completed observable, rejecting dependent declarations.
+  Detectors are cleaned of declared logical content relative to those conjugates,
+  retaining an independent set that prefers unflipped local detectors. Undeclared
+  deterministic logicals remain detectors. Conjugates must commute with every
+  measured check: records alone cannot verify this, and a wrong conjugate can
+  silently lower the fault distance even when pairing passes.
+
+- `SymbolicSparseStab` and `SymbolicSparseStabVecSet` reset a qubit that is
+  entangled with others instead of postselecting it (#1360). Its partners now
+  carry the reset's hidden random outcome, so a Bell partner measured later is
+  random rather than reported deterministic. `symbolic_measurement_history`,
+  `InfluenceBuilder`, the DEM builders and the samplers built on them give
+  correct determinism and detectors for such circuits. `MeasureLeaked` is now
+  supported in these record-aligned replays: its outcome stays hidden until a
+  recorded measurement observes it. Breaking:
+  `MeasurementHistoryError::LeakedMeasurementNotRepresentable` is removed, and
+  `SymbolicSign` gains a public `hidden` field (struct literals must set it, and
+  equality compares it).
+
+- MX leaves the measured qubit in its X-basis eigenstate everywhere, as
+  `CliffordGateable::mx` specifies. The stabilizer, sparse-stabilizer, stab-vec,
+  density-matrix and state-vector engines, `CircuitExecutor`, the `pecos-qec`
+  replays (`InfluenceBuilder`, `symbolic_measurement_history`, the fault-check
+  runner, the DEM builder's crosstalk replay) and the SLR converters from Stim
+  and `QuantumCircuit` (MX and MY) previously left it in a Z eigenstate. Outcomes
+  change only for circuits that reuse a qubit after MX (or, in the SLR
+  converters, MY) without a reset: such reuse now gives the correct outcomes
+  and detectors.
+
+- **Breaking:** the SLR converters from Stim and `QuantumCircuit` no longer
+  drop, alter or shift gates and measurement records silently (#1370); input
+  they cannot convert now raises instead of becoming a comment. From Stim,
+  `MR`, `MRX`, `MRY` and inverted targets (`M !0`) are converted, and a
+  `REPEAT` block that measures is unrolled so each iteration writes its own
+  bits. Unsupported gates (for example `SQRT_X`, `ISWAP`, `MPP`, `MXX`, `MPAD`
+  and the heralded channels) and classical-feedback or sweep-bit targets
+  (`CX rec[-1] 1`) raise `NotImplementedError`. Noise channels, and the noise
+  argument of a measurement, become `// Noise:` comments with the full
+  instruction text, and annotations such as `DETECTOR` stay comments with
+  their arguments. From `QuantumCircuit`, the long-form measurement symbols
+  (`measure X`, `Measure +Y`, ...) are measured in their basis and advance the
+  bit offset. Unsupported symbols raise `NotImplementedError`, including `RX`,
+  `RY` and `RZ`, which are rotations, and `R`, which is `SY`; all four were
+  previously converted to resets. Measurement destinations are honoured: a
+  measurement with `var_output` or `var` writes that bit, registers come from
+  `cvar_spec` and the named destinations, and a measurement without a
+  destination stays bare, so SLR -> `QuantumCircuit` -> SLR keeps every
+  destination. A circuit with no destinations and no `cvar_spec` still writes
+  its measurements in order to a single `c` register. SLR codegen always emits
+  `cvar_spec`, including an empty mapping when no classical registers are
+  declared, so bare-only programs round-trip without gaining destinations.
+  Classical register names must match `[A-Za-z_][A-Za-z0-9_]*` and must not be
+  `q`, which is reserved for the converter's quantum register; invalid names
+  raise `ValueError` with a renaming instruction before emission. Other gate
+  parameters, malformed destinations, malformed one- or two-qubit locations, negative
+  qubit indices and two-qubit gates on one qubit raise `ValueError`. The
+  `ParallelOptimizer` also keeps two measurements that write the same bit in
+  order. Symbolic result indices conservatively write every bit of their
+  register, preserving the clean Guppy/HUGR rejection of symbolic LoopVar
+  indexing. Classical operations and operations without qubits act as ordering
+  barriers inside `Parallel`, so assignments cannot move ahead of their input
+  measurements or past later operations.
+
 - Live scheduled simulation now admits `StabilizerEngine` (`pr.stabilizer()`) with
   checked stochastic noise. Coherent idle rates and unsupported rotations reject
   before current-input execution. Scheduled profiles no longer cap the qubit
@@ -176,6 +330,10 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   first decision from program results.
 
 ### Python breaking changes
+
+- `SurfaceCircuitStep` is renamed to `CircuitStep` and moves, with `OpType`, to
+  `pecos.qec.circuit_steps`; `pecos.qec.surface` and `pecos.qec` export both.
+  The old name is removed.
 
 - `LogicalCircuitBuilder.build_dem` returns a `DetectorErrorModel` object; use
   `str(dem)` for text. Graph decoders given the object apply its detectors'
@@ -397,6 +555,9 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   `global_axis_cycle_f2`, still raise because no physical prefix is defined for
   their pending Clifford. Forward-flow analysis and lowering now raise on any
   step they have no rule for.
+
+- `StimRenderer` raises on `PREP`, `F`, `FDG`, `SY`, `SYDG`, `X` and `Z` steps
+  instead of silently dropping them. `TickCircuitRenderer` renders all of them.
 
 - The Python PHIR interpreter releases cached Result operations on a full reset.
   Declaration size diagnostics now give quantum or classical size guidance on all

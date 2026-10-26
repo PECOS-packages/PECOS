@@ -266,6 +266,7 @@ impl CliffordGateable for BitmaskPauliProp {
 
     #[inline]
     fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "CX");
         for &(control, target) in pairs {
             let control = control.index();
             let target = target.index();
@@ -284,6 +285,7 @@ impl CliffordGateable for BitmaskPauliProp {
 
     #[inline]
     fn cy(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "CY");
         for &(q1, q2) in pairs {
             let q1 = q1.index();
             let q2 = q2.index();
@@ -299,6 +301,7 @@ impl CliffordGateable for BitmaskPauliProp {
 
     #[inline]
     fn cz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "CZ");
         for &(q1, q2) in pairs {
             let q1 = q1.index();
             let q2 = q2.index();
@@ -314,6 +317,7 @@ impl CliffordGateable for BitmaskPauliProp {
 
     #[inline]
     fn sxx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SXX");
         for &(q1, q2) in pairs {
             let q1 = q1.index();
             let q2 = q2.index();
@@ -330,11 +334,13 @@ impl CliffordGateable for BitmaskPauliProp {
 
     #[inline]
     fn sxxdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SXXDG");
         self.sxx(pairs)
     }
 
     #[inline]
     fn syy(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SYY");
         for &(q1, q2) in pairs {
             let q1 = q1.index();
             let q2 = q2.index();
@@ -350,11 +356,13 @@ impl CliffordGateable for BitmaskPauliProp {
 
     #[inline]
     fn syydg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SYYDG");
         self.syy(pairs)
     }
 
     #[inline]
     fn szz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SZZ");
         for &(q1, q2) in pairs {
             let q1 = q1.index();
             let q2 = q2.index();
@@ -371,11 +379,13 @@ impl CliffordGateable for BitmaskPauliProp {
 
     #[inline]
     fn szzdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SZZDG");
         self.szz(pairs)
     }
 
     #[inline]
     fn swap(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SWAP");
         for &(q1, q2) in pairs {
             let q1 = q1.index();
             let q2 = q2.index();

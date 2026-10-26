@@ -212,8 +212,7 @@ fn apply_tick_gates<S: CliffordGateable>(sim: &mut S, tick: &pecos_quantum::Tick
                 }
             }
             GateType::MX => {
-                sim.h(&gate.qubits);
-                sim.mz(&gate.qubits);
+                sim.mx(&gate.qubits);
             }
             GateType::MZ | GateType::MeasureFree => mz_qubits.extend(gate.qubits.iter()),
             GateType::MPZ => mpz_qubits.extend(gate.qubits.iter()),
@@ -405,8 +404,7 @@ fn apply_gate<S: CliffordGateable>(sim: &mut S, gate: &pecos_core::Gate) {
             }
         }
         GateType::MX => {
-            sim.h(&qubits);
-            sim.mz(&qubits);
+            sim.mx(&qubits);
         }
         GateType::MZ | GateType::MeasureFree => {
             sim.mz(&qubits);
@@ -1136,6 +1134,42 @@ mod tests {
     use super::*;
     use crate::fault_tolerance::PauliFaultIterator;
     use pecos_simulators::SparseStab;
+
+    fn check_mx_replay(consolidated: bool) {
+        for minus in [false, true] {
+            let mut sim = SparseStab::new(3);
+            sim.h(&[QubitId(0)]);
+            if minus {
+                sim.z(&[QubitId(0)]);
+            }
+            let mut tc = TickCircuit::new();
+            for _ in 0..2 {
+                let mut tick = tc.tick();
+                tick.try_add_gate(pecos_core::Gate::mx(&[0])).unwrap();
+                if consolidated {
+                    tick.x(&[1]);
+                    tick.z(&[2]);
+                }
+            }
+            for (_, tick) in tc.iter_ticks() {
+                apply_tick_gates(&mut sim, tick);
+                // Probe a clone so the replay itself must preserve the eigenstate.
+                let second = &sim.clone().mx(&[QubitId(0)])[0];
+                assert!(second.is_deterministic);
+                assert_eq!(second.outcome, minus);
+            }
+        }
+    }
+
+    #[test]
+    fn mx_individual_replay_restores_x_eigenstate() {
+        check_mx_replay(false);
+    }
+
+    #[test]
+    fn mx_consolidated_replay_restores_x_eigenstate() {
+        check_mx_replay(true);
+    }
 
     #[test]
     fn diagonal_gates_are_rejected_by_individual_and_tick_dispatch() {

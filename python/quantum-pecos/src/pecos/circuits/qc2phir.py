@@ -31,6 +31,7 @@ if TYPE_CHECKING:
 
 qsym_conv = {
     "init |0>": "Init",
+    "RESET": "Init",
     "measure Z": "Measure",
     "SqrtX": "SX",
     "SqrtXd": "SXdg",
@@ -357,14 +358,28 @@ def to_phir_dict(qc: pecos.QuantumCircuit) -> dict:
             if angles:
                 op["angles"] = [angles, "rad"]
 
-            if sym.startswith("measure"):
+            if sym == "Measure" or sym.startswith("measure"):
                 # Getting return values:
                 if "var" in metadata:
                     var = metadata["var"]
+                    if len(qubits) != 1:
+                        msg = (
+                            f"Measurement {sym!r} on qubits {qubits!r} has var={var!r} for multiple targets; "
+                            "use var_output to specify a destination for each qubit."
+                        )
+                        raise ValueError(msg)
                     op["returns"] = [list(var)]
                     del metadata["var"]
                 elif "var_output" in metadata:
                     var_output = metadata["var_output"]
+                    missing = qubits.difference(var_output)
+                    if missing:
+                        msg = (
+                            f"Measurement {sym!r} on qubits {qubits!r} has var_output={var_output!r}, "
+                            f"missing destinations for qubits {missing!r}; provide every destination "
+                            "or put bare measurements in a separate gate group."
+                        )
+                        raise ValueError(msg)
                     var_return = []
                     for q in qubits:
                         var = var_output[q]

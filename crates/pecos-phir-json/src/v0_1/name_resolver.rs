@@ -57,7 +57,7 @@ fn resolve_rzz(angles: Option<&[Angle64]>) -> String {
     {
         let a = angs[0];
         if a == Angle64::ZERO {
-            return "I".to_string();
+            return "II".to_string();
         }
         if a == Angle64::QUARTER_TURN {
             return "SZZ".to_string();
@@ -159,7 +159,10 @@ mod tests {
 
     #[test]
     fn test_rzz_zero_is_identity() {
-        assert_eq!(resolve_sim_name("RZZ", Some(&[0.0])).unwrap(), "I");
+        assert_eq!(
+            resolve_sim_name("RZZ", Some(&[0.0])).expect("valid angle"),
+            "II"
+        );
     }
 
     #[test]

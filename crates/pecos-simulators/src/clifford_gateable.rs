@@ -27,6 +27,20 @@ pub struct MeasurementResult {
     pub is_deterministic: bool,
 }
 
+/// Reject repeated operands throughout a batch before any gate mutates the simulator.
+/// Reuse of a qubit across different pairs is not checked here.
+#[inline]
+pub(crate) fn validate_distinct_pairs(pairs: &[(QubitId, QubitId)], gate: &str) {
+    for &(a, b) in pairs {
+        assert_ne!(
+            a,
+            b,
+            "{gate} requires distinct qubits; repeated qubit {} appears twice in a pair",
+            a.index()
+        );
+    }
+}
+
 /// A simulator trait for quantum systems that implement Clifford operations.
 ///
 /// # Overview
@@ -123,13 +137,14 @@ pub struct MeasurementResult {
 ///   <https://arxiv.org/abs/quant-ph/9807006>
 #[expect(clippy::min_ident_chars)]
 pub trait CliffordGateable: QuantumSimulator {
-    /// Validate operands before a default gate decomposition applies any operations.
+    /// Validate operand bounds before a default gate decomposition applies any operations.
     ///
     /// Fixed-register backends override this hook. The default imposes no bound,
-    /// preserving the support-growing behavior of Pauli trackers.
+    /// preserving the support-growing behavior of Pauli trackers. Repeated operands
+    /// are permitted by this bounds hook; pair distinctness is checked at gate entry.
     ///
     /// # Panics
-    /// Fixed-register GPU backends panic if an operand is outside their register.
+    /// Backends that override this hook panic if an operand is outside their register.
     fn validate_qubits(&self, _qubits: &[QubitId]) {}
 
     /// Applies the scalar `exp(i * phase)` once for every target qubit.
@@ -148,7 +163,7 @@ pub trait CliffordGateable: QuantumSimulator {
     /// A mutable reference to `Self` for method chaining.
     ///
     /// # Panics
-    /// GPU backends panic if any operand is outside their register.
+    /// Backends that override the bounds hook panic if any operand is outside their register.
     #[inline]
     fn apply_global_phase(&mut self, _phase: Angle64, qubits: &[QubitId]) -> &mut Self {
         self.validate_qubits(qubits);
@@ -166,7 +181,7 @@ pub trait CliffordGateable: QuantumSimulator {
     /// * `&mut Self` - Returns the simulator for method chaining.
     ///
     /// # Panics
-    /// GPU backends panic if any operand is outside their register.
+    /// Backends that override the bounds hook panic if any operand is outside their register.
     #[inline]
     fn identity(&mut self, qubits: &[QubitId]) -> &mut Self {
         self.validate_qubits(qubits);
@@ -981,6 +996,8 @@ pub trait CliffordGateable: QuantumSimulator {
     /// * `&mut Self` - Returns the simulator for method chaining.
     ///
     /// # Panics
+    /// Pairs must name two distinct qubits. The simulators in this crate panic before
+    /// applying any gates if a pair repeats a qubit.
     /// GPU backends panic if any operand is outside their register.
     fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self;
 
@@ -1013,9 +1030,11 @@ pub trait CliffordGateable: QuantumSimulator {
     /// * `&mut Self` - Returns the simulator for method chaining.
     ///
     /// # Panics
+    /// The default implementation panics before applying any gates if a pair repeats a qubit.
     /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn cy(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "CY");
         for &(a, b) in pairs {
             self.validate_qubits(&[a, b]);
         }
@@ -1054,9 +1073,11 @@ pub trait CliffordGateable: QuantumSimulator {
     /// * `&mut Self` - Returns the simulator for method chaining.
     ///
     /// # Panics
+    /// The default implementation panics before applying any gates if a pair repeats a qubit.
     /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn cz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "CZ");
         for &(a, b) in pairs {
             self.validate_qubits(&[a, b]);
         }
@@ -1093,9 +1114,11 @@ pub trait CliffordGateable: QuantumSimulator {
     /// * `&mut Self` - Returns the simulator for method chaining.
     ///
     /// # Panics
+    /// The default implementation panics before applying any gates if a pair repeats a qubit.
     /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn sxx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SXX");
         for &(a, b) in pairs {
             self.validate_qubits(&[a, b]);
         }
@@ -1133,9 +1156,11 @@ pub trait CliffordGateable: QuantumSimulator {
     /// * `&mut Self` - Returns the simulator for method chaining.
     ///
     /// # Panics
+    /// The default implementation panics before applying any gates if a pair repeats a qubit.
     /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn sxxdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SXXDG");
         for &(a, b) in pairs {
             self.validate_qubits(&[a, b]);
         }
@@ -1172,9 +1197,11 @@ pub trait CliffordGateable: QuantumSimulator {
     /// * `&mut Self` - Returns the simulator for method chaining.
     ///
     /// # Panics
+    /// The default implementation panics before applying any gates if a pair repeats a qubit.
     /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn syy(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SYY");
         for &(a, b) in pairs {
             self.validate_qubits(&[a, b]);
         }
@@ -1212,9 +1239,11 @@ pub trait CliffordGateable: QuantumSimulator {
     /// * `&mut Self` - Returns the simulator for method chaining.
     ///
     /// # Panics
+    /// The default implementation panics before applying any gates if a pair repeats a qubit.
     /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn syydg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SYYDG");
         for &(a, b) in pairs {
             self.validate_qubits(&[a, b]);
         }
@@ -1252,9 +1281,11 @@ pub trait CliffordGateable: QuantumSimulator {
     /// * `&mut Self` - Returns the simulator for method chaining.
     ///
     /// # Panics
+    /// The default implementation panics before applying any gates if a pair repeats a qubit.
     /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn szz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SZZ");
         for &(a, b) in pairs {
             self.validate_qubits(&[a, b]);
         }
@@ -1292,9 +1323,11 @@ pub trait CliffordGateable: QuantumSimulator {
     /// * `&mut Self` - Returns the simulator for method chaining.
     ///
     /// # Panics
+    /// The default implementation panics before applying any gates if a pair repeats a qubit.
     /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn szzdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SZZDG");
         for &(a, b) in pairs {
             self.validate_qubits(&[a, b]);
         }
@@ -1330,9 +1363,11 @@ pub trait CliffordGateable: QuantumSimulator {
     /// * `&mut Self` - Returns the simulator for method chaining.
     ///
     /// # Panics
+    /// The default implementation panics before applying any gates if a pair repeats a qubit.
     /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn swap(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SWAP");
         for &(a, b) in pairs {
             self.validate_qubits(&[a, b]);
         }
@@ -1369,8 +1404,10 @@ pub trait CliffordGateable: QuantumSimulator {
     /// * `&mut Self` - Returns the simulator for method chaining.
     ///
     /// # Panics
+    /// The default implementation panics before applying any gates if a pair repeats a qubit.
     /// GPU backends panic if any operand is outside their register.
     fn iswap(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "ISWAP");
         for &(a, b) in pairs {
             self.validate_qubits(&[a, b]);
         }
@@ -1413,9 +1450,11 @@ pub trait CliffordGateable: QuantumSimulator {
     /// * `&mut Self` - Returns the simulator for method chaining.
     ///
     /// # Panics
+    /// The default implementation panics before applying any gates if a pair repeats a qubit.
     /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn g(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "G");
         for &(a, b) in pairs {
             self.validate_qubits(&[a, b]);
         }
@@ -1435,9 +1474,11 @@ pub trait CliffordGateable: QuantumSimulator {
     /// ```
     ///
     /// # Panics
+    /// The default implementation panics before applying any gates if a pair repeats a qubit.
     /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn iswapdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "ISWAPDG");
         for &(a, b) in pairs {
             self.validate_qubits(&[a, b]);
         }
@@ -1455,9 +1496,11 @@ pub trait CliffordGateable: QuantumSimulator {
     /// Applies the dagger of the G gate. G is Hermitian (self-inverse), so Gdg = G.
     ///
     /// # Panics
+    /// The default implementation panics before applying any gates if a pair repeats a qubit.
     /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn gdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "GDG");
         for &(a, b) in pairs {
             self.validate_qubits(&[a, b]);
         }

@@ -6,6 +6,12 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- `derive_seed` hashes its purpose string with a fixed SipHash-1-3 instead of
+  `std`'s `DefaultHasher`, whose algorithm is unspecified across Rust releases
+  (#1496). Every derived seed keeps its current value, so seeded results do not
+  change. Component seeds in `MonteCarloEngine` and `HybridEngine`, and so the
+  replay of a recorded `SeedReport`, no longer depend on the Rust release.
+
 - **Breaking:** two-qubit gates in `pecos-simulators` now reject repeated-qubit
   pairs in debug and release builds. Such inputs could previously cause undefined
   behaviour or a wrong state in the sparse stabilizers and `DenseStab`, but were
@@ -663,9 +669,7 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   is reseeded from the run seed and its global index before resetting the engine.
 - `WorkerSeedRecord.seed` is replaced by `first_shot`, the worker's first global
   shot index. `SeedReport.base_seed` now drives replay; `root_seed` is provenance
-  only. Old serialized reports must be regenerated. Shot-seed derivation is stable,
-  but component derivation uses `DefaultHasher`, so seeded samples are not promised
-  stable across Rust releases.
+  only. Old serialized reports must be regenerated. Shot-seed derivation is stable.
 
 - Removed `DemBuilder::with_measurement_order`,
   `DemSamplerBuilder::with_measurement_order`, `MemBuilder::with_measurement_order`, `DemStabSimBuilder::measurement_order`,

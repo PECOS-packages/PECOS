@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from pecos.slr.ast.codegen._block_flatten import flatten_block_calls
+from pecos.slr.ast.codegen._loop_bounds import static_for_range
 from pecos.slr.ast.codegen._permutation import iter_permutes, reject_permute_in_region
 from pecos.slr.ast.codegen._prep_tail import prep_tail
 from pecos.slr.ast.nodes import (
@@ -52,6 +53,7 @@ from pecos.slr.ast.nodes import (
     PrintOp,
     RegisterDecl,
     RepeatStmt,
+    ReturnOp,
     WhileStmt,
 )
 
@@ -341,7 +343,9 @@ class AstToStim:
                 "lose observable program output)."
             )
             raise NotImplementedError(msg)
-        # Other statement types (Comment, Return) don't generate Stim output
+        elif not isinstance(stmt, CommentOp | ReturnOp):
+            msg = f"Stim codegen does not support statement {type(stmt).__name__}: {stmt!r}"
+            raise NotImplementedError(msg)
 
     def _process_gate(self, node: GateOp) -> None:
         """Process a gate operation."""
@@ -591,34 +595,9 @@ class AstToStim:
         )
         raise NotImplementedError(msg)
 
-    def _static_int_bound(self, expr: object, which: str) -> int:
-        """Resolve a static integer `For` bound.
-
-        The AST converter wraps integer range bounds in `LiteralExpr`
-        (`converter.py` `_convert_for`), so the bound is never a raw
-        `int` -- the old `isinstance(int)` guard was always false and
-        silently dropped every `For` body. A non-literal / non-int
-        bound is a symbolic/dynamic `For`: fail LOUD, never drop.
-        """
-        if isinstance(expr, LiteralExpr) and isinstance(expr.value, int) and not isinstance(expr.value, bool):
-            return expr.value
-        msg = (
-            f"Stim codegen: For loop {which} bound is not a static integer "
-            f"({type(expr).__name__}); only fixed-bound `For(i, <int>, "
-            "<int>)` is supported (symbolic/dynamic For is out of scope -- "
-            "and must not silently drop the loop body)."
-        )
-        raise NotImplementedError(msg)
-
     def _process_for(self, node: ForStmt) -> None:
-        """Unroll a static fixed-bound `For` (v1-supported)."""
-        start = self._static_int_bound(node.start, "start")
-        stop = self._static_int_bound(node.stop, "stop")
-        step = 1 if node.step is None else self._static_int_bound(node.step, "step")
-        if step == 0:
-            msg = "Stim codegen: For loop step is 0 (infinite loop); only a non-zero static step is supported."
-            raise NotImplementedError(msg)
-        for _ in range(start, stop, step):
+        """Unroll a static fixed-bound For."""
+        for _ in static_for_range(node, "Stim"):
             for stmt in node.body:
                 self._process_statement(stmt)
 

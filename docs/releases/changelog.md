@@ -6,6 +6,20 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Breaking:** SLR code generation rejects constructs it previously silently
+  dropped (#1189): QASM `While`, dynamic or non-integer `For` bounds, zero steps,
+  `Print`, and unsupported `Permute` shapes; QIR non-integer
+  `Repeat`; and unresolved block calls in QASM, Stim and QIR. Deprecated
+  `StimGenerator` and `QuantumCircuitGenerator` reject `Permute` at every nesting
+  level and direct callers to `SlrConverter(...).stim()` or `.quantum_circuit()`.
+  QASM now unrolls static integer `For` loops using the same bound resolver as
+  Stim, QIR and QuantumCircuit. Repeated QASM permutations compose correctly
+  and share their classical swap temporary. QIR preserves global barriers and
+  reuses barrier declarations across repeated calls. QASM preparation also
+  follows the current permutation. Deprecated QIR retains supported permutations
+  but rejects mixed quantum/classical permutations that previously lost the
+  classical part.
+
 - **Breaking:** two-qubit gates in `pecos-simulators` now reject repeated-qubit
   pairs in debug and release builds. Such inputs could previously cause undefined
   behaviour or a wrong state in the sparse stabilizers and `DenseStab`, but were

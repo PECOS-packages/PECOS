@@ -68,9 +68,6 @@ def flatten_block_calls(program: Program) -> Program:
     `AllocatorArg` is supported; richer BlockArg shapes raise
     `NotImplementedError`. Quantum-only for now.
     """
-    if not program.block_decls:
-        return program
-
     validate_unique_block_decl_names(program)
     decls = {decl.name: decl for decl in program.block_decls}
     new_body = _flatten_stmts(program.body, decls)
@@ -143,7 +140,7 @@ def _flatten_stmts(body: tuple[Statement, ...], decls: dict[str, BlockDecl]) -> 
 def _inline_call(call: BlockCall, decls: dict[str, BlockDecl]) -> tuple[Statement, ...]:
     decl = decls.get(call.callee)
     if decl is None:
-        msg = f"BlockCall references undefined block {call.callee!r}"
+        msg = f"BlockCall references undefined block {call.callee!r}; provide its block declaration."
         raise ValueError(msg)
     if len(call.arg_bindings) != len(decl.inputs):
         msg = (

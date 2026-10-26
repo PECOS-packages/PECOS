@@ -32,6 +32,7 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 from pecos.slr.ast.codegen._block_flatten import flatten_block_calls
+from pecos.slr.ast.codegen._loop_bounds import static_for_range
 from pecos.slr.ast.codegen._permutation import reject_permute_in_region
 from pecos.slr.ast.codegen._prep_tail import prep_tail
 from pecos.slr.ast.nodes import (
@@ -42,6 +43,7 @@ from pecos.slr.ast.nodes import (
     BinaryOp,
     BitExpr,
     BitRef,
+    CommentOp,
     ForStmt,
     GateKind,
     GateOp,
@@ -601,6 +603,9 @@ class AstToQir:
                 "lose observable program output)."
             )
             raise NotImplementedError(msg)
+        elif not isinstance(stmt, CommentOp):
+            msg = f"QIR codegen does not support statement {type(stmt).__name__}: {stmt!r}"
+            raise NotImplementedError(msg)
 
     def _process_return(self, node: ReturnOp) -> None:
         """Validate that returned CLASSICAL registers have QIR storage.
@@ -918,13 +923,16 @@ class AstToQir:
         """Process a barrier operation."""
         # Collect all qubits involved
         qubits = []
-        if node.allocators:
-            for alloc in node.allocators:
-                qubits.extend(
-                    self._get_qubit_ptr(SlotRef(allocator=key[0], index=key[1]))
-                    for key in self.context.qubit_map
-                    if key[0] == alloc
-                )
+        allocators = node.allocators or tuple(
+            name for name in self.context.qreg_sizes if self.context.allocator_parents.get(name) is None
+        )
+        for alloc in allocators:
+            if alloc not in self.context.qreg_sizes:
+                msg = f"QIR codegen: Barrier refers to unknown allocator {alloc!r}."
+                raise NotImplementedError(msg)
+            qubits.extend(
+                self._get_qubit_ptr(SlotRef(allocator=alloc, index=i)) for i in range(self.context.qreg_sizes[alloc])
+            )
 
         if not qubits:
             return
@@ -935,7 +943,10 @@ class AstToQir:
             self._types["void"],
             [self._types["qubit_ptr"]] * len(qubits),
         )
-        barrier_func = llvm_ir.Function(self._module, fnty, name=barrier_name)
+        barrier_func = self._gate_cache.get(barrier_name)
+        if barrier_func is None:
+            barrier_func = llvm_ir.Function(self._module, fnty, name=barrier_name)
+            self._gate_cache[barrier_name] = barrier_func
         self._builder.call(barrier_func, qubits, name="")
 
     def _process_assign(self, node: AssignOp) -> None:
@@ -1069,44 +1080,20 @@ class AstToQir:
         )
         raise NotImplementedError(msg)
 
-    def _static_int_bound(self, expr: Any, which: str) -> int:
-        """Resolve a static integer `For` bound.
-
-        The converter wraps integer range bounds in `LiteralExpr`
-        (`converter.py` `_convert_for`), so the bound is never a raw
-        `int`. A non-literal / non-int bound is a symbolic/dynamic
-        `For`, which is unsupported -- fail LOUD rather than silently
-        drop the loop body (the previous `isinstance(int)` guard was
-        always false, so EVERY `For` body was silently dropped).
-        """
-        if isinstance(expr, LiteralExpr) and isinstance(expr.value, int) and not isinstance(expr.value, bool):
-            return expr.value
-        msg = (
-            f"QIR codegen: For loop {which} bound is not a static integer "
-            f"({type(expr).__name__}); only fixed-bound `For(i, <int>, "
-            "<int>)` is supported (symbolic/dynamic For is out of scope -- "
-            "and must not silently drop the loop body)."
-        )
-        raise NotImplementedError(msg)
-
     def _process_for(self, node: ForStmt) -> None:
-        """Unroll a static fixed-bound `For` (v1-supported)."""
-        start = self._static_int_bound(node.start, "start")
-        stop = self._static_int_bound(node.stop, "stop")
-        step = 1 if node.step is None else self._static_int_bound(node.step, "step")
-        if step == 0:
-            msg = "QIR codegen: For loop step is 0 (infinite loop); only a non-zero static step is supported."
-            raise NotImplementedError(msg)
-        for _ in range(start, stop, step):
+        """Unroll a static fixed-bound For."""
+        for _ in static_for_range(node, "QIR"):
             for stmt in node.body:
                 self._process_statement(stmt)
 
     def _process_repeat(self, node: RepeatStmt) -> None:
         """Process a repeat loop by unrolling."""
-        if isinstance(node.count, int):
-            for _ in range(node.count):
-                for stmt in node.body:
-                    self._process_statement(stmt)
+        if not isinstance(node.count, int):
+            msg = f"QIR codegen: Repeat count is not a static integer ({node.count!r})."
+            raise NotImplementedError(msg)
+        for _ in range(node.count):
+            for stmt in node.body:
+                self._process_statement(stmt)
 
     def _process_parallel(self, node: ParallelBlock) -> None:
         """Process a parallel block."""

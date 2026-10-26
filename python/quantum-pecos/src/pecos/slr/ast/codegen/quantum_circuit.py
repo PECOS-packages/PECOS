@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from pecos.slr.ast.codegen._block_flatten import flatten_block_calls
+from pecos.slr.ast.codegen._loop_bounds import static_for_range
 from pecos.slr.ast.codegen._permutation import reject_permute_in_region
 from pecos.slr.ast.codegen._prep_tail import prep_tail
 from pecos.slr.ast.nodes import (
@@ -537,38 +538,9 @@ class AstToQuantumCircuit:
         )
         raise NotImplementedError(msg)
 
-    def _static_int_bound(self, expr: object, which: str) -> int:
-        """Resolve a static integer `For` bound.
-
-        The AST converter wraps integer range bounds in `LiteralExpr`
-        (`converter.py` `_convert_for`), so the bound is never a raw
-        `int` -- the old `isinstance(int)` guard was always false, so
-        the `else` branch *rejected every* static `For` (even valid
-        `For(i, 0, 3)`). Resolve the literal; a non-literal / non-int
-        bound is a symbolic/dynamic `For`: fail LOUD.
-        """
-        if isinstance(expr, LiteralExpr) and isinstance(expr.value, int) and not isinstance(expr.value, bool):
-            return expr.value
-        msg = (
-            f"QuantumCircuit codegen: For loop {which} bound is not a "
-            f"static integer ({type(expr).__name__}); only fixed-bound "
-            "`For(i, <int>, <int>)` is supported (symbolic/dynamic For "
-            "is out of scope)."
-        )
-        raise NotImplementedError(msg)
-
     def _process_for(self, node: ForStmt) -> None:
-        """Unroll a static fixed-bound `For` (v1-supported)."""
-        start = self._static_int_bound(node.start, "start")
-        stop = self._static_int_bound(node.stop, "stop")
-        step = 1 if node.step is None else self._static_int_bound(node.step, "step")
-        if step == 0:
-            msg = (
-                "QuantumCircuit codegen: For loop step is 0 (infinite "
-                "loop); only a non-zero static step is supported."
-            )
-            raise NotImplementedError(msg)
-        for _ in range(start, stop, step):
+        """Unroll a static fixed-bound For."""
+        for _ in static_for_range(node, "QuantumCircuit"):
             for stmt in node.body:
                 self._process_statement(stmt)
 

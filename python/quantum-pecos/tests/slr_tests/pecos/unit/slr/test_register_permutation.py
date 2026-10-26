@@ -48,7 +48,7 @@ def create_mixed_permutation_program() -> tuple:
             b,
         ),
         # Apply gates to see the effect of permutations
-        qubit.H(a[0]),  # Should apply to c[1] after both permutations
+        qubit.H(a[0]),  # Should apply to b[0] after both permutations
         qubit.X(b[1]),  # Should apply to a[1] after the whole register permutation
         qubit.Z(c[2]),  # Should apply to c[2] since it's not permuted
     )
@@ -105,10 +105,10 @@ def test_mixed_permutation_qasm() -> None:
 
     # Verify the operations after the permutation
     # For quantum registers, we're using the permutation map approach
-    # So H(a[0]) should become H(c[1]) after both permutations
+    # So H(a[0]) should become H(b[0]) after both permutations
     # X(b[1]) should become X(a[1]) after the whole register permutation
     # Z(c[2]) remains Z(c[2]) since it's not permuted
-    assert "h c[1]" in qasm, f"Expected 'h c[1]' not found in QASM:\n{qasm}"
+    assert "h b[0]" in qasm, f"Expected 'h b[0]' not found in QASM:\n{qasm}"
     assert "x a[1]" in qasm, f"Expected 'x a[1]' not found in QASM:\n{qasm}"
     assert "z c[2]" in qasm, f"Expected 'z c[2]' not found in QASM:\n{qasm}"
 

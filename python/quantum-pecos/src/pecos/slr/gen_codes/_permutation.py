@@ -47,6 +47,23 @@ def is_classical_permute(op: Permute) -> bool:
     return classical(op.elems_i) and classical(op.elems_f)
 
 
+def reject_unsupported_permute(block: Block, backend: str, target: str, parents: tuple[str, ...] = ()) -> None:
+    """Reject every Permute, including those in bodies the generator never visits."""
+    path = (*parents, type(block).__name__)
+    for op in block.ops:
+        if isinstance(op, Permute):
+            msg = (
+                f"{backend} does not support Permute in {' / '.join(path)}; "
+                f"use SlrConverter(...).{target}(), whose AST backend applies a static relabel."
+            )
+            raise NotImplementedError(msg)
+        if hasattr(op, "ops"):
+            reject_unsupported_permute(op, backend, target, path)
+    otherwise = getattr(block, "else_block", None)
+    if otherwise is not None:
+        reject_unsupported_permute(otherwise, backend, target, path)
+
+
 def reject_permute_in_region(block: Block, backend: str, *, classical_runtime: bool = False) -> None:
     """Reject relabels in a region whose execution cannot be resolved statically.
 

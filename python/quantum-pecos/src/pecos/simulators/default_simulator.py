@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from pecos.simulators.batch_validation import replayable_locations, validate_batch
+from pecos.simulators.batch_validation import is_empty_batch, replayable_locations, validate_batch
 
 if TYPE_CHECKING:
     from pecos_rslib import GateRegistry
@@ -39,6 +39,10 @@ class DefaultSimulator:
     """
 
     gate_capacity: int | None = None
+    # Generic user bindings retain their tuple/list location contract. Concrete
+    # quantum wrappers restrict one-qubit locations to scalars.
+    _allow_singletons = True
+    _allow_sequence_locations = True
 
     def __init__(self) -> None:
         """Initialize the DefaultSimulator.
@@ -46,6 +50,16 @@ class DefaultSimulator:
         Creates an empty bindings dictionary to store gate operation mappings.
         """
         self.bindings = {}
+
+    def validate_gate_batch(self, symbol: str, locations: object) -> None:
+        """Validate a batch using this state's capacity and binding location policy."""
+        validate_batch(
+            symbol,
+            locations,
+            self.gate_capacity,
+            allow_singletons=self._allow_singletons,
+            allow_sequences=self._allow_sequence_locations,
+        )
 
     def run_gate(
         self,
@@ -64,10 +78,10 @@ class DefaultSimulator:
         """
         output = {}
 
-        if not locations:
+        if is_empty_batch(locations):
             return output
         locations = replayable_locations(locations)
-        validate_batch(symbol, locations, self.gate_capacity)
+        self.validate_gate_batch(symbol, locations)
 
         if params.get("simulate_gate", True):
             for location in locations:

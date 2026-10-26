@@ -28,7 +28,7 @@ from pecos.engines.cvm.semantics import DefaultClassicalSemantics
 from pecos.engines.cvm.wasm import eval_cfunc, get_ccop
 from pecos.exceptions import NotSupportedGateError
 from pecos.noise.fake_error_model import FakeErrorModel
-from pecos.simulators.batch_validation import replayable_locations, validate_batch
+from pecos.simulators.batch_validation import is_empty_batch, replayable_locations, validate_batch
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -422,10 +422,16 @@ class HybridEngine:
         **params: Additional parameters for the gate operation.
 
         """
-        if not locations:
+        if is_empty_batch(locations):
             return
         locations = replayable_locations(locations)
-        validate_batch(symbol, locations, getattr(state, "gate_capacity", None))
+        validator = getattr(state, "validate_gate_batch", None)
+        if validator is not None:
+            validator(symbol, locations)
+        else:
+            # Native simulators expose their Rust capacity, including None for
+            # growable PauliProp; num_qubits is never used as a fallback.
+            validate_batch(symbol, locations, getattr(state, "gate_capacity", None))
 
         if params.get("simulate_gate", True):
             for location in locations:

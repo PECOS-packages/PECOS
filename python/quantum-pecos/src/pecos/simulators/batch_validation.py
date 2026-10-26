@@ -15,7 +15,7 @@ Bindings still decide which gates a wrapper supports. Overriding a known
 spelling retains its arity; a different-arity override must update GATE_ARITIES.
 """
 
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping, Sized
 from operator import index
 
 from pecos_rslib import _gate_bindings_symbols
@@ -64,11 +64,29 @@ def replayable_locations(locations: Iterable) -> Iterable:
     return tuple(locations) if isinstance(locations, Iterator) else locations
 
 
-def validate_batch(symbol: str, locations: Iterable, capacity: int | None) -> None:
+def is_empty_batch(locations: object) -> bool:
+    """Check container length without invoking array truth-value conversion.
+
+    Preserve the historical falsey bare-zero/None shortcut. Iterators have no
+    length and are truthy, so their replay buffer determines whether they run.
+    """
+    if isinstance(locations, Sized):
+        return len(locations) == 0
+    return not locations
+
+
+def validate_batch(
+    symbol: str,
+    locations: Iterable,
+    capacity: int | None,
+    *,
+    allow_singletons: bool = True,
+    allow_sequences: bool = False,
+) -> None:
     """Check all locations without changing their container or dispatching gates.
 
-    Scalars and singleton lists/tuples are one-qubit locations; larger arities
-    require lists/tuples. Unknown spellings and location-free operations skip
+    States select whether singleton locations and general sized sequences are
+    accepted by their bindings. Unknown spellings and location-free operations skip
     checks. None capacity means growable, but indices must still be nonnegative.
     Only qubits within a single location must be distinct.
     """
@@ -77,7 +95,14 @@ def validate_batch(symbol: str, locations: Iterable, capacity: int | None) -> No
         return
     if _plain_batch_is_valid(arity, locations, capacity):
         return
-    _validate_each(symbol, arity, locations, capacity)
+    _validate_each(
+        symbol,
+        arity,
+        locations,
+        capacity,
+        allow_singletons=allow_singletons,
+        allow_sequences=allow_sequences,
+    )
 
 
 def _plain_batch_is_valid(arity: int, locations: Iterable, capacity: int | None) -> bool:
@@ -108,9 +133,27 @@ def _plain_batch_is_valid(arity: int, locations: Iterable, capacity: int | None)
     return False
 
 
-def _validate_each(symbol: str, arity: int, locations: Iterable, capacity: int | None) -> None:
+def _validate_each(
+    symbol: str,
+    arity: int,
+    locations: Iterable,
+    capacity: int | None,
+    *,
+    allow_singletons: bool,
+    allow_sequences: bool,
+) -> None:
     for location in locations:
-        qubits = location if isinstance(location, (tuple, list)) else (location,)
+        is_sequence = isinstance(location, (tuple, list)) or (
+            allow_sequences
+            and isinstance(location, Sized)
+            and hasattr(location, "__getitem__")
+            and not isinstance(location, (str, bytes, bytearray, Mapping))
+        )
+        if arity == 1 and is_sequence and not allow_singletons:
+            hint = "; use II for the two-qubit identity" if symbol == "I" else ""
+            msg = f"{symbol}: expected a scalar qubit index, got {location!r}{hint}"
+            raise ValueError(msg)
+        qubits = location if is_sequence else (location,)
         if len(qubits) != arity:
             hint = "; use II for the two-qubit identity" if symbol == "I" else ""
             msg = f"{symbol}: expected {arity} qubit(s) per location, got {location!r}{hint}"

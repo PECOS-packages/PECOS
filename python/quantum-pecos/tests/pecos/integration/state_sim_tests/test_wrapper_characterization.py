@@ -110,7 +110,7 @@ def test_result_singleton_tuple(state):
             state.run_circuit(_items("Measure", {(1,)}))
     else:
         # These measurement helpers require a scalar qubit, even in a batch.
-        with pytest.raises(TypeError):
+        with pytest.raises(ValueError, match="Measure"):
             state.run_gate("Measure", [(1,)])
 
 
@@ -406,7 +406,12 @@ def test_phir_zero_rzz(backend, interpreter, monkeypatch):
 def test_original_result_keys_from_overridden_binding(state, symbol, location, one, zero):
     state.bindings = dict(state.bindings)
     state.bindings[symbol] = lambda _state, _location, **_params: 1
-    # Mutable bindings may return results: scalar, singleton and pair keys stay original.
+    # Overrides retain the state's location policy as well as the spelling's arity.
+    if location == (1,) and type(state).__name__ in QUANTUM:
+        with pytest.raises(ValueError, match="Measure"):
+            state.run_gate(symbol, [location])
+        return
+    # Accepted scalar, singleton and pair keys stay original.
     result = state.run_gate(symbol, [location])
     assert result == one
     assert next(iter(result)) is location
@@ -539,3 +544,30 @@ def test_error_set_string_rejection():
     # The legacy constructor advertises strings, but pecos.array now rejects them.
     with pytest.raises(TypeError, match="Arrays cannot contain string objects"):
         Generator.ErrorSet(["X"])
+
+
+@pytest.mark.parametrize("state", [*WRAPPERS, "DefaultSimulator"], indirect=True)
+@pytest.mark.parametrize("values", [[], [0, 1]])
+def test_disabled_numpy_batch(state, values):
+    np = pytest.importorskip("numpy")
+    assert state.run_gate("X", np.array(values, dtype=int), simulate_gate=False) == {}
+
+
+@pytest.mark.parametrize("state", ["SparseStabPy", "CuStateVec", "MPS", "CudaStateVec"], indirect=True)
+@pytest.mark.parametrize("container", ["numpy", "range"])
+def test_sized_sequence_pair(state, container):
+    np = pytest.importorskip("numpy")
+    location = np.array([0, 1]) if container == "numpy" else range(2)
+    state.run_gate("X", [0])
+    assert state.run_gate("CX", [location]) == {}
+    assert state.run_gate("Measure", [0, 1]) == {0: 1, 1: 1}
+
+
+@pytest.mark.parametrize("identity", [True, False])
+def test_pauli_list_locations_with_removal(identity):
+    state = PauliProp(num_qubits=2)
+    if not identity:
+        state.faults = {"X": {0}, "Y": set(), "Z": set()}
+    # Both frames use the existing set subtraction contract; inner lists are unhashable.
+    with pytest.raises(TypeError, match="unhashable type: 'list'"):
+        state.run_circuit(_items("CX", [[0, 1]]), removed_locations=set())

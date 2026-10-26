@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING
 from pecos_rslib_cuda import CuStateVec as CuStateVecRs
 
 from pecos.simulators._cuda_fork_guard import check_fork_poison, mark_cuda_initialized
-from pecos.simulators.batch_validation import replayable_locations, validate_batch
+from pecos.simulators.batch_validation import is_empty_batch, replayable_locations
 from pecos.simulators.cuda_statevec import bindings
 from pecos.simulators.sim_class_types import StateVector
 
@@ -100,10 +100,10 @@ class CudaStateVec(StateVector):
         """
         output = {}
 
-        if not locations:
+        if is_empty_batch(locations):
             return output
         locations = replayable_locations(locations)
-        validate_batch(symbol, locations, self.gate_capacity)
+        self.validate_gate_batch(symbol, locations)
 
         if params.get("simulate_gate", True):
             for location in locations:

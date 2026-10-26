@@ -174,6 +174,12 @@ impl PyPauliProp {
     }
 
     /// Get `track_sign` setting (for backwards compatibility)
+    /// Fixed register capacity, or None for a growable simulator.
+    #[getter]
+    fn gate_capacity(&self) -> Option<usize> {
+        self.inner.qubit_capacity()
+    }
+
     #[getter]
     pub fn track_sign(&self) -> bool {
         self.track_sign

@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 
 from pecos_rslib.simulators import PauliProp as PauliPropRs
 
-from pecos.simulators.batch_validation import validate_batch
+from pecos.simulators.batch_validation import is_empty_batch
 from pecos.simulators.gate_syms import alt_symbols
 from pecos.simulators.pauliprop.logical_sign import find_logical_signs
 from pecos.simulators.sim_class_types import PauliPropagation
@@ -46,6 +46,8 @@ class PauliProp(PauliPropagation):
         bindings (Dict[str, Callable]):
 
     """
+
+    _allow_sequence_locations = False
 
     def __init__(self, *, num_qubits: int, track_sign: bool = False) -> None:
         """Initialize a PauliProp state.
@@ -184,8 +186,8 @@ class PauliProp(PauliPropagation):
             gate_locations = locations
             if removed_locations is not None:
                 gate_locations = set(locations) - removed_locations
-            if gate_locations:
-                validate_batch(symbol, gate_locations, self.gate_capacity)
+            if not is_empty_batch(gate_locations):
+                self.validate_gate_batch(symbol, gate_locations)
         return None
 
         # need to return output?

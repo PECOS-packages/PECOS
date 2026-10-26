@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 
 from pecos_rslib.simulators import StateVec as StateVecRs
 
-from pecos.simulators.batch_validation import replayable_locations, validate_batch
+from pecos.simulators.batch_validation import is_empty_batch, replayable_locations, validate_batch
 from pecos.simulators.statevec.bindings import get_bindings
 
 if TYPE_CHECKING:
@@ -84,6 +84,10 @@ class StateVec:
         self.backend.reset()
         return self
 
+    def validate_gate_batch(self, symbol: str, locations: object) -> None:
+        """Validate scalar one-qubit and tuple/list multi-qubit locations."""
+        validate_batch(symbol, locations, self.gate_capacity, allow_singletons=False)
+
     def run_gate(
         self,
         symbol: str,
@@ -102,10 +106,10 @@ class StateVec:
         """
         output = {}
 
-        if not locations:
+        if is_empty_batch(locations):
             return output
         locations = replayable_locations(locations)
-        validate_batch(symbol, locations, self.gate_capacity)
+        self.validate_gate_batch(symbol, locations)
 
         if params.get("simulate_gate", True):
             for location in locations:

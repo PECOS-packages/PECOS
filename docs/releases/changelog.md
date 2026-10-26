@@ -6,12 +6,19 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
-- **Breaking:** Python simulator wrappers validate each known gate batch before
-  changing state, including when `simulate_gate=False`. Malformed locations,
+- **Breaking:** Python simulator wrappers and the public `pecos.HybridEngine`
+  validate whole known-gate batches per `run_gate` call and per circuit item
+  before changing state, including when `simulate_gate=False`. Registered-gate
+  decomposition is still validated per step until a later PR. Malformed locations,
   repeated operands within a location, and out-of-range qubits raise gate-named
-  `ValueError`s. `I` is single-qubit; use `II` for a pair location. Batches may
-  still repeat or overlap qubits and execute sequentially. PauliProp remains
-  growable. CoinToss's no-op `run_gate` is unchanged.
+  `ValueError`s; some errors previously raised `TypeError`. One-qubit singleton
+  tuples/lists are accepted only by states whose bindings support them. `I` is
+  single-qubit; use `II` for a pair location. Batches may still repeat or overlap
+  qubits and execute sequentially. Native SparseStab, Stabilizer, StateVec,
+  StabVec, CoinToss and PauliProp expose a read-only `gate_capacity` property;
+  PauliProp returns `None` and remains growable. CoinToss's no-op `run_gate`
+  is unchanged; its HybridEngine validation checks only measurement-prefix
+  symbols with set or integer location containers.
 
 - **Breaking:** two-qubit gates in `pecos-simulators` now reject repeated-qubit
   pairs in debug and release builds. Such inputs could previously cause undefined

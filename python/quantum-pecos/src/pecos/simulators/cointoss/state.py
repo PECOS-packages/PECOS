@@ -22,6 +22,8 @@ from typing import TYPE_CHECKING
 
 from pecos_rslib.simulators import CoinToss as RustCoinToss
 
+from pecos.simulators.batch_validation import validate_batch
+
 if TYPE_CHECKING:
     from pecos.circuits import QuantumCircuit
     from pecos.typing import SimulatorGateParams
@@ -91,6 +93,16 @@ class CoinToss:
         """
         result = self._sim.run_measure(qubit)
         return next(iter(result.values())) if result else 0
+
+    def validate_gate_batch(self, symbol: str, locations: object) -> None:
+        """Check exactly the measurements/containers recognized by run_circuit."""
+        if symbol.lower().startswith("measure") and isinstance(locations, (set, int)):
+            batch = (locations,) if isinstance(locations, int) else locations
+            try:
+                validate_batch("Measure", batch, self.gate_capacity, allow_singletons=False)
+            except ValueError as exc:
+                # Prefix dispatch also recognizes spellings outside the arity map.
+                raise ValueError(str(exc).replace("Measure", symbol, 1)) from exc
 
     def run_gate(
         self,

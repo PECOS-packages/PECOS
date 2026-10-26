@@ -25,6 +25,7 @@ from pecos.simulators import DefaultSimulator, PauliProp, StateVec
 from pecos.simulators.batch_validation import GATE_ARITIES, replayable_locations, validate_batch
 from pecos.simulators.gate_syms import alt_symbols
 from pecos_rslib import _gate_bindings_symbols
+from pecos_rslib import simulators as native_simulators
 
 QUANTUM = ("StateVec", "SparseStabPy", "CuStateVec", "MPS", "CudaStateVec")
 PAULI = ("PauliProp", "PauliFaultProp")
@@ -54,6 +55,8 @@ class _OrderedLocations(list):
     """Preserve order while supporting StateVec.run_circuit's set subtraction."""
 
     def __sub__(self, removed):
+        if not removed:
+            return list(self)
         return [location for location in self if location not in removed]
 
 
@@ -117,12 +120,24 @@ def test_bad_tail_preserves_state_and_rng(name, route, symbol, bad):
     _prepare(state, symbol)
     first = 0 if symbol == "Measure" else (0, 1)
     locations = [first, bad]
-    output = {"m": pecos.BitInt(2, 3)}
+    output = {"m": pecos.BitInt(2, 2)}
+    calls = []
+    if name in PAULI and symbol == "Measure":
+        # Pauli measurement has no state/RNG side effect. Observe dispatch as
+        # well as the HybridEngine output bit, which a first result of 1 flips.
+        measure = state.bindings[symbol]
+
+        def record_measure(_state, location, **params):
+            calls.append(location)
+            return measure(_state, location, **params)
+
+        state.bindings[symbol] = record_measure
     with pytest.raises(ValueError, match=symbol):
         _dispatch(state, route, symbol, locations, output, var=("m", 0))
     snapshot = _snapshot(state)
     observed_rng = _rng_probe(state)
-    assert int(output["m"]) == 3
+    assert int(output["m"]) == 2
+    assert calls == []
 
     pecos.random.seed(721)
     fresh = _make(name)
@@ -305,8 +320,143 @@ def test_hybrid_cointoss_preserves_output_and_rng():
     fresh = simulators.CoinToss(4, prob=0.5, seed=42)
     output = {"m": pecos.BitInt(2, 3)}
     with pytest.raises(ValueError, match="Measure"):
-        pecos.HybridEngine.run_gate(state, output, "Measure", [0, 4], var=("m", 0))
+        pecos.HybridEngine.run_gate(state, output, "Measure", {0, 4}, var=("m", 0))
     assert int(output["m"]) == 3
     assert [state.bindings["Measure"](state, 0) for _ in range(32)] == [
         fresh.bindings["Measure"](fresh, 0) for _ in range(32)
     ]
+
+
+@pytest.mark.parametrize("name", QUANTUM)
+@pytest.mark.parametrize("route", ["gate", "hybrid", "circuit"])
+@pytest.mark.parametrize("singleton", [(1,), [1]])
+def test_singleton_tail_is_atomic(name, route, singleton):
+    pecos.random.seed(721)
+    state = _make(name)
+    before = _snapshot(state)
+    with pytest.raises(ValueError, match="X"):
+        _dispatch(state, route, "X", [0, singleton], {})
+    assert _snapshot(state) == before
+    observed_rng = _rng_probe(state)
+    pecos.random.seed(721)
+    fresh = _make(name)
+    # CUDA snapshots sample; match the two observations made above.
+    _snapshot(fresh)
+    _snapshot(fresh)
+    assert observed_rng == _rng_probe(fresh)
+
+
+@pytest.mark.parametrize("route", ["gate", "hybrid"])
+@pytest.mark.parametrize("singleton", [(1,), [1]])
+def test_cuda_singleton_policy_without_gpu(route, singleton, cuda_wrapper_class):
+    state = cuda_wrapper_class.__new__(cuda_wrapper_class)
+    state.gate_capacity = 2
+    calls = []
+    state.bindings = {"X": lambda _state, location, **_params: calls.append(location)}
+    with pytest.raises(ValueError, match="X"):
+        _dispatch(state, route, "X", [0, singleton], {})
+    assert calls == []
+
+
+@pytest.mark.parametrize("name", ["SparseStab", "Stabilizer", "StateVec", "StabVec", "CoinToss", "PauliProp"])
+def test_native_capacity_is_read_only(name):
+    cls = getattr(native_simulators, name)
+    state = cls() if name == "PauliProp" else cls(4, seed=42)
+    assert state.gate_capacity == (None if name == "PauliProp" else 4)
+    with pytest.raises(AttributeError):
+        state.gate_capacity = 99
+
+
+@pytest.mark.parametrize("name", ["SparseStab", "Stabilizer", "StateVec", "StabVec"])
+@pytest.mark.parametrize("symbol", ["X", "Measure"])
+def test_native_hybrid_bad_tail_is_atomic(name, symbol):
+    cls = getattr(native_simulators, name)
+    state, fresh = cls(4, seed=42), cls(4, seed=42)
+    if symbol == "Measure":
+        for sim in (state, fresh):
+            pecos.HybridEngine.run_gate(sim, {}, "H", [0])
+    output = {"m": pecos.BitInt(2, 2)}
+    with pytest.raises(ValueError, match=symbol):
+        pecos.HybridEngine.run_gate(state, output, symbol, [0, 99], var=("m", 0))
+    assert int(output["m"]) == 2
+    if name in {"SparseStab", "Stabilizer"}:
+        assert state.stab_tableau() == fresh.stab_tableau()
+        assert state.destab_tableau() == fresh.destab_tableau()
+    elif name == "StateVec":
+        assert list(state.vector) == pytest.approx(list(fresh.vector))
+    else:
+        assert state.state_vector() == pytest.approx(fresh.state_vector())
+    for _ in range(32):
+        for sim in (state, fresh):
+            pecos.HybridEngine.run_gate(sim, {}, "H", [0])
+        assert state.bindings["Measure"](state, 0) == fresh.bindings["Measure"](fresh, 0)
+
+
+def test_native_hybrid_x_tail_preserves_tableau():
+    state = native_simulators.SparseStab(4, seed=42)
+    fresh = native_simulators.SparseStab(4, seed=42)
+    with pytest.raises(ValueError, match="X"):
+        pecos.HybridEngine.run_gate(state, {}, "X", [0, 99])
+    assert state.stab_tableau() == fresh.stab_tableau()
+    assert state.destab_tableau() == fresh.destab_tableau()
+
+
+def test_native_hybrid_pauli_is_growable():
+    state = native_simulators.PauliProp()
+    state.add_paulis({"X": {0}})
+    pecos.HybridEngine.run_gate(state, {}, "CX", [(0, 99)])
+    assert state.gate_capacity is None
+    assert state.faults["X"] == {0, 99}
+
+
+@pytest.mark.parametrize("symbol", ["X", "I", "CX", "Tick"])
+def test_cointoss_hybrid_nonmeasurement_policy(symbol):
+    state = simulators.CoinToss(2, seed=42)
+    # Tick is not bound, but policy still does no validation for it.
+    state.bindings = {**state.bindings, "Tick": lambda *_args, **_params: None}
+    pecos.HybridEngine.run_gate(state, {}, symbol, {5})
+
+
+@pytest.mark.parametrize("symbol", ["Measure", "Measure -Z", "measure X", "MEASURE custom"])
+def test_cointoss_measurement_predicate(symbol):
+    state = simulators.CoinToss(2, seed=42)
+    for locations in ({0, 5}, 5):
+        with pytest.raises(ValueError, match=symbol):
+            state.validate_gate_batch(symbol, locations)
+    # Lists, tuples, generators, and frozensets are outside the circuit predicate.
+    for locations in ([0, 5], (0, 5), iter([0, 5]), frozenset({0, 5})):
+        state.validate_gate_batch(symbol, locations)
+    state.validate_gate_batch("MZ", {0, 5})
+
+
+@pytest.mark.parametrize("pair", [(-1, 1), (4, 1)])
+def test_fast_pair_first_operand_bounds(pair):
+    state = DefaultSimulator()
+    state.gate_capacity = 4
+    calls = []
+    state.bindings["CX"] = lambda _state, location, **_params: calls.append(location)
+    # Plain tuples enter the fast path. Without either first-operand guard it
+    # returns True, bypasses the slow checker and invokes the binding.
+    with pytest.raises(ValueError, match="CX"):
+        state.run_gate("CX", [(0, 1), pair])
+    assert calls == []
+
+
+@pytest.mark.parametrize("name", ["StateVec", "SparseStabPy", "PauliProp"])
+@pytest.mark.parametrize("route", ["gate", "hybrid"])
+def test_disabled_numpy_invalid_batch(name, route):
+    np = pytest.importorskip("numpy")
+    state = _make(name)
+    with pytest.raises(ValueError, match="X"):
+        _dispatch(state, route, "X", np.array([0, -1]), {}, simulate_gate=False)
+
+
+@pytest.mark.parametrize("name", ["SparseStabPy", "CuStateVec", "MPS", "CudaStateVec"])
+def test_numpy_pair_tail_is_atomic(name):
+    np = pytest.importorskip("numpy")
+    state = _make(name)
+    state.run_gate("X", [0])
+    before = _snapshot(state)
+    with pytest.raises(ValueError, match="CX"):
+        state.run_gate("CX", [np.array([0, 1]), np.array([2, 2])])
+    assert _snapshot(state) == before

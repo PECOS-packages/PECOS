@@ -448,6 +448,24 @@ Tracks how Pauli errors propagate through Clifford circuits—essential for QEC 
 
 Returns random measurement results, ignoring all gates. Useful for testing.
 
+The Python `CoinToss` wrapper measures its measurement bindings (including
+`MX`, `MY`, and `MZ`) and any case-insensitive `measure` prefix. Both `run_gate`
+and `run_circuit` accept an integer or an iterable of scalar qubit indices,
+validate the whole batch, and return only outcome-1 results. Iterable order and
+duplicates determine coin order. With `simulate_gate=False`, the batch is still
+validated but consumes no coins. Other gates are no-ops.
+
+```python
+from pecos.simulators import CoinToss
+
+state = CoinToss(3, prob=1.0, seed=42)
+assert state.run_gate("MZ", [2, 0]) == {2: 1, 0: 1}
+assert state.run_gate("MX", (q for q in [1, 2])) == {1: 1, 2: 1}
+assert state.run_gate("MY", [0, 1], simulate_gate=False) == {}
+```
+
+The `coin_toss()` builder below selects the separate native engine backend.
+
 === ":fontawesome-brands-python: Python"
 
     ```python

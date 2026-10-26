@@ -22,9 +22,11 @@ from typing import TYPE_CHECKING
 
 from pecos_rslib.simulators import CoinToss as RustCoinToss
 
-from pecos.simulators.batch_validation import validate_batch
+from pecos.simulators.batch_validation import replayable_locations, validate_batch
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from pecos.circuits import QuantumCircuit
     from pecos.typing import SimulatorGateParams
 
@@ -94,35 +96,60 @@ class CoinToss:
         result = self._sim.run_measure(qubit)
         return next(iter(result.values())) if result else 0
 
-    def validate_gate_batch(self, symbol: str, locations: object) -> None:
-        """Check measurement bindings over every batch HybridEngine dispatches."""
-        if self.bindings.get(symbol) is _measure_gate:
-            validate_batch(symbol, locations, self.gate_capacity, allow_singletons=False)
+    def is_measurement(self, symbol: str) -> bool:
+        """Recognize measuring bindings, and "measure"-prefixed spellings with no binding.
+
+        A bound spelling follows its binding, so an override wins on every path.
+        HybridEngine dispatches through bindings, so it rejects an unbound
+        prefixed spelling as unsupported instead of measuring it.
+        """
+        binding = self.bindings.get(symbol)
+        if binding is not None:
+            return binding is _measure_gate
+        return symbol.lower().startswith("measure")
+
+    def validate_gate_batch(self, symbol: str, locations: int | Iterable[int]) -> None:
+        """Check a whole measurement batch before dispatch, including when disabled."""
+        if self.is_measurement(symbol):
+            if isinstance(locations, int):
+                locations = (locations,)
+            validate_batch(symbol, locations, self.gate_capacity, allow_singletons=False, arity=1)
 
     def run_gate(
         self,
-        _symbol: str,
-        _location: int | set[int],
-        **_params: SimulatorGateParams,
-    ) -> dict:
-        """Execute a quantum gate (all gates are no-ops in coin toss simulator).
+        symbol: str,
+        locations: int | Iterable[int],
+        **params: SimulatorGateParams,
+    ) -> dict[int, int]:
+        """Measure a batch in iteration order; other gates are no-ops.
 
         Args:
-            symbol (str): The gate symbol (ignored).
-            location (int | set[int]): The qubit(s) to apply the gate to (ignored).
-            **params: Gate parameters (ignored).
+            symbol: A measurement binding or a "measure"-prefixed spelling measures.
+            locations: A qubit index or an iterable of qubit indices. Duplicates
+                draw another coin; one-shot iterators are buffered for validation.
+            **params: ``simulate_gate=False`` validates but draws no coins.
+                Other parameters are ignored.
 
         Returns:
-            dict: Always returns an empty dictionary since all gates are no-ops.
+            dict[int, int]: Only outcome-1 results, keyed by the original location.
         """
-        # All gates are no-ops - return empty dict
-        return {}
+        if not self.is_measurement(symbol):
+            return {}
+        locations = (locations,) if isinstance(locations, int) else replayable_locations(locations)
+        self.validate_gate_batch(symbol, locations)
+        measurement_results = {}
+        if params.get("simulate_gate", True):
+            for location in locations:
+                if self.mz(location):
+                    measurement_results[location] = 1
+        return measurement_results
 
     def run_circuit(self, circuit: QuantumCircuit) -> dict[int, int]:
-        """Execute a complete quantum circuit (all gates are no-ops).
+        """Execute measurement batches; other gates are no-ops.
 
         Args:
-            circuit: The quantum circuit to execute (gates are ignored).
+            circuit: The quantum circuit to execute. Each measurement batch is
+                validated before drawing coins, even with ``simulate_gate=False``.
 
         Returns:
             dict[int, int]: Dictionary mapping qubit indices to measurement results (1 for |1>).
@@ -135,22 +162,9 @@ class CoinToss:
             if isinstance(gate_data, tuple) and len(gate_data) >= 2:
                 gate_symbol, locations = gate_data[0], gate_data[1]
 
-                if gate_symbol.lower().startswith("measure"):
-                    # Handle measurements
-                    if isinstance(locations, set):
-                        # run_circuit measures by name prefix, so check every such batch.
-                        validate_batch(gate_symbol, locations, self.gate_capacity, allow_singletons=False, arity=1)
-                        for loc in locations:
-                            result = self._sim.run_measure(loc)
-                            # Only store results that measured |1>
-                            if result and next(iter(result.values())) == 1:
-                                measurement_results[loc] = 1
-                    elif isinstance(locations, int):
-                        validate_batch(gate_symbol, (locations,), self.gate_capacity, allow_singletons=False, arity=1)
-                        result = self._sim.run_measure(locations)
-                        # Only store results that measured |1>
-                        if result and next(iter(result.values())) == 1:
-                            measurement_results[locations] = 1
+                if self.is_measurement(gate_symbol):
+                    params = gate_data[2] if len(gate_data) >= 3 else {}
+                    measurement_results.update(self.run_gate(gate_symbol, locations, **params))
                 # All other gates are ignored
 
         return measurement_results

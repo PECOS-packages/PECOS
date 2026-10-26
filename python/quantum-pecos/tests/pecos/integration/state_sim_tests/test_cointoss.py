@@ -18,6 +18,8 @@ from types import SimpleNamespace
 import pecos as pc
 import pytest
 from pecos.circuits import QuantumCircuit
+from pecos.engines.circuit_runners.timing_runner import TimingRunner
+from pecos.exceptions import NotSupportedGateError
 from pecos.simulators import CoinToss
 
 MEASURE_SYMBOLS = (
@@ -29,11 +31,152 @@ MEASURE_SYMBOLS = (
     "Measure -X",
     "Measure +Y",
     "Measure -Y",
+    "MX",
+    "MY",
+    "MZ",
 )
 
 
 def _items(symbol, locations, **params):
     return SimpleNamespace(items=lambda: iter([(symbol, locations, params)]))
+
+
+def _dispatch(state, route, symbol, locations, **params):
+    if route == "gate":
+        return state.run_gate(symbol, locations, **params)
+    if route == "hybrid":
+        output = {"m": pc.BitInt(4, 0)}
+        pc.HybridEngine.run_gate(
+            state,
+            output,
+            symbol,
+            locations,
+            var_output={q: ("m", q) for q in range(4)},
+            **params,
+        )
+        return {q: 1 for q in range(4) if output["m"][q]}
+    return state.run_circuit(_items(symbol, locations, **params))
+
+
+@pytest.mark.parametrize("route", ["gate", "circuit", "hybrid"])
+@pytest.mark.parametrize("symbol", [*MEASURE_SYMBOLS, "MEASURE custom"])
+@pytest.mark.parametrize("container", [list, tuple, set, frozenset, iter])
+@pytest.mark.parametrize("simulate_gate", [True, False])
+def test_measurement_containers_follow_coin_order(route, symbol, container, simulate_gate):
+    """Every measurement route consumes exactly the caller's ordered coin stream."""
+    state = CoinToss(4, seed=42)
+    fresh = CoinToss(4, seed=42)
+    if route == "hybrid" and symbol not in state.bindings and simulate_gate:
+        # HybridEngine dispatches through bindings: an unbound spelling is loud.
+        with pytest.raises(NotSupportedGateError):
+            _dispatch(state, route, symbol, container([3, 1, 2, 0]), simulate_gate=simulate_gate)
+        return
+    order = list(container([3, 1, 2, 0]))
+    expected = {}
+    if simulate_gate:
+        for q in order:
+            if fresh.mz(q):
+                expected[q] = 1
+    assert _dispatch(state, route, symbol, container(order), simulate_gate=simulate_gate) == expected
+    assert [state.mz(0) for _ in range(32)] == [fresh.mz(0) for _ in range(32)]
+
+
+@pytest.mark.parametrize("route", ["gate", "circuit"])
+@pytest.mark.parametrize("container", [list, tuple, iter])
+def test_repeated_measurements_draw_each_coin(route, container):
+    """Repeated locations are not deduplicated, and recorded ones are retained."""
+    state = CoinToss(4, seed=42)
+    fresh = CoinToss(4, seed=42)
+    locations = [3, 1, 2, 0, 1]
+    expected = {}
+    for q in locations:
+        if fresh.mz(q):
+            expected[q] = 1
+    assert _dispatch(state, route, "MZ", container(locations)) == expected
+    assert [state.mz(0) for _ in range(32)] == [fresh.mz(0) for _ in range(32)]
+
+
+@pytest.mark.parametrize("route", ["gate", "circuit"])
+@pytest.mark.parametrize("location", [0, 3])
+@pytest.mark.parametrize("simulate_gate", [True, False])
+def test_scalar_measurement_coin_stream(route, location, simulate_gate):
+    state = CoinToss(4, seed=42)
+    fresh = CoinToss(4, seed=42)
+    expected = {location: 1} if simulate_gate and fresh.mz(location) else {}
+    assert _dispatch(state, route, "MX", location, simulate_gate=simulate_gate) == expected
+    assert [state.mz(0) for _ in range(32)] == [fresh.mz(0) for _ in range(32)]
+
+
+def test_timing_runner_receives_measurement_results():
+    """The gate-based runner now receives the wrapper's outcome-1 results."""
+    state = CoinToss(4, seed=42)
+    fresh = CoinToss(4, seed=42)
+    expected = {}
+    locations = {0, 1, 2, 3}
+    for q in locations:
+        if fresh.mz(q):
+            expected[q] = 1
+    assert TimingRunner(seed=42).run_gates(state, _items("MZ", locations)) == expected
+    assert [state.mz(0) for _ in range(32)] == [fresh.mz(0) for _ in range(32)]
+
+
+@pytest.mark.parametrize("route", ["gate", "circuit", "hybrid"])
+@pytest.mark.parametrize(
+    ("symbol", "binding", "measures"),
+    [
+        ("custom coin", "Measure", True),
+        ("CX", "Measure", True),
+        ("Measure", "X", False),
+        ("MEASURE custom", None, True),
+        ("MX", "X", False),
+    ],
+)
+def test_measurement_rule_follows_bindings_or_prefix(route, symbol, binding, measures):
+    """Rebindings, unknown aliases, and prefix fallback have the same dispatch rule."""
+    state = CoinToss(4, seed=42)
+    fresh = CoinToss(4, seed=42)
+    if binding is not None:
+        state.bindings[symbol] = state.bindings[binding]
+    if route == "hybrid" and symbol not in state.bindings:
+        # HybridEngine dispatches through bindings: an unbound spelling is loud.
+        with pytest.raises(NotSupportedGateError):
+            _dispatch(state, route, symbol, [3, 1, 2, 0])
+        return
+    expected = {}
+    if measures:
+        for q in [3, 1, 2, 0]:
+            if fresh.mz(q):
+                expected[q] = 1
+    assert _dispatch(state, route, symbol, [3, 1, 2, 0]) == expected
+    assert [state.mz(0) for _ in range(32)] == [fresh.mz(0) for _ in range(32)]
+    if measures:
+        with pytest.raises(ValueError, match="qubit 4"):
+            _dispatch(state, route, symbol, [0, 4], simulate_gate=False)
+        with pytest.raises(ValueError, match="expected 1 qubit"):
+            _dispatch(state, route, symbol, [(0, 1)])
+    else:
+        if route == "hybrid":
+            pc.HybridEngine.run_gate(state, {}, symbol, [0, 4])
+        else:
+            assert _dispatch(state, route, symbol, [0, 4]) == {}
+
+
+@pytest.mark.parametrize("route", ["gate", "circuit"])
+@pytest.mark.parametrize("symbol", ["MX", "MY", "MZ", "measure custom"])
+@pytest.mark.parametrize("container", [list, tuple, set, frozenset, iter])
+@pytest.mark.parametrize("simulate_gate", [True, False])
+@pytest.mark.parametrize("prob", [0.5, 1.0])
+def test_all_measurement_batches_are_atomic(route, symbol, container, simulate_gate, prob):
+    state = CoinToss(4, seed=42, prob=prob)
+    fresh = CoinToss(4, seed=42, prob=prob)
+    assert list(container([0, 4])) == [0, 4]
+    with pytest.raises(ValueError, match="qubit 4") as error:
+        _dispatch(state, route, symbol, container([0, 4]), simulate_gate=simulate_gate)
+    for entry in error.traceback:
+        if entry.name in {"run_gate", "run_circuit"}:
+            assert entry.frame.f_locals.get("measurement_results", {}) == {}
+    state.prob = fresh.prob = 0.5
+    assert [state.mz(0) for _ in range(32)] == [fresh.mz(0) for _ in range(32)]
 
 
 @pytest.mark.parametrize("symbol", MEASURE_SYMBOLS)
@@ -67,7 +210,6 @@ def test_bare_int_measurement_is_validated(location):
 
 
 @pytest.mark.parametrize("symbol", [*MEASURE_SYMBOLS, "MEASURE Z", "measure custom"])
-@pytest.mark.parametrize("simulate_gate", [True, False])
 @pytest.mark.parametrize(
     ("locations", "expected"),
     [
@@ -78,22 +220,20 @@ def test_bare_int_measurement_is_validated(location):
         (0, [{}, {0: 1}, {0: 1}, {0: 1}, {}, {}, {}, {0: 1}]),
     ],
 )
-def test_valid_measurement_batches_match_dev(symbol, simulate_gate, locations, expected):
-    """Golden results from dev (59163a5e6) pin output and successive RNG draws."""
+def test_valid_measurement_batches_match_dev(symbol, locations, expected):
+    """Enabled batches retain dev's prefix-measurement output and RNG draws."""
     state = CoinToss(4, seed=42)
-    circuit = _items(symbol, locations, simulate_gate=simulate_gate)
+    circuit = _items(symbol, locations)
     assert [state.run_circuit(circuit) for _ in expected] == expected
 
 
-@pytest.mark.parametrize(
-    ("symbol", "locations"),
-    [("MX", {0, 4}), ("MY", {0, 4}), ("MZ", {0, 4}), ("Measure", [0, 4]), ("X", {0, 4})],
-)
-def test_ignored_batches_preserve_rng(symbol, locations):
-    """Ignored symbols and containers remain ignored even with bad locations."""
+@pytest.mark.parametrize("route", ["gate", "circuit"])
+@pytest.mark.parametrize("symbol", ["X", "CX", "unknown"])
+def test_nonmeasurement_batches_preserve_rng(route, symbol):
+    """Only non-measurement symbols ignore bad locations without drawing coins."""
     state = CoinToss(4, seed=42)
     fresh = CoinToss(4, seed=42)
-    assert state.run_circuit(_items(symbol, locations)) == {}
+    assert _dispatch(state, route, symbol, [0, 4]) == {}
     assert [state.mz(0) for _ in range(32)] == [fresh.mz(0) for _ in range(32)]
 
 

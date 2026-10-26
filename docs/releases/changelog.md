@@ -26,11 +26,25 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   ran. Batches may still repeat or overlap qubits and execute sequentially.
   Native SparseStab, Stabilizer, StateVec, StabVec, CoinToss and PauliProp expose
   a read-only `gate_capacity` property; PauliProp returns `None` and remains
-  growable. CoinToss's own `run_gate` stays a no-op; its `run_circuit` pre-checks
+  growable. CoinToss's `run_circuit` pre-checks
   measurement batches before drawing RNG or recording results.
   Through HybridEngine, every CoinToss measurement binding (including MX/MY/MZ)
   is validated for every iterable batch container; other CoinToss gates remain
   no-ops.
+
+- **Breaking:** CoinToss now measures MX/MY/MZ and all iterable batch containers
+  (set, frozenset, list, tuple, and generator), as well as bare integers, in
+  `run_circuit` and `run_gate`, where measurements were previously silently
+  skipped. `run_gate` returns measurement results, recording only ones under
+  their original location keys. Both methods validate the whole measurement
+  batch first and honour `simulate_gate=False` by skipping coin draws. A spelling
+  measures if its binding measures; an unbound case-insensitive "measure"-prefixed
+  spelling also measures in `run_circuit` and `run_gate`, while the public
+  `pecos.HybridEngine`, which dispatches through bindings, rejects it as
+  unsupported. Non-measuring gates remain no-ops.
+  Locations are measured in container order, including duplicates. Outcomes and
+  coin use change for circuits that relied on the old silent skips or ignored
+  `simulate_gate=False`.
 
 - **Breaking:** two-qubit gates in `pecos-simulators` now reject repeated-qubit
   pairs in debug and release builds. Such inputs could previously cause undefined

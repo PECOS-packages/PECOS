@@ -1791,11 +1791,12 @@ impl SamplingEngine {
         let shots_per_chunk = cache_optimal.min(thread_based).max(1_000);
         let num_chunks = num_shots.div_ceil(shots_per_chunk);
 
-        // Chunk seeds are indexed from a root drawn from `seed`, as the Monte Carlo
-        // engine does, not from `seed` itself: `nth_derived_seed(s + increment, i)`
-        // equals `nth_derived_seed(s, i + 1)` for the SplitMix64 increment, so runs
-        // seeded that far apart would share chunks.
-        let chunk_root = PecosRng::seed_from_u64(seed).next_u64();
+        // Chunk seeds are indexed from a root mixed from `seed`, not from `seed` itself:
+        // `nth_derived_seed(s + increment, i)` equals `nth_derived_seed(s, i + 1)` for
+        // the SplitMix64 increment, so runs seeded that far apart would share chunks.
+        // The mix must be a bijection so distinct seeds keep distinct roots;
+        // `PecosRng`'s first output is not one (it maps two seeds to each value).
+        let chunk_root = nth_derived_seed(seed, 0);
 
         // Process shot chunks in parallel
         let partial_stats: Vec<SamplingStatistics> = (0..num_chunks)
@@ -3691,7 +3692,9 @@ mod tests {
 
     /// Runs seeded `s` and `s` plus the `SplitMix64` increment must be unrelated.
     /// Indexing chunk seeds from `seed` itself made such runs share all but one
-    /// chunk (per-detector counts correlated at about 7/8 with 8 chunks).
+    /// chunk (per-detector counts correlated at about 7/8 with 8 chunks). Seeds 0
+    /// and `7_018_560_142_476_457_556` must also differ: a chunk root taken from
+    /// `PecosRng`'s first output gave both the same root, and identical results.
     #[test]
     #[allow(clippy::cast_precision_loss)]
     fn test_parallel_statistics_related_seeds_are_independent() {
@@ -3747,6 +3750,19 @@ mod tests {
             mean_correlation.abs() < 0.1,
             "per-detector counts of runs seeded s and s + SplitMix64 increment correlate at \
              {mean_correlation:.3}; they should be independent"
+        );
+
+        let (zero, partner) = pool.install(|| {
+            (
+                engine.sample_statistics_parallel(num_shots, 0).per_detector,
+                engine
+                    .sample_statistics_parallel(num_shots, 7_018_560_142_476_457_556)
+                    .per_detector,
+            )
+        });
+        assert_ne!(
+            zero, partner,
+            "seeds 0 and 7018560142476457556 gave identical results"
         );
     }
 

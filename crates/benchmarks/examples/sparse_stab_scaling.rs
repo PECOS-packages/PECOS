@@ -168,46 +168,36 @@ impl WorkCounters {
     fn measurement<S: IndexSet>(&mut self, sim: &SparseStabGeneric<S>, q: QubitId) {
         let q = q.index();
         let (stabs, destabs) = (sim.stabs(), sim.destabs());
-        let refactor = sim.measurement_rule() == MeasurementRule::RefactorDecouple;
-        let r0 = if stabs.col_x[q].is_empty() {
+        if stabs.col_x[q].is_empty() {
             self.meas_count_det += 1;
-            let det_work = destabs.col_x[q]
+            self.meas_det_work += destabs.col_x[q]
                 .iter()
                 .map(|r| stabs.generator_weight(r))
                 .sum::<usize>();
-            self.meas_det_work += det_work;
-            if !refactor {
-                return;
-            }
-            let partners = destabs.col_x[q].len() - 1;
-            let r0 = destabs.col_x[q]
-                .iter()
-                .max_by_key(|&r| {
-                    (
-                        stabs.generator_weight(r) as i128
-                            - partners as i128 * destabs.generator_weight(r) as i128,
-                        std::cmp::Reverse(r),
-                    )
-                })
-                .expect("deterministic measurement has a stabilizer expansion");
-            self.meas_refactor_work += det_work + partners * destabs.generator_weight(r0);
-            r0
         } else {
             self.meas_count_rand += 1;
-            let (weight, pivot) = stabs.col_x[q]
+            let (weight, _) = stabs.col_x[q]
                 .iter()
                 .map(|r| (stabs.generator_weight(r), r))
                 .min()
                 .expect("nondeterministic measurement has a pivot");
             self.meas_rand_work += (stabs.col_x[q].len() + destabs.col_x[q].len()) * weight;
-            pivot
-        };
-        if refactor {
-            self.meas_decouple_work += stabs.col_z[q].len()
-                - usize::from(stabs.col_z[q].contains(r0))
-                + destabs.col_z[q].len()
-                + destabs.generator_weight(r0);
         }
+    }
+
+    fn measure<S: IndexSet>(
+        &mut self,
+        sim: &mut SparseStabGeneric<S>,
+        q: QubitId,
+        seconds: &mut f64,
+    ) -> MeasurementResult {
+        self.measurement(sim, q);
+        let start = Instant::now();
+        let (result, executed) = sim.mz_with_work(q.index());
+        *seconds += start.elapsed().as_secs_f64();
+        self.meas_refactor_work += executed.refactor;
+        self.meas_decouple_work += executed.decouple;
+        result
     }
 
     fn print(&self) {
@@ -339,11 +329,7 @@ fn counted_measure<S: IndexSet>(
         })
         .collect();
     for i in positions {
-        let q = qubits[i];
-        work.measurement(sim, q);
-        let start = Instant::now();
-        results[i] = sim.mz(&[q]).remove(0);
-        *seconds += start.elapsed().as_secs_f64();
+        results[i] = work.measure(sim, qubits[i], seconds);
     }
     results
 }
@@ -367,10 +353,10 @@ fn print_header(count_work: bool) {
             "# meas_rand_work = (stabs.col_x[q].len + destabs.col_x[q].len) * pivot weight, minimizing (row_x.len + row_z.len, row id)"
         );
         println!(
-            "# meas_refactor_work = refactor deterministic only: sum over r in R of |S_r| + (|R|-1)*|D_r0|, R=destabs.col_x[q], r0 maximizes |S_r|-(|R|-1)*|D_r|, ties lowest id"
+            "# meas_refactor_work = executed source support scans + dual product support visits; two-source shortcut counts replaced S support + one X toggle; singleton shortcut counts zero"
         );
         println!(
-            "# meas_decouple_work = refactor only: stabs.col_z[q].len - contains(r0) + destabs.col_z[q].len + |D_r0|; all weights and columns at measurement entry; |row| = row_x.len + row_z.len"
+            "# meas_decouple_work = executed Z removals + discarded D support, counted at each update (after the random update); already isolated partners cost zero; |row| = row_x.len + row_z.len"
         );
         println!(
             "# meas_count_det = number of Z_q measurements with empty stabs.col_x[q], including PZ's internal MZ"
@@ -379,7 +365,7 @@ fn print_header(count_work: bool) {
             "# meas_count_rand = number of Z_q measurements with nonempty stabs.col_x[q], including PZ's internal MZ"
         );
         println!(
-            "# work counted every round outside timers; counted runs apply H/CX gates one at a time in batch order and are not timing runs"
+            "# work counted every round; refactor/decouple counters run inside measurement timers; counted runs apply H/CX gates one at a time in batch order and are not timing runs"
         );
     }
     print!(
@@ -733,8 +719,6 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pecos_simulators::SparseStabBitSet;
-    use std::hint::black_box;
 
     #[test]
     fn bell_pair_work_includes_reset_measurements() {
@@ -779,10 +763,10 @@ mod tests {
         assert_eq!(work.meas_count_det, 3);
         assert_eq!(work.meas_rand_work, 2);
         assert_eq!(work.meas_det_work, 3);
-        assert_eq!(work.meas_refactor_work, 3);
-        // Before the random measurement: one other S with Z0, one D with
-        // Z0, and |D0|=1. Each subsequent deterministic measurement costs 1.
-        assert_eq!(work.meas_decouple_work, 6);
+        assert_eq!(work.meas_refactor_work, 0);
+        // Post-update S1=Z0 Z1 and D0=X0 X1: one strip and two discarded entries.
+        // Subsequent singleton measurements are already isolated.
+        assert_eq!(work.meas_decouple_work, 3);
     }
 
     #[test]
@@ -791,16 +775,41 @@ mod tests {
             .with_measurement_rule(MeasurementRule::RefactorDecouple);
         sim.cx(&[(QubitId(0), QubitId(1))]);
         let mut work = WorkCounters::default();
-        work.measurement(&sim, QubitId(1));
+        work.measure(&mut sim, QubitId(1), &mut 0.0);
         // R={0,1}, weights S=(1,2), D=(2,1), so r0=1.
         assert_eq!(work.meas_det_work, 3);
-        assert_eq!(work.meas_refactor_work, 4);
-        assert_eq!(work.meas_decouple_work, 1);
+        assert_eq!(work.meas_refactor_work, 3);
+        assert_eq!(work.meas_decouple_work, 0);
         assert!(sim.mz_forced(1, false).is_deterministic);
-        work.measurement(&sim, QubitId(1));
+        work.measure(&mut sim, QubitId(1), &mut 0.0);
         assert_eq!(work.meas_det_work, 4);
-        assert_eq!(work.meas_refactor_work, 5);
-        assert_eq!(work.meas_decouple_work, 2);
+        assert_eq!(work.meas_refactor_work, 3);
+        assert_eq!(work.meas_decouple_work, 0);
+    }
+
+    fn check_random_decouple_work(n: usize, expected: usize) {
+        let mut sim = SparseStabGeneric::<SortedVecSet>::with_seed(n, 0)
+            .with_measurement_rule(MeasurementRule::RefactorDecouple);
+        sim.h(&[QubitId(0)]);
+        for q in 1..n {
+            sim.cx(&[(QubitId(0), QubitId(q))]);
+        }
+        let mut work = WorkCounters::default();
+        let result = work.measure(&mut sim, QubitId(0), &mut 0.0);
+        assert!(!result.is_deterministic);
+        // The new D0 is X on all n qubits; n-1 remaining S rows lose Z0.
+        assert_eq!(work.meas_decouple_work, expected, "n={n}");
+        assert_eq!(work.meas_refactor_work, 0);
+    }
+
+    #[test]
+    fn random_decouple_work_ghz() {
+        check_random_decouple_work(3, 5);
+    }
+
+    #[test]
+    fn random_decouple_work_single_h() {
+        check_random_decouple_work(1, 1);
     }
 
     #[test]
@@ -907,24 +916,5 @@ mod tests {
                 }
             }
         }
-    }
-
-    #[test]
-    fn reset_timing_at_7937() {
-        // Identically initialized simulators; construction is outside both timers.
-        // A separate release test keeps the scaling process's peak RSS comparable.
-        let mut adaptive =
-            SparseStabGeneric::<AdaptiveIndexSet>::with_rng(7937, PecosRng::seed_from_u64(1434));
-        let mut bitset = SparseStabBitSet::with_rng(7937, PecosRng::seed_from_u64(1434));
-        let start = Instant::now();
-        black_box(&mut adaptive).reset();
-        let adaptive_seconds = start.elapsed().as_secs_f64();
-        let start = Instant::now();
-        black_box(&mut bitset).reset();
-        let bitset_seconds = start.elapsed().as_secs_f64();
-        black_box((&adaptive, &bitset));
-        println!(
-            "reset_n=7937 adaptive_seconds={adaptive_seconds:.9} bitset_seconds={bitset_seconds:.9}"
-        );
     }
 }

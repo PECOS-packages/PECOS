@@ -32,13 +32,6 @@ id = "RUSTSEC-2024-0388"
 reason = "Transitive via fusion-blossom and mwpf; unmaintained-crate warning, no runtime impact (proc-macro)."
 
 [[IgnoredVulns]]
-id = "RUSTSEC-2024-0384"
-# instant@0.1.13 -- unmaintained; replaced by web-time.
-# Chain: hugr-passes/ascent -> ... -> zlup.
-# Upstream owner: https://github.com/CQCL/hugr (ascent is a transitive build-graph helper).
-reason = "Transitive via hugr-passes/ascent; unmaintained-crate warning, no Wasm target."
-
-[[IgnoredVulns]]
 id = "RUSTSEC-2024-0375"
 # atty@0.2.14 -- unmaintained (clap 4.x dropped it).
 # Chain: mwpf -> slp -> structopt 0.3 -> clap 2.34.
@@ -122,7 +115,7 @@ id = "RUSTSEC-2026-0197"
 # Chains: cgmath -> hugr-core -> hugr -> tket -> zlup, and
 #         cgmath -> tket (dev-dependency) -> zlup.
 # Upstream owners: https://github.com/CQCL/hugr and https://github.com/CQCL/tket2.
-reason = "Transitive via hugr-core and tket; no swap_columns call exists in PECOS or in the pinned hugr-core 0.29.3/tket 0.21.2 sources, and no fixed cgmath release exists. Re-check on hugr/tket bumps."
+reason = "Transitive via hugr-core and tket; no swap_columns call exists in PECOS, in the hugr 0.30.3 crates, in tket 0.22.0, or in the pinned tket2 Selene compiler sources, and no fixed cgmath release exists. Re-check on hugr/tket bumps."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0367"
@@ -147,13 +140,3 @@ id = "RUSTSEC-2026-0369"
 # pecos-rslib enables it for the Python RelayBpDecoder).
 # Upstream owners: https://github.com/trmue/relay and https://github.com/jturner314/ndarray-npy.
 reason = "Transitive via relay-bp/ndarray-npy, which read .npz entries by name and never call ZipArchive::extract or ZipStreamReader::extract, the affected APIs."
-
-[[IgnoredVulns]]
-id = "RUSTSEC-2026-0173"
-# proc-macro-error2@2.0.1 -- unmaintained proc-macro (fork of proc-macro-error).
-# Chain: pecos-qec -> selene-hugr-qis-compiler -> tket-qsystem -> hugr-cli 0.29 ->
-# tabled 0.21 -> tabled_derive 0.11 -> proc-macro-error2. tabled_derive 0.12 drops
-# it, but needs tabled 0.22, which hugr-cli only takes from 0.30.
-# Upstream owners: https://github.com/CQCL/hugr and https://github.com/Quantinuum/tket2.
-# Re-check on hugr/tket bumps.
-reason = "Transitive via hugr-cli -> tabled -> tabled_derive; compile-time proc-macro only, no runtime impact."

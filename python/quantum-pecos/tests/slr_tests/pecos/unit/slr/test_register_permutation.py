@@ -77,7 +77,7 @@ def test_whole_register_permutation_qasm() -> None:
     assert "a = a ^ b;" in qasm, f"Expected 'a = a ^ b;' not found in QASM:\n{qasm}"
 
     # Verify the temporary bit approach is NOT used for whole register permutations
-    assert "creg _bit_swap[1];" not in qasm, f"Unexpected 'creg _bit_swap[1];' found in QASM:\n{qasm}"
+    assert "creg bitswap[1];" not in qasm, f"Unexpected 'creg bitswap[1];' found in QASM:\n{qasm}"
 
     # For classical registers, we're using XOR swap, which swaps the values, not the references.
     # For bit-level operations, the permutation is applied, so b[2].set(1) becomes b[2] = 1;

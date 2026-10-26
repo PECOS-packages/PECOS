@@ -82,7 +82,8 @@ def test_while_permute_rejected(backend) -> None:
     """Even generators which skip unsupported bodies must reject their Permutes."""
     q, c = QReg("q", 2), CReg("c", 1)
     program = Main(q, c, While(c == 1).Do(Permute([q[0], q[1]], [q[1], q[0]])))
-    with pytest.raises(NotImplementedError, match=r"Permute.*While"):
+    reason = r"While.*SlrConverter.*qir" if backend == "legacy_qir" else r"Permute.*While"
+    with pytest.raises(NotImplementedError, match=reason):
         compile_program(program, backend)
 
 
@@ -181,14 +182,11 @@ def test_stim_unrolled_repeat_preserves_measurement_tracking() -> None:
 
 @pytest.mark.parametrize("whole_register", [False, True])
 def test_stim_repeat_classical_permute_invalidates_measurement(whole_register) -> None:
-    """Unrolling must retain the rule that all named CRegs lose tracked records."""
+    """Stim rejects classical permutations before later record-dependent uses."""
     q, c, d = QReg("q", 1), CReg("c", 1), CReg("d", 1)
     operation = Permute(c, d) if whole_register else Permute([c[0], d[0]], [d[0], c[0]])
     program = Main(q, c, d, qb.Measure(q[0]) > c[0], Repeat(2).block(operation), If(c[0]).Then(qb.X(q[0])))
-    # Whole CReg Permute is already unsupported in Stim; element permutations
-    # invalidate records even when two swaps restore the original bit mapping.
-    reason = "whole-register Permute" if whole_register else "no longer comes from a tracked measurement"
-    with pytest.raises(NotImplementedError, match=reason):
+    with pytest.raises(NotImplementedError, match=r"Permute.*not a known qubit allocator"):
         compile_program(program, "stim")
 
 

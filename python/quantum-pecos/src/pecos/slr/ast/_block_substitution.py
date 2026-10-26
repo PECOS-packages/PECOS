@@ -106,6 +106,7 @@ class BodyRemap:
         self._bit: dict[tuple[str, int], tuple[str, int]] = {}
         self._whole_alloc: dict[str, str] = {}
         self._partial_names: set[str] = set()
+        self._barrier_allocators: dict[str, tuple[str, ...]] = {}
         # Only OUTER -> PARAM conversion reserves destination names. The
         # inverse flattening remap has no parameter scope to capture refs.
         self._block_name = block_name
@@ -221,6 +222,21 @@ class BodyRemap:
         self.check_unbound_reference(name, f"{name}[{index}]")
         return key
 
+    def add_barrier_allocators(self, name: str, allocators: tuple[str, ...]) -> None:
+        """Bind all slots of a formal qubit input to their owning allocators.
+
+        Only flattening uses this: every slot of the formal single-qubit or
+        bundle input has a binding. Widening these slots is safe for a fence,
+        but not for other whole-register operations.
+        """
+        self._barrier_allocators[name] = tuple(dict.fromkeys(allocators))
+
+    def barrier_allocators(self, name: str) -> tuple[str, ...]:
+        """Resolve a fence without weakening an incompletely bound allocator."""
+        if name in self._barrier_allocators:
+            return self._barrier_allocators[name]
+        return (self.whole_name(name, context="Barrier"),)
+
     def whole_name(self, name: str, *, context: str, classical: bool = False) -> str:
         """Rename a whole-allocator/register name; reject if partially bound.
 
@@ -262,7 +278,7 @@ def substitute_stmt(stmt: Statement, remap: BodyRemap) -> Statement:
         return _sub_prepare(stmt, remap)
     if isinstance(stmt, BarrierOp):
         return BarrierOp(
-            allocators=tuple(remap.whole_name(a, context="Barrier") for a in stmt.allocators),
+            allocators=tuple(dict.fromkeys(name for a in stmt.allocators for name in remap.barrier_allocators(a))),
             location=stmt.location,
         )
     if isinstance(stmt, AssignOp):

@@ -214,8 +214,8 @@ def test_qasm_for_classical_permute_declares_temporary_once() -> None:
     """Unrolling a swap must produce valid QASM with one temporary declaration."""
     c = CReg("c", 2)
     code = SlrConverter(Main(c, For("i", 0, 3).Do(Permute([c[0], c[1]], [c[1], c[0]])))).qasm()
-    assert code.count("creg _bit_swap[1];") == 1
-    assert code.count("_bit_swap[0] = c[0];") == 3
+    assert code.count("creg bitswap[1];") == 1
+    assert code.count("bitswap[0] = c[0];") == 3
 
 
 def test_qasm_for_permute_preparation_uses_current_mapping() -> None:

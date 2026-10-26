@@ -38,6 +38,7 @@ from pecos.slr.ast.codegen._permutation import reject_permute_in_region
 from pecos.slr.ast.codegen._prep_tail import prep_tail
 from pecos.slr.ast.nodes import (
     AllocatorDecl,
+    AssignOp,
     BinaryExpr,
     BinaryOp,
     BitExpr,
@@ -45,6 +46,8 @@ from pecos.slr.ast.nodes import (
     GateKind,
     LiteralExpr,
     RegisterDecl,
+    ReturnOp,
+    SlotRef,
     UnaryExpr,
     UnaryOp,
     VarExpr,
@@ -53,7 +56,7 @@ from pecos.slr.ast.visitor import BaseVisitor
 
 if TYPE_CHECKING:
     from pecos.slr.ast.nodes import (
-        AssignOp,
+        AstNode,
         BarrierOp,
         BlockCall,
         CommentOp,
@@ -68,8 +71,6 @@ if TYPE_CHECKING:
         PrintOp,
         Program,
         RepeatStmt,
-        ReturnOp,
-        SlotRef,
         Statement,
         WhileStmt,
     )
@@ -495,8 +496,24 @@ class AstToQasm(BaseVisitor[list[str]]):
 
     def visit_barrier(self, node: BarrierOp) -> list[str]:
         """Generate barrier operation."""
-        qubits = ", ".join(node.allocators) if node.allocators else ", ".join(self.context.allocators.keys())
-        return [f"barrier {qubits};"]
+        allocators = node.allocators or tuple(
+            name for name in self.context.allocators if self.context.allocator_parents.get(name) is None
+        )
+        refs = []
+        for name in allocators:
+            # Unchanged root operands can remain whole-register references,
+            # including externally declared names in standalone Block fragments.
+            permuted = any(
+                source[0] == name and source != target for source, target in self.context.permutation_map.items()
+            )
+            if self.context.allocator_parents.get(name) is None and not permuted:
+                refs.append(name)
+            else:
+                refs.extend(
+                    self._render_slot_ref(SlotRef(allocator=name, index=i))
+                    for i in range(self.context.allocators[name])
+                )
+        return [f"barrier {', '.join(refs)};"] if refs else []
 
     def visit_comment(self, node: CommentOp) -> list[str]:
         """Generate comment.
@@ -577,6 +594,10 @@ class AstToQasm(BaseVisitor[list[str]]):
                 if not 0 <= index < size:
                     msg = f"QASM codegen: Permute reference {name}[{index}] is not a declared slot."
                     raise NotImplementedError(msg)
+            kinds = {name in self.context.registers for name, _ in parsed}
+            if len(kinds) > 1:
+                msg = "QASM codegen: Permute cannot mix quantum and classical element refs."
+                raise NotImplementedError(msg)
         if node.sources == node.targets:
             return lines
 
@@ -650,9 +671,9 @@ class AstToQasm(BaseVisitor[list[str]]):
         # If there are cycles, we need a temporary bit
         if cycles:
             if self.context.bit_swap_temp is None:
-                temp = "_bit_swap"
+                temp = "bitswap"
                 while temp in self.context.registers or temp in self.context.allocators:
-                    temp += "_"
+                    temp += "x"
                 self.context.bit_swap_temp = temp
                 lines.append(f"creg {temp}[1];")
             temp = self.context.bit_swap_temp
@@ -801,6 +822,9 @@ class AstToQasm(BaseVisitor[list[str]]):
 
     def visit_for(self, node: ForStmt) -> list[str]:
         """Generate a static For by unrolling in the current context."""
+        if any(self._references_variable(stmt, node.variable) for stmt in node.body):
+            msg = f"QASM codegen: For body references loop variable {node.variable!r}; binding it is not supported."
+            raise NotImplementedError(msg)
         lines = []
         for _ in static_for_range(node, "QASM"):
             for stmt in node.body:
@@ -876,6 +900,21 @@ class AstToQasm(BaseVisitor[list[str]]):
         return [f"qreg[{node.capacity}]"]
 
     # === Helper methods ===
+
+    def _references_variable(self, node: AstNode, variable: str) -> bool:
+        """Find loop-variable uses, including symbolic indices rendered as strings."""
+        names = []
+        if isinstance(node, VarExpr):
+            names.append(node.name)
+        elif isinstance(node, BitRef | SlotRef):
+            names.append(str(node))
+        elif isinstance(node, AssignOp) and isinstance(node.target, str):
+            names.append(node.target)
+        elif isinstance(node, ReturnOp):
+            names.extend(value for value in node.values if isinstance(value, str))
+        if any(re.search(rf"(?<!\w){re.escape(variable)}(?!\w)", name) for name in names):
+            return True
+        return any(self._references_variable(child, variable) for child in node.children())
 
     def _render_slot_ref(self, node: SlotRef) -> str:
         """Render a slot reference as array access.

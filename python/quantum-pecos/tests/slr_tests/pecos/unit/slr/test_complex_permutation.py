@@ -103,16 +103,8 @@ def test_permutation_with_conditional_qasm() -> None:
         Return(b),
     )
 
-    qasm = SlrConverter(prog).qasm()
-
-    # Print the QASM for debugging
-    print("\nQASM Output:")
-    print(qasm)
-
-    # Verify that the QASM contains the correct permuted operations
-    assert "b[0] = 1;" in qasm  # The classical bit assignment happens before permutation
-    # The condition and operation should both be permuted
-    assert "if(b[1] == 1) x a[1];" in qasm
+    with pytest.raises(NotImplementedError, match=r"Permute.*quantum and classical"):
+        SlrConverter(prog).qasm()
 
 
 # QIR Tests

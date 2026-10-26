@@ -178,9 +178,11 @@ def _inline_call(call: BlockCall, decls: dict[str, BlockDecl]) -> tuple[Statemen
             remap.add_whole_alloc(inp.name, arg.name, size)
         elif isinstance(arg, SingleQubitArg):
             remap.add_slot((inp.name, 0), (arg.slot.allocator, arg.slot.index))
+            remap.add_barrier_allocators(inp.name, (arg.slot.allocator,))
         elif isinstance(arg, SingleBitArg):
             remap.add_bit((inp.name, 0), (arg.bit.register, arg.bit.index))
         elif isinstance(arg, QubitBundleArg):
+            remap.add_barrier_allocators(inp.name, tuple(slot.allocator for slot in arg.slots))
             for k, slot in enumerate(arg.slots):
                 remap.add_slot((inp.name, k), (slot.allocator, slot.index))
         else:  # BitBundleArg already rejected above; defensive

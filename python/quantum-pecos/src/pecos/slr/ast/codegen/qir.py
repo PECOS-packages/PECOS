@@ -1107,15 +1107,18 @@ class AstToQir:
         of the register (QReg capacity or CReg size). Mirrors the
         Guppy codegen's `_expand_permute_ref`.
         """
+        name = ref.split("[", 1)[0]
+        sizes = {**self.context.creg_map, **self.context.qreg_sizes}
+        if name not in sizes:
+            msg = f"QIR codegen: unknown Permute ref {ref!r}"
+            raise NotImplementedError(msg)
         if ref.endswith("]") and "[" in ref:
-            name, idx = ref[:-1].split("[", 1)
-            return [(name, int(idx))]
-        if ref in self.context.qreg_sizes:
-            return [(ref, i) for i in range(self.context.qreg_sizes[ref])]
-        if ref in self.context.creg_map:
-            return [(ref, i) for i in range(self.context.creg_map[ref])]
-        msg = f"QIR codegen: unknown Permute ref {ref!r}"
-        raise NotImplementedError(msg)
+            index = int(ref[:-1].split("[", 1)[1])
+            if not 0 <= index < sizes[name]:
+                msg = f"QIR codegen: Permute reference {ref!r} is not a declared slot."
+                raise NotImplementedError(msg)
+            return [(name, index)]
+        return [(name, i) for i in range(sizes[name])]
 
     def _process_permute(self, node: PermuteOp) -> None:
         """Realize a Permute as a static logical relabel.
@@ -1149,6 +1152,12 @@ class AstToQir:
             tgt_refs = self._expand_permute_ref(target)
             if len(src_refs) != len(tgt_refs):
                 msg = f"QIR codegen: Permute element count mismatch for {source!r} -> {target!r}"
+                raise NotImplementedError(msg)
+            if any(
+                (src[0] in self.context.qreg_sizes) != (tgt[0] in self.context.qreg_sizes)
+                for src, tgt in zip(src_refs, tgt_refs, strict=True)
+            ):
+                msg = f"QIR codegen: Permute cannot map quantum and classical refs together: {source!r} -> {target!r}"
                 raise NotImplementedError(msg)
             src_all.extend(src_refs)
             tgt_all.extend(tgt_refs)

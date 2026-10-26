@@ -675,17 +675,21 @@ class AstToStim:
         so a bare CReg permute is not realizable -> fail loud (never
         a silent no-op). Mirrors the QIR codegen's helper.
         """
+        name = ref.split("[", 1)[0]
+        if name not in self.context.qreg_sizes:
+            msg = (
+                f"Stim codegen: Permute reference {ref!r} is not a known qubit allocator; "
+                "use the QASM, QIR or Guppy targets for classical permutations."
+            )
+            raise NotImplementedError(msg)
+        size = self.context.qreg_sizes[name]
         if ref.endswith("]") and "[" in ref:
-            name, idx = ref[:-1].split("[", 1)
-            return [(name, int(idx))]
-        if ref in self.context.qreg_sizes:
-            return [(ref, i) for i in range(self.context.qreg_sizes[ref])]
-        msg = (
-            f"Stim codegen: whole-register Permute of {ref!r} is not "
-            "supported (no classical-register model in Stim); a "
-            "qubit-register or element-wise Permute is realizable."
-        )
-        raise NotImplementedError(msg)
+            index = int(ref[:-1].split("[", 1)[1])
+            if not 0 <= index < size:
+                msg = f"Stim codegen: Permute reference {ref!r} is not a declared slot."
+                raise NotImplementedError(msg)
+            return [(name, index)]
+        return [(name, i) for i in range(size)]
 
     def _process_permute(self, node: PermuteOp) -> None:
         """Realize a Permute as a static logical relabel.

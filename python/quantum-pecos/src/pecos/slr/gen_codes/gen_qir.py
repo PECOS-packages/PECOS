@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 
 from pecos_rslib_llvm import binding, ir
 
-from pecos.slr import Angle, Block, If, Repeat
+from pecos.slr import Angle, Block, For, If, Repeat, While
 from pecos.slr._qubit_args import gate_target_groups
 from pecos.slr.cops import (
     NEG,
@@ -390,8 +390,11 @@ class QIRGenerator(Generator):
 
         block (Block): the current SLR block to convert into a QIR block."""
 
-        if type(block).__name__ in ("If", "While", "For"):
-            reject_permute_in_region(block, "QIRGenerator", classical_runtime=isinstance(block, If))
+        if isinstance(block, For | While):
+            msg = f"QIRGenerator does not support {type(block).__name__}; use SlrConverter(...).qir()."
+            raise NotImplementedError(msg)
+        if isinstance(block, If):
+            reject_permute_in_region(block, "QIRGenerator", classical_runtime=True)
         self._current_block = block
         repeat_times = block.cond if isinstance(block, Repeat) else 1
 

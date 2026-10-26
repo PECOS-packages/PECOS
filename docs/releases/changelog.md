@@ -18,7 +18,16 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   reuses barrier declarations across repeated calls. QASM preparation also
   follows the current permutation. Deprecated QIR retains supported permutations
   but rejects mixed quantum/classical permutations that previously lost the
-  classical part.
+  classical part. QASM also rejects `For` bodies that reference the loop
+  variable and element permutations mixing quantum and classical refs. Stim
+  rejects permutation refs that are not qubits, and QIR rejects cross-kind
+  permutation pairs with an actionable error. Deprecated `QIRGenerator` now
+  rejects `For` and `While` instead of executing their bodies once and directs
+  callers to `SlrConverter(...).qir()`. Barrier conversion widens individual
+  qubits to their owning allocator, preserving operand order without duplicates.
+  QASM barriers use declared root registers and follow the current permutation.
+  Both QASM generators use a legal, collision-free classical swap temporary,
+  declared once (#1238).
 
 - **Breaking:** two-qubit gates in `pecos-simulators` now reject repeated-qubit
   pairs in debug and release builds. Such inputs could previously cause undefined

@@ -6,6 +6,13 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- `pecos-random` implements `RapidRng`, the generator behind `PecosRng` and
+  `PecosScalarRng`, itself instead of wrapping the `rapidrand` crate, and exports
+  it as `pecos_random::RapidRng`. Seeded `PecosRng` and `PecosScalarRng` streams
+  are unchanged. `CuStateVec` now draws its measurement random numbers from
+  `PecosRng` instead of `fastrand`, so seeded `CuStateVec` runs give different
+  outcomes than before.
+
 - **Breaking:** SLR block conversion rejects input names that capture unbound
   outer references in the block body. The error identifies the block, input
   and reference; rename the block input to avoid the collision (#1472).

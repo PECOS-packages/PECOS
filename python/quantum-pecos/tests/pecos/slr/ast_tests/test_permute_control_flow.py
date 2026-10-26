@@ -182,11 +182,14 @@ def test_stim_unrolled_repeat_preserves_measurement_tracking() -> None:
 
 @pytest.mark.parametrize("whole_register", [False, True])
 def test_stim_repeat_classical_permute_invalidates_measurement(whole_register) -> None:
-    """Stim rejects classical permutations before later record-dependent uses."""
+    """Unrolling must retain the rule that all named CRegs lose tracked records."""
     q, c, d = QReg("q", 1), CReg("c", 1), CReg("d", 1)
     operation = Permute(c, d) if whole_register else Permute([c[0], d[0]], [d[0], c[0]])
     program = Main(q, c, d, qb.Measure(q[0]) > c[0], Repeat(2).block(operation), If(c[0]).Then(qb.X(q[0])))
-    with pytest.raises(NotImplementedError, match=r"Permute.*not a known qubit allocator"):
+    # Whole CReg Permute is already unsupported in Stim; element permutations
+    # invalidate records even when two swaps restore the original bit mapping.
+    reason = "whole-register Permute" if whole_register else "no longer comes from a tracked measurement"
+    with pytest.raises(NotImplementedError, match=reason):
         compile_program(program, "stim")
 
 

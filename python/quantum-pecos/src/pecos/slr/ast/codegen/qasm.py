@@ -53,6 +53,7 @@ from pecos.slr.ast.nodes import (
     VarExpr,
 )
 from pecos.slr.ast.visitor import BaseVisitor
+from pecos.slr.vars import IDENTIFIER_PATTERN
 
 if TYPE_CHECKING:
     from pecos.slr.ast.nodes import (
@@ -499,6 +500,9 @@ class AstToQasm(BaseVisitor[list[str]]):
         allocators = node.allocators or tuple(
             name for name in self.context.allocators if self.context.allocator_parents.get(name) is None
         )
+        if not node.allocators and not allocators:
+            msg = "QASM codegen: global Barrier with no declared registers is not supported."
+            raise NotImplementedError(msg)
         refs = []
         for name in allocators:
             # Unchanged root operands can remain whole-register references,
@@ -902,19 +906,31 @@ class AstToQasm(BaseVisitor[list[str]]):
     # === Helper methods ===
 
     def _references_variable(self, node: AstNode, variable: str) -> bool:
-        """Find loop-variable uses, including symbolic indices rendered as strings."""
-        names = []
-        if isinstance(node, VarExpr):
-            names.append(node.name)
-        elif isinstance(node, BitRef | SlotRef):
-            names.append(str(node))
-        elif isinstance(node, AssignOp) and isinstance(node.target, str):
-            names.append(node.target)
-        elif isinstance(node, ReturnOp):
-            names.extend(value for value in node.values if isinstance(value, str))
-        if any(re.search(rf"(?<!\w){re.escape(variable)}(?!\w)", name) for name in names):
+        """Find unbound variable references without conflating them with register names."""
+        if isinstance(node, VarExpr) and self._name_references_variable(node.name, variable):
+            return True
+        if (
+            isinstance(node, AssignOp)
+            and isinstance(node.target, str)
+            and self._name_references_variable(node.target, variable)
+        ):
+            return True
+        if isinstance(node, ReturnOp) and any(
+            self._name_references_variable(value, variable) for value in node.values if isinstance(value, str)
+        ):
+            return True
+        # Converted references have integer indices. Keep the direct-AST guard
+        # structural too, for callers constructing an unsupported symbolic index.
+        if isinstance(node, BitRef | SlotRef) and node.index == variable:
             return True
         return any(self._references_variable(child, variable) for child in node.children())
+
+    def _name_references_variable(self, name: str, variable: str) -> bool:
+        """Recognize a bare variable or the converter's symbolic bit name reg[var]."""
+        if name == variable:
+            return variable not in self.context.registers and variable not in self.context.allocators
+        match = re.fullmatch(r"(\w+)\[(\w+)\]", name)
+        return match is not None and IDENTIFIER_PATTERN.fullmatch(match[1]) is not None and match[2] == variable
 
     def _render_slot_ref(self, node: SlotRef) -> str:
         """Render a slot reference as array access.

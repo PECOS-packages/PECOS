@@ -176,6 +176,7 @@ class StimCodeGenContext:
     allocator_parents: dict[str, str | None] = field(default_factory=dict)
     allocator_offsets: dict[str, int] = field(default_factory=dict)
     qreg_sizes: dict[str, int] = field(default_factory=dict)  # name -> capacity
+    creg_sizes: dict[str, int] = field(default_factory=dict)  # name -> size
     # Static logical permutation (same model as the QIR codegen /
     # the Guppy linearity tracker -- Stim has no permute instruction).
     # Maps a logical (reg, index) ref to the (reg, index) whose qubit
@@ -278,7 +279,7 @@ class AstToStim:
                     for i in range(decl.capacity):
                         self.context.get_qubit(decl.name, i)
             elif isinstance(decl, RegisterDecl):
-                pass  # Classical registers don't need qubit allocation
+                self.context.creg_sizes[decl.name] = decl.size
 
         if program.allocator:
             self.context.qreg_sizes[program.allocator.name] = program.allocator.capacity
@@ -676,20 +677,24 @@ class AstToStim:
         a silent no-op). Mirrors the QIR codegen's helper.
         """
         name = ref.split("[", 1)[0]
-        if name not in self.context.qreg_sizes:
-            msg = (
-                f"Stim codegen: Permute reference {ref!r} is not a known qubit allocator; "
-                "use the QASM, QIR or Guppy targets for classical permutations."
-            )
+        sizes = {**self.context.creg_sizes, **self.context.qreg_sizes}
+        if name not in sizes:
+            msg = f"Stim codegen: unknown Permute reference {ref!r}."
             raise NotImplementedError(msg)
-        size = self.context.qreg_sizes[name]
         if ref.endswith("]") and "[" in ref:
             index = int(ref[:-1].split("[", 1)[1])
-            if not 0 <= index < size:
+            if not 0 <= index < sizes[name]:
                 msg = f"Stim codegen: Permute reference {ref!r} is not a declared slot."
                 raise NotImplementedError(msg)
             return [(name, index)]
-        return [(name, i) for i in range(size)]
+        if name in self.context.qreg_sizes:
+            return [(name, i) for i in range(sizes[name])]
+        msg = (
+            f"Stim codegen: whole-register Permute of {ref!r} is not "
+            "supported (no classical-register model in Stim); a "
+            "qubit-register or element-wise Permute is realizable."
+        )
+        raise NotImplementedError(msg)
 
     def _process_permute(self, node: PermuteOp) -> None:
         """Realize a Permute as a static logical relabel.
@@ -729,10 +734,16 @@ class AstToStim:
             msg = "Stim codegen: Permute must be bijective over the same ref set"
             raise NotImplementedError(msg)
 
-        # Compose ATOMICALLY (snapshot old, then map[s] = old.get(t, t))
-        # so a whole-register (a,b)/(b,a) pair applies once.
-        old = dict(self.context.permutation_map)
-        self.context.permutation_map.update({s: old.get(t, t) for s, t in zip(src_all, tgt_all, strict=True)})
+        kinds = {name in self.context.qreg_sizes for name, _ in src_all}
+        if len(kinds) > 1:
+            msg = "Stim codegen: Permute cannot mix quantum and classical refs."
+            raise NotImplementedError(msg)
+
+        # Classical permutations only invalidate provenance. Quantum ones
+        # compose atomically so a whole-register swap applies exactly once.
+        if kinds == {True}:
+            old = dict(self.context.permutation_map)
+            self.context.permutation_map.update({s: old.get(t, t) for s, t in zip(src_all, tgt_all, strict=True)})
         # A Permute ref is a bare string that may name a qubit or a classical
         # register (SLR allows both under one name), so classical bits under
         # any permuted name stop being valid If conditions.

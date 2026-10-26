@@ -717,12 +717,6 @@ class AstToGuppy:
                 for t in stmt.targets:
                     if (t.allocator, t.index) in scratch:
                         _reject("a Measure", (t.allocator, t.index))
-            elif isinstance(stmt, BarrierOp):
-                for alloc in stmt.allocators:
-                    if alloc in scratch_allocs:
-                        # Name-level: conservatively reject any barrier
-                        # naming a register that hosts a scratch slot.
-                        _reject_alloc("a Barrier", alloc)
             elif isinstance(stmt, PermuteOp):
                 # sources/targets are string refs (`q`, `q[0]`); a permute
                 # touching the scratch register reorders/observes it.

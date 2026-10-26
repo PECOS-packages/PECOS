@@ -34,7 +34,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
-from pecos.slr._qubit_args import expand_qubit_args, gate_target_groups
+from pecos.slr._qubit_args import expand_qubit_args, gate_target_groups, iter_qubit_args
 from pecos.slr.ast._block_substitution import BodyRemap, substitute_stmt
 from pecos.slr.ast.nodes import (
     AllocatorArg,
@@ -76,6 +76,7 @@ from pecos.slr.ast.nodes import (
     VarExpr,
     WhileStmt,
 )
+from pecos.slr.vars import SymbolicBit
 
 if TYPE_CHECKING:
     from pecos.slr.ast.nodes import (
@@ -737,6 +738,11 @@ class SlrToAst:
 
     def _convert_bit_ref(self, bit: Any) -> BitRef:
         """Convert an SLR Bit to an AST BitRef."""
+        if isinstance(bit, SymbolicBit):
+            msg = (
+                f"For loop variable {bit.index_var.name!r}: symbolic bit indices are not supported by this conversion."
+            )
+            raise NotImplementedError(msg)
         register = bit.reg.sym if hasattr(bit.reg, "sym") else str(bit.reg)
         return BitRef(register=register, index=bit.index)
 
@@ -801,14 +807,14 @@ class SlrToAst:
         # BarrierOp stores allocator names. Widen single-qubit operands to
         # their owner rather than losing the requested fence entirely.
         allocators = []
-        for operand in op.qregs:
+        for operand in iter_qubit_args(op.qregs, "Barrier"):
             if hasattr(operand, "reg"):
                 ref = self._convert_qubit_ref(operand)
                 if remap is not None:
                     ref = remap.slot(ref)
                 name = ref.allocator
             else:
-                name = operand.sym if hasattr(operand, "sym") else str(operand)
+                name = operand.sym
                 if remap is not None:
                     name = remap.whole_name(name, context="Barrier")
             allocators.append(name)
@@ -1069,7 +1075,7 @@ def _scratch_events(stmt: Statement, name: str) -> list[str]:
     (scratch inputs must have a flat Prep -> ... -> Measure
     lifecycle).
     """
-    if isinstance(stmt, CommentOp):
+    if isinstance(stmt, CommentOp | BarrierOp):
         return []
     if isinstance(stmt, PrepareOp):
         return ["PREP"] if stmt.allocator == name else []
@@ -1077,8 +1083,6 @@ def _scratch_events(stmt: Statement, name: str) -> list[str]:
         return ["MEASURE"] if any(t.allocator == name for t in stmt.targets) else []
     if isinstance(stmt, GateOp):
         return ["USE"] if any(t.allocator == name for t in stmt.targets) else []
-    if isinstance(stmt, BarrierOp):
-        return ["USE"] if name in stmt.allocators else []
     if isinstance(stmt, PermuteOp):
         refs = (*stmt.sources, *stmt.targets)
         return ["UNSUPPORTED"] if any(_ref_base_name(r) == name for r in refs) else []

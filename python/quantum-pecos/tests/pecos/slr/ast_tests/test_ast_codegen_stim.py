@@ -414,7 +414,7 @@ class TestAstToStimConditionals:
         assert all(len(row) == 6 and row[2] == row[0] and row[5] == row[3] for row in rows)
 
     def test_permuted_bit_is_rejected(self) -> None:
-        """Stim rejects a classical permutation before it can invalidate records."""
+        """A permuted classical bit no longer has a tracked measurement record."""
         prog = Main(
             q := QReg("q", 3),
             c := CReg("c", 2),
@@ -424,11 +424,11 @@ class TestAstToStimConditionals:
             If(c[0] == 1).Then(qb.X(q[2])),
         )
 
-        with pytest.raises(NotImplementedError, match=r"Permute.*not a known qubit allocator"):
+        with pytest.raises(NotImplementedError, match="no longer comes from a tracked measurement"):
             ast_to_stim(slr_to_ast(prog))
 
     def test_bit_permuted_inside_repeat_is_rejected_after_it(self) -> None:
-        """A classical Permute is rejected even inside a REPEAT."""
+        """A Permute inside a REPEAT invalidates the record taken before it."""
         prog = Main(
             q := QReg("q", 3),
             c := CReg("c", 2),
@@ -439,7 +439,7 @@ class TestAstToStimConditionals:
             If(c[0] == 1).Then(qb.X(q[2])),
         )
 
-        with pytest.raises(NotImplementedError, match=r"Permute.*not a known qubit allocator"):
+        with pytest.raises(NotImplementedError, match="no longer comes from a tracked measurement"):
             ast_to_stim(slr_to_ast(prog))
 
     def test_qubit_permute_still_applies_when_a_creg_shares_the_name(self) -> None:
@@ -828,7 +828,7 @@ def record_program(request):
         "classical_permute": (
             (*measurements, Permute([c[0], c[1]], [c[1], c[0]]), *measurements),
             {"c": [1, 0]},
-            None,  # Classical Permute is rejected, even if measurements overwrite it.
+            "X 0\nM 1 0 1 0",
         ),
         "later_assignment": (
             (*measurements, c.set(0), *measurements),
@@ -865,26 +865,14 @@ def record_program(request):
 def test_record_circuit_compatibility(record_program) -> None:
     """Existing APIs retain the exact pre-mapping circuit text for every case."""
     program, _qasm, _expected, baseline = record_program
-    if baseline is None:
-        with pytest.raises(NotImplementedError, match="Permute"):
-            SlrConverter(program).stim()
-        with pytest.raises(NotImplementedError, match="Permute"):
-            ast_to_stim_str(slr_to_ast(program))
-        return
     assert str(SlrConverter(program).stim()) == baseline
     assert ast_to_stim_str(slr_to_ast(program)) == baseline
 
 
 def test_stim_with_records(record_program) -> None:
     """Both mapping APIs match QASM destinations and deterministic classical values."""
-    program, qasm, expected, baseline = record_program
+    program, qasm, expected, _baseline = record_program
     converter = SlrConverter(program)
-    if baseline is None:
-        with pytest.raises(NotImplementedError, match="Permute"):
-            converter.stim_with_records()
-        with pytest.raises(NotImplementedError, match="Permute"):
-            ast_to_stim_with_records(slr_to_ast(program))
-        return
     circuit, records = converter.stim_with_records()
     assert circuit == converter.stim()
     assert records == _qasm_record_bits(qasm)
@@ -964,14 +952,10 @@ def test_aliased_records(aliased_record_program) -> None:
 
 def test_record_history_resets_between_programs(record_program) -> None:
     """Reusing the generator clears the history along with its record frame."""
-    program, qasm, expected, baseline = record_program
+    program, qasm, expected, _baseline = record_program
     previous = QReg("previous", 1)
     generator = AstToStim(collect_records=True)
     generator.generate(slr_to_ast(Main(previous, qb.X(previous[0]), qb.Measure(previous[0]))))
-    if baseline is None:
-        with pytest.raises(NotImplementedError, match="Permute"):
-            generator.generate(slr_to_ast(program))
-        return
     circuit = generator.generate(slr_to_ast(program))
     records = tuple(generator.context.record_bits)
     assert records == _qasm_record_bits(qasm)

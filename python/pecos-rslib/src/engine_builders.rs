@@ -115,7 +115,7 @@ impl PyQasmEngineBuilder {
     }
 }
 
-fn runtime_clock_model(value: &str) -> PyResult<pecos_qis::RuntimeClockModel> {
+pub(crate) fn runtime_clock_model(value: &str) -> PyResult<pecos_qis::RuntimeClockModel> {
     match value {
         "continuous" => Ok(pecos_qis::RuntimeClockModel::Continuous),
         "shot_relative" => Ok(pecos_qis::RuntimeClockModel::ShotRelative),

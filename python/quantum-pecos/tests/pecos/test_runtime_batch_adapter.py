@@ -7,9 +7,10 @@ import pecos_rslib as pr
 import pytest
 from guppylang import guppy
 from guppylang.std.angles import pi
+from guppylang.std.builtins import array, output
 from guppylang.std.qsystem.helios import phased_x
-from guppylang.std.quantum import measure, qubit
-from pecos.qec import DetectorErrorModel
+from guppylang.std.quantum import collect_measurements, measure, measure_array, qubit
+from pecos.qec import DetectorErrorModel, infer_guppy_dem_annotations
 from pecos.qec.surface import NoiseParameters
 from selene_simple_runtime_plugin import SimpleRuntimePlugin
 
@@ -246,16 +247,54 @@ def test_clock_model_is_independent_of_custom_events(tmp_path, scheduled_support
     chunks = builder.capture_operation_trace(3)
     idles = [gate["params"] for chunk in chunks for gate in chunk["lowered_quantum_ops"] if gate["gate_type"] == "Idle"]
     assert idles == [[100e-9]] * 3
-    # An explicit argument overrides the plugin declaration while retaining init args.
+    # An explicit argument overrides the plugin declaration while retaining init
+    # args. Several shots are needed: a wrong clock model only fails after the first.
     plugin.clock_model = "continuous"
-    trace = pecos.capture_qis_operation_trace(
-        program,
-        1,
-        runtime=plugin,
-        clock_model="shot_relative",
-        batch_adapter_factory=PhaseAdapter if with_adapter else None,
+    overridden = (
+        pecos.sim(program)
+        .classical(pecos.selene_engine(plugin, clock_model="shot_relative"))
+        .qubits(1)
+        .quantum(pr.state_vector())
+        .seed(42)
+        .workers(1)
     )
-    assert trace[-1]["runtime_events_complete"] is True
+    assert overridden.run(3).to_dict()["measurement_0"] == [int(with_adapter)] * 3
+
+
+@guppy
+def ramsey_outputs() -> None:
+    q = qubit()
+    phased_x(q, pi / 2, pi / 2)
+    phased_x(q, -pi / 2, pi / 2)
+    bits = collect_measurements(measure_array(array(q)))
+    output("raw measurements", bits)
+    output("DETECTOR", bits[0])
+    output("obs", bits[0])
+
+
+def test_dem_inference_uses_the_plugin_clock_and_adapter(tmp_path, scheduled_support):
+    library, _ = scheduled_support.build_runtime(tmp_path, 100, events=True, shot_relative_clock=True)
+
+    class Plugin:
+        library_file = library
+        clock_model = "shot_relative"
+        batch_adapter_factory = PhaseAdapter
+
+        def get_init_args(self):
+            return SimpleRuntimePlugin().get_init_args()
+
+    # Several probe shots: without the clock model the second shot is behind the
+    # carried clock, and without the adapter the synthetic event is rejected.
+    inferred = infer_guppy_dem_annotations(
+        ramsey_outputs,
+        num_qubits=1,
+        probe_shots=8,
+        provenance_shots=4,
+        validation_rows=4,
+        runtime=Plugin(),
+        require_raw_provenance=False,
+    )
+    assert inferred.observable_supports == ((0,),)
 
 
 def test_invalid_clock_model_rejects_before_runtime_discovery():

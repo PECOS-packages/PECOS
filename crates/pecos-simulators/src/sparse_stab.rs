@@ -737,6 +737,10 @@ where
         if self.track_destab_signs {
             // D_r0 = +-X_q: Hermitian with no Z support, so the dual product
             // D_other * D_r0 only takes D_r0's minus sign.
+            debug_assert!(
+                !self.destabs.signs_i.contains(r0),
+                "a weight-one X destabilizer must have no i phase to be Hermitian"
+            );
             if self.destabs.signs_minus.contains(r0) {
                 self.destabs.signs_minus.toggle(other);
             }

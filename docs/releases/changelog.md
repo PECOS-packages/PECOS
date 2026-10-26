@@ -6,6 +6,11 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Breaking:** `pecos_engines::byte_message::protocol::MessageFlags` is a plain
+  `u8` newtype with `NONE` and `bits()`. The `bitflags`-generated methods and
+  operators and the `RESERVED_*` constants are removed; no flag was ever defined.
+  The wire format and `MessageHeader::get_flags()` values are unchanged.
+
 - **Breaking:** SLR block conversion rejects input names that capture unbound
   outer references in the block body. The error identifies the block, input
   and reference; rename the block input to avoid the collision (#1472).

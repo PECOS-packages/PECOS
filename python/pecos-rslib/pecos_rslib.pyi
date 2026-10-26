@@ -1125,6 +1125,7 @@ class QisEngineBuilder:
         *,
         custom_event_policy: str = "reject_unhandled",
         native_gates: list[str] | None = None,
+        batch_adapter_factory: Callable[[], object] | None = None,
     ) -> QisEngineBuilder: ...
     def selene_runtime_plugin(
         self,
@@ -1134,6 +1135,7 @@ class QisEngineBuilder:
         *,
         custom_event_policy: str = "reject_unhandled",
         native_gates: list[str] | None = None,
+        batch_adapter_factory: Callable[[], object] | None = None,
     ) -> QisEngineBuilder: ...
 
 class PhirJsonEngineBuilder:

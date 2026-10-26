@@ -664,7 +664,7 @@ impl PySimBuilder {
                         "capture_operation_trace shots must be greater than zero",
                     ));
                 }
-                sim_builder.run(shots).map_err(|e| {
+                py.detach(|| sim_builder.run(shots)).map_err(|e| {
                     crate::errors::simulation_error(e, "Trace capture simulation failed")
                 })?;
 

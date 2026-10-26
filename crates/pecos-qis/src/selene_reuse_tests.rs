@@ -718,3 +718,39 @@ fn two_drains_per_shot_preserve_timing() {
         }
     }
 }
+
+#[test]
+fn batch_adapters_restart_native_clocks_with_their_shot_context() {
+    struct Identity;
+    impl RuntimeBatchAdapter for Identity {
+        fn normalize(&mut self, batch: &RuntimeBatch) -> Result<Vec<RuntimeScheduledOp>> {
+            Ok(batch.operations.clone())
+        }
+    }
+    fixture(
+        "batch_adapters_restart_native_clocks_with_their_shot_context",
+        "PECOS_ADAPTER_FRESH_CLOCK",
+        true,
+        |plugin, public| {
+            for explicit_reset in [false, true] {
+                let mut runtime = runtime(plugin, public);
+                runtime.set_batch_adapter_factory(|| Ok(Box::new(Identity)));
+                runtime.set_num_qubits(1);
+                for shot in 0..3 {
+                    if explicit_reset {
+                        runtime.reset().unwrap();
+                    }
+                    runtime.shot_start(shot, None).unwrap();
+                    let ops = runtime
+                        .lower_operations(&[QuantumOp::RZ(0.25, 0).into()])
+                        .unwrap();
+                    assert_eq!(ops, [QuantumOp::RZ(0.25, 0)]);
+                    assert!(runtime.drain_pending_operations().unwrap().is_empty());
+                    runtime.shot_end().unwrap();
+                }
+                assert_eq!(INITS.lock().unwrap().len(), 3);
+                assert_eq!(EXITS.lock().unwrap().len(), 2);
+            }
+        },
+    );
+}

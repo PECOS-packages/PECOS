@@ -109,6 +109,12 @@ The runtime-lowered stream is authoritative for the resulting circuit. A
 runtime may reorder independent gates, lower a source operation into different
 native gates, or add explicit scheduling operations.
 
+Runtime integrations can supply a `batch_adapter_factory`, explicitly or on the
+runtime plugin object. Simulation and tracing then share the same checked
+normalization of custom events. See [runtime custom events](runtime-custom-events.md#shared-simulation-and-tracing-adapters).
+Capture-only traces with unhandled events have `runtime_events_complete=false`
+and cannot be replayed as audited circuits.
+
 ## Replaying a Stored Trace
 
 `qis_operation_trace_to_tick_circuit(...)` does not execute the original
@@ -128,17 +134,48 @@ The circuit metadata records the source measurement IDs under
 runtime-lowered `MeasId`s, even if runtime scheduling changes their execution
 order.
 
-## Runtime-Emitted Idle Gates
+## Runtime Timing and Idle Gates
 
-Some compatible runtimes emit explicit `Idle` operations as part of their
-schedule. Replay preserves those operations as `Idle` gates. Runtime durations
-are expressed in seconds and converted to integer PECOS `TimeUnits` using
+The lowered trace contains explicit `Idle` operations for runtime scheduling
+gaps. Replay preserves those operations as `Idle` gates. Trace durations are
+expressed in seconds and converted to integer PECOS `TimeUnits` using
 `1 TimeUnit = 1 ns`.
 
-PECOS does not infer or synthesize missing idles in this workflow. If the
-selected runtime emits no explicit idle operations, the traced circuit has no
-idle gates. This distinction matters when the circuit is later used with an
+PECOS inserts these explicit idles from gaps between the runtime's original
+batch timestamps, using the same lowering path as simulation. It does not
+invent a schedule for a runtime that supplies no timing gaps. Such a trace has
+no idle gates. This distinction matters when the circuit is later used with an
 idle-, T1-, or T2-dependent noise model.
+
+Reuse the simulator's idle parameters on the replayed circuit. For per-second
+rates, `NoiseParameters.for_runtime_idle_time_units()` converts them to the
+nanosecond units used by replay. Linear and sine-law rates are divided by
+`1e9`, quadratic coefficients by `1e18`, and T1/T2 durations are multiplied by
+`1e9`. Apply that conversion exactly once. The normalizer does not fit rates or
+replace the simulator's timing model.
+
+For example, if `physical_noise` is the existing `NoiseParameters` configuration
+in seconds, pass a converted copy to the DEM builder and retain the runtime's
+idles:
+
+```python
+from pecos.qec import DetectorErrorModel
+
+build = (
+    DetectorErrorModel.builder()
+    .with_program(program)
+    .with_qubits(num_qubits)
+    .with_runtime(runtime_plugin)  # Includes its batch_adapter_factory, if needed.
+    .with_detectors_json(detectors_json)
+    .with_observables_json(observables_json)
+    .with_noise(physical_noise.for_runtime_idle_time_units())
+    .build()
+)
+```
+
+Do not add `with_idle_after_2q(...)` to this workflow: that introduces a different
+timing convention and strips runtime idles by default. The conversion above
+changes units only; it does not estimate new noise parameters.
 
 Runtime-specific measurement-crosstalk payload gates are also preserved. The
 advanced `measurement_crosstalk_topology="global_from_measurements"` option can

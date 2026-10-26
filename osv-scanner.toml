@@ -13,16 +13,20 @@
 [[IgnoredVulns]]
 id = "RUSTSEC-2025-0057"
 # fxhash@0.2.1 -- unmaintained.
-# Chain: hugr-passes -> hugr -> tket -> zlup.
-# Upstream owner: https://github.com/CQCL/hugr (awaiting rustc-hash/ahash swap).
+# Chains: fxhash -> relrc -> hugr-core -> hugr -> tket -> zlup, and fxhash -> tket.
+# Upstream owners: https://github.com/CQCL/hugr and https://github.com/Quantinuum/tket2
+# (awaiting rustc-hash/ahash swap).
 reason = "Transitive via hugr/tket; unmaintained-crate warning, no exploit path in PECOS."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2024-0436"
 # paste@1.0.15 -- unmaintained proc-macro.
-# Chain: hugr-passes/ascent and mwpf both pull it in.
-# Upstream owners: https://github.com/CQCL/hugr and https://github.com/yuewuo/mwpf.
-reason = "Transitive via hugr/tket and mwpf; unmaintained-crate warning, no runtime impact (proc-macro)."
+# Chains: paste -> malachite-bigint -> rustpython-ast/rustpython-parser -> guppy-zlup,
+# and a dev-dependency of pecos-simulators, pecos-gpu-sims, pecos-stab-active and
+# pecos-stab-tn (test-only macro use).
+# Upstream owner: https://github.com/RustPython/Parser (archived; same long-term fix
+# as RUSTSEC-2025-0075).
+reason = "Transitive via rustpython-parser in the experimental zlup frontend, plus test-only use in simulator crates; unmaintained-crate warning, no runtime impact (proc-macro)."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2024-0388"

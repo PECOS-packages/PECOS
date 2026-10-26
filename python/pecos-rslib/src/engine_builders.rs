@@ -115,6 +115,16 @@ impl PyQasmEngineBuilder {
     }
 }
 
+fn runtime_clock_model(value: &str) -> PyResult<pecos_qis::RuntimeClockModel> {
+    match value {
+        "continuous" => Ok(pecos_qis::RuntimeClockModel::Continuous),
+        "shot_relative" => Ok(pecos_qis::RuntimeClockModel::ShotRelative),
+        _ => Err(pyo3::exceptions::PyValueError::new_err(
+            "clock_model must be 'continuous' or 'shot_relative'",
+        )),
+    }
+}
+
 fn runtime_custom_event_policy(value: &str) -> PyResult<pecos_qis::RuntimeCustomEventPolicy> {
     match value {
         "capture" => Ok(pecos_qis::RuntimeCustomEventPolicy::Capture),
@@ -178,17 +188,20 @@ impl PyQisEngineBuilder {
     }
 
     /// Use a Selene runtime built into the current PECOS/Cargo target.
-    #[pyo3(signature = (runtime_name = None, *, custom_event_policy = "reject_unhandled", native_gates = None, batch_adapter_factory = None))]
+    #[pyo3(signature = (runtime_name = None, *, custom_event_policy = "reject_unhandled", native_gates = None, batch_adapter_factory = None, clock_model = "continuous"))]
     fn selene_runtime(
         &mut self,
         runtime_name: Option<&str>,
         custom_event_policy: &str,
         native_gates: Option<Vec<String>>,
         batch_adapter_factory: Option<Py<PyAny>>,
+        clock_model: &str,
         py: Python<'_>,
     ) -> PyResult<Self> {
+        let clock_model = runtime_clock_model(clock_model)?;
         let mut runtime =
             configured_selene_runtime(runtime_name, custom_event_policy, native_gates)?;
+        runtime = runtime.with_clock_model(clock_model);
         crate::runtime_batch_adapter::configure(&mut runtime, batch_adapter_factory, py)?;
         self.inner = self.inner.clone().runtime(runtime);
         self.runtime_configured = true;
@@ -196,7 +209,7 @@ impl PyQisEngineBuilder {
     }
 
     /// Use a generic Selene runtime plugin by its shared library and plugin arguments.
-    #[pyo3(signature = (library_file, init_args = None, library_search_dirs = None, *, custom_event_policy = "reject_unhandled", native_gates = None, batch_adapter_factory = None))]
+    #[pyo3(signature = (library_file, init_args = None, library_search_dirs = None, *, custom_event_policy = "reject_unhandled", native_gates = None, batch_adapter_factory = None, clock_model = "continuous"))]
     fn selene_runtime_plugin(
         &mut self,
         library_file: &str,
@@ -205,8 +218,10 @@ impl PyQisEngineBuilder {
         custom_event_policy: &str,
         native_gates: Option<Vec<String>>,
         batch_adapter_factory: Option<Py<PyAny>>,
+        clock_model: &str,
         py: Python<'_>,
     ) -> PyResult<Self> {
+        let clock_model = runtime_clock_model(clock_model)?;
         let mut runtime = configured_selene_runtime_plugin(
             library_file,
             init_args,
@@ -214,6 +229,7 @@ impl PyQisEngineBuilder {
             custom_event_policy,
             native_gates,
         )?;
+        runtime = runtime.with_clock_model(clock_model);
         crate::runtime_batch_adapter::configure(&mut runtime, batch_adapter_factory, py)?;
         self.inner = self.inner.clone().runtime(runtime);
         self.runtime_configured = true;

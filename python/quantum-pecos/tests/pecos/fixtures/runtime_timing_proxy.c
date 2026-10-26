@@ -83,7 +83,12 @@ static SeleneErrno start(RuntimeInstance instance, uint64_t shot, uint64_t seed)
     if (!timing) return EINVAL;
     /* Only shots begun through shot_start advance the origin; this proxy does
      * not model lowering on a kept instance without a new shot_start. */
+#ifdef SHOT_RELATIVE_CLOCK
+    timing->clock = 0;
+    timing->shot_origin = 0;
+#else
     timing->shot_origin = timing->clock;
+#endif
     timing->rxy_count = 0;
 #ifdef PREP_GAP_NANOS
     timing->prep_emitted = false;

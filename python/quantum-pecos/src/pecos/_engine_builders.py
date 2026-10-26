@@ -167,6 +167,7 @@ class QisEngineBuilder:
         custom_event_policy: str = "reject_unhandled",
         native_gates: list[str] | None = None,
         batch_adapter_factory: object | None = None,
+        clock_model: str | None = None,
     ) -> Self:
         """Use a Selene runtime.
 
@@ -180,6 +181,9 @@ class QisEngineBuilder:
             native_gates: Accepted ABI gates (``rxy``, ``rz``, ``rzz``, ``rpp``).
                 Generic plugins default to all four; known runtimes use their declared set.
                 Plugin objects may alternatively expose a ``native_gates`` property.
+            clock_model: ``"continuous"`` (default) or ``"shot_relative"`` for
+                runtimes whose clock restarts in shot_start. Plugin objects may
+                declare this property. Both modes reuse clean native instances.
             batch_adapter_factory: Zero-argument factory returning a fresh adapter
                 with ``normalize(batch)`` for each shot. Plugin objects may expose
                 this property. Normalization is shared by simulation and tracing.
@@ -197,6 +201,7 @@ class QisEngineBuilder:
             custom_event_policy=custom_event_policy,
             native_gates=native_gates,
             batch_adapter_factory=batch_adapter_factory,
+            clock_model=clock_model,
         )
         return self
 
@@ -309,6 +314,7 @@ def _configure_selene_runtime(
     custom_event_policy: str = "reject_unhandled",
     native_gates: list[str] | None = None,
     batch_adapter_factory: object | None = None,
+    clock_model: str | None = None,
 ) -> object:
     if custom_event_policy not in ("capture", "reject_unhandled"):
         msg = "custom_event_policy must be 'capture' or 'reject_unhandled'"
@@ -324,7 +330,14 @@ def _configure_selene_runtime(
     if batch_adapter_factory is not None and not callable(batch_adapter_factory):
         msg = "batch_adapter_factory must be callable"
         raise TypeError(msg)
+    if clock_model is None and runtime is not None:
+        clock_model = getattr(runtime, "clock_model", None)
+    if clock_model is not None and clock_model not in ("continuous", "shot_relative"):
+        msg = "clock_model must be 'continuous' or 'shot_relative'"
+        raise ValueError(msg)
     gate_options = {} if native_gates is None else {"native_gates": native_gates}
+    if clock_model is not None:
+        gate_options["clock_model"] = clock_model
     if batch_adapter_factory is not None:
         gate_options["batch_adapter_factory"] = batch_adapter_factory
     if runtime is None:
@@ -342,6 +355,7 @@ def _configure_selene_runtime(
                     custom_event_policy=custom_event_policy,
                     native_gates=native_gates,
                     batch_adapter_factory=batch_adapter_factory,
+                    clock_model=clock_model,
                 )
             except Exception as fallback_error:
                 raise original_error from fallback_error
@@ -364,6 +378,7 @@ def _configure_selene_runtime(
                     custom_event_policy=custom_event_policy,
                     native_gates=declared_gates,
                     batch_adapter_factory=batch_adapter_factory,
+                    clock_model=clock_model,
                 )
             except Exception as fallback_error:
                 raise original_error from fallback_error
@@ -397,6 +412,7 @@ def selene_engine(
     custom_event_policy: str = "reject_unhandled",
     native_gates: list[str] | None = None,
     batch_adapter_factory: object | None = None,
+    clock_model: str | None = None,
 ) -> QisEngineBuilder:
     """Create a Selene-backed QIS engine builder.
 
@@ -406,6 +422,9 @@ def selene_engine(
             path, or generic Selene runtime plugin object may also be supplied.
         native_gates: Optional accepted ABI gate names; generic plugins default to
             all four, while known runtimes use their declared set.
+        clock_model: Optional ``"continuous"`` or ``"shot_relative"`` native
+            clock convention, also discoverable on runtime plugin objects.
+            Defaults to continuous and is independent of event normalization.
         batch_adapter_factory: Optional shot-local event normalizer factory, also
             discoverable on runtime plugin objects. See runtime-custom-events.
         custom_event_policy: ``"capture"`` (explicit opt-in) or
@@ -422,6 +441,7 @@ def selene_engine(
             custom_event_policy=custom_event_policy,
             native_gates=native_gates,
             batch_adapter_factory=batch_adapter_factory,
+            clock_model=clock_model,
         )
         .interface(pecos_rslib.qis_helios_interface())
     )

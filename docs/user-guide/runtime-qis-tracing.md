@@ -112,6 +112,9 @@ native gates, or add explicit scheduling operations.
 Runtime integrations can supply a `batch_adapter_factory`, explicitly or on the
 runtime plugin object. Simulation and tracing then share the same checked
 normalization of custom events. See [runtime custom events](runtime-custom-events.md#shared-simulation-and-tracing-adapters).
+The independent `clock_model` option declares whether native timestamps continue
+across shots or restart at zero; clean native instances remain reusable in both
+modes. It can also be declared on the runtime plugin object.
 Capture-only traces with unhandled events have `runtime_events_complete=false`
 and cannot be replayed as audited circuits.
 

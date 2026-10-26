@@ -236,3 +236,66 @@ fn adapter_keeps_shot_identity_after_native_end() {
     runtime.convert_runtime_batch(batch(0)).unwrap();
     assert_eq!(*seen.lock().unwrap(), [19, 19, 20]);
 }
+
+#[test]
+fn repeated_timed_targets_require_adapter_normalization() {
+    for reset_first in [false, true] {
+        for normalized in [false, true] {
+            let mut runtime = SeleneRuntime::new("synthetic.so");
+            runtime.set_num_qubits(1);
+            if normalized {
+                runtime.set_batch_adapter_factory(|| Ok(Box::new(Phase)));
+            }
+            let first = if reset_first {
+                RuntimeScheduledOp::Reset { qubit_id: 0 }
+            } else {
+                RuntimeScheduledOp::Rxy {
+                    qubit_id: 0,
+                    theta: 0.5,
+                    phi: 0.0,
+                }
+            };
+            let result = runtime.convert_runtime_batch(RuntimeOperationBatch {
+                start_time_nanos: 100,
+                duration_nanos: 20,
+                operations: vec![
+                    first,
+                    RuntimeScheduledOp::Rz {
+                        qubit_id: 0,
+                        theta: 0.5,
+                    },
+                ],
+                ..Default::default()
+            });
+            if normalized {
+                let ops = result.unwrap();
+                assert_eq!(
+                    ops.iter()
+                        .filter(|op| matches!(op, QuantumOp::Idle(..)))
+                        .count(),
+                    usize::from(!reset_first)
+                );
+                assert_eq!(runtime.last_gate_time_end_nanos[0], 120);
+            } else {
+                assert!(
+                    result
+                        .unwrap_err()
+                        .to_string()
+                        .contains("starts before its previous operation ended")
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn normalized_batches_still_reject_cross_batch_overlap() {
+    let mut runtime = runtime();
+    runtime.convert_runtime_batch(batch(100)).unwrap();
+    let error = runtime.convert_runtime_batch(batch(110)).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("starts before its previous operation ended")
+    );
+}

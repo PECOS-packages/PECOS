@@ -719,41 +719,85 @@ fn two_drains_per_shot_preserve_timing() {
     }
 }
 
-#[test]
-fn batch_adapters_restart_native_clocks_with_their_shot_context() {
-    struct Identity;
-    impl RuntimeBatchAdapter for Identity {
-        fn normalize(&mut self, batch: &RuntimeBatch) -> Result<Vec<RuntimeScheduledOp>> {
-            Ok(batch.operations.clone())
-        }
+struct IdentityAdapter;
+impl RuntimeBatchAdapter for IdentityAdapter {
+    fn normalize(&mut self, batch: &RuntimeBatch) -> Result<Vec<RuntimeScheduledOp>> {
+        Ok(batch.operations.clone())
     }
+}
+
+#[test]
+fn restarting_clocks_require_an_explicit_model_independent_of_adapters() {
     fixture(
-        "batch_adapters_restart_native_clocks_with_their_shot_context",
-        "PECOS_ADAPTER_FRESH_CLOCK",
+        "restarting_clocks_require_an_explicit_model_independent_of_adapters",
+        "PECOS_EXPLICIT_SHOT_CLOCK",
         true,
         |plugin, public| {
-            for explicit_reset in [false, true] {
-                let mut runtime = runtime(plugin, public);
-                runtime.set_batch_adapter_factory(|| Ok(Box::new(Identity)));
-                runtime.set_num_qubits(1);
-                for shot in 0..3 {
-                    if explicit_reset {
-                        runtime.reset().unwrap();
+            for model in [
+                RuntimeClockModel::Continuous,
+                RuntimeClockModel::ShotRelative,
+            ] {
+                for with_adapter in [false, true] {
+                    for explicit_reset in [false, true] {
+                        let mut runtime = runtime(plugin, public).with_clock_model(model);
+                        assert_eq!(runtime.clone().clock_model(), model);
+                        if with_adapter {
+                            runtime.set_batch_adapter_factory(|| Ok(Box::new(IdentityAdapter)));
+                        }
+                        runtime.set_num_qubits(1);
+                        for shot in 0..3 {
+                            if explicit_reset {
+                                runtime.reset().unwrap();
+                            }
+                            runtime.shot_start(shot, None).unwrap();
+                            let output = runtime.lower_operations(&[QuantumOp::RZ(0.25, 0).into()]);
+                            if model == RuntimeClockModel::Continuous && shot > 0 {
+                                assert!(
+                                    output.unwrap_err().to_string().contains("clock is behind")
+                                );
+                                break;
+                            }
+                            assert_eq!(output.unwrap(), [QuantumOp::RZ(0.25, 0)]);
+                            assert_eq!(
+                                runtime.drain_pending_operations().unwrap(),
+                                Vec::<QuantumOp>::new()
+                            );
+                            runtime.shot_end().unwrap();
+                        }
+                        assert_eq!(INITS.lock().unwrap().len(), 1);
+                        assert_eq!(EXITS.lock().unwrap().len(), 0);
                     }
-                    runtime.shot_start(shot, None).unwrap();
-                    let ops = runtime
-                        .lower_operations(&[QuantumOp::RZ(0.25, 0).into()])
-                        .unwrap();
-                    assert_eq!(ops, [QuantumOp::RZ(0.25, 0)]);
-                    assert_eq!(
-                        runtime.drain_pending_operations().unwrap(),
-                        Vec::<QuantumOp>::new()
-                    );
-                    runtime.shot_end().unwrap();
                 }
-                assert_eq!(INITS.lock().unwrap().len(), 3);
-                assert_eq!(EXITS.lock().unwrap().len(), 2);
             }
+        },
+    );
+}
+
+#[test]
+fn batch_adapters_reuse_continuous_native_clocks() {
+    fixture(
+        "batch_adapters_reuse_continuous_native_clocks",
+        "PECOS_ADAPTER_CONTINUOUS_CLOCK",
+        false,
+        |plugin, public| {
+            let expected = timed_shot(&mut timed_runtime(), LoweringRoute::Flat, 0);
+            let mut runtime = runtime(plugin, public);
+            runtime.init_args = timed_runtime().init_args.clone();
+            let created = Arc::new(AtomicUsize::new(0));
+            let count = created.clone();
+            runtime.set_batch_adapter_factory(move || {
+                count.fetch_add(1, Ordering::SeqCst);
+                Ok(Box::new(IdentityAdapter))
+            });
+            for shot in 0..3 {
+                assert_eq!(
+                    timed_shot(&mut runtime, LoweringRoute::Flat, shot),
+                    expected
+                );
+            }
+            assert_eq!(created.load(Ordering::SeqCst), 3);
+            assert_eq!(INITS.lock().unwrap().len(), 1);
+            assert_eq!(EXITS.lock().unwrap().len(), 0);
         },
     );
 }

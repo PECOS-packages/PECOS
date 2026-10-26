@@ -215,3 +215,51 @@ def test_standard_runtimes_need_no_event_adapter(runtime_name, scheduled_support
     trace = pecos.capture_qis_operation_trace(pecos.Qis(scheduled_support.ramsey), 1, runtime=runtime_name)
     circuit = pecos.qis_operation_trace_to_tick_circuit(trace)
     assert circuit.num_measurements() == 1
+
+
+@pytest.mark.parametrize("with_adapter", [False, True])
+@pytest.mark.parametrize("declared_clock", [None, "shot_relative"])
+def test_clock_model_is_independent_of_custom_events(tmp_path, scheduled_support, with_adapter, declared_clock):
+    library, _ = scheduled_support.build_runtime(
+        tmp_path,
+        100,
+        events=with_adapter,
+        shot_relative_clock=True,
+    )
+
+    class Plugin:
+        library_file = library
+        clock_model = declared_clock
+        batch_adapter_factory = PhaseAdapter if with_adapter else None
+
+        def get_init_args(self):
+            return SimpleRuntimePlugin().get_init_args()
+
+    plugin = Plugin()
+    program = pecos.Qis(scheduled_support.ramsey)
+    builder = simulation(plugin, program).workers(1)
+    if declared_clock is None:
+        with pytest.raises(RuntimeError, match="clock is behind"):
+            builder.run(3)
+        return
+    assert builder.run(3).to_dict()["measurement_0"] == [int(with_adapter)] * 3
+    chunks = builder.capture_operation_trace(3)
+    idles = [gate["params"] for chunk in chunks for gate in chunk["lowered_quantum_ops"] if gate["gate_type"] == "Idle"]
+    assert idles == [[100e-9]] * 3
+    # An explicit argument overrides the plugin declaration while retaining init args.
+    plugin.clock_model = "continuous"
+    trace = pecos.capture_qis_operation_trace(
+        program,
+        1,
+        runtime=plugin,
+        clock_model="shot_relative",
+        batch_adapter_factory=PhaseAdapter if with_adapter else None,
+    )
+    assert trace[-1]["runtime_events_complete"] is True
+
+
+def test_invalid_clock_model_rejects_before_runtime_discovery():
+    with pytest.raises(ValueError, match="clock_model"):
+        pecos.selene_engine("missing-runtime", clock_model="guess")
+    with pytest.raises(ValueError, match="clock_model"):
+        pr.qis_engine().selene_runtime("missing-runtime", clock_model="guess")

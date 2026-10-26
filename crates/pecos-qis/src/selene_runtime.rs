@@ -362,6 +362,16 @@ impl NativeWorkState {
     }
 }
 
+/// Timestamp convention declared by a native runtime, independent of custom events.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RuntimeClockModel {
+    /// One native clock continues across shots. Replayed times are shot-relative.
+    #[default]
+    Continuous,
+    /// The runtime restarts its clock at zero in each native `shot_start` hook.
+    ShotRelative,
+}
+
 /// Selene runtime implementation
 ///
 /// The `library` field is wrapped in `ManuallyDrop` to prevent calling `dlclose()`
@@ -373,6 +383,8 @@ pub struct SeleneRuntime {
     plugin_path: String,
     /// Declared accepted ABI gates; part of this runtime's configuration identity.
     native_gate_set: RuntimeNativeGateSet,
+    /// Native timestamp convention, configured before execution.
+    clock_model: RuntimeClockModel,
 
     /// Runtime-plugin init arguments passed to `selene_runtime_init`.
     init_args: Vec<String>,
@@ -561,11 +573,25 @@ impl SeleneRuntime {
         self.native_gate_set
     }
 
+    /// Declare the native clock convention before execution. Both conventions
+    /// reuse clean native instances; this does not reset or reinterpret live work.
+    #[must_use]
+    pub fn with_clock_model(mut self, clock_model: RuntimeClockModel) -> Self {
+        self.clock_model = clock_model;
+        self
+    }
+
+    #[must_use]
+    pub fn clock_model(&self) -> RuntimeClockModel {
+        self.clock_model
+    }
+
     /// Create a new Selene runtime with the given plugin path
     pub fn new(plugin_path: impl AsRef<Path>) -> Self {
         Self {
             plugin_path: plugin_path.as_ref().to_string_lossy().to_string(),
             native_gate_set: RuntimeNativeGateSet::default(),
+            clock_model: RuntimeClockModel::default(),
             init_args: Vec::new(),
             library_search_dirs: Vec::new(),
             library: None,
@@ -2987,6 +3013,8 @@ impl SeleneRuntime {
         let batch_index = self.runtime_batch_index;
         self.runtime_batch_index += 1;
         let mut lowered_ops = Vec::new();
+        // Only normalized output may expand into multiple gates sharing a qubit.
+        let normalized = self.batch_adapter_factory.is_some();
         let mut touched = BTreeSet::new();
         let start_time = batch.start_time_nanos;
         let end_time = batch.end_time_nanos();
@@ -2999,7 +3027,7 @@ impl SeleneRuntime {
                     phi,
                 } => {
                     let qubit = self.runtime_qubit_to_usize(qubit_id)?;
-                    if touched.insert(qubit) {
+                    if !normalized || touched.insert(qubit) {
                         self.push_idle_before(&mut lowered_ops, qubit, start_time)?;
                     }
                     lowered_ops.push(QuantumOp::RXY(theta, phi, qubit));
@@ -3007,7 +3035,7 @@ impl SeleneRuntime {
                 }
                 RuntimeScheduledOp::Rz { qubit_id, theta } => {
                     let qubit = self.runtime_qubit_to_usize(qubit_id)?;
-                    if touched.insert(qubit) {
+                    if !normalized || touched.insert(qubit) {
                         self.push_idle_before(&mut lowered_ops, qubit, start_time)?;
                     }
                     lowered_ops.push(QuantumOp::RZ(theta, qubit));
@@ -3020,10 +3048,10 @@ impl SeleneRuntime {
                 } => {
                     let qubit_1 = self.runtime_qubit_to_usize(qubit_id_1)?;
                     let qubit_2 = self.runtime_qubit_to_usize(qubit_id_2)?;
-                    if touched.insert(qubit_1) {
+                    if !normalized || touched.insert(qubit_1) {
                         self.push_idle_before(&mut lowered_ops, qubit_1, start_time)?;
                     }
-                    if touched.insert(qubit_2) {
+                    if !normalized || touched.insert(qubit_2) {
                         self.push_idle_before(&mut lowered_ops, qubit_2, start_time)?;
                     }
                     lowered_ops.push(QuantumOp::RZZ(theta, qubit_1, qubit_2));
@@ -3036,7 +3064,7 @@ impl SeleneRuntime {
                 } => {
                     let qubit = self.runtime_qubit_to_usize(qubit_id)?;
                     let program_result = self.runtime_result_to_program_result(result_id)?;
-                    if touched.insert(qubit) {
+                    if !normalized || touched.insert(qubit) {
                         self.push_idle_before(&mut lowered_ops, qubit, start_time)?;
                     }
                     let leakage_aware = self
@@ -3068,7 +3096,7 @@ impl SeleneRuntime {
                         .entry(program_result)
                         .or_default()
                         .push_back((result_id, true));
-                    if touched.insert(qubit) {
+                    if !normalized || touched.insert(qubit) {
                         self.push_idle_before(&mut lowered_ops, qubit, start_time)?;
                     }
                     lowered_ops.push(QuantumOp::MeasureLeaked(qubit, program_result));
@@ -3088,10 +3116,10 @@ impl SeleneRuntime {
                 } => {
                     let qubit_1 = self.runtime_qubit_to_usize(qubit_id_1)?;
                     let qubit_2 = self.runtime_qubit_to_usize(qubit_id_2)?;
-                    if touched.insert(qubit_1) {
+                    if !normalized || touched.insert(qubit_1) {
                         self.push_idle_before(&mut lowered_ops, qubit_1, start_time)?;
                     }
-                    if touched.insert(qubit_2) {
+                    if !normalized || touched.insert(qubit_2) {
                         self.push_idle_before(&mut lowered_ops, qubit_2, start_time)?;
                     }
                     lowered_ops.push(QuantumOp::RXYXY2Q(theta, phi, qubit_1, qubit_2));
@@ -3233,6 +3261,7 @@ impl Clone for SeleneRuntime {
         Self {
             plugin_path: self.plugin_path.clone(),
             native_gate_set: self.native_gate_set,
+            clock_model: self.clock_model,
             init_args: self.init_args.clone(),
             library_search_dirs: self.library_search_dirs.clone(),
             library: None,  // Will be reloaded on demand
@@ -3678,19 +3707,22 @@ impl QisRuntime for SeleneRuntime {
                 "end the active native shot or reset before starting another shot".into(),
             ));
         }
-        // A runtime normalizer has a fresh physical context each shot. Match
-        // that with a fresh native instance: opaque-event plugins may reset
-        // their clocks and bookkeeping at shot_start rather than carry them.
-        if self.native_work.unsettled
-            || (self.batch_adapter_factory.is_some() && self.instance.is_some())
-        {
+        if self.native_work.unsettled {
             self.reset_plugin_instance()
                 .map_err(|error| self.latch_batch_failure(error))?;
         }
         // Reset state for new shot
         self.native_shot.plugin_engaged = false;
         self.native_shot.work_submitted = false;
-        self.native_shot.time_origin_nanos = self.collected_time_end_nanos;
+        self.native_shot.time_origin_nanos = match self.clock_model {
+            RuntimeClockModel::Continuous => self.collected_time_end_nanos,
+            RuntimeClockModel::ShotRelative => {
+                // The plugin's shot_start hook resets its own clock. No guessed
+                // offset or native reinitialization is needed for this contract.
+                self.collected_time_end_nanos = 0;
+                0
+            }
+        };
         self.state = ClassicalState::default();
         self.current_op_index = 0;
         self.needs_reexecution = false;
@@ -3775,7 +3807,6 @@ impl QisRuntime for SeleneRuntime {
 
     fn reset(&mut self) -> Result<()> {
         if (self.batch_failure.is_some()
-            || self.batch_adapter_factory.is_some()
             || self.active_shot.is_some()
             || self.native_work.unsettled
             || self.instance.is_none())

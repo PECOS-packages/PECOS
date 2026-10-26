@@ -242,9 +242,11 @@ def test_qis_operation_trace_can_be_replayed_or_captured_as_a_tick_circuit(
         seed: int = 0,
         runtime: object | None = None,
         batch_adapter_factory: object | None = None,
+        clock_model: str | None = None,
     ) -> list[dict]:
         del program, num_qubits, seed, runtime
         assert batch_adapter_factory is None
+        assert clock_model is None
         return trace
 
     monkeypatch.setattr(pecos.tracing, "capture_qis_operation_trace", fake_capture)
@@ -385,8 +387,10 @@ def test_qis_operation_trace_conversion_rejects_invalid_angle_arity(
         pecos.qis_operation_trace_to_tick_circuit(trace)
 
 
+@pytest.mark.parametrize("clock_model", [None, "shot_relative"])
 def test_capture_qis_operation_trace_configures_the_trace_builder(
     monkeypatch: pytest.MonkeyPatch,
+    clock_model: str | None,
 ) -> None:
     trace = _completed_trace()
     calls: list[tuple[str, object]] = []
@@ -418,13 +422,13 @@ def test_capture_qis_operation_trace_configures_the_trace_builder(
     monkeypatch.setattr(
         pecos,
         "selene_engine",
-        lambda actual, *, batch_adapter_factory: ("runtime", actual, batch_adapter_factory),
+        lambda actual, *, batch_adapter_factory, clock_model: ("runtime", actual, batch_adapter_factory, clock_model),
     )
     monkeypatch.setattr(pecos_rslib, "coin_toss", lambda: "trace-backend")
 
-    assert pecos.capture_qis_operation_trace(program, 3, seed=11, runtime=runtime) == trace
+    assert pecos.capture_qis_operation_trace(program, 3, seed=11, runtime=runtime, clock_model=clock_model) == trace
     assert calls == [
-        ("classical", ("runtime", runtime, None)),
+        ("classical", ("runtime", runtime, None, clock_model)),
         ("quantum", "trace-backend"),
         ("qubits", 3),
         ("seed", 11),

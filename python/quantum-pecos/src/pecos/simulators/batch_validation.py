@@ -156,13 +156,6 @@ def _validate_each(
             )
         else:
             # Integer-like objects take precedence over their sequence methods.
-            # Bindings key and store qubits in sets and dicts, so an unhashable
-            # scalar (such as a zero-dimensional array) cannot be dispatched.
-            try:
-                hash(location)
-            except TypeError as exc:
-                msg = f"{symbol}: expected a hashable qubit index, got {location!r}"
-                raise ValueError(msg) from exc
             is_sequence = False
         qubits = location if is_sequence else (location,)
         try:
@@ -183,6 +176,13 @@ def _validate_each(
                 q = index(qubit)
             except TypeError as exc:
                 msg = f"{symbol}: expected a non-negative qubit index, got {qubit!r}"
+                raise ValueError(msg) from exc
+            # Results are keyed by location, and Python simulators store qubits
+            # in sets, so reject unhashable indices before dispatch.
+            try:
+                hash(qubit)
+            except TypeError as exc:
+                msg = f"{symbol}: expected a hashable qubit index, got {qubit!r}"
                 raise ValueError(msg) from exc
             if q < 0 or (capacity is not None and q >= capacity):
                 msg = f"{symbol}: qubit {q} is out of bounds (capacity={capacity})"

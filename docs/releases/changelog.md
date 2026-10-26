@@ -18,10 +18,13 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   singleton tuples/lists, and DefaultSimulator accepts singleton sized, indexable
   sequences. `I` is a single-qubit gate and follows the same per-state rule as
   `X`; a pair location for `I` is rejected (use `II`), except by CoinToss, whose
-  gates stay no-ops. Integer-like scalars are classified before sequences, and an
-  unhashable one (such as a zero-dimensional array) is rejected up front.
-  Multi-qubit locations must be ordered: set/frozenset pairs are rejected, including in SparseStabPy and CudaStateVec where they previously
-  ran. Batches may still repeat or overlap qubits and execute sequentially.
+  gates stay no-ops. Integer-like scalars are classified before sequences, and
+  unhashable qubit indices are rejected up front, including inside locations.
+  Zero-dimensional arrays are now rejected even where Rust-backed bindings
+  accepted them for non-measuring gates. Multi-qubit locations must be ordered:
+  set/frozenset pairs are rejected, including in SparseStabPy and CudaStateVec
+  where they previously ran. Batches may still repeat or overlap qubits and
+  execute sequentially.
   Native SparseStab, Stabilizer, StateVec, StabVec, CoinToss and PauliProp expose
   a read-only `gate_capacity` property; PauliProp returns `None` and remains
   growable. CoinToss's own no-op `run_gate` and its `run_circuit` are unchanged.

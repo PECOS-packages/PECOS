@@ -17,10 +17,10 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   its other one-qubit gates require scalars. PauliProp/PauliFaultProp accept
   singleton tuples/lists, and DefaultSimulator accepts singleton sized, indexable
   sequences. `I` is a single-qubit gate and follows the same per-state rule as
-  `X`; a pair location for `I` is rejected (use `II`).
-  Integer-like scalars (including zero-dimensional integer arrays) are classified
-  before sequences. Multi-qubit locations must be ordered: set/frozenset pairs
-  are rejected, including in SparseStabPy and CudaStateVec where they previously
+  `X`; a pair location for `I` is rejected (use `II`), except by CoinToss, whose
+  gates stay no-ops. Integer-like scalars are classified before sequences, and an
+  unhashable one (such as a zero-dimensional array) is rejected up front.
+  Multi-qubit locations must be ordered: set/frozenset pairs are rejected, including in SparseStabPy and CudaStateVec where they previously
   ran. Batches may still repeat or overlap qubits and execute sequentially.
   Native SparseStab, Stabilizer, StateVec, StabVec, CoinToss and PauliProp expose
   a read-only `gate_capacity` property; PauliProp returns `None` and remains

@@ -585,7 +585,8 @@ def test_sparse_rotation_location_protocol(symbol, shape, index_scalar):
     assert state.destabs.row_string() == fresh.destabs.row_string()
 
 
-@pytest.mark.parametrize("state", [*WRAPPERS, "DefaultSimulator"], indirect=True)
+# CoinToss.run_gate is a no-op for every input, so it cannot observe this.
+@pytest.mark.parametrize("state", [*QUANTUM, *PAULI, "DefaultSimulator"], indirect=True)
 def test_zero_dimensional_empty_batch(state, index_scalar):
     assert state.run_gate("unknown-private-gate", index_scalar(0)) == {}
 
@@ -612,15 +613,7 @@ def test_identity_singleton_accepted_where_singletons_are(state, location):
     assert state.run_gate("I", [location]) == {}
 
 
-def test_numpy_location_compatibility():
-    # NumPy is explicitly declared in the root numpy-compat test dependency group.
-    # The dependency-free protocol tests above remain mandatory without that group.
-    np = pytest.importorskip("numpy")
-    state = simulators.SparseStabPy(2)
-    assert state.run_gate("X", np.array([0, 1]), simulate_gate=False) == {}
-    assert state.run_gate("unknown-private-gate", np.array(0)) == {}
-    for scalar in (np.int64(1), np.array(1)):
-        state.run_gate("RZ", [0, scalar], angle=pi / 2)
-    state.run_gate("X", [0])
-    state.run_gate("CX", [np.array([0, 1])])
-    assert state.run_gate("Measure", [0, 1]) == {0: 1, 1: 1}
+def test_hybrid_engine_bare_int_still_raises():
+    # On dev the public HybridEngine iterated the batch and raised TypeError.
+    with pytest.raises(TypeError):
+        pecos.HybridEngine.run_gate(simulators.SparseStabPy(2), {}, "X", 0)

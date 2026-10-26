@@ -156,18 +156,25 @@ def _validate_each(
             )
         else:
             # Integer-like objects take precedence over their sequence methods.
+            # Bindings key and store qubits in sets and dicts, so an unhashable
+            # scalar (such as a zero-dimensional array) cannot be dispatched.
+            try:
+                hash(location)
+            except TypeError as exc:
+                msg = f"{symbol}: expected a hashable qubit index, got {location!r}"
+                raise ValueError(msg) from exc
             is_sequence = False
-        if arity == 1 and is_sequence and not allow_singletons and len(location) == 1:
-            msg = f"{symbol}: expected a scalar qubit index, got {location!r}"
-            raise ValueError(msg)
         qubits = location if is_sequence else (location,)
         try:
             size = len(qubits)
         except TypeError as exc:
             msg = f"{symbol}: expected a qubit index or a sized sequence, got {location!r}"
             raise ValueError(msg) from exc
+        if arity == 1 and is_sequence and not allow_singletons and size == 1:
+            msg = f"{symbol}: expected a scalar qubit index, got {location!r}"
+            raise ValueError(msg)
         if size != arity:
-            hint = "; use II for the two-qubit identity" if symbol == "I" else ""
+            hint = "; use II for the two-qubit identity" if symbol == "I" and size == 2 else ""
             msg = f"{symbol}: expected {arity} qubit(s) per location, got {location!r}{hint}"
             raise ValueError(msg)
         seen = set()

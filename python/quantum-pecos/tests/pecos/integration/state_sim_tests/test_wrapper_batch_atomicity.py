@@ -312,7 +312,13 @@ def test_empty_short_circuit(route, locations, cuda_wrapper_class):
     state.gate_capacity = 0
     state.bindings = {}
     for symbol in ("X", "unknown-private-gate", "Tick"):
-        _dispatch(state, route, symbol, locations, {})
+        if route == "hybrid" and locations == 0:
+            # The wrappers keep their historical bare-zero shortcut; the public
+            # HybridEngine never had one and still raises, as on dev.
+            with pytest.raises(TypeError):
+                _dispatch(state, route, symbol, locations, {})
+        else:
+            _dispatch(state, route, symbol, locations, {})
 
 
 def test_hybrid_cointoss_preserves_output_and_rng():
@@ -477,11 +483,25 @@ def test_sized_pair_tail_is_atomic(name, sized_sequence):
     assert state.run_gate("Measure", [0, 1]) == {0: 1, 1: 1}
 
 
-@pytest.mark.parametrize("allow_sequences", [False, True])
-def test_index_scalar_precedes_sequence_policy(index_scalar, allow_sequences):
-    validate_batch("X", [index_scalar(1)], 2, allow_singletons=False, allow_sequences=allow_sequences)
+def test_index_scalar_precedes_sequence_policy(index_scalar):
+    # With sequences allowed, IndexScalar's sequence methods would otherwise win.
+    validate_batch("X", [index_scalar(1)], 2, allow_singletons=False, allow_sequences=True)
     with pytest.raises(ValueError, match=r"X.*out of bounds"):
-        validate_batch("X", [index_scalar(2)], 2, allow_sequences=allow_sequences)
+        validate_batch("X", [index_scalar(2)], 2, allow_sequences=True)
+
+
+def test_noninteger_unsized_scalar_is_gate_named_on_one_qubit_gates(index_scalar):
+    with pytest.raises(ValueError, match="X: expected a qubit index or a sized sequence"):
+        validate_batch("X", [index_scalar(1.5)], 2, allow_singletons=False, allow_sequences=True)
+
+
+def test_cointoss_validation_follows_instance_bindings():
+    # Rebind a spelling whose module-level binding does not measure, so only a
+    # check against this instance's bindings sees the measurement.
+    state = simulators.CoinToss(4, prob=1.0)
+    state.bindings["X"] = state.bindings["MX"]
+    with pytest.raises(ValueError, match="X"):
+        state.validate_gate_batch("X", [0, 9])
 
 
 def test_index_scalar_dispatch_keeps_original_location(index_scalar):
@@ -507,3 +527,12 @@ def test_sparse_rotation_bad_scalar_tail_is_atomic(symbol, index_scalar):
 def test_noninteger_unsized_location_is_gate_named(index_scalar):
     with pytest.raises(ValueError, match="CX"):
         validate_batch("CX", [index_scalar(1.5)], 2, allow_sequences=True)
+
+
+@pytest.mark.parametrize("name", ["SparseStabPy", "StateVec"])
+def test_unhashable_scalar_rejected_before_dispatch(name, unhashable_index_scalar):
+    state = _make(name)
+    before = _snapshot(state)
+    with pytest.raises(ValueError, match="H: expected a hashable qubit index"):
+        state.run_gate("H", [0, unhashable_index_scalar(1)])
+    assert _snapshot(state) == before

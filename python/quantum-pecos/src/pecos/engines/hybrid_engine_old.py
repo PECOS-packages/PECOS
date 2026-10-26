@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 import struct
+from collections.abc import Sized
 from typing import TYPE_CHECKING
 
 import pecos as pc
@@ -422,7 +423,8 @@ class HybridEngine:
         **params: Additional parameters for the gate operation.
 
         """
-        if is_empty_batch(locations):
+        # Only an empty container is a no-op here; dev raised for None and bare ints.
+        if isinstance(locations, Sized) and is_empty_batch(locations):
             return
         locations = replayable_locations(locations)
         validator = getattr(state, "validate_gate_batch", None)

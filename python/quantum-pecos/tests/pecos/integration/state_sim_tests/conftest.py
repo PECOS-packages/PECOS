@@ -60,3 +60,14 @@ def sized_sequence():
 @pytest.fixture
 def index_scalar():
     return IndexScalar
+
+
+class UnhashableIndexScalar(IndexScalar):
+    """An integer scalar that cannot be hashed, like a zero-dimensional array."""
+
+    __hash__ = None
+
+
+@pytest.fixture
+def unhashable_index_scalar():
+    return UnhashableIndexScalar

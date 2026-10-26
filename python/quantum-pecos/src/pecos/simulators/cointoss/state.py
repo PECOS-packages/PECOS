@@ -96,7 +96,7 @@ class CoinToss:
 
     def validate_gate_batch(self, symbol: str, locations: object) -> None:
         """Check measurement spellings over every batch HybridEngine dispatches."""
-        if gate_dict.get(symbol) is _measure_gate:
+        if self.bindings.get(symbol) is _measure_gate:
             validate_batch(symbol, locations, self.gate_capacity, allow_singletons=False)
 
     def run_gate(

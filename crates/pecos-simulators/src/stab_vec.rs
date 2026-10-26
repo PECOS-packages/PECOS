@@ -1478,6 +1478,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
     // Non-Pauli frames must be flushed.
 
     fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "CX");
         if let Some(dense) = &mut self.dense {
             dense.cx(pairs);
             return self;
@@ -1497,6 +1498,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
     }
 
     fn cz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "CZ");
         if let Some(dense) = &mut self.dense {
             dense.cz(pairs);
             return self;
@@ -1513,6 +1515,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
     }
 
     fn szz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SZZ");
         if let Some(dense) = &mut self.dense {
             dense.szz(pairs);
             return self;
@@ -1529,6 +1532,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
     }
 
     fn szzdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SZZDG");
         if let Some(dense) = &mut self.dense {
             dense.szzdg(pairs);
             return self;
@@ -1546,6 +1550,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
     }
 
     fn sxx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SXX");
         if let Some(dense) = &mut self.dense {
             dense.sxx(pairs);
             return self;
@@ -1564,6 +1569,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
     }
 
     fn sxxdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SXXDG");
         if let Some(dense) = &mut self.dense {
             dense.sxxdg(pairs);
             return self;
@@ -1581,6 +1587,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
     }
 
     fn syy(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SYY");
         if let Some(dense) = &mut self.dense {
             dense.syy(pairs);
             return self;
@@ -1606,6 +1613,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
     }
 
     fn syydg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SYYDG");
         if let Some(dense) = &mut self.dense {
             dense.syydg(pairs);
             return self;
@@ -1630,6 +1638,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
     }
 
     fn cy(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "CY");
         if let Some(dense) = &mut self.dense {
             dense.cy(pairs);
             return self;
@@ -1721,6 +1730,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> ArbitraryRotationGateabl
     }
 
     fn rzz(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "RZZ");
         if let Some(dense) = &mut self.dense {
             dense.rzz(theta, pairs);
             return self;
@@ -1734,6 +1744,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> ArbitraryRotationGateabl
     }
 
     fn rxx(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "RXX");
         if let Some(dense) = &mut self.dense {
             dense.rxx(theta, pairs);
             return self;
@@ -1749,6 +1760,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> ArbitraryRotationGateabl
     }
 
     fn ryy(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "RYY");
         if let Some(dense) = &mut self.dense {
             dense.ryy(theta, pairs);
             return self;

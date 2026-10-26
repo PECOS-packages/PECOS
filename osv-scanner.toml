@@ -147,3 +147,13 @@ id = "RUSTSEC-2026-0369"
 # pecos-rslib enables it for the Python RelayBpDecoder).
 # Upstream owners: https://github.com/trmue/relay and https://github.com/jturner314/ndarray-npy.
 reason = "Transitive via relay-bp/ndarray-npy, which read .npz entries by name and never call ZipArchive::extract or ZipStreamReader::extract, the affected APIs."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0173"
+# proc-macro-error2@2.0.1 -- unmaintained proc-macro (fork of proc-macro-error).
+# Chain: pecos-qec -> selene-hugr-qis-compiler -> tket-qsystem -> hugr-cli 0.29 ->
+# tabled 0.21 -> tabled_derive 0.11 -> proc-macro-error2. tabled_derive 0.12 drops
+# it, but needs tabled 0.22, which hugr-cli only takes from 0.30.
+# Upstream owners: https://github.com/CQCL/hugr and https://github.com/Quantinuum/tket2.
+# Re-check on hugr/tket bumps.
+reason = "Transitive via hugr-cli -> tabled -> tabled_derive; compile-time proc-macro only, no runtime impact."

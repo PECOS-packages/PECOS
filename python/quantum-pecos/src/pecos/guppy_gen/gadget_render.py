@@ -5,13 +5,14 @@
 
 from pecos.guppy_gen._certificate import certify_surface_measurement_layout
 from pecos.guppy_gen._module_loader import load_cached_guppy_source
+from pecos.qec.circuit_steps import OpType
 from pecos.qec.surface._check_plan import (
     ancilla_schedule_for_check_plan,
     cnot_round_order_for_check_plan,
     require_current_surface_check_plan_renderer,
     resolve_surface_check_plan,
 )
-from pecos.qec.surface.circuit_builder import OpType, generate_tick_circuit_from_patch
+from pecos.qec.surface.circuit_builder import generate_tick_circuit_from_patch
 from pecos.qec.surface.gadgets import (
     Gadget,
     GadgetKind,
@@ -55,6 +56,9 @@ def _allocation_epochs(
     epochs = {}
     results: dict[str, list[tuple[int, str]]] = {"X": [], "Z": []}
     for step_index, step in enumerate(gadget.steps):
+        if step.op_type == OpType.RELABEL:
+            msg = f"render_gadget_function does not support RELABEL step {step!r}; use pecos.qec.helix.lower_steps"
+            raise ValueError(msg)
         if not step.qubits or step.qubits[0] in data_names:
             continue
         qubit = step.qubits[0]

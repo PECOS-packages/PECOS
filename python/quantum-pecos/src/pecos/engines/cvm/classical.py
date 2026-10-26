@@ -55,7 +55,7 @@ def set_output(
     output_spec["__pecos_scratch"] = state.num_qubits
 
     if circuit.metadata.get("cvar_spec"):
-        output_spec_new = circuit.metadata["cvar_spec"]
+        output_spec_new = circuit.metadata["cvar_spec"].copy()
         output_spec_new.update(output_spec)
         output_spec = output_spec_new
 

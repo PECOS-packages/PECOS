@@ -390,11 +390,24 @@ class Statement(AstNode):
 
 @dataclass(frozen=True, kw_only=True)
 class GateOp(Statement):
-    """Quantum gate application."""
+    """Quantum gate application; multi-qubit gates have exactly ``gate.arity`` distinct targets."""
 
     gate: GateKind
     targets: tuple[SlotRef, ...]
     params: tuple[Expression, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.gate.arity > 1 and len(self.targets) != self.gate.arity:
+            msg = f"Gate {self.gate.name} expects {self.gate.arity} qubit(s), got {len(self.targets)}: {self.targets!r}"
+            raise ValueError(msg)
+        if self.gate.arity > 1:
+            seen = set()
+            for target in self.targets:
+                key = (target.allocator, target.index)
+                if key in seen:
+                    msg = f"Gate {self.gate.name} repeats qubit {target}"
+                    raise ValueError(msg)
+                seen.add(key)
 
     def children(self) -> Sequence[AstNode]:
         return (*self.targets, *self.params)

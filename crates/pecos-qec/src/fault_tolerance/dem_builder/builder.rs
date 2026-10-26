@@ -1314,6 +1314,11 @@ impl<'a> DemBuilder<'a> {
                 require(1)?;
                 sim.h(qubits);
                 sim.mz(qubits);
+                sim.h(qubits);
+            }
+            GateType::MeasureLeaked => {
+                require(1)?;
+                sim.mz_unrecorded(qubits);
             }
             GateType::MZ | GateType::MeasureFree => {
                 require(1)?;
@@ -3794,6 +3799,31 @@ mod tests {
     }
 
     #[test]
+    fn mx_crosstalk_replay_restores_x_eigenstate() {
+        for prepared in [false, true] {
+            let mut sim = SymbolicSparseStab::new(1);
+            if prepared {
+                sim.h(&[0]);
+            }
+            let gate = pecos_core::Gate::mx(&[0]);
+            DemBuilder::apply_symbolic_gate_for_crosstalk_hidden_mz(&mut sim, 0, &gate).unwrap();
+            DemBuilder::apply_symbolic_gate_for_crosstalk_hidden_mz(&mut sim, 1, &gate).unwrap();
+            let history = sim.measurement_history();
+            let first = history.get(0).unwrap();
+            let second = history.get(1).unwrap();
+            assert_eq!(first.is_deterministic, prepared);
+            assert!(second.is_deterministic);
+            assert_eq!(second.outcome, first.outcome);
+            assert_eq!(second.flip, first.flip);
+            if prepared {
+                assert!(second.outcome.is_empty());
+            } else {
+                assert_eq!(second.outcome.iter().collect::<Vec<_>>(), [0]);
+            }
+        }
+    }
+
+    #[test]
     fn map_only_records_are_bounded() {
         let mut map = DagFaultInfluenceMap::with_capacity(0);
         map.measurements = vec![(0, 0, 0), (1, 1, 0)];
@@ -5133,6 +5163,61 @@ mod tests {
             err.to_string()
                 .contains("state-independent hidden MZ result"),
             "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn crosstalk_hidden_replay_supports_leaked_measurements() {
+        let mut sim = SymbolicSparseStab::new(2);
+        sim.h(&[0]).cx(&[(0, 1)]);
+        DemBuilder::apply_symbolic_gate_for_crosstalk_hidden_mz(
+            &mut sim,
+            0,
+            &pecos_core::Gate::measure_leaked(&[0]),
+        )
+        .unwrap();
+        assert_eq!(sim.measurement_count(), 0);
+        let results = sim.mz(&[1, 0]);
+        assert!(!results[0].is_deterministic);
+        assert!(results[1].is_deterministic);
+        assert_eq!(results[1].outcome, pecos_core::BitSet::single(0));
+
+        // Skipping the collapse would let the two H gates cancel.
+        let mut sim = SymbolicSparseStab::new(1);
+        sim.h(&[0]);
+        DemBuilder::apply_symbolic_gate_for_crosstalk_hidden_mz(
+            &mut sim,
+            0,
+            &pecos_core::Gate::measure_leaked(&[0]),
+        )
+        .unwrap();
+        sim.h(&[0]);
+        assert!(!sim.mz(&[0])[0].is_deterministic);
+    }
+
+    #[test]
+    fn exact_crosstalk_rejects_randomness_from_entangled_reset() {
+        use crate::fault_tolerance::dem_builder::MeasurementCrosstalkTransitionModel;
+
+        let mut circuit = pecos_quantum::DagCircuit::new();
+        circuit.pz(&[0, 1]);
+        circuit.h(&[0]);
+        circuit.cx(&[(0, 1)]);
+        circuit.pz(&[0]);
+        circuit.add_gate_auto_wire(pecos_core::Gate::meas_crosstalk_local_payload(&[1]));
+        circuit.mz(&[1]);
+        let noise = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
+            .set_measurement_crosstalk_local_rate(0.25)
+            .set_measurement_crosstalk_transition_model(
+                MeasurementCrosstalkTransitionModel::bit_flip(0.4, 0.0),
+            )
+            .set_measurement_crosstalk_dem_mode(MeasurementCrosstalkDemMode::ExactDeterministic);
+        let err = DemBuilder::try_from_circuit_with_noise_config(&circuit, noise).unwrap_err();
+        assert!(matches!(err, DemBuilderError::ConfigurationError(_)));
+        assert!(
+            err.to_string()
+                .contains("state-independent hidden MZ result"),
+            "{err}"
         );
     }
 

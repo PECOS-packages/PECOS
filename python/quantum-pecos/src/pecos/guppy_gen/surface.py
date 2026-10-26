@@ -241,6 +241,7 @@ def generate_guppy_source(
     Raises:
         ValueError: If exactly one of ``twirl`` / ``rng`` is supplied.
     """
+    from pecos.qec.circuit_steps import OpType
     from pecos.qec.surface._ancilla_batching import batched_stabilizers, normalize_ancilla_budget
     from pecos.qec.surface._check_plan import (
         ancilla_schedule_for_check_plan,
@@ -250,7 +251,6 @@ def generate_guppy_source(
     from pecos.qec.surface.circuit_builder import (
         _SZZ_FLOW_IDENTITY,
         _SZZ_FLOW_PHYSICAL_PREFIX_BY_PENDING,
-        OpType,
         _resolve_szz_clifford_frame_for_builder,
         _szz_flow_clifford_name,
         _szz_flow_compose_pending_gate,

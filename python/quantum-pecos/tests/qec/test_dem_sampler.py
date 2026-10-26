@@ -338,6 +338,19 @@ def test_influence_map_tracks_dem_outputs_and_tracked_paulis_separately() -> Non
         assert influence_map.has_tracked_pauli_flips(loc_idx, 1) == bool(tracked)
 
 
+def test_influence_builder_repeated_mx_is_deterministic() -> None:
+    """MX preserves the X eigenstate for a subsequent measurement without reset."""
+    from pecos_rslib import TickCircuit
+    from pecos_rslib.qec import InfluenceBuilder
+
+    tc = TickCircuit()
+    tc.tick().h([0])
+    tc.tick().mx([0])
+    tc.tick().mx([0])
+
+    assert InfluenceBuilder(tc.to_dag_circuit()).build().num_detectors == 2
+
+
 def test_influence_builder_does_not_add_empty_tracked_paulis() -> None:
     """An unconfigured Python InfluenceBuilder should not create identity tracked Paulis."""
     from pecos_rslib import DagCircuit

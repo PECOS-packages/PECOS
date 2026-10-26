@@ -97,13 +97,19 @@ class BodyRemap:
     binding); only those may be renamed at the name level. Any name that
     appears in a per-slot/per-bit binding (single qubit, bundle, single
     bit) is recorded as *partial*: name-level use of it is rejected.
+    With `block_name`, destination names are input names: an unbound outer
+    reference with one of those names is rejected instead of captured.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, block_name: str | None = None) -> None:
         self._slot: dict[tuple[str, int], tuple[str, int]] = {}
         self._bit: dict[tuple[str, int], tuple[str, int]] = {}
         self._whole_alloc: dict[str, str] = {}
         self._partial_names: set[str] = set()
+        # Only OUTER -> PARAM conversion reserves destination names. The
+        # inverse flattening remap has no parameter scope to capture refs.
+        self._block_name = block_name
+        self._input_names: set[str] = set()
 
     # ---- builders ----
     #
@@ -132,6 +138,7 @@ class BodyRemap:
         """Bind a whole QReg `src` (size N) to `dst`, identity per-slot."""
         self._reject_conflict(src, mode="whole")
         self._whole_alloc[src] = dst
+        self._input_names.add(dst)
         for i in range(size):
             self._slot[(src, i)] = (dst, i)
 
@@ -154,6 +161,7 @@ class BodyRemap:
             raise BodySubstitutionError(msg)
         self._slot[src] = dst
         self._partial_names.add(src[0])
+        self._input_names.add(dst[0])
 
     def add_bit(self, src: tuple[str, int], dst: tuple[str, int]) -> None:
         """Bind one outer classical bit; marks `src` register partial.
@@ -172,28 +180,55 @@ class BodyRemap:
             raise BodySubstitutionError(msg)
         self._bit[src] = dst
         self._partial_names.add(src[0])
+        self._input_names.add(dst[0])
 
     # ---- lookups ----
+
+    def check_unbound_reference(self, name: str, reference: str) -> None:
+        """Reject an outer reference that would acquire a parameter's meaning."""
+        if self._block_name is not None and name in self._input_names:
+            msg = (
+                f"Block {self._block_name!r} input {name!r} captures unbound outer reference "
+                f"{reference!r}; rename the block input to avoid the collision."
+            )
+            raise BodySubstitutionError(msg)
 
     def slot(self, ref: SlotRef) -> SlotRef:
         dst = self._slot.get((ref.allocator, ref.index))
         if dst is None:
+            self.check_unbound_reference(ref.allocator, f"{ref.allocator}[{ref.index}]")
             return ref
         return SlotRef(allocator=dst[0], index=dst[1], location=ref.location)
 
     def bit(self, ref: BitRef) -> BitRef:
         dst = self._bit.get((ref.register, ref.index))
         if dst is None:
+            self.check_unbound_reference(ref.register, f"{ref.register}[{ref.index}]")
             return ref
         return BitRef(register=dst[0], index=dst[1], location=ref.location)
 
-    def whole_name(self, name: str, *, context: str) -> str:
+    def indexed_name(self, name: str, index: int) -> tuple[str, int]:
+        """Resolve an untyped Permute element through either binding table."""
+        key = (name, index)
+        slot, bit = self._slot.get(key), self._bit.get(key)
+        if slot is not None and bit is not None and slot != bit:
+            msg = f"Permute reference {name}[{index}] has ambiguous qubit and bit bindings"
+            raise BodySubstitutionError(msg)
+        if slot is not None:
+            return slot
+        if bit is not None:
+            return bit
+        self.check_unbound_reference(name, f"{name}[{index}]")
+        return key
+
+    def whole_name(self, name: str, *, context: str, classical: bool = False) -> str:
         """Rename a whole-allocator/register name; reject if partially bound.
 
         Unmapped names pass through unchanged (they reference allocators not
-        bound by any input -- a Block-local register, say).
+        bound by any input -- a Block-local register, say), unless an input
+        would capture them. Classical names never use whole-qubit bindings.
         """
-        if name in self._whole_alloc:
+        if not classical and name in self._whole_alloc:
             return self._whole_alloc[name]
         if name in self._partial_names:
             msg = (
@@ -204,6 +239,7 @@ class BodyRemap:
                 f"{name!r} by bare name."
             )
             raise BodySubstitutionError(msg)
+        self.check_unbound_reference(name, name)
         return name
 
 
@@ -232,7 +268,9 @@ def substitute_stmt(stmt: Statement, remap: BodyRemap) -> Statement:
     if isinstance(stmt, AssignOp):
         target = stmt.target
         new_target = (
-            remap.bit(target) if isinstance(target, BitRef) else remap.whole_name(target, context="assignment target")
+            remap.bit(target)
+            if isinstance(target, BitRef)
+            else remap.whole_name(target, context="assignment target", classical=True)
         )
         return AssignOp(
             target=new_target,
@@ -247,15 +285,27 @@ def substitute_stmt(stmt: Statement, remap: BodyRemap) -> Statement:
         # substituted BlockCall body).
         return ReturnOp(
             values=tuple(
-                _sub_expr(v, remap) if not isinstance(v, str) else remap.whole_name(v, context="Return value")
-                for v in stmt.values
+                (
+                    _sub_expr(v, remap)
+                    if not isinstance(v, str)
+                    else remap.whole_name(
+                        v,
+                        context="Return value",
+                        classical=bool(stmt.value_kinds) and stmt.value_kinds[i] == "classical",
+                    )
+                )
+                for i, v in enumerate(stmt.values)
             ),
             value_kinds=stmt.value_kinds,
             location=stmt.location,
         )
     if isinstance(stmt, PrintOp):
         value = stmt.value
-        new_value = remap.bit(value) if isinstance(value, BitRef) else remap.whole_name(value, context="Print value")
+        new_value = (
+            remap.bit(value)
+            if isinstance(value, BitRef)
+            else remap.whole_name(value, context="Print value", classical=True)
+        )
         return PrintOp(
             value=new_value,
             tag=stmt.tag,
@@ -325,7 +375,7 @@ def _sub_expr(expr: Expression, remap: BodyRemap) -> Expression:
         return expr
     if isinstance(expr, VarExpr):
         return VarExpr(
-            name=remap.whole_name(expr.name, context="variable expression"),
+            name=remap.whole_name(expr.name, context="variable expression", classical=True),
             location=expr.location,
         )
     if isinstance(expr, BitExpr):
@@ -381,8 +431,8 @@ def _sub_prepare(stmt: PrepareOp, remap: BodyRemap) -> PrepareOp:
 def _sub_permute_ref(ref: str, remap: BodyRemap) -> str:
     """Remap a PermuteOp `name` or `name[idx]` string.
 
-    `name[idx]` resolves through the per-slot table (works for whole-alloc
-    identity AND bundles). Bare `name` is a whole-register reference ->
+    `name[idx]` resolves through the slot or bit table (including whole-alloc
+    identity and bundles). Bare `name` is a whole-register reference ->
     name-level rename, rejected if partially bound. Unparseable refs that
     mention a partially-bound name are rejected rather than silently leaked.
     """
@@ -392,6 +442,8 @@ def _sub_permute_ref(ref: str, remap: BodyRemap) -> str:
         # partial-name set (not a substring scan) so `sq[0:2]` is not
         # falsely rejected when `q` is partially bound.
         lead = _LEADING_IDENT_RE.match(ref)
+        if lead is not None:
+            remap.check_unbound_reference(lead.group(0), ref)
         if lead is not None and lead.group(0) in remap._partial_names:  # noqa: SLF001 -- same module
             base = lead.group(0)
             msg = (
@@ -403,8 +455,8 @@ def _sub_permute_ref(ref: str, remap: BodyRemap) -> str:
     name, idx = match.group(1), match.group(2)
     if idx is None:
         return remap.whole_name(name, context="Permute")
-    new = remap.slot(SlotRef(allocator=name, index=int(idx)))
-    return f"{new.allocator}[{new.index}]"
+    new_name, new_index = remap.indexed_name(name, int(idx))
+    return f"{new_name}[{new_index}]"
 
 
 def _sub_block_arg(arg: BlockArg, remap: BodyRemap) -> BlockArg:

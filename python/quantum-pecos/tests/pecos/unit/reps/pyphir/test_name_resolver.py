@@ -37,7 +37,9 @@ from pecos.reps.pyphir.op_types import QOp
 )
 def test_z_rotation_resolution(gate, args, positive, negative, angle, resolution) -> None:
     """Only Clifford rotations lower to discrete simulator gates."""
-    expected = {"I": "I", "positive": positive, "negative": negative, "unchanged": gate}[resolution]
+    expected = {"I": "II" if gate == "RZZ" else "I", "positive": positive, "negative": negative, "unchanged": gate}[
+        resolution
+    ]
     assert sim_name_resolver(QOp(name=gate, angles=(angle,), args=args)) == expected
 
 

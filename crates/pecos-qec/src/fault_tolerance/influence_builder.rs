@@ -508,6 +508,9 @@ impl<'a> InfluenceBuilder<'a> {
                             sim.h(&[qubits[0]]);
                         }
                         sim.mz(&[qubits[0]]);
+                        if op.gate_type == pecos_quantum::GateType::MX {
+                            sim.h(&[qubits[0]]);
+                        }
                         if op.gate_type == pecos_quantum::GateType::MPZ {
                             // Measure-and-prepare resets after the readout.
                             sim.pz(qubits[0]);
@@ -515,20 +518,8 @@ impl<'a> InfluenceBuilder<'a> {
                         node_to_meas_idx[node] = Some(meas_idx);
                         meas_idx += 1;
                     }
-                    // A leaked measurement collapses its qubit but consumes no
-                    // record -- and this replay cannot express that: `sim.mz`
-                    // advances the simulator's internal history index, so a
-                    // record-less collapse desyncs symbolic indices from
-                    // records and manufactures phantom detectors. Refused,
-                    // exactly as `symbolic_measurement_history` refuses it.
-                    pecos_quantum::GateType::MeasureLeaked => {
-                        return Err(InfluenceBuildError::UnsupportedGate(UnsupportedGateError {
-                            angles: op.angles.to_vec(),
-                            location: UnsupportedGateLocation::DagNode { node },
-                            gate_type: op.gate_type,
-                            qubits,
-                        }));
-                    }
+                    // A record-less collapse preserves the node-to-record map.
+                    pecos_quantum::GateType::MeasureLeaked => sim.mz_unrecorded(&qubits),
                     // Resets project onto |0>. Skipping them treated a reused
                     // qubit as still carrying its pre-reset correlations.
                     gate_type if is_supported_prep_gate(gate_type) => {
@@ -1215,6 +1206,31 @@ mod tests {
     use pecos_quantum::DagCircuit;
 
     #[test]
+    fn mx_influence_restores_x_eigenstate() {
+        for minus in [false, true] {
+            let mut tc = pecos_quantum::TickCircuit::new();
+            tc.tick().h(&[0]);
+            if minus {
+                tc.tick().z(&[0]);
+            }
+            tc.tick().mx(&[0]);
+            tc.tick().mx(&[0]);
+            let dag = DagCircuit::try_from(&tc).unwrap();
+            let builder = InfluenceBuilder::new(&dag).unwrap();
+            let replay = builder.run_symbolic_simulation().unwrap();
+            let first = replay.history.get(0).unwrap();
+            let second = replay.history.get(1).unwrap();
+            assert!(first.is_deterministic);
+            assert!(second.is_deterministic);
+            assert!(second.outcome.is_empty());
+            assert_eq!(second.outcome, first.outcome);
+            assert_eq!(second.flip, first.flip);
+            assert_eq!(second.flip, minus);
+            assert_eq!(builder.build().unwrap().detectors.len(), 2);
+        }
+    }
+
+    #[test]
     fn emission_replay_determinism_matches_tick_history() {
         use crate::fault_tolerance::fault_sampler::symbolic_measurement_history;
         use pecos_quantum::TickCircuit;
@@ -1692,24 +1708,26 @@ mod tests {
         ));
     }
 
-    /// A leaked measurement cannot be represented in this replay: collapsing
-    /// it via `sim.mz` advances the simulator's internal history index without
-    /// a matching record, desyncing symbolic indices from records. The witness
-    /// circuit manufactured a phantom detector on the visible measurement.
+    /// A leaked collapse consumes no record and leaves its first recorded
+    /// observation random, so it must not manufacture a phantom detector. The
+    /// collapse sits between two H gates: skipping it would make them cancel
+    /// and the MZ deterministic.
     #[test]
-    fn a_leaked_measurement_is_refused_not_desynced() {
+    fn a_leaked_measurement_keeps_records_aligned_without_phantom_detectors() {
         let mut dag = DagCircuit::new();
         dag.pz(&[0]);
         dag.h(&[0]);
         dag.add_gate_auto_wire(pecos_quantum::Gate::measure_leaked(&[0usize]));
+        dag.h(&[0]);
         dag.mz(&[0]);
 
-        let err = InfluenceBuilder::new(&dag)
-            .unwrap()
-            .build()
-            .map(|_| ())
-            .expect_err("a leaked measurement has no record this replay can express");
-        assert!(matches!(err, InfluenceBuildError::UnsupportedGate(_)));
+        let builder = InfluenceBuilder::new(&dag).unwrap();
+        let info = builder.run_symbolic_simulation().unwrap();
+        assert_eq!(info.history.len(), 1);
+        assert!(!info.history.get(0).unwrap().is_deterministic);
+        let map = builder.build().unwrap();
+        assert_eq!(map.measurements.len(), 1);
+        assert_eq!(map.detectors.as_slice(), []);
     }
 
     /// A mid-circuit reset must reach the simulator: skipping it treated a

@@ -6,6 +6,7 @@
 use crate::runtime::{
     ClassicalState, QisRuntime, Result, RuntimeError, Shot, for_each_quantum_qubit,
 };
+use crate::runtime_batch_adapter::{RuntimeBatch, RuntimeBatchAdapter};
 use crate::scheduled::{
     MAX_OPERATIONS, MAX_PAYLOAD_BYTES, RuntimeScheduledOp, ScheduledBatch, ScheduledMeasurement,
     ScheduledOutput,
@@ -311,6 +312,8 @@ pub enum RuntimeCustomEventDisposition {
     Unsupported,
 }
 
+type BatchAdapterFactory = Arc<dyn Fn() -> Result<Box<dyn RuntimeBatchAdapter>> + Send + Sync>;
+
 type CustomEventHandler =
     Arc<dyn Fn(&RuntimeCustomEvent) -> Result<RuntimeCustomEventDisposition> + Send + Sync>;
 
@@ -416,7 +419,10 @@ pub struct SeleneRuntime {
     custom_events: Vec<RuntimeCustomEvent>,
     runtime_batch_index: usize,
     custom_event_policy: RuntimeCustomEventPolicy,
+    unhandled_custom_events: bool,
     custom_event_handler: Option<CustomEventHandler>,
+    batch_adapter_factory: Option<BatchAdapterFactory>,
+    batch_adapter: Option<Box<dyn RuntimeBatchAdapter>>,
     batch_failure: Option<RuntimeError>,
     scheduled_mode: Option<bool>,
     /// A successful forced drain since the last submission or measurement feedback.
@@ -536,7 +542,10 @@ impl SeleneRuntime {
             custom_events: Vec::new(),
             runtime_batch_index: 0,
             custom_event_policy: RuntimeCustomEventPolicy::default(),
+            unhandled_custom_events: false,
             custom_event_handler: None,
+            batch_adapter_factory: None,
+            batch_adapter: None,
             batch_failure: None,
             scheduled_mode: None,
             scheduled_drained: false,
@@ -938,6 +947,11 @@ impl SeleneRuntime {
 
     fn select_output_mode(&mut self, scheduled: bool) -> Result<()> {
         self.check_batch_failure()?;
+        if scheduled && self.batch_adapter_factory.is_some() {
+            return Err(RuntimeError::ExecutionError(
+                "runtime batch adapters require ordinary QIS lowering; use the scheduled adapter for scheduled transport".into(),
+            ));
+        }
         if self
             .scheduled_mode
             .is_some_and(|previous| previous != scheduled)
@@ -1113,13 +1127,15 @@ impl SeleneRuntime {
                     start_time_nanos: batch.start_time_nanos,
                     duration_nanos: batch.duration_nanos,
                 };
-                Self::validate_custom_event(
+                let disposition = Self::validate_custom_event(
                     &event,
                     self.custom_event_policy,
                     self.custom_event_handler.as_ref(),
                     &self.plugin_path,
                     &mut self.batch_failure,
                 )?;
+                self.unhandled_custom_events |=
+                    disposition == RuntimeCustomEventDisposition::Unsupported;
             }
         }
         output
@@ -2152,7 +2168,7 @@ impl SeleneRuntime {
                 ));
             }
             let mut batch = RuntimeOperationBatch::default();
-            if self.scheduled_output.is_some() {
+            if self.scheduled_output.is_some() || self.batch_adapter_factory.is_some() {
                 batch.extraction_budget = Some((MAX_OPERATIONS, MAX_PAYLOAD_BYTES));
             }
             let errno = {
@@ -2664,9 +2680,85 @@ impl SeleneRuntime {
         )))
     }
 
+    /// Install a shot-local normalizer shared by simulation and tracing.
+    /// Configure before execution. Opaque event meaning remains with the adapter;
+    /// unknown or unrepresentable effects must be rejected by it.
+    pub fn set_batch_adapter_factory<F>(&mut self, factory: F)
+    where
+        F: Fn() -> Result<Box<dyn RuntimeBatchAdapter>> + Send + Sync + 'static,
+    {
+        self.batch_adapter_factory = Some(Arc::new(factory));
+        // Changing configuration must not clear a live failure or session.
+    }
+
+    fn normalize_runtime_batch(
+        &mut self,
+        mut batch: RuntimeOperationBatch,
+    ) -> Result<RuntimeOperationBatch> {
+        self.check_batch_failure()?;
+        let Some(factory) = self.batch_adapter_factory.clone() else {
+            return Ok(batch);
+        };
+        if let Some(error) = batch.callback_error {
+            return Err(RuntimeError::FfiError(error.into()));
+        }
+        let snapshot = RuntimeBatch {
+            shot_id: self.active_shot.map_or(0, |(shot, _)| shot),
+            batch_index: self.runtime_batch_index,
+            num_qubits: self.plugin_num_qubits(),
+            start_time_nanos: batch.start_time_nanos,
+            duration_nanos: batch.duration_nanos,
+            operations: std::mem::take(&mut batch.operations),
+        };
+        snapshot.validate()?;
+        let context = format!(
+            "runtime batch adapter at batch {}, start {} ns from {}",
+            snapshot.batch_index, snapshot.start_time_nanos, self.plugin_path
+        );
+        // Leave a terminal failure latched if a Rust callback unwinds.
+        self.batch_failure = Some(RuntimeError::ExecutionError(format!(
+            "{context} panicked; reset required"
+        )));
+        let result = (|| {
+            if self.batch_adapter.is_none() {
+                self.batch_adapter = Some(factory()?);
+            }
+            let output = self
+                .batch_adapter
+                .as_mut()
+                .expect("initialized adapter")
+                .normalize(&snapshot)?;
+            snapshot.validate_output(&output)?;
+            Ok(output)
+        })();
+        self.batch_failure = None;
+        batch.operations = result.map_err(|error: RuntimeError| {
+            RuntimeError::ExecutionError(format!("{context}: {error}"))
+        })?;
+        // Retain original event bytes for diagnosis. Scheduled consumers already
+        // have their own batch history contract and do not retain this copy.
+        if self.scheduled_output.is_none() {
+            for (operation_index, operation) in snapshot.operations.into_iter().enumerate() {
+                if let RuntimeScheduledOp::Custom { tag, data } = operation {
+                    self.custom_events.push(RuntimeCustomEvent {
+                        tag,
+                        data,
+                        operation_index,
+                        batch_index: snapshot.batch_index,
+                        start_time_nanos: snapshot.start_time_nanos,
+                        duration_nanos: snapshot.duration_nanos,
+                    });
+                }
+            }
+        }
+        Ok(batch)
+    }
+
     fn convert_runtime_batch(&mut self, batch: RuntimeOperationBatch) -> Result<Vec<QuantumOp>> {
         self.check_batch_failure()?;
-        let result = self.convert_runtime_batch_inner(batch);
+        let result = self
+            .normalize_runtime_batch(batch)
+            .and_then(|batch| self.convert_runtime_batch_inner(batch));
         result.map_err(|error| self.latch_batch_failure(error))
     }
 
@@ -2680,6 +2772,7 @@ impl SeleneRuntime {
         let batch_index = self.runtime_batch_index;
         self.runtime_batch_index += 1;
         let mut lowered_ops = Vec::new();
+        let mut touched = BTreeSet::new();
         let start_time = batch.start_time_nanos;
         let end_time = batch.end_time_nanos();
 
@@ -2691,13 +2784,17 @@ impl SeleneRuntime {
                     phi,
                 } => {
                     let qubit = self.runtime_qubit_to_usize(qubit_id)?;
-                    self.push_idle_before(&mut lowered_ops, qubit, start_time)?;
+                    if touched.insert(qubit) {
+                        self.push_idle_before(&mut lowered_ops, qubit, start_time)?;
+                    }
                     lowered_ops.push(QuantumOp::RXY(theta, phi, qubit));
                     self.mark_gate_end(qubit, end_time);
                 }
                 RuntimeScheduledOp::Rz { qubit_id, theta } => {
                     let qubit = self.runtime_qubit_to_usize(qubit_id)?;
-                    self.push_idle_before(&mut lowered_ops, qubit, start_time)?;
+                    if touched.insert(qubit) {
+                        self.push_idle_before(&mut lowered_ops, qubit, start_time)?;
+                    }
                     lowered_ops.push(QuantumOp::RZ(theta, qubit));
                     self.mark_gate_end(qubit, end_time);
                 }
@@ -2708,8 +2805,12 @@ impl SeleneRuntime {
                 } => {
                     let qubit_1 = self.runtime_qubit_to_usize(qubit_id_1)?;
                     let qubit_2 = self.runtime_qubit_to_usize(qubit_id_2)?;
-                    self.push_idle_before(&mut lowered_ops, qubit_1, start_time)?;
-                    self.push_idle_before(&mut lowered_ops, qubit_2, start_time)?;
+                    if touched.insert(qubit_1) {
+                        self.push_idle_before(&mut lowered_ops, qubit_1, start_time)?;
+                    }
+                    if touched.insert(qubit_2) {
+                        self.push_idle_before(&mut lowered_ops, qubit_2, start_time)?;
+                    }
                     lowered_ops.push(QuantumOp::RZZ(theta, qubit_1, qubit_2));
                     self.mark_gate_end(qubit_1, end_time);
                     self.mark_gate_end(qubit_2, end_time);
@@ -2720,7 +2821,9 @@ impl SeleneRuntime {
                 } => {
                     let qubit = self.runtime_qubit_to_usize(qubit_id)?;
                     let program_result = self.runtime_result_to_program_result(result_id)?;
-                    self.push_idle_before(&mut lowered_ops, qubit, start_time)?;
+                    if touched.insert(qubit) {
+                        self.push_idle_before(&mut lowered_ops, qubit, start_time)?;
+                    }
                     let leakage_aware = self
                         .runtime_to_program_results
                         .get(&result_id)
@@ -2750,12 +2853,15 @@ impl SeleneRuntime {
                         .entry(program_result)
                         .or_default()
                         .push_back((result_id, true));
-                    self.push_idle_before(&mut lowered_ops, qubit, start_time)?;
+                    if touched.insert(qubit) {
+                        self.push_idle_before(&mut lowered_ops, qubit, start_time)?;
+                    }
                     lowered_ops.push(QuantumOp::MeasureLeaked(qubit, program_result));
                     self.mark_gate_end(qubit, end_time);
                 }
                 RuntimeScheduledOp::Reset { qubit_id } => {
                     let qubit = self.runtime_qubit_to_usize(qubit_id)?;
+                    touched.insert(qubit);
                     lowered_ops.push(QuantumOp::Reset(qubit));
                     self.mark_gate_end(qubit, end_time);
                 }
@@ -2767,8 +2873,12 @@ impl SeleneRuntime {
                 } => {
                     let qubit_1 = self.runtime_qubit_to_usize(qubit_id_1)?;
                     let qubit_2 = self.runtime_qubit_to_usize(qubit_id_2)?;
-                    self.push_idle_before(&mut lowered_ops, qubit_1, start_time)?;
-                    self.push_idle_before(&mut lowered_ops, qubit_2, start_time)?;
+                    if touched.insert(qubit_1) {
+                        self.push_idle_before(&mut lowered_ops, qubit_1, start_time)?;
+                    }
+                    if touched.insert(qubit_2) {
+                        self.push_idle_before(&mut lowered_ops, qubit_2, start_time)?;
+                    }
                     lowered_ops.push(QuantumOp::RXYXY2Q(theta, phi, qubit_1, qubit_2));
                     self.mark_gate_end(qubit_1, end_time);
                     self.mark_gate_end(qubit_2, end_time);
@@ -2789,13 +2899,15 @@ impl SeleneRuntime {
                     })?;
                     self.custom_events.push(event);
                     let event = self.custom_events.last().expect("just inserted");
-                    Self::validate_custom_event(
+                    let disposition = Self::validate_custom_event(
                         event,
                         self.custom_event_policy,
                         self.custom_event_handler.as_ref(),
                         &self.plugin_path,
                         &mut self.batch_failure,
                     )?;
+                    self.unhandled_custom_events |=
+                        disposition == RuntimeCustomEventDisposition::Unsupported;
                 }
             }
         }
@@ -2809,7 +2921,7 @@ impl SeleneRuntime {
         handler: Option<&CustomEventHandler>,
         runtime: &str,
         batch_failure: &mut Option<RuntimeError>,
-    ) -> Result<()> {
+    ) -> Result<RuntimeCustomEventDisposition> {
         let context = format!(
             "tag {} at batch {}, operation {}, start {} ns from runtime {runtime}",
             event.tag, event.batch_index, event.operation_index, event.start_time_nanos
@@ -2835,7 +2947,7 @@ impl SeleneRuntime {
                 "unsupported runtime custom event {context}; register a metadata-only handler with set_custom_event_handler for understood metadata or explicitly opt into RuntimeCustomEventPolicy::Capture with set_custom_event_policy; physical effects require downstream modeling"
             )));
         }
-        Ok(())
+        Ok(disposition)
     }
 
     fn runtime_qubit_to_usize(&mut self, runtime_qubit: u64) -> Result<usize> {
@@ -2935,11 +3047,14 @@ impl Clone for SeleneRuntime {
             custom_events: self.custom_events.clone(),
             runtime_batch_index: self.runtime_batch_index,
             custom_event_policy: self.custom_event_policy,
+            unhandled_custom_events: self.unhandled_custom_events,
             custom_event_handler: self.custom_event_handler.clone(),
+            batch_adapter_factory: self.batch_adapter_factory.clone(),
+            batch_adapter: None,
             batch_failure: self.batch_failure.clone().or_else(|| {
                 let kind = if self.scheduled_mode == Some(true) {
                     "scheduled"
-                } else if self.instance.is_some() {
+                } else if self.instance.is_some() || self.batch_adapter.is_some() {
                     "native"
                 } else {
                     return None;
@@ -3076,6 +3191,10 @@ fn include_result(num_results: &mut usize, result: usize) {
 }
 
 impl QisRuntime for SeleneRuntime {
+    fn runtime_events_complete(&self) -> bool {
+        !self.unhandled_custom_events
+    }
+
     fn load_interface(&mut self, interface: OperationCollector) -> Result<()> {
         self.check_batch_failure()?;
         debug!(
@@ -3349,6 +3468,8 @@ impl QisRuntime for SeleneRuntime {
         self.submitted_rz_phases.clear();
         self.source_trace_metadata.clear();
         self.custom_events.clear();
+        self.unhandled_custom_events = false;
+        self.batch_adapter = None;
         self.scheduled_mode = None;
         self.scheduled_drained = false;
         self.scheduled_output = None;
@@ -3440,6 +3561,8 @@ impl QisRuntime for SeleneRuntime {
         self.submitted_rz_phases.clear();
         self.source_trace_metadata.clear();
         self.custom_events.clear();
+        self.unhandled_custom_events = false;
+        self.batch_adapter = None;
         self.scheduled_mode = None;
         self.scheduled_drained = false;
         self.scheduled_output = None;
@@ -6299,3 +6422,7 @@ mod scheduled_tests;
 #[cfg(all(test, feature = "selene-runtimes"))]
 #[path = "selene_native_tests.rs"]
 mod native_tests;
+
+#[cfg(test)]
+#[path = "runtime_batch_adapter_tests.rs"]
+mod batch_adapter_tests;

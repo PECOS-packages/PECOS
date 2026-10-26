@@ -176,12 +176,14 @@ impl PyQisEngineBuilder {
     }
 
     /// Use a Selene runtime built into the current PECOS/Cargo target.
-    #[pyo3(signature = (runtime_name = None, *, custom_event_policy = "reject_unhandled", native_gates = None))]
+    #[pyo3(signature = (runtime_name = None, *, custom_event_policy = "reject_unhandled", native_gates = None, batch_adapter_factory = None))]
     fn selene_runtime(
         &mut self,
         runtime_name: Option<&str>,
         custom_event_policy: &str,
         native_gates: Option<Vec<String>>,
+        batch_adapter_factory: Option<Py<PyAny>>,
+        py: Python<'_>,
     ) -> PyResult<Self> {
         let policy = runtime_custom_event_policy(custom_event_policy)?;
         let mut runtime = match runtime_name {
@@ -197,13 +199,14 @@ impl PyQisEngineBuilder {
             runtime = runtime.with_native_gate_set(runtime_native_gate_set(names)?);
         }
         runtime.set_custom_event_policy(policy);
+        crate::runtime_batch_adapter::configure(&mut runtime, batch_adapter_factory, py)?;
         self.inner = self.inner.clone().runtime(runtime);
         self.runtime_configured = true;
         Ok(self.clone())
     }
 
     /// Use a generic Selene runtime plugin by its shared library and plugin arguments.
-    #[pyo3(signature = (library_file, init_args = None, library_search_dirs = None, *, custom_event_policy = "reject_unhandled", native_gates = None))]
+    #[pyo3(signature = (library_file, init_args = None, library_search_dirs = None, *, custom_event_policy = "reject_unhandled", native_gates = None, batch_adapter_factory = None))]
     fn selene_runtime_plugin(
         &mut self,
         library_file: &str,
@@ -211,6 +214,8 @@ impl PyQisEngineBuilder {
         library_search_dirs: Option<Vec<String>>,
         custom_event_policy: &str,
         native_gates: Option<Vec<String>>,
+        batch_adapter_factory: Option<Py<PyAny>>,
+        py: Python<'_>,
     ) -> PyResult<Self> {
         let policy = runtime_custom_event_policy(custom_event_policy)?;
         let mut runtime = pecos_qis::SeleneRuntime::with_plugin_config(
@@ -226,6 +231,7 @@ impl PyQisEngineBuilder {
             runtime = runtime.with_native_gate_set(runtime_native_gate_set(names)?);
         }
         runtime.set_custom_event_policy(policy);
+        crate::runtime_batch_adapter::configure(&mut runtime, batch_adapter_factory, py)?;
         self.inner = self.inner.clone().runtime(runtime);
         self.runtime_configured = true;
         Ok(self.clone())

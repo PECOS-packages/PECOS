@@ -85,6 +85,8 @@ pub struct OperationTraceChunk {
     pub operations: Vec<Operation>,
     pub lowered_quantum_ops: Vec<LoweredQuantumGateTrace>,
     pub lowered_quantum_ops_complete: bool,
+    /// False if opaque events were captured without interpretation.
+    pub runtime_events_complete: bool,
     pub named_result_traces: Vec<NamedResultTrace>,
     /// Physical measurement outcomes keyed by stable QIS result id.
     ///
@@ -1453,6 +1455,7 @@ impl QisEngine {
             operations: ops.to_vec(),
             lowered_quantum_ops: lowered_trace,
             lowered_quantum_ops_complete,
+            runtime_events_complete: self.runtime.runtime_events_complete(),
             named_result_traces: Vec::new(),
             measurement_results: if stage == "trace_complete" {
                 self.measurement_results.clone()
@@ -1528,6 +1531,7 @@ impl QisEngine {
             operations: Vec::new(),
             lowered_quantum_ops: Vec::new(),
             lowered_quantum_ops_complete: true,
+            runtime_events_complete: self.runtime.runtime_events_complete(),
             named_result_traces: named_result_traces.to_vec(),
             measurement_results: BTreeMap::new(),
         };

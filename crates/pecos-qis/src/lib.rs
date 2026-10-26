@@ -113,12 +113,16 @@ pub use program::{InterfaceChoice, IntoQisInterface, QisEngineProgram, QisInterf
 #[cfg(feature = "selene")]
 pub mod executor;
 #[cfg(feature = "selene")]
+pub mod runtime_batch_adapter;
+#[cfg(feature = "selene")]
 #[path = "selene_builder.rs"]
 pub mod selene_builder;
 #[cfg(feature = "selene")]
 mod selene_native;
 #[cfg(feature = "selene")]
 pub mod selene_runtime;
+#[cfg(feature = "selene")]
+pub use runtime_batch_adapter::{RuntimeBatch, RuntimeBatchAdapter};
 #[cfg(feature = "selene")]
 pub mod selene_runtimes;
 

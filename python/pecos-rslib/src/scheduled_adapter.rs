@@ -14,9 +14,9 @@ use std::cell::Cell;
 thread_local! {
     static IN_CALLBACK: Cell<bool> = const { Cell::new(false) };
 }
-struct CallbackScope(bool);
+pub(crate) struct CallbackScope(bool);
 impl CallbackScope {
-    fn enter() -> Self {
+    pub(crate) fn enter() -> Self {
         Self(IN_CALLBACK.replace(true))
     }
 }

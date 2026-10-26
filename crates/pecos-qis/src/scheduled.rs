@@ -4,7 +4,8 @@
 //! event is data, never acknowledgement that its physical effect was simulated.
 
 /// One operation in native emission order. Qubit IDs are runtime physical IDs.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum RuntimeScheduledOp {
     /// Rotation about an axis in the XY plane.
     Rxy {

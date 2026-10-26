@@ -29,7 +29,7 @@ from pecos.engines.cvm.semantics import DefaultClassicalSemantics
 from pecos.engines.cvm.wasm import eval_cfunc, get_ccop
 from pecos.exceptions import NotSupportedGateError
 from pecos.noise.fake_error_model import FakeErrorModel
-from pecos.simulators.batch_validation import is_empty_batch, replayable_locations, validate_batch
+from pecos.simulators.batch_validation import replayable_locations, validate_batch
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -424,7 +424,7 @@ class HybridEngine:
 
         """
         # Only an empty container is a no-op here; dev raised for None and bare ints.
-        if isinstance(locations, Sized) and is_empty_batch(locations):
+        if isinstance(locations, Sized) and len(locations) == 0:
             return
         locations = replayable_locations(locations)
         validator = getattr(state, "validate_gate_batch", None)

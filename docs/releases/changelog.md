@@ -6,6 +6,24 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Breaking:** an SLR multi-qubit gate on whole registers applies element-wise:
+  `CX(q, r)` is `CX(q[i], r[i])` for every `i` and requires equally sized
+  registers (#1476). It used to become a single gate on the wrong qubits
+  (`cx q[0], q[1]`). Arguments that do not define the qubit groups, such as a
+  register mixed with single qubits (`CX(q[0], r)`), lists or slices, or a
+  qubit count that is not the gate's arity, now raise `ValueError` instead of
+  being truncated, and an AST `GateOp` of arity two or more must have exactly
+  that many distinct targets. These rules also apply to the deprecated QASM,
+  Stim, QuantumCircuit and QIR generators, including `QGate.gen("qasm")`.
+  Parallel optimization now tracks register and tuple operands by individual
+  qubit, preserving dependencies with gates on their elements; a loop-variable
+  qubit counts as its whole register, leaving its rejection to the code
+  generators. Single-qubit
+  gates expand whole `QAlloc` operands into their available qubits and reject
+  non-qubit or empty arguments. Unsupported loop-variable qubit indices now
+  raise a `ValueError` naming the gate instead of failing with an attribute
+  error or a generic argument-count error.
+
 - **Breaking:** SLR block conversion rejects input names that capture unbound
   outer references in the block body. The error identifies the block, input
   and reference; rename the block input to avoid the collision (#1472).

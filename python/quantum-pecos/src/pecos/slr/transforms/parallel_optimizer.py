@@ -19,12 +19,13 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pecos.slr.fund import Node
 
+from pecos.slr._qubit_args import expand_qubit_args, qubit_key
 from pecos.slr.block import Block
 from pecos.slr.cond_block import If, Repeat
 from pecos.slr.loop_block import For
 from pecos.slr.main import Main
 from pecos.slr.misc import Parallel
-from pecos.slr.vars import CReg, SymbolicBit
+from pecos.slr.vars import CReg, SymbolicBit, SymbolicElem
 
 
 class ParallelOptimizer:
@@ -278,27 +279,29 @@ class ParallelOptimizer:
 
     def _get_qubits(self, op: Node) -> set:
         """Extract the set of qubits an operation acts on."""
-        qubits = set()
-
-        # Handle quantum gates with qargs
         if hasattr(op, "qargs"):
-            for qarg in op.qargs:
-                qubits.add(self._qubit_to_key(qarg))
-
-        # Handle measurements
+            args = op.qargs
         elif hasattr(op, "qin"):
-            for q in op.qin:
-                qubits.add(self._qubit_to_key(q))
+            args = op.qin
+        else:
+            return set()
+        return {qubit_key(qubit) for qubit in expand_qubit_args(self._widen_symbolic(args), type(op).__name__)}
 
-        return qubits
+    def _widen_symbolic(self, args):
+        """Replace loop-variable elements by their register, as for symbolic result bits.
 
-    def _qubit_to_key(self, qubit) -> tuple:
-        """Convert a qubit to a hashable key."""
-        if hasattr(qubit, "reg") and hasattr(qubit, "index"):
-            return (qubit.reg.sym, qubit.index)
-        if hasattr(qubit, "sym"):
-            return (qubit.sym,)
-        return (str(qubit),)
+        The optimizer only orders operations; rejecting symbolic indices is left
+        to the code generators, which report it with their own error.
+        """
+        widened = []
+        for arg in args:
+            if isinstance(arg, SymbolicElem):
+                widened.append(arg.reg)
+            elif isinstance(arg, tuple | list):
+                widened.append(type(arg)(self._widen_symbolic(arg)))
+            else:
+                widened.append(arg)
+        return widened
 
     def _group_operations(
         self,

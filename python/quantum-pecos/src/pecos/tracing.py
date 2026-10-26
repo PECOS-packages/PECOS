@@ -56,12 +56,7 @@ def _capture_qis_operation_traces(
 
     sim_builder = (
         pecos.sim(program)
-        .classical(
-            pecos.selene_engine(
-                runtime,
-                **({"batch_adapter_factory": batch_adapter_factory} if batch_adapter_factory is not None else {}),
-            ),
-        )
+        .classical(pecos.selene_engine(runtime, batch_adapter_factory=batch_adapter_factory))
         .quantum(pecos_rslib.coin_toss())
         .qubits(num_qubits)
         .seed(seed)
@@ -105,7 +100,7 @@ def capture_qis_operation_trace(
         shots=1,
         seed=seed,
         runtime=runtime,
-        **({"batch_adapter_factory": batch_adapter_factory} if batch_adapter_factory is not None else {}),
+        batch_adapter_factory=batch_adapter_factory,
     )
 
 
@@ -216,7 +211,7 @@ def _trace_program_to_tick_circuit_with_result_traces(
         num_qubits,
         seed=seed,
         runtime=runtime,
-        **({"batch_adapter_factory": batch_adapter_factory} if batch_adapter_factory is not None else {}),
+        batch_adapter_factory=batch_adapter_factory,
     )
     tick_circuit = _qis_operation_trace_to_tick_circuit(
         chunks,
@@ -290,7 +285,7 @@ def trace_program_to_tick_circuit(
         num_qubits,
         seed=seed,
         runtime=runtime,
-        **({"batch_adapter_factory": batch_adapter_factory} if batch_adapter_factory is not None else {}),
+        batch_adapter_factory=batch_adapter_factory,
         measurement_crosstalk_topology=measurement_crosstalk_topology,
         require_hosted_operation_order=require_hosted_operation_order,
         max_hosted_tick_separation=max_hosted_tick_separation,

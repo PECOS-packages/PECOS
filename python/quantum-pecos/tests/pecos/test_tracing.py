@@ -241,8 +241,10 @@ def test_qis_operation_trace_can_be_replayed_or_captured_as_a_tick_circuit(
         *,
         seed: int = 0,
         runtime: object | None = None,
+        batch_adapter_factory: object | None = None,
     ) -> list[dict]:
         del program, num_qubits, seed, runtime
+        assert batch_adapter_factory is None
         return trace
 
     monkeypatch.setattr(pecos.tracing, "capture_qis_operation_trace", fake_capture)
@@ -413,12 +415,16 @@ def test_capture_qis_operation_trace_configures_the_trace_builder(
     program = object()
     runtime = object()
     monkeypatch.setattr(pecos, "sim", lambda actual: FakeBuilder() if actual is program else None)
-    monkeypatch.setattr(pecos, "selene_engine", lambda actual: ("runtime", actual))
+    monkeypatch.setattr(
+        pecos,
+        "selene_engine",
+        lambda actual, *, batch_adapter_factory: ("runtime", actual, batch_adapter_factory),
+    )
     monkeypatch.setattr(pecos_rslib, "coin_toss", lambda: "trace-backend")
 
     assert pecos.capture_qis_operation_trace(program, 3, seed=11, runtime=runtime) == trace
     assert calls == [
-        ("classical", ("runtime", runtime)),
+        ("classical", ("runtime", runtime, None)),
         ("quantum", "trace-backend"),
         ("qubits", 3),
         ("seed", 11),

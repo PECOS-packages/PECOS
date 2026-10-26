@@ -158,6 +158,7 @@ For example, if `physical_noise` is the existing `NoiseParameters` configuration
 in seconds, pass a converted copy to the DEM builder and retain the runtime's
 idles:
 
+<!--skip: API template requires a caller-supplied runtime that emits timing gaps; covered by test_runtime_batch_adapter.py.-->
 ```python
 from pecos.qec import DetectorErrorModel
 

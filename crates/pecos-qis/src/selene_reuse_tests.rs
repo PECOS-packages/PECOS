@@ -745,7 +745,10 @@ fn batch_adapters_restart_native_clocks_with_their_shot_context() {
                         .lower_operations(&[QuantumOp::RZ(0.25, 0).into()])
                         .unwrap();
                     assert_eq!(ops, [QuantumOp::RZ(0.25, 0)]);
-                    assert!(runtime.drain_pending_operations().unwrap().is_empty());
+                    assert_eq!(
+                        runtime.drain_pending_operations().unwrap(),
+                        Vec::<QuantumOp>::new()
+                    );
                     runtime.shot_end().unwrap();
                 }
                 assert_eq!(INITS.lock().unwrap().len(), 3);

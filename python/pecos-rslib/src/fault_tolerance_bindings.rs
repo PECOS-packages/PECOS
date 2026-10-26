@@ -8213,6 +8213,97 @@ impl PyBivariateBicycleCode {
     }
 }
 
+/// Discovered record parities and their noiseless reference bits.
+#[pyclass(name = "DiscoveredDetectors", module = "pecos_rslib.qec")]
+pub struct PyDiscoveredDetectors {
+    #[pyo3(get)]
+    detectors: Vec<(Vec<usize>, u8)>,
+    #[pyo3(get)]
+    observables: Vec<(Vec<usize>, u8)>,
+}
+
+#[pymethods]
+impl PyDiscoveredDetectors {
+    fn __repr__(&self) -> String {
+        format!(
+            "DiscoveredDetectors(detectors={}, observables={})",
+            self.detectors.len(),
+            self.observables.len()
+        )
+    }
+}
+
+/// Discover Clifford detectors, completing observables with random-source records.
+/// Supply one conjugate (before_tick, pauli_string) per observable. The string
+/// uses `PauliString`'s sparse ("X0 X3") or dense syntax; its phase is ignored.
+/// `before_tick=1` injects after tick 0. Each conjugate must flip only its own
+/// completed observable; pairing also rejects dependent observables.
+/// Detectors are cleaned by taking the XOR with the observables whose conjugates flip them,
+/// including reference bits, then selected independently with unflipped detectors
+/// preferred. Undeclared deterministic logical parities still become detectors.
+///
+/// Precondition: each conjugate is a genuine logical operator, commuting with
+/// every measured check and anticommuting with its own observable only. Records
+/// alone cannot identify logical content or verify this: a wrong conjugate can
+/// pass pairing and silently lower the fault distance.
+/// Invalid observables, counts, tick/qubit bounds, pairing or strings raise `ValueError`;
+/// conjugate arguments are parsed before the observables are validated.
+#[pyfunction]
+#[pyo3(signature = (tc, observables = Vec::new(), conjugates = Vec::new()), text_signature = "(tc, observables=(), conjugates=())")]
+fn discover_detectors(
+    py: Python<'_>,
+    tc: &PyTickCircuit,
+    observables: Vec<Vec<Py<PyAny>>>,
+    conjugates: Vec<(Py<PyAny>, String)>,
+) -> PyResult<PyDiscoveredDetectors> {
+    let observables = observables
+        .iter()
+        .enumerate()
+        .map(|(observable, records)| {
+            records
+                .iter()
+                .map(|record| match record.extract::<usize>(py) {
+                    Ok(index) => Ok(index),
+                    Err(_) => Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "observable {observable} record {} must be a nonnegative integer that fits a record index",
+                        record.bind(py).repr()?
+                    ))),
+                })
+                .collect::<PyResult<Vec<_>>>()
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+    let conjugates = conjugates.iter().enumerate().map(|(conjugate, (tick, pauli))| {
+        let Ok(before_tick) = tick.extract::<usize>(py) else {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "conjugate {conjugate} before_tick {} must be a nonnegative integer that fits a tick index",
+                tick.bind(py).repr()?
+            )));
+        };
+        let pauli = pauli.parse::<pecos_core::PauliString>().map_err(|error| {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "conjugate {conjugate} pauli {pauli:?} is invalid: {error}; supply a sparse or dense Pauli string"
+            ))
+        })?;
+        Ok(pecos_qec::fault_tolerance::detector_discovery::Conjugate { before_tick, pauli })
+    }).collect::<PyResult<Vec<_>>>()?;
+    let discovered = pecos_qec::fault_tolerance::detector_discovery::discover_detectors(
+        &tc.inner,
+        &observables,
+        &conjugates,
+    )
+    .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+    let convert = |relations: Vec<(Vec<usize>, bool)>| {
+        relations
+            .into_iter()
+            .map(|(records, reference)| (records, u8::from(reference)))
+            .collect()
+    };
+    Ok(PyDiscoveredDetectors {
+        detectors: convert(discovered.detectors),
+        observables: convert(discovered.observables),
+    })
+}
+
 /// Build the Table 5 bivariate-bicycle memory circuit.
 #[pyfunction]
 fn bb_memory_circuit(
@@ -8366,6 +8457,8 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     qec.add_function(wrap_pyfunction!(certified_stabilizer_coset_weight, &qec)?)?;
     qec.add_function(wrap_pyfunction!(logical_generator_coset_weights, &qec)?)?;
     qec.add_function(wrap_pyfunction!(certified_classical_distance, &qec)?)?;
+    qec.add_class::<PyDiscoveredDetectors>()?;
+    qec.add_function(wrap_pyfunction!(discover_detectors, &qec)?)?;
     qec.add_function(wrap_pyfunction!(bb_memory_circuit, &qec)?)?;
     qec.add_function(wrap_pyfunction!(coloration_memory_circuit, &qec)?)?;
     qec.add_function(wrap_pyfunction!(transform_two_patch_pauli, &qec)?)?;

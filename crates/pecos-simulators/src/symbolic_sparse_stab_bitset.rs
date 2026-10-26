@@ -48,6 +48,7 @@ pub struct SymbolicSparseStab {
     stabs: SymbolicGensBitSet,
     destabs: SymbolicGensBitSet,
     measurement_counter: usize,
+    hidden_counter: usize,
     measurement_history: MeasurementHistory,
 }
 
@@ -136,6 +137,7 @@ impl SymbolicSparseStab {
             stabs: SymbolicGensBitSet::new(num_qubits),
             destabs: SymbolicGensBitSet::new(num_qubits),
             measurement_counter: 0,
+            hidden_counter: 0,
             measurement_history: MeasurementHistory::new(),
         };
         sim.stabs.init_all_z();
@@ -170,6 +172,7 @@ impl SymbolicSparseStab {
         self.stabs.init_all_z();
         self.destabs.init_all_x();
         self.measurement_counter = 0;
+        self.hidden_counter = 0;
         self.measurement_history.clear();
         self
     }
@@ -726,22 +729,54 @@ impl SymbolicSparseStab {
             .collect()
     }
 
+    /// Measure qubits in the Z basis without recording their outcomes.
+    ///
+    /// Random outcomes remain hidden until a recorded measurement observes them.
+    /// Neither the measurement counter nor the history changes.
+    pub fn mz_unrecorded(&mut self, qubits: &[usize]) {
+        for &q in qubits {
+            if !self.stabs.col_x[q].is_empty() {
+                self.measure_hidden(q);
+            }
+        }
+    }
+
     /// Prepare qubit in |0⟩ (reset). Does not record a measurement.
     ///
-    /// See `SymbolicSparseStabVecSet::pz` for detailed documentation.
+    /// Measure Z with a hidden outcome and conditionally apply X to force +Z.
+    /// Entangled partners retain the hidden outcome in their signs. A qubit
+    /// already in a Z eigenstate is rotated by H and projected onto +Z without
+    /// allocating a hidden source.
     pub fn pz(&mut self, q: usize) -> &mut Self {
         if self.stabs.col_x[q].is_empty() {
             self.h(&[q]);
+            self.project_z(q, SymbolicSign::empty());
+        } else {
+            self.pz_nondeterministic(q);
         }
-        self.pz_nondeterministic(q);
         self
     }
 
-    /// Project qubit onto +Z eigenstate without recording a measurement.
-    ///
-    /// Same Gaussian elimination as `nondeterministic_meas` but with
-    /// empty sign and no measurement counter increment.
+    /// Reset using an unrecorded measurement followed by the symbolic X^h.
     fn pz_nondeterministic(&mut self, q: usize) {
+        let hidden = self.measure_hidden(q);
+        for g in &self.stabs.col_z[q] {
+            self.stabs.signs[g].hidden.toggle(hidden);
+        }
+    }
+
+    /// Collapse an undetermined qubit and return its fresh hidden source.
+    fn measure_hidden(&mut self, q: usize) -> usize {
+        let hidden = self.hidden_counter;
+        self.hidden_counter += 1;
+        let mut sign = SymbolicSign::empty();
+        sign.hidden.insert(hidden);
+        self.project_z(q, sign);
+        hidden
+    }
+
+    /// Eliminate anticommuting generators and replace one with `Z_q` and `sign`.
+    fn project_z(&mut self, q: usize, sign: SymbolicSign) {
         let mut anticom_stabs_col = self.stabs.col_x[q].clone();
         let mut anticom_destabs_col = self.destabs.col_x[q].clone();
 
@@ -821,7 +856,7 @@ impl SymbolicSparseStab {
         self.stabs.row_x[id].clear();
         self.stabs.row_z[id].clear();
         self.stabs.row_z[id].insert(q);
-        self.stabs.signs[id] = SymbolicSign::empty();
+        self.stabs.signs[id] = sign;
         self.stabs.signs_minus.remove(id);
         self.stabs.signs_i.remove(id);
 
@@ -893,6 +928,27 @@ impl SymbolicSparseStab {
             result_sign.multiply_assign(&self.stabs.signs[row]);
         }
 
+        // BitSet iteration is ascending: both simulators eliminate the smallest source.
+        if let Some(hidden) = result_sign.hidden.iter().next() {
+            let mut records = result_sign.measurements.clone();
+            records.toggle(index);
+            for (g, sign) in self.stabs.signs.iter_mut().enumerate() {
+                if sign.hidden.contains(hidden) {
+                    sign.measurements ^= &records;
+                    sign.hidden ^= &result_sign.hidden;
+                    if flip {
+                        self.stabs.signs_minus.toggle(g);
+                    }
+                }
+            }
+            return SymbolicMeasurementResult {
+                outcome: BitSet::single(index),
+                flip: false,
+                is_deterministic: false,
+                index,
+            };
+        }
+
         SymbolicMeasurementResult {
             outcome: result_sign.measurements,
             flip,
@@ -902,143 +958,15 @@ impl SymbolicSparseStab {
     }
 
     /// Handle a non-deterministic measurement.
-    #[allow(clippy::too_many_lines)]
     fn nondeterministic_meas(&mut self, q: usize) -> SymbolicMeasurementResult {
-        let measurement_index = self.measurement_counter;
+        let index = self.measurement_counter;
         self.measurement_counter += 1;
-
-        let mut anticom_stabs_col = self.stabs.col_x[q].clone();
-        let mut anticom_destabs_col = self.destabs.col_x[q].clone();
-
-        // Find a stabilizer to replace (choose smallest weight)
-        let mut smallest_wt = 2 * self.num_qubits + 2;
-        let mut removed_id: Option<usize> = None;
-
-        for stab_id in &anticom_stabs_col {
-            let weight = self.stabs.row_x[stab_id].len() + self.stabs.row_z[stab_id].len();
-            if (weight, stab_id) < (smallest_wt, removed_id.unwrap_or(usize::MAX)) {
-                smallest_wt = weight;
-                removed_id = Some(stab_id);
-            }
-        }
-
-        let id = removed_id.expect("Critical error: removed_id was None");
-        anticom_stabs_col.remove(id);
-        let removed_row_x = self.stabs.row_x[id].clone();
-        let removed_row_z = self.stabs.row_z[id].clone();
-
-        // Phase tracking for anticommuting stabilizers
-        if self.stabs.signs_minus.contains(id) {
-            self.stabs.signs_minus ^= &anticom_stabs_col;
-        }
-
-        // Handle imaginary component propagation
-        if self.stabs.signs_i.contains(id) {
-            self.stabs.signs_i.remove(id);
-
-            let gens_common: Vec<usize> = self
-                .stabs
-                .signs_i
-                .iter()
-                .filter(|i| anticom_stabs_col.contains(*i))
-                .collect();
-            let gens_only_stabs: Vec<usize> = anticom_stabs_col
-                .iter()
-                .filter(|i| !self.stabs.signs_i.contains(*i))
-                .collect();
-
-            for i in gens_common {
-                let i_set = BitSet::single(i);
-                self.stabs.signs_minus ^= &i_set;
-                self.stabs.signs_i.remove(i);
-            }
-
-            for i in gens_only_stabs {
-                self.stabs.signs_i.insert(i);
-            }
-        }
-
-        // Multiply all other anticommuting stabilizers by the removed one
-        let removed_sign = self.stabs.signs[id].clone();
-        for g in &anticom_stabs_col {
-            self.stabs.signs[g].multiply_assign(&removed_sign);
-
-            // Count intersection for phase
-            let mut num_minuses = 0;
-            for z in &removed_row_z {
-                if self.stabs.row_x[g].contains(z) {
-                    num_minuses += 1;
-                }
-            }
-            if num_minuses & 1 != 0 {
-                let g_set = BitSet::single(g);
-                self.stabs.signs_minus ^= &g_set;
-            }
-
-            // Update Pauli structure
-            self.stabs.row_x[g] ^= &removed_row_x;
-            self.stabs.row_z[g] ^= &removed_row_z;
-        }
-
-        // Update column storage for stabilizers
-        for i in &removed_row_x {
-            self.stabs.col_x[i] ^= &anticom_stabs_col;
-        }
-        for i in &removed_row_z {
-            self.stabs.col_z[i] ^= &anticom_stabs_col;
-        }
-
-        // Remove the old stabilizer
-        for i in &self.stabs.row_x[id] {
-            self.stabs.col_x[i].remove(id);
-        }
-        for i in &self.stabs.row_z[id] {
-            self.stabs.col_z[i].remove(id);
-        }
-
-        // Replace with the measured stabilizer Z_q
-        self.stabs.col_z[q].insert(id);
-        self.stabs.row_x[id].clear();
-        self.stabs.row_z[id].clear();
-        self.stabs.row_z[id].insert(q);
-
-        // Set the sign of the new stabilizer
-        self.stabs.signs[id] = SymbolicSign::single(measurement_index);
-        self.stabs.signs_minus.remove(id);
-        self.stabs.signs_i.remove(id);
-
-        // Update destabilizers
-        for i in &self.destabs.row_x[id] {
-            self.destabs.col_x[i].remove(id);
-        }
-        for i in &self.destabs.row_z[id] {
-            self.destabs.col_z[i].remove(id);
-        }
-
-        anticom_destabs_col.remove(id);
-
-        for i in &removed_row_x {
-            self.destabs.col_x[i].insert(id);
-            self.destabs.col_x[i] ^= &anticom_destabs_col;
-        }
-        for i in &removed_row_z {
-            self.destabs.col_z[i].insert(id);
-            self.destabs.col_z[i] ^= &anticom_destabs_col;
-        }
-
-        for row in &anticom_destabs_col {
-            self.destabs.row_x[row] ^= &removed_row_x;
-            self.destabs.row_z[row] ^= &removed_row_z;
-        }
-
-        self.destabs.row_x[id] = removed_row_x;
-        self.destabs.row_z[id] = removed_row_z;
-
+        self.project_z(q, SymbolicSign::single(index));
         SymbolicMeasurementResult {
-            outcome: BitSet::single(measurement_index),
+            outcome: BitSet::single(index),
             flip: false,
             is_deterministic: false,
-            index: measurement_index,
+            index,
         }
     }
 }
@@ -1075,6 +1003,7 @@ mod tests {
         assert_same_gens(&left.stabs, &right.stabs);
         assert_same_gens(&left.destabs, &right.destabs);
         assert_eq!(left.measurement_counter, right.measurement_counter);
+        assert_eq!(left.hidden_counter, right.hidden_counter);
         assert_eq!(
             left.measurement_history.as_slice(),
             right.measurement_history.as_slice()
@@ -1186,8 +1115,8 @@ mod tests {
 
     fn signed_stab_row(gens: &SymbolicGensBitSet, row: usize, num_qubits: usize) -> SignedPauli {
         assert!(
-            gens.signs[row].measurements.is_empty(),
-            "unexpected measurement-dependent sign"
+            gens.signs[row].measurements.is_empty() && gens.signs[row].hidden.is_empty(),
+            "unexpected symbolic sign"
         );
         let pauli = row_binary(gens, row, num_qubits);
         let y_count = pauli.chars().filter(|&label| label == 'Y').count();
@@ -1372,6 +1301,95 @@ mod tests {
         sim.cx(pairs);
         sim.cx(&reversed);
         sim.cx(pairs);
+    }
+
+    #[test]
+    fn unrecorded_measurement_preserves_records_and_reset_clears_sources() {
+        let mut sim = SymbolicSparseStab::new(2);
+        sim.pz(0);
+        sim.mz_unrecorded(&[0, 1]);
+        assert_eq!(sim.hidden_counter, 0);
+        sim.h(&[0]).cx(&[(0, 1)]);
+        sim.mz_unrecorded(&[0, 1]);
+        let before = format!("{sim:?}");
+        sim.mz_unrecorded(&[0, 1]);
+        assert_eq!(format!("{sim:?}"), before);
+        assert_eq!(sim.hidden_counter, 1);
+        assert_eq!(sim.measurement_count(), 0);
+        assert!(sim.measurement_history().is_empty());
+        let results = sim.mz(&[1, 0]);
+        assert!(!results[0].is_deterministic);
+        assert!(results[1].is_deterministic);
+        assert_eq!(results[1].outcome, BitSet::single(0));
+        sim.h(&[0]);
+        sim.mz_unrecorded(&[0]);
+        sim.reset();
+        assert_eq!(sim.hidden_counter, 0);
+        assert_eq!(sim.measurement_count(), 0);
+        assert!(sim.stabs.signs.iter().all(|sign| sign.hidden.is_empty()));
+        assert!(sim.mz(&[0, 1]).iter().all(|result| result.is_deterministic));
+    }
+
+    #[test]
+    fn substitution_preserves_multiple_sources_and_record_dependencies() {
+        let mut sim = SymbolicSparseStab::new(3);
+        sim.h(&[0, 1, 2]);
+        sim.mz(&[2]);
+        sim.mz_unrecorded(&[0, 1]);
+        sim.cx(&[(0, 1), (2, 1)]).x(&[1]);
+        let result = sim.mz(&[1]);
+        assert!(!result[0].is_deterministic);
+        assert_eq!(result[0].outcome, BitSet::single(1));
+        assert!(!result[0].flip);
+        assert!(sim.stabs.signs.iter().all(|sign| !sign.hidden.contains(0)));
+        assert!(sim.stabs.signs.iter().any(|sign| sign.hidden.contains(1)));
+        let repeated = sim.mz(&[1]);
+        assert!(repeated[0].is_deterministic);
+        assert_eq!(repeated[0].outcome, BitSet::single(1));
+        assert!(!repeated[0].flip);
+        sim.cx(&[(0, 1), (2, 1)]);
+        let results = sim.mz(&[0, 1]);
+        assert!(!results[0].is_deterministic);
+        assert!(results[1].is_deterministic);
+        assert_eq!(results[1].outcome, BitSet::from_iter([0, 1, 3]));
+        assert!(!results[1].flip);
+    }
+
+    #[test]
+    fn reset_entangled_partner_stays_random() {
+        let mut sim = SymbolicSparseStab::new(2);
+        sim.h(&[1]).cx(&[(1, 0)]).pz(1);
+        let results = sim.mz(&[0, 0]);
+        assert!(!results[0].is_deterministic);
+        assert_eq!(results[0].outcome, BitSet::single(0));
+        assert!(!results[0].flip);
+        assert!(results[1].is_deterministic);
+        assert_eq!(results[1].outcome, BitSet::single(0));
+        assert!(!results[1].flip);
+    }
+
+    #[test]
+    fn reset_of_undetermined_qubit_applies_the_hidden_correction() {
+        // The collapse leaves Z_q with sign h; X^h must cancel it to +Z.
+        let mut sim = SymbolicSparseStab::new(1);
+        sim.h(&[0]).pz(0);
+        let results = sim.mz(&[0]);
+        assert!(results[0].is_deterministic);
+        assert!(results[0].outcome.is_empty());
+        assert!(!results[0].flip);
+    }
+
+    #[test]
+    fn hidden_source_substitution_carries_flip() {
+        let mut sim = SymbolicSparseStab::new(3);
+        sim.h(&[1]).cx(&[(1, 0), (1, 2)]).pz(1).x(&[0]);
+        let results = sim.mz(&[0, 2]);
+        assert!(!results[0].is_deterministic);
+        assert_eq!(results[0].outcome, BitSet::single(0));
+        assert!(!results[0].flip);
+        assert!(results[1].is_deterministic);
+        assert_eq!(results[1].outcome, BitSet::single(0));
+        assert!(results[1].flip);
     }
 
     #[test]

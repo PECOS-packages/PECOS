@@ -2313,6 +2313,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CliffordGateable for CHFormGener
     }
 
     fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "CX");
         for &(q0, q1) in pairs {
             self.apply_cx(q0.index(), q1.index());
         }
@@ -2457,6 +2458,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CliffordGateable for CHFormGener
     }
 
     fn cz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "CZ");
         for &(q0, q1) in pairs {
             self.apply_cz(q0.index(), q1.index());
         }
@@ -2464,6 +2466,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CliffordGateable for CHFormGener
     }
 
     fn szz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SZZ");
         // SZZ = CZ * S * S. Batch M updates in single make_mut.
         for &(q0, q1) in pairs {
             let q = q0.index();
@@ -2483,6 +2486,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CliffordGateable for CHFormGener
     }
 
     fn szzdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SZZDG");
         // SZZdg = CZ * Sdg * Sdg. Sdg = Z*S.
         for &(q0, q1) in pairs {
             let q = q0.index();
@@ -2500,6 +2504,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CliffordGateable for CHFormGener
     }
 
     fn sxx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SXX");
         // SXX = CX * (H*S*H) * CX. Faster than 4H for standalone SXX.
         for &(q0, q1) in pairs {
             let q = q0.index();
@@ -2514,6 +2519,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CliffordGateable for CHFormGener
     }
 
     fn sxxdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SXXDG");
         // SXXdg = CX * (H*Sdg*H) * CX
         for &(q0, q1) in pairs {
             let q = q0.index();
@@ -2528,6 +2534,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CliffordGateable for CHFormGener
     }
 
     fn syy(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SYY");
         // SYY = S*S * (H*H*SZZ*H*H) * Sdg*Sdg
         // Uses H-based SXX decomposition for better state structure.
         let all_qubits: Vec<QubitId> = pairs.iter().flat_map(|&(q0, q1)| [q0, q1]).collect();
@@ -2540,6 +2547,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CliffordGateable for CHFormGener
     }
 
     fn syydg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SYYDG");
         // SYYdg = S*S * (H*H*SZZdg*H*H) * Sdg*Sdg
         let all_qubits: Vec<QubitId> = pairs.iter().flat_map(|&(q0, q1)| [q0, q1]).collect();
         self.sz(&all_qubits);
@@ -2560,6 +2568,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CliffordGateable for CHFormGener
     }
 
     fn cy(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "CY");
         // CY = Sdg(tgt) * CX * S(tgt). All C-type.
         // Sdg = Z*S: gamma[r] += 1 (Z+2 + S+3 = +5 = +1 mod 4), M[r,:] ^= G[r,:]
         // CX: gamma[q] += gamma[r] + 2*ip, G[r,:] ^= G[q,:], F[q,:] ^= F[r,:], M[q,:] ^= M[r,:]

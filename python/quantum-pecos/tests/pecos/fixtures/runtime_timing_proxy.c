@@ -1,5 +1,8 @@
 /* Public synthetic timestamp proxy for sim() integration tests. */
 #include <dlfcn.h>
+#include <errno.h>
+#include <pthread.h>
+#include <stdlib.h>
 #include <selene/runtime.h>
 
 static SeleneRuntimePluginDescriptorV1 original;
@@ -8,14 +11,66 @@ static SeleneRuntimePluginDescriptorV1 proxy;
  * INITIAL_NANOS offsets every batch timestamp equally, adding an initial gap
  * while preserving the gaps between subsequent batches.
  * This is NOT a calibration or timing model for the public runtime. */
-static _Thread_local unsigned rxy_count;
+struct InstanceTiming {
+    RuntimeInstance instance;
+    uint64_t clock;
+    uint64_t shot_origin;
+    unsigned rxy_count;
+#ifdef PREP_GAP_NANOS
+    bool prep_emitted;
+#endif
+    struct InstanceTiming *next;
+};
+static struct InstanceTiming *instances;
+static pthread_mutex_t instances_mutex = PTHREAD_MUTEX_INITIALIZER;
+/* Instances may move between worker threads, but calls on one instance are
+ * serialized. Only synchronous callback forwarding is thread-local. */
+static _Thread_local struct InstanceTiming *current;
+
+static struct InstanceTiming *timing_for(RuntimeInstance instance) {
+    pthread_mutex_lock(&instances_mutex);
+    struct InstanceTiming *timing = instances;
+    while (timing && timing->instance != instance) timing = timing->next;
+    pthread_mutex_unlock(&instances_mutex);
+    return timing;
+}
+static SeleneErrno init(RuntimeInstance *instance, uint64_t qubits, uint64_t start,
+                        uint32_t argc, const char *const *argv) {
+    struct InstanceTiming *timing = calloc(1, sizeof(*timing));
+    if (!timing) return ENOMEM;
+    SeleneErrno rc = original.init_fn(instance, qubits, start, argc, argv);
+    if (rc != 0) {
+        free(timing);
+        return rc;
+    }
+    timing->instance = *instance;
+    timing->clock = start;
+    timing->shot_origin = start;
+    pthread_mutex_lock(&instances_mutex);
+    timing->next = instances;
+    instances = timing;
+    pthread_mutex_unlock(&instances_mutex);
+    return 0;
+}
+static SeleneErrno exit_runtime(RuntimeInstance instance) {
+    SeleneErrno rc = original.exit_fn ? original.exit_fn(instance) : 0;
+    pthread_mutex_lock(&instances_mutex);
+    struct InstanceTiming **link = &instances;
+    while (*link && (*link)->instance != instance) link = &(*link)->next;
+    if (*link) {
+        struct InstanceTiming *timing = *link;
+        *link = timing->next;
+        free(timing);
+    }
+    pthread_mutex_unlock(&instances_mutex);
+    return rc;
+}
 static _Thread_local RuntimeGetOperationHandle forwarding;
 static _Thread_local bool has_batch;
 #ifdef PREP_GAP_NANOS
-static _Thread_local bool prep_emitted;
 static void reset(SeleneRuntimeGetOperationInstance instance, uint64_t q) {
     (void)instance;
-    prep_emitted = true;
+    current->prep_emitted = true;
     forwarding.interface.reset_fn(forwarding.instance, q);
 }
 #endif
@@ -24,24 +79,31 @@ static void time_batch(SeleneRuntimeGetOperationInstance instance, uint64_t star
     has_batch = true;
 }
 static SeleneErrno start(RuntimeInstance instance, uint64_t shot, uint64_t seed) {
-    rxy_count = 0;
+    struct InstanceTiming *timing = timing_for(instance);
+    if (!timing) return EINVAL;
+    /* Only shots begun through shot_start advance the origin; this proxy does
+     * not model lowering on a kept instance without a new shot_start. */
+    timing->shot_origin = timing->clock;
+    timing->rxy_count = 0;
 #ifdef PREP_GAP_NANOS
-    prep_emitted = false;
+    timing->prep_emitted = false;
 #endif
     return original.shot_start_fn(instance, shot, seed);
 }
 static void rxy(SeleneRuntimeGetOperationInstance instance, uint64_t q, double theta, double phi) {
     (void)instance;
-    ++rxy_count;
+    ++current->rxy_count;
     forwarding.interface.rxy_fn(forwarding.instance, q, theta, phi);
 #ifdef SYNTHETIC_EVENT
-    if (rxy_count == 1) {
+    if (current->rxy_count == 1) {
         const uint8_t payload[] = {1};
         forwarding.interface.custom_fn(forwarding.instance, 4242, payload, sizeof(payload));
     }
 #endif
 }
 static SeleneErrno next(RuntimeInstance instance, RuntimeGetOperationHandle ops) {
+    current = timing_for(instance);
+    if (!current) return EINVAL;
     forwarding = ops;
     has_batch = false;
     RuntimeGetOperationHandle wrapped = ops;
@@ -49,7 +111,7 @@ static SeleneErrno next(RuntimeInstance instance, RuntimeGetOperationHandle ops)
     wrapped.interface.set_batch_time_fn = time_batch;
 #ifdef PREP_GAP_NANOS
     /* The program starts with a prep; isolate it before coalescing readouts. */
-    bool prep_batch = !prep_emitted;
+    bool prep_batch = !current->prep_emitted;
     wrapped.interface.reset_fn = reset;
 #endif
     SeleneErrno rc;
@@ -59,7 +121,7 @@ static SeleneErrno next(RuntimeInstance instance, RuntimeGetOperationHandle ops)
         rc = original.get_next_operations_fn(instance, wrapped);
         any_batch = any_batch || has_batch;
 #ifdef PREP_GAP_NANOS
-        if (prep_batch && prep_emitted) break;
+        if (prep_batch && current->prep_emitted) break;
 #endif
 #ifndef COALESCE_QUEUED
         break;
@@ -68,11 +130,19 @@ static SeleneErrno next(RuntimeInstance instance, RuntimeGetOperationHandle ops)
          * waiting on a measurement remains suspended until PECOS returns it.
          * This deliberately invents one zero-duration batch, not runtime timing. */
     } while (rc == 0 && has_batch);
+    if (rc == 0 && any_batch) {
+        uint64_t relative = INITIAL_NANOS;
 #ifdef PREP_GAP_NANOS
-    if (rc == 0 && any_batch) ops.interface.set_batch_time_fn(ops.instance, INITIAL_NANOS + (prep_batch ? 0 : PREP_GAP_NANOS + (rxy_count >= 2 ? GAP_NANOS : 0)), 0);
+        if (!prep_batch) relative += PREP_GAP_NANOS + (current->rxy_count >= 2 ? GAP_NANOS : 0);
 #else
-    if (rc == 0 && any_batch) ops.interface.set_batch_time_fn(ops.instance, INITIAL_NANOS + (rxy_count >= 2 ? GAP_NANOS : 0), 0);
+        relative += current->rxy_count >= 2 ? GAP_NANOS : 0;
 #endif
+        /* Base timestamps are intentionally replaced. The proxy's emitted
+         * zero-duration batches, not the base runtime's clock, define this clock. */
+        uint64_t start = current->shot_origin + relative;
+        ops.interface.set_batch_time_fn(ops.instance, start, 0);
+        current->clock = start;
+    }
     return rc;
 }
 
@@ -93,6 +163,8 @@ const SeleneRuntimePluginDescriptorV1 *selene_runtime_get_plugin_descriptor_v1(v
             descriptor->api_version != SELENE_RUNTIME_CURRENT_API_VERSION) return NULL;
         original = *descriptor;
         proxy = original;
+        proxy.init_fn = init;
+        proxy.exit_fn = exit_runtime;
         proxy.shot_start_fn = start;
         proxy.get_next_operations_fn = next;
     }

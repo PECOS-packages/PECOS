@@ -14,10 +14,10 @@
 //!
 //! This module provides [`SymbolicGensGeneric`], a variant of the generator storage that tracks
 //! stabilizer signs in two parts:
-//! 1. **Measurement dependencies** (`signs`): Sets of measurement indices that XOR together
+//! 1. **Symbolic dependencies** (`signs`): Record and hidden-source sets that XOR together
 //! 2. **Phase flips** (`signs_minus`, `signs_i`): Traditional phase tracking from unitary gates
 //!
-//! The final measurement outcome is: `XOR(measurement_outcomes) XOR phase_flip`
+//! The final measurement outcome is: `XOR(measurement_outcomes) XOR XOR(hidden_sources) XOR phase_flip`
 //!
 //! # Set Type Parameter
 //!
@@ -48,10 +48,10 @@ pub type SymbolicGensVecSet = SymbolicGensGeneric<VecSet<usize>>;
 /// Generic generators for symbolic stabilizer simulation.
 ///
 /// Tracks stabilizer signs in two parts:
-/// 1. **Measurement dependencies** (`signs`): Per-generator sets of measurement indices
+/// 1. **Symbolic dependencies** (`signs`): Per-generator record and hidden-source sets
 /// 2. **Phase tracking** (`signs_minus`, `signs_i`): Traditional phase from unitary gates
 ///
-/// The final sign is: `{measurement_deps} ^ phase_flip` where `phase_flip` is computed
+/// The final sign is: `{measurement_deps} ^ {hidden_sources} ^ phase_flip` where `phase_flip` is computed
 /// from `signs_minus` and `signs_i`.
 ///
 /// # Type Parameter
@@ -68,7 +68,7 @@ pub struct SymbolicGensGeneric<S: IndexSet> {
     pub row_x: Vec<S>,
     /// Row-wise storage of Z operators: `row_z`[gen] = set of qubits where this generator has Z
     pub row_z: Vec<S>,
-    /// Symbolic signs for each generator: signs[gen] = set of measurement indices
+    /// Symbolic signs for each generator: record and hidden-source dependencies
     pub signs: Vec<SymbolicSign>,
     /// Traditional phase tracking: generators with a minus sign (from unitaries)
     pub signs_minus: S,
@@ -236,6 +236,20 @@ impl<S: IndexSet> SymbolicGensGeneric<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reinitialization_clears_hidden_signs() {
+        let mut gens = SymbolicGens::new(2);
+        gens.signs[0].hidden.insert(0);
+        gens.init_all_z();
+        assert!(gens.signs.iter().all(|sign| sign.hidden.is_empty()));
+        gens.signs[1].hidden.insert(1);
+        gens.init_all_x();
+        assert!(gens.signs.iter().all(|sign| sign.hidden.is_empty()));
+        gens.signs[0].hidden.insert(2);
+        gens.clear_sign(0);
+        assert!(gens.signs[0].hidden.is_empty());
+    }
 
     #[test]
     fn test_symbolic_gens_new() {

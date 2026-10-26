@@ -78,6 +78,9 @@ use pecos_random::{PecosRng, Rng, SeedableRng};
 /// Each gate operation updates the stabilizer and destabilizer generators according to
 /// the appropriate Heisenberg representation transformations.
 ///
+/// Two-qubit gates panic if both operands name the same qubit, in debug and release
+/// builds. The panic identifies the repeated qubit.
+///
 /// # Memory Efficiency
 /// The sparse representation is memory efficient for:
 /// - States with local correlations
@@ -272,6 +275,15 @@ where
     #[inline]
     pub fn num_qubits(&self) -> usize {
         self.num_qubits
+    }
+
+    /// Panics before any gate mutates the tableau if a pair repeats a qubit or names a
+    /// qubit outside the register.
+    fn validate_pairs(&self, pairs: &[(QubitId, QubitId)], gate: &str) {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, gate);
+        for &(a, b) in pairs {
+            self.validate_qubits(&[a, b]);
+        }
     }
 
     /// Create a stabilizer simulator with a custom RNG.
@@ -684,6 +696,17 @@ where
     S: IndexSet,
     R: SeedableRng + Rng + Debug,
 {
+    fn validate_qubits(&self, qubits: &[QubitId]) {
+        for &qubit in qubits {
+            assert!(
+                qubit.index() < self.num_qubits,
+                "qubit {} is outside the {}-qubit sparse stabilizer register",
+                qubit.index(),
+                self.num_qubits
+            );
+        }
+    }
+
     // TODO: pub fun p(&mut self, pauli: &pauli, q: U) { todo!() }
     // TODO: pub fun m(&mut self, pauli: &pauli, q: U) -> bool { todo!() }
 
@@ -1534,34 +1557,29 @@ where
     /// CX: +IX -> +IX; +IZ -> +ZZ; +XI -> +XX; +ZI -> +ZI
     #[inline]
     fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        self.validate_pairs(pairs, "CX");
         for &(control, target) in pairs {
             let q1 = control.index();
             let q2 = target.index();
-            debug_assert_ne!(q1, q2, "CX requires distinct qubits");
 
             for g in &mut [&mut self.stabs, &mut self.destabs] {
-                // SAFETY: q1 != q2 is guaranteed by the caller (asserted above in debug).
-                // We need mutable access to two different column entries simultaneously.
-                // Using unsafe to avoid the split_at_mut overhead.
-                unsafe {
-                    // Handle col_x: toggle q2 in row_x[i] for each i in col_x[q1], then XOR columns
-                    let col_x_q1 = g.col_x.get_unchecked(q1);
-                    for i in col_x_q1.iter() {
-                        g.row_x.get_unchecked_mut(i).toggle(q2);
-                    }
-                    let col_x_q1 = std::ptr::from_ref::<S>(g.col_x.get_unchecked(q1));
-                    let col_x_q2 = g.col_x.get_unchecked_mut(q2);
-                    col_x_q2.xor_assign(&*col_x_q1);
-
-                    // Handle col_z: toggle q1 in row_z[i] for each i in col_z[q2], then XOR columns
-                    let col_z_q2 = g.col_z.get_unchecked(q2);
-                    for i in col_z_q2.iter() {
-                        g.row_z.get_unchecked_mut(i).toggle(q1);
-                    }
-                    let col_z_q2 = std::ptr::from_ref::<S>(g.col_z.get_unchecked(q2));
-                    let col_z_q1 = g.col_z.get_unchecked_mut(q1);
-                    col_z_q1.xor_assign(&*col_z_q2);
+                let [col_x_q1, col_x_q2] =
+                    g.col_x.get_disjoint_mut([q1, q2]).unwrap_or_else(|error| {
+                        panic!("CX: cannot borrow qubits {q1} and {q2}: {error:?}")
+                    });
+                for i in col_x_q1.iter() {
+                    g.row_x[i].toggle(q2);
                 }
+                col_x_q2.xor_assign(col_x_q1);
+
+                let [col_z_q1, col_z_q2] =
+                    g.col_z.get_disjoint_mut([q1, q2]).unwrap_or_else(|error| {
+                        panic!("CX: cannot borrow qubits {q1} and {q2}: {error:?}")
+                    });
+                for i in col_z_q2.iter() {
+                    g.row_z[i].toggle(q1);
+                }
+                col_z_q1.xor_assign(col_z_q2);
             }
         }
         self
@@ -1581,10 +1599,10 @@ where
     /// ```
     #[inline]
     fn sxx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        self.validate_pairs(pairs, "SXX");
         for &(qa, qb) in pairs {
             let q1 = qa.index();
             let q2 = qb.index();
-            debug_assert_ne!(q1, q2, "SXX requires distinct qubits");
 
             // Sign update (stabs only): multiply phase by -i for odd Z-count generators.
             for g in self.stabs.col_z[q1].iter() {
@@ -1637,38 +1655,19 @@ where
 
             // Pauli update (both stabs and destabs): toggle X on q1,q2 for odd-Z generators.
             for tab in [&mut self.stabs, &mut self.destabs] {
-                unsafe {
-                    let col_z_q1 = std::ptr::from_ref::<S>(tab.col_z.get_unchecked(q1));
-                    let col_z_q2 = std::ptr::from_ref::<S>(tab.col_z.get_unchecked(q2));
-                    let col_x_q1 = tab.col_x.get_unchecked_mut(q1);
-                    let old_col_x_q1 = col_x_q1.clone();
-                    col_x_q1.xor_assign(&*col_z_q1);
-                    col_x_q1.xor_assign(&*col_z_q2);
-                    for i in old_col_x_q1.iter() {
-                        if !tab.col_x.get_unchecked(q1).contains(i) {
-                            tab.row_x.get_unchecked_mut(i).remove(q1);
+                for qubit in [q1, q2] {
+                    let column = &mut tab.col_x[qubit];
+                    let old_column = column.clone();
+                    column.xor_assign(&tab.col_z[q1]);
+                    column.xor_assign(&tab.col_z[q2]);
+                    for i in old_column.iter() {
+                        if !column.contains(i) {
+                            tab.row_x[i].remove(qubit);
                         }
                     }
-                    for i in tab.col_x.get_unchecked(q1).iter() {
-                        if !old_col_x_q1.contains(i) {
-                            tab.row_x.get_unchecked_mut(i).insert(q1);
-                        }
-                    }
-
-                    let col_z_q1 = std::ptr::from_ref::<S>(tab.col_z.get_unchecked(q1));
-                    let col_z_q2 = std::ptr::from_ref::<S>(tab.col_z.get_unchecked(q2));
-                    let col_x_q2 = tab.col_x.get_unchecked_mut(q2);
-                    let old_col_x_q2 = col_x_q2.clone();
-                    col_x_q2.xor_assign(&*col_z_q1);
-                    col_x_q2.xor_assign(&*col_z_q2);
-                    for i in old_col_x_q2.iter() {
-                        if !tab.col_x.get_unchecked(q2).contains(i) {
-                            tab.row_x.get_unchecked_mut(i).remove(q2);
-                        }
-                    }
-                    for i in tab.col_x.get_unchecked(q2).iter() {
-                        if !old_col_x_q2.contains(i) {
-                            tab.row_x.get_unchecked_mut(i).insert(q2);
+                    for i in column.iter() {
+                        if !old_column.contains(i) {
+                            tab.row_x[i].insert(qubit);
                         }
                     }
                 }
@@ -1680,6 +1679,7 @@ where
     /// Adjoint of square root of XX gate. `SXXdg` = X(q1).X(q2).SXX
     #[inline]
     fn sxxdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        self.validate_pairs(pairs, "SXXDG");
         let q1s: Vec<QubitId> = pairs.iter().map(|&(q1, _)| q1).collect();
         let q2s: Vec<QubitId> = pairs.iter().map(|&(_, q2)| q2).collect();
         self.x(&q1s).x(&q2s).sxx(pairs)
@@ -1699,10 +1699,10 @@ where
     /// ```
     #[inline]
     fn szz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        self.validate_pairs(pairs, "SZZ");
         for &(qa, qb) in pairs {
             let q1 = qa.index();
             let q2 = qb.index();
-            debug_assert_ne!(q1, q2, "SZZ requires distinct qubits");
 
             // Sign update (stabs only): multiply phase by +i for odd X-count generators.
             for g in self.stabs.col_x[q1].iter() {
@@ -1750,38 +1750,19 @@ where
 
             // Pauli update (both stabs and destabs): toggle Z on q1,q2 for odd-X generators.
             for tab in [&mut self.stabs, &mut self.destabs] {
-                unsafe {
-                    let col_x_q1 = std::ptr::from_ref::<S>(tab.col_x.get_unchecked(q1));
-                    let col_x_q2 = std::ptr::from_ref::<S>(tab.col_x.get_unchecked(q2));
-                    let col_z_q1 = tab.col_z.get_unchecked_mut(q1);
-                    let old_col_z_q1 = col_z_q1.clone();
-                    col_z_q1.xor_assign(&*col_x_q1);
-                    col_z_q1.xor_assign(&*col_x_q2);
-                    for i in old_col_z_q1.iter() {
-                        if !tab.col_z.get_unchecked(q1).contains(i) {
-                            tab.row_z.get_unchecked_mut(i).remove(q1);
+                for qubit in [q1, q2] {
+                    let column = &mut tab.col_z[qubit];
+                    let old_column = column.clone();
+                    column.xor_assign(&tab.col_x[q1]);
+                    column.xor_assign(&tab.col_x[q2]);
+                    for i in old_column.iter() {
+                        if !column.contains(i) {
+                            tab.row_z[i].remove(qubit);
                         }
                     }
-                    for i in tab.col_z.get_unchecked(q1).iter() {
-                        if !old_col_z_q1.contains(i) {
-                            tab.row_z.get_unchecked_mut(i).insert(q1);
-                        }
-                    }
-
-                    let col_x_q1 = std::ptr::from_ref::<S>(tab.col_x.get_unchecked(q1));
-                    let col_x_q2 = std::ptr::from_ref::<S>(tab.col_x.get_unchecked(q2));
-                    let col_z_q2 = tab.col_z.get_unchecked_mut(q2);
-                    let old_col_z_q2 = col_z_q2.clone();
-                    col_z_q2.xor_assign(&*col_x_q1);
-                    col_z_q2.xor_assign(&*col_x_q2);
-                    for i in old_col_z_q2.iter() {
-                        if !tab.col_z.get_unchecked(q2).contains(i) {
-                            tab.row_z.get_unchecked_mut(i).remove(q2);
-                        }
-                    }
-                    for i in tab.col_z.get_unchecked(q2).iter() {
-                        if !old_col_z_q2.contains(i) {
-                            tab.row_z.get_unchecked_mut(i).insert(q2);
+                    for i in column.iter() {
+                        if !old_column.contains(i) {
+                            tab.row_z[i].insert(qubit);
                         }
                     }
                 }
@@ -1793,6 +1774,7 @@ where
     /// Adjoint of square root of ZZ gate. `SZZdg` = Z(q1).Z(q2).SZZ
     #[inline]
     fn szzdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        self.validate_pairs(pairs, "SZZDG");
         let q1s: Vec<QubitId> = pairs.iter().map(|&(q1, _)| q1).collect();
         let q2s: Vec<QubitId> = pairs.iter().map(|&(_, q2)| q2).collect();
         self.z(&q1s).z(&q2s).szz(pairs)
@@ -1816,10 +1798,10 @@ where
     /// ```
     #[inline]
     fn syy(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        self.validate_pairs(pairs, "SYY");
         for &(qa, qb) in pairs {
             let q1 = qa.index();
             let q2 = qb.index();
-            debug_assert_ne!(q1, q2, "SYY requires distinct qubits");
 
             // Sign update (stabs only): for affected generators ((x1^z1)^(x2^z2)=1),
             // multiply by -i when z1+z2 even, +i when z1+z2 odd.
@@ -1959,66 +1941,40 @@ where
             // Pauli update (both stabs and destabs): toggle both X and Z on q1,q2
             // for generators where (x1^z1) XOR (x2^z2) = 1.
             for tab in [&mut self.stabs, &mut self.destabs] {
-                unsafe {
-                    // Compute the affected set: anti_y[q] = col_x[q] ^ col_z[q]
-                    let mut anti_y_q1 = tab.col_x.get_unchecked(q1).clone();
-                    anti_y_q1.xor_assign(tab.col_z.get_unchecked(q1));
-                    let mut anti_y_q2 = tab.col_x.get_unchecked(q2).clone();
-                    anti_y_q2.xor_assign(tab.col_z.get_unchecked(q2));
-                    let mut affected = anti_y_q1;
-                    affected.xor_assign(&anti_y_q2);
+                // Compute the affected generators before changing either column.
+                let mut affected = tab.col_x[q1].clone();
+                affected.xor_assign(&tab.col_z[q1]);
+                let mut anti_y_q2 = tab.col_x[q2].clone();
+                anti_y_q2.xor_assign(&tab.col_z[q2]);
+                affected.xor_assign(&anti_y_q2);
 
-                    // Toggle X bits at q1 and q2
-                    let old_col_x_q1 = tab.col_x.get_unchecked(q1).clone();
-                    tab.col_x.get_unchecked_mut(q1).xor_assign(&affected);
-                    for i in old_col_x_q1.iter() {
-                        if !tab.col_x.get_unchecked(q1).contains(i) {
-                            tab.row_x.get_unchecked_mut(i).remove(q1);
+                for qubit in [q1, q2] {
+                    let column = &mut tab.col_x[qubit];
+                    let old_column = column.clone();
+                    column.xor_assign(&affected);
+                    for i in old_column.iter() {
+                        if !column.contains(i) {
+                            tab.row_x[i].remove(qubit);
                         }
                     }
-                    for i in tab.col_x.get_unchecked(q1).iter() {
-                        if !old_col_x_q1.contains(i) {
-                            tab.row_x.get_unchecked_mut(i).insert(q1);
+                    for i in column.iter() {
+                        if !old_column.contains(i) {
+                            tab.row_x[i].insert(qubit);
                         }
                     }
-
-                    let old_col_x_q2 = tab.col_x.get_unchecked(q2).clone();
-                    tab.col_x.get_unchecked_mut(q2).xor_assign(&affected);
-                    for i in old_col_x_q2.iter() {
-                        if !tab.col_x.get_unchecked(q2).contains(i) {
-                            tab.row_x.get_unchecked_mut(i).remove(q2);
+                }
+                for qubit in [q1, q2] {
+                    let column = &mut tab.col_z[qubit];
+                    let old_column = column.clone();
+                    column.xor_assign(&affected);
+                    for i in old_column.iter() {
+                        if !column.contains(i) {
+                            tab.row_z[i].remove(qubit);
                         }
                     }
-                    for i in tab.col_x.get_unchecked(q2).iter() {
-                        if !old_col_x_q2.contains(i) {
-                            tab.row_x.get_unchecked_mut(i).insert(q2);
-                        }
-                    }
-
-                    // Toggle Z bits at q1 and q2
-                    let old_col_z_q1 = tab.col_z.get_unchecked(q1).clone();
-                    tab.col_z.get_unchecked_mut(q1).xor_assign(&affected);
-                    for i in old_col_z_q1.iter() {
-                        if !tab.col_z.get_unchecked(q1).contains(i) {
-                            tab.row_z.get_unchecked_mut(i).remove(q1);
-                        }
-                    }
-                    for i in tab.col_z.get_unchecked(q1).iter() {
-                        if !old_col_z_q1.contains(i) {
-                            tab.row_z.get_unchecked_mut(i).insert(q1);
-                        }
-                    }
-
-                    let old_col_z_q2 = tab.col_z.get_unchecked(q2).clone();
-                    tab.col_z.get_unchecked_mut(q2).xor_assign(&affected);
-                    for i in old_col_z_q2.iter() {
-                        if !tab.col_z.get_unchecked(q2).contains(i) {
-                            tab.row_z.get_unchecked_mut(i).remove(q2);
-                        }
-                    }
-                    for i in tab.col_z.get_unchecked(q2).iter() {
-                        if !old_col_z_q2.contains(i) {
-                            tab.row_z.get_unchecked_mut(i).insert(q2);
+                    for i in column.iter() {
+                        if !old_column.contains(i) {
+                            tab.row_z[i].insert(qubit);
                         }
                     }
                 }
@@ -2030,6 +1986,7 @@ where
     /// Adjoint of square root of YY gate. `SYYdg` = Y(q1).Y(q2).SYY
     #[inline]
     fn syydg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        self.validate_pairs(pairs, "SYYDG");
         let q1s: Vec<QubitId> = pairs.iter().map(|&(q1, _)| q1).collect();
         let q2s: Vec<QubitId> = pairs.iter().map(|&(_, q2)| q2).collect();
         self.y(&q1s).y(&q2s).syy(pairs)
@@ -2185,6 +2142,15 @@ where
     #[inline]
     pub fn num_qubits(&self) -> usize {
         self.num_qubits
+    }
+
+    /// Panics before any gate mutates the tableau if a pair repeats a qubit or names a
+    /// qubit outside the register.
+    fn validate_pairs(&self, pairs: &[(QubitId, QubitId)], gate: &str) {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, gate);
+        for &(a, b) in pairs {
+            self.validate_qubits(&[a, b]);
+        }
     }
 
     /// Reset to the |0...0> state.
@@ -2540,6 +2506,17 @@ impl<R> CliffordGateable for SparseStabHybrid<R>
 where
     R: SeedableRng + Rng + Debug,
 {
+    fn validate_qubits(&self, qubits: &[QubitId]) {
+        for &qubit in qubits {
+            assert!(
+                qubit.index() < self.num_qubits,
+                "qubit {} is outside the {}-qubit sparse stabilizer register",
+                qubit.index(),
+                self.num_qubits
+            );
+        }
+    }
+
     /// Pauli X gate. X -> X, Z -> -Z
     #[inline]
     fn x(&mut self, qubits: &[QubitId]) -> &mut Self {
@@ -3272,10 +3249,10 @@ where
     /// Controlled-X (CNOT) gate.
     #[inline]
     fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        self.validate_pairs(pairs, "CX");
         for &(control, target) in pairs {
             let q1 = control.index();
             let q2 = target.index();
-            debug_assert_ne!(q1, q2, "CX requires distinct qubits");
 
             for g in [&mut self.stabs, &mut self.destabs] {
                 let (qu_min, qu_max) = if q1 < q2 { (q1, q2) } else { (q2, q1) };
@@ -3327,10 +3304,10 @@ where
     /// Generators with odd Z-count on {q1,q2} get phase * -i and X toggled on both qubits.
     #[inline]
     fn sxx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        self.validate_pairs(pairs, "SXX");
         for &(qa, qb) in pairs {
             let q1 = qa.index();
             let q2 = qb.index();
-            debug_assert_ne!(q1, q2, "SXX requires distinct qubits");
 
             // Sign update (stabs only): multiply phase by -i for odd Z-count generators.
             for g in self.stabs.col_z[q1].iter().copied() {
@@ -3397,6 +3374,7 @@ where
     /// Adjoint of square root of XX gate. `SXXdg` = X(q1).X(q2).SXX
     #[inline]
     fn sxxdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        self.validate_pairs(pairs, "SXXDG");
         let q1s: Vec<QubitId> = pairs.iter().map(|&(q1, _)| q1).collect();
         let q2s: Vec<QubitId> = pairs.iter().map(|&(_, q2)| q2).collect();
         self.x(&q1s).x(&q2s).sxx(pairs)
@@ -3407,10 +3385,10 @@ where
     /// Generators with odd X-count on {q1,q2} get phase * +i and Z toggled on both qubits.
     #[inline]
     fn szz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        self.validate_pairs(pairs, "SZZ");
         for &(qa, qb) in pairs {
             let q1 = qa.index();
             let q2 = qb.index();
-            debug_assert_ne!(q1, q2, "SZZ requires distinct qubits");
 
             // Sign update (stabs only): multiply phase by +i for odd X-count generators.
             for g in self.stabs.col_x[q1].iter().copied() {
@@ -3474,6 +3452,7 @@ where
     /// Adjoint of square root of ZZ gate. `SZZdg` = Z(q1).Z(q2).SZZ
     #[inline]
     fn szzdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        self.validate_pairs(pairs, "SZZDG");
         let q1s: Vec<QubitId> = pairs.iter().map(|&(q1, _)| q1).collect();
         let q2s: Vec<QubitId> = pairs.iter().map(|&(_, q2)| q2).collect();
         self.z(&q1s).z(&q2s).szz(pairs)
@@ -3485,6 +3464,7 @@ where
     /// and both X,Z toggled on both qubits. Sign is z-parity dependent.
     #[inline]
     fn syy(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        self.validate_pairs(pairs, "SYY");
         for &(qa, qb) in pairs {
             let q1 = qa.index();
             let q2 = qb.index();
@@ -3630,6 +3610,7 @@ where
     /// Adjoint of square root of YY gate. `SYYdg` = Y(q1).Y(q2).SYY
     #[inline]
     fn syydg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        self.validate_pairs(pairs, "SYYDG");
         let q1s: Vec<QubitId> = pairs.iter().map(|&(q1, _)| q1).collect();
         let q2s: Vec<QubitId> = pairs.iter().map(|&(_, q2)| q2).collect();
         self.y(&q1s).y(&q2s).syy(pairs)

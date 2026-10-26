@@ -22,6 +22,7 @@ pub mod circuit_runner;
 pub mod correlation;
 pub mod decoder_integration;
 pub mod dem_builder;
+pub mod detector_discovery;
 pub mod fault_distance;
 pub mod fault_distance_upper_bound;
 pub mod fault_sampler;

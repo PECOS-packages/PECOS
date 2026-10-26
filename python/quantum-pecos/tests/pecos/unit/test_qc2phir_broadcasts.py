@@ -6,6 +6,24 @@ import pecos as pc
 import pytest
 
 
+@pytest.mark.parametrize("symbol", ["Measure", "measure Z"])
+def test_multi_qubit_measurement_rejects_single_var(symbol) -> None:
+    """A single destination cannot describe several measurement results."""
+    qc = pc.QuantumCircuit(cvar_spec={"c": 2})
+    qc.append(symbol, {0, 1}, var=("c", 0))
+    with pytest.raises(ValueError, match=rf"{symbol!r}.*qubits.*0.*1.*var.*c.*var_output"):
+        qc.to_phir_json()
+
+
+@pytest.mark.parametrize("symbol", ["Measure", "measure Z"])
+def test_measurement_rejects_missing_var_output(symbol) -> None:
+    """Partial per-gate metadata must explain which result is missing."""
+    qc = pc.QuantumCircuit(cvar_spec={"c": 2})
+    qc.append(symbol, {0, 1}, var_output={0: ("c", 1)})
+    with pytest.raises(ValueError, match=rf"{symbol!r}.*qubits.*0.*1.*var_output.*c.*missing.*1"):
+        qc.to_phir_json()
+
+
 @pytest.mark.parametrize("case", ["repeated_h", "repeated_measure", "cx_ladder"])
 def test_round_trip_matches_direct_circuit(case: str) -> None:
     """Overlapping gates in consecutive ticks remain executable in native PHIR."""

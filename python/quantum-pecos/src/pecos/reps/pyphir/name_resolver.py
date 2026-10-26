@@ -26,7 +26,7 @@ def sim_name_resolver(qop: QOp) -> str:
     # TODO: Try to support as many TQ gates... but at least all the allowed ones to standard TQ Cliffords
 
     if qop.name == "RZZ" and qop.angles == (0.0,):
-        return "I"
+        return "II"
 
     if qop.name == "RZZ":
         (theta,) = qop.angles

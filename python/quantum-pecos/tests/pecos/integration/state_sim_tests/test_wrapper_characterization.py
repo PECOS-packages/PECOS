@@ -104,9 +104,9 @@ def test_result_singleton_tuple(state):
         # The generated native binding accepts 1-tuples; the wrapper retains them.
         assert state.run_gate("Measure", [(1,)]) == {(1,): 1}
     elif isinstance(state, CoinToss):
-        # CoinToss ignores locations in run_gate, but native circuit measurements reject tuples.
+        # CoinToss ignores locations in run_gate; circuit pre-checks reject tuples.
         assert state.run_gate("Measure", [(1,)]) == {}
-        with pytest.raises(ValueError, match="MZ: expected a non-negative qubit index"):
+        with pytest.raises(ValueError, match="Measure: expected a scalar qubit index"):
             state.run_circuit(_items("Measure", {(1,)}))
     else:
         # These measurement helpers require a scalar qubit, even in a batch.

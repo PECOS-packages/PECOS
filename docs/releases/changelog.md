@@ -26,7 +26,8 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   ran. Batches may still repeat or overlap qubits and execute sequentially.
   Native SparseStab, Stabilizer, StateVec, StabVec, CoinToss and PauliProp expose
   a read-only `gate_capacity` property; PauliProp returns `None` and remains
-  growable. CoinToss's own no-op `run_gate` and its `run_circuit` are unchanged.
+  growable. CoinToss's own `run_gate` stays a no-op; its `run_circuit` pre-checks
+  measurement batches before drawing RNG or recording results.
   Through HybridEngine, every CoinToss measurement binding (including MX/MY/MZ)
   is validated for every iterable batch container; other CoinToss gates remain
   no-ops.

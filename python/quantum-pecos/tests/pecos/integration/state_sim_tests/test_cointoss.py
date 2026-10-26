@@ -13,9 +13,96 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pecos as pc
+import pytest
 from pecos.circuits import QuantumCircuit
 from pecos.simulators import CoinToss
+
+MEASURE_SYMBOLS = (
+    "Measure",
+    "measure Z",
+    "Measure +Z",
+    "Measure -Z",
+    "Measure +X",
+    "Measure -X",
+    "Measure +Y",
+    "Measure -Y",
+)
+
+
+def _items(symbol, locations, **params):
+    return SimpleNamespace(items=lambda: iter([(symbol, locations, params)]))
+
+
+@pytest.mark.parametrize("symbol", MEASURE_SYMBOLS)
+@pytest.mark.parametrize("simulate_gate", [True, False])
+@pytest.mark.parametrize("prob", [0.5, 1.0])
+def test_measurement_batch_failure_preserves_results_and_rng(symbol, simulate_gate, prob):
+    """An invalid second location must not record a one or consume a coin toss."""
+    state = CoinToss(4, prob=prob, seed=42)
+    fresh = CoinToss(4, prob=prob, seed=42)
+    locations = {0, 4}
+    assert list(locations) == [0, 4]  # Ensure the invalid location really is second.
+
+    with pytest.raises(ValueError, match="qubit 4") as error:
+        state.run_circuit(_items(symbol, locations, simulate_gate=simulate_gate))
+
+    # run_circuit owns the result dict locally and cannot return it on failure.
+    # Inspect its exception frame to detect results recorded before rejection.
+    frame = next(entry.frame for entry in error.traceback if entry.name == "run_circuit")
+    assert frame.f_locals["measurement_results"] == fresh.run_circuit(_items(symbol, set())) == {}
+    state.prob = fresh.prob = 0.5
+    probe = _items("Measure", {0, 1, 2, 3})
+    assert [state.run_circuit(probe) for _ in range(32)] == [fresh.run_circuit(probe) for _ in range(32)]
+    assert symbol in str(error.value)
+
+
+@pytest.mark.parametrize("location", [-1, 4])
+def test_bare_int_measurement_is_validated(location):
+    """Scalar measurements get the same gate-named validation as set batches."""
+    with pytest.raises(ValueError, match="Measure -Z"):
+        CoinToss(4).run_circuit(_items("Measure -Z", location))
+
+
+@pytest.mark.parametrize("symbol", [*MEASURE_SYMBOLS, "MEASURE Z", "measure custom"])
+@pytest.mark.parametrize("simulate_gate", [True, False])
+@pytest.mark.parametrize(
+    ("locations", "expected"),
+    [
+        (
+            {0, 1, 2, 3},
+            [{1: 1, 2: 1, 3: 1}, {3: 1}, {1: 1}, {2: 1}, {0: 1, 1: 1, 2: 1, 3: 1}, {1: 1}, {}, {1: 1, 3: 1}],
+        ),
+        (0, [{}, {0: 1}, {0: 1}, {0: 1}, {}, {}, {}, {0: 1}]),
+    ],
+)
+def test_valid_measurement_batches_match_dev(symbol, simulate_gate, locations, expected):
+    """Golden results from dev (59163a5e6) pin output and successive RNG draws."""
+    state = CoinToss(4, seed=42)
+    circuit = _items(symbol, locations, simulate_gate=simulate_gate)
+    assert [state.run_circuit(circuit) for _ in expected] == expected
+
+
+@pytest.mark.parametrize(
+    ("symbol", "locations"),
+    [("MX", {0, 4}), ("MY", {0, 4}), ("MZ", {0, 4}), ("Measure", [0, 4]), ("X", {0, 4})],
+)
+def test_ignored_batches_preserve_rng(symbol, locations):
+    """Ignored symbols and containers remain ignored even with bad locations."""
+    state = CoinToss(4, seed=42)
+    fresh = CoinToss(4, seed=42)
+    assert state.run_circuit(_items(symbol, locations)) == {}
+    assert [state.mz(0) for _ in range(32)] == [fresh.mz(0) for _ in range(32)]
+
+
+def test_circuit_validation_uses_instance_measurement_binding():
+    """A known prefix spelling rebound to a measurement is pre-checked."""
+    state = CoinToss(4, seed=42)
+    state.bindings["measure X"] = state.bindings["MX"]
+    with pytest.raises(ValueError, match="measure X"):
+        state.run_circuit(_items("measure X", {0, 4}))
 
 
 def test_fixed_prob() -> None:
@@ -113,3 +200,14 @@ def test_all_gate_circ() -> None:
     # Run
     sim = CoinToss(len(qc.qudits))
     sim.run_circuit(qc)
+
+
+def test_prefix_measurement_without_binding_is_checked_before_measuring():
+    """run_circuit measures any "measure"-prefixed batch, so it must check them all."""
+    state = CoinToss(4, prob=0.5, seed=42)
+    fresh = CoinToss(4, prob=0.5, seed=42)
+    with pytest.raises(ValueError, match="measure custom"):
+        state.run_circuit(_items("measure custom", {0, 9}))
+    assert state.run_circuit(_items("Measure", {0, 1, 2, 3})) == fresh.run_circuit(
+        _items("Measure", {0, 1, 2, 3}),
+    )

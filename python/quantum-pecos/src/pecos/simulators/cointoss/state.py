@@ -95,7 +95,7 @@ class CoinToss:
         return next(iter(result.values())) if result else 0
 
     def validate_gate_batch(self, symbol: str, locations: object) -> None:
-        """Check measurement spellings over every batch HybridEngine dispatches."""
+        """Check measurement bindings over every batch HybridEngine dispatches."""
         if self.bindings.get(symbol) is _measure_gate:
             validate_batch(symbol, locations, self.gate_capacity, allow_singletons=False)
 
@@ -138,12 +138,15 @@ class CoinToss:
                 if gate_symbol.lower().startswith("measure"):
                     # Handle measurements
                     if isinstance(locations, set):
+                        # run_circuit measures by name prefix, so check every such batch.
+                        validate_batch(gate_symbol, locations, self.gate_capacity, allow_singletons=False, arity=1)
                         for loc in locations:
                             result = self._sim.run_measure(loc)
                             # Only store results that measured |1>
                             if result and next(iter(result.values())) == 1:
                                 measurement_results[loc] = 1
                     elif isinstance(locations, int):
+                        validate_batch(gate_symbol, (locations,), self.gate_capacity, allow_singletons=False, arity=1)
                         result = self._sim.run_measure(locations)
                         # Only store results that measured |1>
                         if result and next(iter(result.values())) == 1:

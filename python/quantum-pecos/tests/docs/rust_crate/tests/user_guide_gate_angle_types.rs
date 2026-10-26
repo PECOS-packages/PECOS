@@ -144,10 +144,15 @@ fn test_user_guide_gate_angle_types_rust_9() {
     let def = GateDefinitionBuilder::new("RZX", 2)
         .angle_arity(1)
         .step(GateType::H, &[1])                              // H on target
+        .expect("valid step positions")
         .step(GateType::CX, &[0, 1])                          // CX
+        .expect("valid step positions")
         .step_with_angles(GateType::RZ, &[1], &[AngleSource::Input(0)])  // RZ(theta)
+        .expect("valid step positions")
         .step(GateType::CX, &[0, 1])                          // CX
+        .expect("valid step positions")
         .step(GateType::H, &[1])                              // H on target
+        .expect("valid step positions")
         .build();
     registry.register(def);
 

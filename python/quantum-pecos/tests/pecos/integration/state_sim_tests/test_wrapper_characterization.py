@@ -9,7 +9,7 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-"""Wrapper contracts recorded on dev ad1e97642, before #1480 batch validation.
+"""Wrapper contracts recorded on dev ad1e97642, updated for #1480 batch validation.
 
 The public pecos.HybridEngine is the old bindings-based engine; PHIR uses the
 separate engines.hybrid_engine.HybridEngine. Optional dependencies alone may
@@ -180,8 +180,12 @@ def test_empty_locations(state, symbol):
 @pytest.mark.parametrize("state", WRAPPERS, indirect=True)
 @pytest.mark.parametrize("locations", [[1], [1, 99]])
 def test_simulate_gate_false(state, locations):
-    # Disabled dispatch skips both valid and out-of-range batches without changing state.
-    assert state.run_gate("X", locations, simulate_gate=False) == {}
+    # Fixed wrappers validate before skipping; growable PauliProp has no upper bound.
+    if locations == [1, 99] and not isinstance(state, (PauliProp, CoinToss)):
+        with pytest.raises(ValueError, match="X"):
+            state.run_gate("X", locations, simulate_gate=False)
+    else:
+        assert state.run_gate("X", locations, simulate_gate=False) == {}
     if isinstance(state, PauliProp):
         assert state.faults == {"X": set(), "Y": set(), "Z": set()}
     elif type(state).__name__ == "CudaStateVec":
@@ -210,14 +214,17 @@ def test_identity_single_qubit_batch(state):
 
 @pytest.mark.parametrize("state", [*QUANTUM, "CoinToss"], indirect=True)
 def test_identity_pair_today(state):
-    # Location-ignoring identity helpers currently accept a pair as one location.
-    assert state.run_gate("I", {(0, 1)}) == {}
+    # CoinToss remains a no-op; quantum wrappers now require the II spelling.
+    if isinstance(state, CoinToss):
+        assert state.run_gate("I", {(0, 1)}) == {}
+    else:
+        with pytest.raises(ValueError, match="II"):
+            state.run_gate("I", {(0, 1)})
 
 
-@pytest.mark.parametrize("state", [*QUANTUM, "CoinToss"], indirect=True)
-@pytest.mark.xfail(strict=True, reason="#1480: 'I' on a pair will raise ValueError")
+@pytest.mark.parametrize("state", QUANTUM, indirect=True)
 def test_identity_pair_future(state):
-    # The only intentional future contract in this characterization corpus.
+    # Q1: I has arity one; CoinToss run_gate remains out of scope.
     with pytest.raises(ValueError, match="II"):
         state.run_gate("I", {(0, 1)})
 
@@ -454,7 +461,8 @@ def test_default_simulator_dispatch_edges():
     with pytest.raises(TypeError, match="not iterable"):
         state.run_gate("X", 1)
     assert state.run_gate("I", {1, 2, 3}) == {}
-    assert state.run_gate("I", {(0, 1)}) == {}
+    with pytest.raises(ValueError, match="II"):
+        state.run_gate("I", {(0, 1)})
     # The public engine also dispatches base-class user bindings directly and in order.
     pecos.HybridEngine.run_gate(state, {}, "X", [2, 1, 2])
     assert calls == [2, 1, 2]
@@ -464,7 +472,6 @@ def test_default_simulator_dispatch_edges():
     assert calls == [2, 1, 2, (0, 1), (1, 2)]
 
 
-@pytest.mark.xfail(strict=True, reason="#1480: 'I' on a pair will raise ValueError")
 def test_default_simulator_identity_pair_future():
     state = DefaultSimulator()
     state.bindings["I"] = lambda _state, _location, **_params: None

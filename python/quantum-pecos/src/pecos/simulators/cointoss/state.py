@@ -49,6 +49,7 @@ class CoinToss:
             seed (int | None): Optional seed for the random number generator.
         """
         self._sim = RustCoinToss(num_qubits, prob, seed)
+        self.gate_capacity = num_qubits
         self.num_qubits = num_qubits
         self.bindings = dict(gate_dict)
 

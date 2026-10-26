@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 from pecos_rslib_cuda import CuStateVec as CuStateVecRs
 
 from pecos.simulators._cuda_fork_guard import check_fork_poison, mark_cuda_initialized
+from pecos.simulators.batch_validation import replayable_locations, validate_batch
 from pecos.simulators.cuda_statevec import bindings
 from pecos.simulators.sim_class_types import StateVector
 
@@ -64,6 +65,7 @@ class CudaStateVec(StateVector):
         super().__init__()
 
         self.bindings = bindings.gate_dict
+        self.gate_capacity = num_qubits
         self.num_qubits = num_qubits
 
         # Create the Rust backend
@@ -98,7 +100,12 @@ class CudaStateVec(StateVector):
         """
         output = {}
 
-        if params.get("simulate_gate", True) and locations:
+        if not locations:
+            return output
+        locations = replayable_locations(locations)
+        validate_batch(symbol, locations, self.gate_capacity)
+
+        if params.get("simulate_gate", True):
             for location in locations:
                 if symbol in self.bindings:
                     result = self.bindings[symbol](self, location, **params)

@@ -6,6 +6,13 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Breaking:** Python simulator wrappers validate each known gate batch before
+  changing state, including when `simulate_gate=False`. Malformed locations,
+  repeated operands within a location, and out-of-range qubits raise gate-named
+  `ValueError`s. `I` is single-qubit; use `II` for a pair location. Batches may
+  still repeat or overlap qubits and execute sequentially. PauliProp remains
+  growable. CoinToss's no-op `run_gate` is unchanged.
+
 - **Breaking:** two-qubit gates in `pecos-simulators` now reject repeated-qubit
   pairs in debug and release builds. Such inputs could previously cause undefined
   behaviour or a wrong state in the sparse stabilizers and `DenseStab`, but were

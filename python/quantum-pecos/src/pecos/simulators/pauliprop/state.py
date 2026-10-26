@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING
 
 from pecos_rslib.simulators import PauliProp as PauliPropRs
 
+from pecos.simulators.batch_validation import validate_batch
 from pecos.simulators.gate_syms import alt_symbols
 from pecos.simulators.pauliprop.logical_sign import find_logical_signs
 from pecos.simulators.sim_class_types import PauliPropagation
@@ -178,6 +179,13 @@ class PauliProp(PauliPropagation):
         if not self._backend.is_identity():
             # Only apply gates if there are faults to act on
             return super().run_circuit(circuit, removed_locations)
+        # Identity frames skip dispatch, but still reject malformed known gates.
+        for symbol, locations, _params in circuit.items():
+            gate_locations = locations
+            if removed_locations is not None:
+                gate_locations = set(locations) - removed_locations
+            if gate_locations:
+                validate_batch(symbol, gate_locations, self.gate_capacity)
         return None
 
         # need to return output?

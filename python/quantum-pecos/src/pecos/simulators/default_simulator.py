@@ -20,6 +20,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from pecos.simulators.batch_validation import replayable_locations, validate_batch
+
 if TYPE_CHECKING:
     from pecos_rslib import GateRegistry
 
@@ -35,6 +37,8 @@ class DefaultSimulator:
     Simulator implementations can inherit from this class to get the standard
     behavior, or implement the SimulatorProtocol directly for custom behavior.
     """
+
+    gate_capacity: int | None = None
 
     def __init__(self) -> None:
         """Initialize the DefaultSimulator.
@@ -60,7 +64,12 @@ class DefaultSimulator:
         """
         output = {}
 
-        if params.get("simulate_gate", True) and locations:
+        if not locations:
+            return output
+        locations = replayable_locations(locations)
+        validate_batch(symbol, locations, self.gate_capacity)
+
+        if params.get("simulate_gate", True):
             for location in locations:
                 if params.get("angles") and len(params["angles"]) == 1:
                     params.update({"angle": params["angles"][0]})

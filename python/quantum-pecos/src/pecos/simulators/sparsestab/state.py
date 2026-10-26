@@ -77,6 +77,7 @@ class SparseStabPy(Stabilizer):
             msg = f"`num_qubits` should be of type `int` but got type: {type(num_qubits)}"
             raise TypeError(msg)
 
+        self.gate_capacity = num_qubits
         self.num_qubits = num_qubits
 
         self.bindings = dict(bindings.gate_dict)

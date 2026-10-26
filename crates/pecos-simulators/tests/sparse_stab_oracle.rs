@@ -1253,6 +1253,9 @@ fn general_weight_one_partner_matches_signed_basis_product() {
 struct BatchHarness<S: IndexSet> {
     candidate: SparseStabGeneric<S>,
     reference: SparseStabVecSet,
+    // Same rule as the candidate, measured one qubit at a time in the replayed
+    // order: its tableau must match the candidate's exactly under either rule.
+    same_rule: SparseStabVecSet,
     context: String,
 }
 
@@ -1263,6 +1266,7 @@ impl<S: IndexSet> BatchHarness<S> {
                 .with_measurement_rule(rule)
                 .with_measurement_batch_order(MeasurementBatchOrder::BitReversed),
             reference: simulator(n, seed, tracking),
+            same_rule: simulator(n, seed, tracking).with_measurement_rule(rule),
             context: format!(
                 "{} seed={seed} rule={rule:?} order=BitReversed tracking={tracking}",
                 std::any::type_name::<S>()
@@ -1271,10 +1275,9 @@ impl<S: IndexSet> BatchHarness<S> {
     }
 
     fn gate(&mut self, op: Op) {
-        assert_eq!(
-            apply(&mut self.candidate, op),
-            apply(&mut self.reference, op)
-        );
+        let expected = apply(&mut self.reference, op);
+        assert_eq!(apply(&mut self.candidate, op), expected);
+        assert_eq!(apply(&mut self.same_rule, op), expected);
     }
 
     fn batch(&mut self, qubits: &[QubitId], prepare: bool) {
@@ -1292,6 +1295,13 @@ impl<S: IndexSet> BatchHarness<S> {
         let mut expected = vec![(false, false); qubits.len()];
         for i in positions {
             let r = self.reference.mz(&qubits[i..=i]).remove(0);
+            let same = self.same_rule.mz(&qubits[i..=i]).remove(0);
+            assert_eq!(
+                (same.outcome, same.is_deterministic),
+                (r.outcome, r.is_deterministic),
+                "(a) same-rule reference outcome: {}",
+                self.context
+            );
             expected[i] = (r.outcome, r.is_deterministic);
         }
         let actual = if prepare {
@@ -1305,6 +1315,7 @@ impl<S: IndexSet> BatchHarness<S> {
                 .filter_map(|(&q, &(outcome, _))| outcome.then_some(q))
                 .collect();
             self.reference.x(&corrections);
+            self.same_rule.x(&corrections);
             results
         } else {
             self.candidate.mz(qubits)
@@ -1334,15 +1345,13 @@ impl<S: IndexSet> BatchHarness<S> {
             self.context
         );
         assert_hermitian(&self.candidate, &self.context);
-        if self.candidate.measurement_rule() == MeasurementRule::AaronsonGottesman {
-            // Same rule, same single-qubit sequence: the tableaux, including any
-            // tracked destabilizer signs, must agree exactly.
-            assert!(
-                same_tableau(&self.candidate, &self.reference),
-                "(b) batch tableau: {}",
-                self.context
-            );
-        }
+        // Same rule, same single-qubit sequence: the tableaux, including any
+        // tracked destabilizer signs, must agree exactly.
+        assert!(
+            same_tableau(&self.candidate, &self.same_rule),
+            "(b) batch tableau: {}",
+            self.context
+        );
     }
 }
 

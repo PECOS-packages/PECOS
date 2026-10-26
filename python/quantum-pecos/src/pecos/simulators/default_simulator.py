@@ -150,24 +150,39 @@ class DefaultSimulator:
         locations: set[int] | set[tuple[int, ...]],
         **params: JSONType,
     ) -> dict[int | tuple[int, ...], JSONType]:
-        """Decompose a registered gate and run each step via run_gate."""
-        output = {}
+        """Validate every location's decomposition before running any step."""
+        steps = []
         for location in locations:
             qubits = list(location) if isinstance(location, tuple) else [location]
             angles = list(params.get("angles", ()))
-            steps = gate_registry.decompose(symbol, qubits, angles)
-            for step_symbol, step_qubits, step_angles, step_meta in steps:
-                step_loc = {step_qubits[0] if len(step_qubits) == 1 else tuple(step_qubits)}
-                step_params = dict(params)
-                if step_angles:
-                    step_params["angles"] = tuple(step_angles)
-                    if len(step_angles) == 1:
-                        step_params["angle"] = step_angles[0]
-                else:
-                    step_params.pop("angles", None)
-                    step_params.pop("angle", None)
-                step_params.update(step_meta)
-                step_output = self.run_gate(step_symbol, step_loc, **step_params)
-                if step_output:
-                    output.update(step_output)
+            steps.extend(gate_registry.decompose(symbol, qubits, angles))
+
+        for step_symbol, step_qubits, _step_angles, _step_meta in steps:
+            # Registry steps are built-in gate types; nested registered gates
+            # are not supported by the builder or run_gate dispatch.
+            if step_symbol not in self.bindings:
+                msg = f"Gate {symbol} step {step_symbol} is not supported in this simulator."
+                raise ValueError(msg)
+            step_loc = {step_qubits[0] if len(step_qubits) == 1 else tuple(step_qubits)}
+            try:
+                self.validate_gate_batch(step_symbol, step_loc)
+            except ValueError as error:
+                msg = f"Gate {symbol} step {step_symbol}: {error}"
+                raise ValueError(msg) from error
+
+        output = {}
+        for step_symbol, step_qubits, step_angles, step_meta in steps:
+            step_loc = {step_qubits[0] if len(step_qubits) == 1 else tuple(step_qubits)}
+            step_params = dict(params)
+            if step_angles:
+                step_params["angles"] = tuple(step_angles)
+                if len(step_angles) == 1:
+                    step_params["angle"] = step_angles[0]
+            else:
+                step_params.pop("angles", None)
+                step_params.pop("angle", None)
+            step_params.update(step_meta)
+            step_output = self.run_gate(step_symbol, step_loc, **step_params)
+            if step_output:
+                output.update(step_output)
         return output

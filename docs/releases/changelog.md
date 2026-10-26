@@ -9,7 +9,9 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 - **Breaking:** Python simulator wrappers and the public `pecos.HybridEngine`
   validate whole known-gate batches per `run_gate` call and per circuit item
   before changing state, including when `simulate_gate=False`. Registered-gate
-  decomposition is still validated per step until a later PR. Malformed locations,
+  batches are fully decomposed and every step's binding and qubits validated
+  before any step runs; failures name the registered gate and failing step.
+  Malformed locations,
   repeated operands within a location, and out-of-range qubits raise gate-named
   `ValueError`s; some errors previously raised `TypeError`.
   StateVec, CuStateVec, MPS and CudaStateVec require scalar one-qubit locations.

@@ -122,6 +122,10 @@ and cannot be replayed as audited circuits.
 
 ## Lazy Measurements
 
+PECOS targets the behavior of the same runtime running under Selene: successful
+reads, lazy scheduling, feedback ordering, and unsupported-read failures. It does
+not require a runtime to succeed on a program that also fails under Selene.
+
 A measurement request gives the selected Selene runtime ownership of scheduling
 that measurement. PECOS does not force it when submitting the request. When the
 program reads a future, PECOS first consumes any available result; otherwise it
@@ -141,16 +145,17 @@ when they need a pending result, then extract ready work with an empty lowering
 call. Deliver each emitted batch's measurement outcomes before extracting more
 work; an empty extraction while feedback is outstanding does not certify that
 the scheduler is drained. The runtime's native future ID is resolved internally.
-Selene runtimes must implement native `force_result` for both ordinary and
-leakage-aware measurements. PECOS does not substitute a qubit or global barrier:
+PECOS uses native `force_result` for both ordinary and leakage-aware measurements,
+following Selene's result-read protocol. It does not substitute a qubit or global barrier:
 that could force later measurements on a reused physical qubit and change timing.
 If a requested result cannot make progress, execution fails promptly and the
 trace is not certified complete.
 
 The pinned public SoftRZ runtime does not implement `force_result` for
 leakage-aware measurements. A read that depends on forcing one therefore fails
-with a runtime-contract error; it requires a fix in the runtime. Ordinary
-SoftRZ reads and both measurement kinds in the Simple runtime are supported.
+with an error, as it does in Selene's own emulator. PECOS preserves that behavior;
+adding support would be a separate upstream runtime change. Ordinary SoftRZ reads
+and both measurement kinds in the Simple runtime are supported.
 Non-Selene `QisRuntime` implementations without targeted forcing retain their
 generic drain path.
 

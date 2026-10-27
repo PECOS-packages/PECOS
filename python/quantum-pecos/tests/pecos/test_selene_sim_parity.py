@@ -24,6 +24,7 @@ from pathlib import Path
 import pytest
 from guppylang import guppy
 from guppylang.std.builtins import array, comptime, output
+from guppylang.std.qsystem import measure_leaked
 from guppylang.std.quantum import collect_measurements, cx, h, measure, measure_array, qubit, x
 from pecos.guppy_gen import variant_scoped
 
@@ -109,6 +110,75 @@ def alloc_reuse_probe() -> None:
     q2 = qubit()
     b2 = measure(q2).read()
     output("m2", array(b2))
+
+
+@guppy
+def ordinary_read_probe() -> None:
+    """Read one ordinary measurement future with a deterministic outcome."""
+    q = qubit()
+    x(q)
+    output("m", array(measure(q).read()))
+
+
+@guppy
+def leaked_read_probe() -> None:
+    """Read one leakage-aware future, without a barrier to force it indirectly."""
+    q = qubit()
+    x(q)
+    output("m", array(measure_leaked(q).to_result().unwrap()))
+
+
+@pytest.mark.parametrize("runtime_name", ["SimpleRuntime", "SoftRZRuntime"])
+@pytest.mark.parametrize("read_case", ["ordinary", "leaked_pending"])
+def test_measurement_reads_match_direct_selene(runtime_name: str, read_case: str) -> None:
+    """Match Selene's successful reads and unsupported-read failures."""
+    import pecos
+    import selene_sim
+    from pecos.compilation_pipeline import compile_guppy_to_hugr
+    from selene_sim.exceptions import SelenePanicError
+
+    _configure_selene_caches()
+    runtime = getattr(selene_sim, runtime_name)()
+    program = {
+        "ordinary": ordinary_read_probe,
+        "leaked_pending": leaked_read_probe,
+    }[read_case]
+    instance = selene_sim.build(compile_guppy_to_hugr(program))
+
+    def run_selene() -> dict:
+        return _collect_selene_named_results(
+            instance,
+            n_qubits=1,
+            n_shots=1,
+            p=0.0,
+            seed=7,
+            runtime=runtime,
+        )
+
+    def run_pecos() -> dict:
+        return (
+            pecos.sim(program)
+            .classical(pecos.selene_engine(runtime))
+            .quantum(pecos.stabilizer())
+            .qubits(1)
+            .seed(7)
+            .run(1)
+            .to_dict()
+        )
+
+    if read_case == "leaked_pending" and runtime_name == "SoftRZRuntime":
+        # The pinned SoftRZ implementation omits MeasureLeaked in force_result.
+        # Compatibility means exposing the same failed read, not adding a barrier.
+        with pytest.raises(SelenePanicError, match="Future u64 result not available after attempting to force it"):
+            run_selene()
+        with pytest.raises(RuntimeError, match="runtime released no measurement for worker-requested result"):
+            run_pecos()
+    else:
+        expected = run_selene()
+        assert expected == {"m": [1]}
+        actual = run_pecos()
+        for name, values in expected.items():
+            assert actual[name] == values
 
 
 def _require_selene_runtime() -> object:
@@ -228,6 +298,7 @@ def _collect_selene_named_results(
     n_shots: int,
     p: float,
     seed: int,
+    runtime: object | None = None,
 ) -> dict[str, list[int] | list[list[int]]]:
     from selene_sim import DepolarizingErrorModel, SimpleRuntime, Stim
 
@@ -250,7 +321,7 @@ def _collect_selene_named_results(
                 p_meas=p,
                 p_init=p,
             ),
-            runtime=SimpleRuntime(),
+            runtime=SimpleRuntime() if runtime is None else runtime,
             random_seed=seed,
             n_processes=1,
         ):

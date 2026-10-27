@@ -157,6 +157,7 @@ fn validate_shot(shot: &[OperationTraceChunk]) -> Result<(), DemBuildError> {
             .iter()
             .any(|op| matches!(op, Operation::Quantum(_)))
             && chunk.lowered_quantum_ops.is_empty()
+            && !chunk.runtime_lowering_deferred
         {
             return Err(preparation(format!(
                 "runtime trace chunk {index} carries lowerable quantum operations but no lowered_quantum_ops"
@@ -864,6 +865,7 @@ mod tests {
             operations: vec![],
             lowered_quantum_ops: vec![],
             lowered_quantum_ops_complete: true,
+            runtime_lowering_deferred: false,
             runtime_events_complete: true,
             named_result_traces: vec![],
             named_results: BTreeMap::new(),
@@ -886,6 +888,16 @@ mod tests {
         let mut last = chunk(1, "trace_complete");
         last.measurement_results.insert(7, 1);
         vec![first, last]
+    }
+
+    fn deferred_trace() -> TraceShot {
+        let mut shot = trace();
+        let mut lowered = chunk(1, "result_read");
+        lowered.lowered_quantum_ops = std::mem::take(&mut shot[0].lowered_quantum_ops);
+        shot[0].runtime_lowering_deferred = true;
+        shot[1].chunk_index = 2;
+        shot.insert(1, lowered);
+        shot
     }
 
     fn inference_trace(direct: bool, bits: [bool; 2]) -> TraceShot {
@@ -1271,6 +1283,59 @@ mod tests {
         assert_eq!(ids, vec![MeasId::from_raw(7)]);
         assert_eq!(circuit.num_measurements(), 8);
         assert_eq!(physical_row(&trace(), &[7]).unwrap(), [1]);
+    }
+
+    #[test]
+    fn replay_accepts_deferred_lowering_with_stable_measurement_identity() {
+        let shot = deferred_trace();
+        let circuit = replay(&shot, 1, &[7]).unwrap();
+        let gates: Vec<_> = circuit.iter_gate_batches().collect();
+        assert_eq!(gates.len(), 1);
+        assert_eq!(gates[0].as_gate().gate_type, GateType::MZ);
+        assert_eq!(
+            gates[0].as_gate().meas_ids.as_slice(),
+            [MeasId::from_raw(7)]
+        );
+        assert_eq!(physical_row(&shot, &[7]).unwrap(), [1]);
+    }
+
+    #[test]
+    fn deferred_lowering_requires_complete_framed_and_handled_trace() {
+        let mut shot = deferred_trace();
+        shot[0].runtime_lowering_deferred = false;
+        assert!(
+            replay(&shot, 1, &[7])
+                .unwrap_err()
+                .to_string()
+                .contains("no lowered_quantum_ops")
+        );
+        let mut shot = deferred_trace();
+        shot.pop();
+        assert!(
+            replay(&shot, 1, &[7])
+                .unwrap_err()
+                .to_string()
+                .contains("exactly one trace_complete")
+        );
+        for index in 0..3 {
+            let mut shot = deferred_trace();
+            shot[index].lowered_quantum_ops_complete = false;
+            assert!(replay(&shot, 1, &[7]).is_err());
+            let mut shot = deferred_trace();
+            shot[index].runtime_events_complete = false;
+            assert!(
+                replay(&shot, 1, &[7])
+                    .unwrap_err()
+                    .to_string()
+                    .contains("unhandled runtime custom events")
+            );
+            let mut shot = deferred_trace();
+            shot[index].chunk_index += 1;
+            assert!(replay(&shot, 1, &[7]).is_err());
+        }
+        let mut shot = deferred_trace();
+        shot[1].lowered_quantum_ops.clear();
+        assert!(replay(&shot, 1, &[7]).is_err());
     }
 
     #[test]

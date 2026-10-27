@@ -8,7 +8,7 @@ use pecos_qec::{
     DemAnnotationOrigin, DemBuildError, DemDefinition, DemInferenceError, DemInferenceSettings,
     DemOutputSelector, DetectorErrorModel, NoiseConfig, SeleneDemProgram,
 };
-use pecos_qis::{SeleneRuntime, selene_simple_runtime};
+use pecos_qis::{SeleneRuntime, selene_simple_runtime, selene_soft_rz_runtime};
 use pecos_quantum::Attribute;
 
 fn runtime() -> SeleneRuntime {
@@ -122,6 +122,47 @@ fn explicit_program_does_not_require_inference_outputs() {
         build.circuit.get_meta("dem_schedule_validation"),
         Some(&Attribute::String("empirical_trace_comparison".into()))
     );
+}
+
+#[test]
+fn public_runtimes_support_explicit_and_inferred_lazy_measurement_dems() {
+    for runtime in [selene_simple_runtime, selene_soft_rz_runtime] {
+        for inferred in [false, true] {
+            let source = if inferred {
+                PARITIES
+            } else {
+                include_str!("fixtures/dem_programs/explicit_only.ll")
+            };
+            let program = SeleneDemProgram::new(Qis::from_string(source))
+                .with_runtime(runtime().expect("Selene public runtime is required"));
+            let builder = DetectorErrorModel::builder()
+                .with_program(program)
+                .with_qubits(if inferred { 3 } else { 1 });
+            let build = if inferred {
+                builder.with_inference(DemInferenceSettings::default())
+            } else {
+                builder
+                    .with_detectors(vec![vec![0]])
+                    .with_observables(vec![])
+            }
+            .build()
+            .unwrap();
+            if inferred {
+                let report = build.inference.as_ref().unwrap();
+                assert_eq!(report.raw_measurement_ids, [2, 0, 1]);
+                assert_eq!(report.detector_supports, [vec![2, 0]]);
+                assert_eq!(report.observable_supports, [vec![1]]);
+                let (detectors, observables) = build.evaluate_runtime_record(&[1, 1, 0]).unwrap();
+                assert_eq!(detectors, [1]);
+                assert!(observables.get(0));
+            } else {
+                assert!(build.inference.is_none());
+                let (detectors, observables) = build.evaluate_runtime_record(&[1]).unwrap();
+                assert_eq!(detectors, [1]);
+                assert!(observables.is_zero());
+            }
+        }
+    }
 }
 
 #[test]

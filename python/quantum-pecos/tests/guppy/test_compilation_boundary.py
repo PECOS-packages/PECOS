@@ -144,13 +144,16 @@ def test_hosted_operations_keep_their_order_through_lowering() -> None:
 
     assert [chunk["stage"] for chunk in trace] == [
         "pending_start",
+        "measurement_feedback",
         "pending_continue",
+        "measurement_feedback",
         "named_results",
         "trace_complete",
     ]
     # Seed 42 measures a = 1, so count = 1 and the loop applies h(b) once.
     assert trace[-1]["measurement_results"] == {"0": 1, "1": 0}
-    assert [[_operation_shape(op) for op in chunk["operations"]] for chunk in trace[:2]] == [
+    source_chunks = [chunk for chunk in trace if chunk["operations"]]
+    assert [[_operation_shape(op) for op in chunk["operations"]] for chunk in source_chunks] == [
         [
             ("AllocateQubit", 0),
             ("Reset", 0),
@@ -180,7 +183,12 @@ def test_hosted_operations_keep_their_order_through_lowering() -> None:
             ("ReleaseQubit", 1),
         ],
     ]
-    assert [named["name"] for named in trace[2]["named_result_traces"]] == ["count", "outcome"]
+    feedback_chunks = [chunk for chunk in trace if chunk["stage"] == "measurement_feedback"]
+    assert all(chunk["operations"] == [] for chunk in feedback_chunks)
+    assert all(chunk["lowered_quantum_ops_complete"] for chunk in feedback_chunks)
+    named_chunks = [chunk for chunk in trace if chunk["stage"] == "named_results"]
+    assert len(named_chunks) == 1
+    assert [named["name"] for named in named_chunks[0]["named_result_traces"]] == ["count", "outcome"]
 
 
 def test_compile_hugr_to_qis_emits_executable_calls() -> None:

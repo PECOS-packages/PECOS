@@ -526,9 +526,12 @@ def _reject_partially_lowered_trace(chunks: list[dict[str, Any]]) -> None:
 
     This is the explicit trace-format contract for live
     ``capture_operation_trace()`` output: lowered and raw forms must not be
-    mixed across chunks. Per-chunk completeness of lowering is exercised by
-    the trace replay regressions.
+    mixed across chunks. Runtime-deferred chunks explicitly attest acceptance
+    without emission and require a final trace_complete drain attestation.
+    Their gates are consumed from later runtime output, never from raw QIS.
     """
+    if any(chunk.get("runtime_lowering_deferred") is True for chunk in chunks):
+        _validate_audited_trace_stream(chunks)
     for idx, chunk in enumerate(chunks):
         if chunk.get("runtime_events_complete", True) is not True:
             msg = "Audited trace replay rejects unhandled runtime custom events; configure a batch adapter"
@@ -542,6 +545,11 @@ def _reject_partially_lowered_trace(chunks: list[dict[str, Any]]) -> None:
             )
             raise ValueError(msg)
         if _chunk_has_lowerable_op(chunk) and not chunk.get("lowered_quantum_ops"):
+            if chunk.get("runtime_lowering_deferred") is True:
+                # A scheduler can hold a lazy measurement and its preceding
+                # gates until a later read. Only a complete, framed trace can
+                # attest that the deferred work was eventually drained.
+                continue
             msg = (
                 f"Traced chunk {idx} carries lowerable operations (a quantum "
                 "gate/measure/reset) but no "

@@ -234,9 +234,13 @@ than an otherwise identical unlabelled program.
 
 Flat and metadata routes release queued work on an Idle's qubit before emitting
 the Idle. Scheduled extraction accepts decomposable gates but continues to reject
-source Idle and trace metadata. Leakage-aware measurements release queued work on
-the measured qubit so their results are available even when a plugin's result
-forcing only recognizes ordinary measurements.
+source Idle and trace metadata. Measurement requests remain lazy: the runtime
+determines when they execute, and PECOS forces a specific result only when the
+program reads it. Leakage-aware reads release queued work on the measured qubit
+so their results are available even when a plugin's result forcing only recognizes
+ordinary measurements. Each emitted measurement batch receives feedback before
+the next extraction. Unannotated qubit release adds no host barrier; provenance
+barriers defer remaining source work when feedback is needed. See [lazy measurements](runtime-qis-tracing.md#lazy-measurements).
 
 At program completion, flat and metadata routes lower a final global barrier
 through the normal metadata-aware path. Any queued native gates become one final

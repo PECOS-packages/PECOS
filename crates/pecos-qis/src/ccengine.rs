@@ -85,6 +85,9 @@ pub struct OperationTraceChunk {
     pub operations: Vec<Operation>,
     pub lowered_quantum_ops: Vec<LoweredQuantumGateTrace>,
     pub lowered_quantum_ops_complete: bool,
+    /// The runtime accepted source work but has not emitted gates in this chunk.
+    /// Replay requires the final `trace_complete` drain attestation as well.
+    pub runtime_lowering_deferred: bool,
     /// False if opaque events were captured without interpretation.
     pub runtime_events_complete: bool,
     pub named_result_traces: Vec<NamedResultTrace>,
@@ -1492,6 +1495,9 @@ impl QisEngine {
             operations: ops.to_vec(),
             lowered_quantum_ops: lowered_trace,
             lowered_quantum_ops_complete,
+            runtime_lowering_deferred: self.runtime.supports_operation_lowering()
+                && lowered_quantum_ops.is_some_and(|lowered| lowered.is_empty)
+                && ops.iter().any(|op| matches!(op, Operation::Quantum(_))),
             runtime_events_complete: self.runtime.runtime_events_complete(),
             named_result_traces: Vec::new(),
             named_results: BTreeMap::new(),
@@ -1573,6 +1579,7 @@ impl QisEngine {
             operations: Vec::new(),
             lowered_quantum_ops: Vec::new(),
             lowered_quantum_ops_complete: true,
+            runtime_lowering_deferred: false,
             runtime_events_complete: self.runtime.runtime_events_complete(),
             named_result_traces: named_result_traces.to_vec(),
             named_results,
@@ -1801,6 +1808,21 @@ impl QisEngine {
             self.set_dynamic_result(result_id, value)?;
             self.signal_dynamic_result_ready()?;
             return Ok(None);
+        }
+        // A lazy measurement is a scheduler request, not a read. Force only
+        // the result the worker now needs, after all preceding work is submitted.
+        let targeted = self.runtime.force_result(result_key).map_err(|error| {
+            self.latch_terminal_error(format!("failed to request result {result_id}: {error}"))
+        })?;
+        if targeted {
+            let lowered = self.lower_operations_terminal(&[])?;
+            self.trace_operations_chunk("result_read", &[], Some(result_id), Some(&lowered));
+            if !lowered.is_empty && lowered.measurement_credits_consumed > 0 {
+                return Ok(Some(lowered.commands));
+            }
+            return Err(self.latch_terminal_error(format!(
+                "runtime released no measurement for worker-requested result {result_id}"
+            )));
         }
         // While the worker is blocked, imported credits are finite. Each
         // progressing drain consumes at least one; feedback may release the
@@ -2672,6 +2694,15 @@ impl ControlEngine for QisEngine {
         let current_updates = self.store_measurement_updates(&measurement_updates)?;
         if !measurement_updates.is_empty() {
             self.provide_measurements_terminal(&measurement_updates)?;
+            if self.runtime.yields_at_measurements() {
+                // Selene processes feedback before requesting another batch or
+                // resuming the program. Poll without forcing any extra work.
+                let lowered = self.lower_operations_terminal(&[])?;
+                self.trace_operations_chunk("measurement_feedback", &[], None, Some(&lowered));
+                if !lowered.is_empty {
+                    return Ok(EngineStage::NeedsProcessing(lowered.commands));
+                }
+            }
         }
 
         // First, check if worker already completed (before processing anything else)
@@ -3003,6 +3034,9 @@ mod tests {
                 QuantumOp::RZ(0.5, 1).into(),
             ])
             .unwrap();
+        assert!(first.is_empty);
+        engine.runtime.force_result(0).unwrap();
+        let first = engine.lower_operations_to_commands(&[]).unwrap();
         assert_eq!(
             first
                 .commands
@@ -3013,6 +3047,10 @@ mod tests {
                 .collect::<Vec<_>>(),
             [PZ, MZ]
         );
+        engine
+            .runtime
+            .provide_measurement_outcomes(vec![(0, 0)])
+            .unwrap();
         let metadata = TraceMetadata::from([("source_label".into(), "program reset".into())]);
         let second = engine
             .lower_operations_to_commands(&[
@@ -3024,18 +3062,18 @@ mod tests {
                 QuantumOp::Measure(1, 1).into(),
             ])
             .unwrap();
+        let mut gates = second.commands.quantum_ops().unwrap();
+        let mut gate_metadata = second.gate_metadata;
+        engine.runtime.force_result(1).unwrap();
+        let second = engine.lower_operations_to_commands(&[]).unwrap();
+        gates.extend(second.commands.quantum_ops().unwrap());
+        gate_metadata.extend(second.gate_metadata);
         assert_eq!(
-            second
-                .commands
-                .quantum_ops()
-                .unwrap()
-                .iter()
-                .map(|gate| gate.gate_type)
-                .collect::<Vec<_>>(),
+            gates.iter().map(|gate| gate.gate_type).collect::<Vec<_>>(),
             [PZ, PZ, MZ]
         );
         assert_eq!(
-            second.gate_metadata,
+            gate_metadata,
             [TraceMetadata::new(), metadata, TraceMetadata::new()]
         );
     }
@@ -3054,7 +3092,7 @@ mod tests {
             } else {
                 "RXY1Q"
             };
-            let first = engine
+            let mut first = engine
                 .lower_operations_to_commands(&[
                     QuantumOp::Measure(0, 0).into(),
                     QuantumOp::RZ(0.5, 1).into(),
@@ -3065,14 +3103,21 @@ mod tests {
                     op.into(),
                 ])
                 .unwrap();
-            // #1027's label-start barrier emits the queued inserted prep in A.
+            // The provenance barrier stops at the measurement. Only feedback
+            // allows the older prep to drain before the label is registered.
+            assert_eq!(first.gate_metadata.len(), 2);
+            engine
+                .runtime
+                .provide_measurement_outcomes(vec![(0, 0)])
+                .unwrap();
+            let resumed = engine.lower_operations_to_commands(&[]).unwrap();
+            let mut gates = first.commands.quantum_ops().unwrap();
+            gates.extend(resumed.commands.quantum_ops().unwrap());
+            first.gate_metadata.extend(resumed.gate_metadata);
             // The labelled operation itself remains queued until B.
             assert_eq!(first.gate_metadata, vec![TraceMetadata::new(); 3]);
             assert_eq!(
-                first
-                    .commands
-                    .quantum_ops()
-                    .unwrap()
+                gates
                     .iter()
                     .map(|gate| gate.gate_type.to_string())
                     .collect::<Vec<_>>(),
@@ -3081,6 +3126,9 @@ mod tests {
             let second = engine
                 .lower_operations_to_commands(&[QuantumOp::Measure(1, 1).into()])
                 .unwrap();
+            assert!(second.is_empty);
+            engine.runtime.force_result(1).unwrap();
+            let second = engine.lower_operations_to_commands(&[]).unwrap();
             assert_eq!(
                 second
                     .commands

@@ -2833,3 +2833,39 @@ def test_raw_surface_trace_gate_rate_keys_name_scheduled_gates() -> None:
     assert scalar != keyed
     raw_tc.lower_clifford_rotations()
     DemSampler.from_circuit(raw_tc, p2_gate_rates={"SZZ": 0.05}, **noise)
+
+
+def test_deferred_runtime_trace_requires_complete_framing() -> None:
+    """Deferred work is valid only with an explicit marker and final drain."""
+    chunks = [
+        {
+            "operations": [{"Quantum": {"Measure": [0, 7]}}],
+            "lowered_quantum_ops": [],
+            "lowered_quantum_ops_complete": True,
+            "runtime_lowering_deferred": True,
+            "stage": "waiting_for_result",
+        },
+        {
+            "operations": [],
+            "stage": "result_read",
+            "lowered_quantum_ops": [
+                {"gate_type": "MZ", "qubits": [0], "angles": [], "measurement_result_ids": [7]},
+            ],
+            "lowered_quantum_ops_complete": True,
+        },
+        {"operations": [], "lowered_quantum_ops": [], "stage": "trace_complete"},
+    ]
+    for index, chunk in enumerate(chunks):
+        chunk.update(
+            format="pecos_qis_operation_trace_v1",
+            engine_trace_id=0,
+            shot_index=0,
+            chunk_index=index,
+            num_operations=len(chunk["operations"]),
+        )
+    _reject_partially_lowered_trace(chunks)
+    with pytest.raises(ValueError, match="terminal trace_complete"):
+        _reject_partially_lowered_trace(chunks[:-1])
+    chunks[0]["runtime_lowering_deferred"] = False
+    with pytest.raises(ValueError, match="mixed/partially-lowered"):
+        _reject_partially_lowered_trace(chunks)

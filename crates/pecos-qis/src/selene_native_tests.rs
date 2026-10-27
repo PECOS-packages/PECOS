@@ -14,7 +14,22 @@ enum Route {
 impl Route {
     const ALL: [Self; 3] = [Self::Flat, Self::Metadata, Self::Scheduled];
 
-    fn lower(self, runtime: &mut SeleneRuntime, ops: &[Operation]) -> Vec<QuantumOp> {
+    // These gate/feedback tests explicitly read every measurement they submit.
+    fn lower_and_read(self, runtime: &mut SeleneRuntime, ops: &[Operation]) -> Vec<QuantumOp> {
+        let mut output = self.lower_raw(runtime, ops);
+        for op in ops {
+            if let Operation::Quantum(
+                QuantumOp::Measure(_, result) | QuantumOp::MeasureLeaked(_, result),
+            ) = op
+            {
+                runtime.force_result(*result).unwrap();
+                output.extend(self.lower_raw(runtime, &[]));
+            }
+        }
+        output
+    }
+
+    fn lower_raw(self, runtime: &mut SeleneRuntime, ops: &[Operation]) -> Vec<QuantumOp> {
         match self {
             Self::Flat => runtime.lower_operations(ops).unwrap(),
             Self::Metadata => runtime
@@ -118,7 +133,7 @@ fn soft_rz_h_rz_h_preserves_virtual_phase_on_every_route() {
     for route in Route::ALL {
         let mut runtime = start(crate::selene_runtimes::selene_soft_rz_runtime().unwrap(), 1);
         let mut sim = StateVecAoS::new(1);
-        let preparation = route.lower(
+        let preparation = route.lower_and_read(
             &mut runtime,
             &[
                 Operation::AllocateQubit { id: 0 },
@@ -129,7 +144,7 @@ fn soft_rz_h_rz_h_preserves_virtual_phase_on_every_route() {
         runtime
             .provide_measurement_outcomes(simulate(&mut sim, &preparation))
             .unwrap();
-        let lowered = route.lower(
+        let lowered = route.lower_and_read(
             &mut runtime,
             &[
                 QuantumOp::H(0).into(),
@@ -152,7 +167,7 @@ fn soft_rz_h_rz_h_preserves_virtual_phase_on_every_route() {
 fn soft_rz_reset_precedes_decomposed_x_on_every_route() {
     for route in Route::ALL {
         let mut runtime = start(crate::selene_runtimes::selene_soft_rz_runtime().unwrap(), 1);
-        let lowered = route.lower(
+        let lowered = route.lower_and_read(
             &mut runtime,
             &[
                 Operation::AllocateQubit { id: 0 },
@@ -181,7 +196,7 @@ fn soft_rz_reset_precedes_decomposed_x_on_every_route() {
 
 fn assert_native_program(route: Route) {
     let mut runtime = start(crate::selene_runtimes::selene_simple_runtime().unwrap(), 3);
-    let lowered = route.lower(
+    let lowered = route.lower_and_read(
         &mut runtime,
         &[
             Operation::AllocateQubit { id: 0 },
@@ -228,7 +243,7 @@ fn scheduled_route_accepts_h_cx_and_ccx_as_native_batches() {
 fn soft_rz_measure_leaked_releases_result_before_unrelated_x() {
     for route in Route::ALL {
         let mut runtime = start(crate::selene_runtimes::selene_soft_rz_runtime().unwrap(), 2);
-        let lowered = route.lower(
+        let lowered = route.lower_and_read(
             &mut runtime,
             &[
                 Operation::AllocateQubit { id: 0 },
@@ -253,7 +268,7 @@ fn soft_rz_measure_leaked_releases_result_before_unrelated_x() {
 fn idle_releases_queued_work_on_its_qubit_before_passthrough() {
     for route in [Route::Flat, Route::Metadata] {
         let mut runtime = start(crate::selene_runtimes::selene_soft_rz_runtime().unwrap(), 1);
-        let lowered = route.lower(
+        let lowered = route.lower_and_read(
             &mut runtime,
             &[
                 Operation::AllocateQubit { id: 0 },
@@ -804,7 +819,7 @@ fn rpp_uses_each_runtime_native_set_on_every_route() {
                 crate::selene_runtimes::selene_simple_runtime().unwrap()
             };
             let mut runtime = start(runtime, 2);
-            let output = route.lower(
+            let output = route.lower_and_read(
                 &mut runtime,
                 &[
                     Operation::AllocateQubit { id: 0 },
@@ -840,7 +855,13 @@ fn rpp_uses_each_runtime_native_set_on_every_route() {
                     1
                 );
             }
-            let results = simulate(&mut StateVecAoS::new(2), &output);
+            let mut sim = StateVecAoS::new(2);
+            let mut results = simulate(&mut sim, &output);
+            runtime
+                .provide_measurement_outcomes(results.clone())
+                .unwrap();
+            let tail = route.lower_raw(&mut runtime, &[]);
+            results.extend(simulate(&mut sim, &tail));
             assert_eq!(results, [(0, 1), (1, 1)]);
         }
     }
@@ -954,7 +975,7 @@ fn scheduled_release_does_not_extract_before_later_submissions() {
     runtime.init_args.clone_from(&public.init_args);
     let mut runtime = start(runtime, 1);
     CALLS.with_borrow_mut(Vec::clear);
-    let batches = runtime
+    let mut batches = runtime
         .lower_scheduled_operations(&[
             Operation::AllocateQubit { id: 7 },
             QuantumOp::Reset(7).into(),
@@ -976,6 +997,12 @@ fn scheduled_release_does_not_extract_before_later_submissions() {
         calls[3..].iter().all(|call| *call == "extract"),
         "{calls:?}"
     );
+    assert!(batches.is_empty(), "submission must remain lazy");
+    runtime.force_result(47).unwrap();
+    batches.extend(runtime.lower_scheduled_operations(&[]).unwrap());
+    assert_eq!(batches.iter().flat_map(|b| &b.measurements).count(), 1);
+    runtime.provide_measurement_outcomes(vec![(31, 0)]).unwrap();
+    batches.extend(runtime.lower_scheduled_operations(&[]).unwrap());
     let results: Vec<_> = batches
         .iter()
         .flat_map(|batch| &batch.measurements)
@@ -1009,7 +1036,7 @@ fn scheduled_release_does_not_extract_before_later_submissions() {
         RuntimeScheduledOp::Measure { qubit_id: 0, .. }
     ));
     runtime
-        .provide_measurement_outcomes(Vec::from([(31, 0), (47, 1)]))
+        .provide_measurement_outcomes(Vec::from([(47, 1)]))
         .unwrap();
     runtime.drain_pending_scheduled_operations().unwrap();
     runtime.shot_end().unwrap();
@@ -1020,6 +1047,7 @@ mod measurement_followups {
     use std::cell::{Cell, RefCell};
 
     thread_local! {
+        static FORCED: RefCell<Vec<u64>> = const { RefCell::new(Vec::new()) };
         static SUBMITTED: RefCell<Vec<(u64, bool)>> = const { RefCell::new(Vec::new()) };
         static DELIVERED: RefCell<Vec<(u64, bool, u64)>> = const { RefCell::new(Vec::new()) };
         static EMITTED: Cell<usize> = const { Cell::new(0) };
@@ -1027,6 +1055,7 @@ mod measurement_followups {
         static REVERSE: Cell<bool> = const { Cell::new(false) };
         static FAIL_SETTER: Cell<bool> = const { Cell::new(false) };
         static PAD: Cell<usize> = const { Cell::new(0) };
+        static REQUIRE_FEEDBACK: Cell<bool> = const { Cell::new(false) };
     }
     fn allocate(leaked: bool, output: *mut u64) -> i32 {
         SUBMITTED.with_borrow_mut(|submitted| {
@@ -1042,7 +1071,8 @@ mod measurement_followups {
     unsafe extern "C" fn measure_leaked(_: RuntimeInstance, _: u64, out: *mut u64) -> i32 {
         allocate(true, out)
     }
-    unsafe extern "C" fn force(_: RuntimeInstance, _: u64) -> i32 {
+    unsafe extern "C" fn force(_: RuntimeInstance, result: u64) -> i32 {
+        FORCED.with_borrow_mut(|calls| calls.push(result));
         0
     }
     unsafe extern "C" fn local(_: RuntimeInstance, _: *const u64, _: u64, _: u64) -> i32 {
@@ -1057,6 +1087,9 @@ mod measurement_followups {
         i32::from(FAIL_SETTER.get())
     }
     unsafe extern "C" fn extract(_: RuntimeInstance, out: SeleneRuntimeGetOperationHandle) -> i32 {
+        if REQUIRE_FEEDBACK.get() && EMITTED.get() > DELIVERED.with_borrow(Vec::len) {
+            return 77;
+        }
         if PAD.get() > 0 {
             PAD.set(PAD.get() - 1);
             unsafe { (out.interface.set_batch_time)(out.instance, 0, 0) };
@@ -1080,6 +1113,24 @@ mod measurement_followups {
         }
         0
     }
+    #[test]
+    fn read_targets_latest_native_future_for_reused_program_slot() {
+        with_descriptor(|mut runtime| {
+            RELEASE.set(0);
+            let ops = Route::Flat.lower_raw(
+                &mut runtime,
+                &[
+                    QuantumOp::Measure(0, 7).into(),
+                    QuantumOp::Measure(0, 7).into(),
+                ],
+            );
+            assert_eq!(ops, Vec::<QuantumOp>::new());
+            assert!(FORCED.with_borrow(Vec::is_empty));
+            runtime.force_result(7).unwrap();
+            assert_eq!(FORCED.with_borrow(Clone::clone), [101]);
+        });
+    }
+
     fn with_descriptor(run: impl FnOnce(SeleneRuntime)) {
         let executable = std::env::current_exe().unwrap();
         let source = crate::selene_runtimes::find_library_in_dir(
@@ -1116,6 +1167,7 @@ mod measurement_followups {
                 .get::<unsafe extern "C" fn(*mut c_void)>(b"set_descriptor")
                 .unwrap()((&raw mut *descriptor).cast());
         };
+        FORCED.with_borrow_mut(Vec::clear);
         SUBMITTED.with_borrow_mut(Vec::clear);
         DELIVERED.with_borrow_mut(Vec::clear);
         EMITTED.set(0);
@@ -1123,9 +1175,43 @@ mod measurement_followups {
         REVERSE.set(false);
         FAIL_SETTER.set(false);
         PAD.set(0);
+        REQUIRE_FEEDBACK.set(false);
         let mut runtime = SeleneRuntime::new(plugin);
         runtime.init_args.clone_from(&public.init_args);
         run(start(runtime, 1));
+    }
+
+    #[test]
+    fn extraction_yields_until_each_measurement_batch_receives_feedback() {
+        for route in Route::ALL {
+            with_descriptor(|mut runtime| {
+                REQUIRE_FEEDBACK.set(true);
+                let first = route.lower_raw(
+                    &mut runtime,
+                    &[
+                        QuantumOp::Measure(0, 7).into(),
+                        QuantumOp::Measure(0, 8).into(),
+                    ],
+                );
+                assert_eq!(
+                    first
+                        .iter()
+                        .filter(|op| matches!(op, QuantumOp::Measure(..)))
+                        .count(),
+                    1
+                );
+                assert_eq!(route.lower_raw(&mut runtime, &[]), Vec::<QuantumOp>::new());
+                runtime.provide_measurement_outcomes(vec![(7, 1)]).unwrap();
+                let second = route.lower_raw(&mut runtime, &[]);
+                assert!(second.contains(&QuantumOp::Measure(0, 8)));
+                runtime.provide_measurement_outcomes(vec![(8, 0)]).unwrap();
+                assert_eq!(route.lower_raw(&mut runtime, &[]), Vec::<QuantumOp>::new());
+                assert_eq!(
+                    DELIVERED.with_borrow(Clone::clone),
+                    [(100, false, 1), (101, false, 0)]
+                );
+            });
+        }
     }
 
     #[test]
@@ -1144,7 +1230,7 @@ mod measurement_followups {
                                     QuantumOp::Measure(0, 7)
                                 }
                             };
-                            let ops = route.lower(
+                            let ops = route.lower_and_read(
                                 &mut runtime,
                                 &[
                                     Operation::AllocateQubit { id: 0 },
@@ -1161,13 +1247,15 @@ mod measurement_followups {
                                     })
                                     .collect::<Vec<_>>()
                             };
-                            assert_eq!(feedback(&ops).len(), if deferred { 1 } else { 2 });
+                            assert_eq!(feedback(&ops).len(), 1);
+                            assert_eq!(route.lower_raw(&mut runtime, &[]), Vec::<QuantumOp>::new());
                             runtime
                                 .provide_measurement_outcomes(feedback(&ops))
                                 .unwrap();
-                            if deferred {
+                            {
                                 RELEASE.set(2);
-                                let tail = route.lower(&mut runtime, &[Operation::Barrier]);
+                                let tail =
+                                    route.lower_and_read(&mut runtime, &[Operation::Barrier]);
                                 assert_eq!(feedback(&tail).len(), 1);
                                 runtime
                                     .provide_measurement_outcomes(feedback(&tail))
@@ -1197,7 +1285,7 @@ mod measurement_followups {
     fn native_measurement_setter_failure_is_latched() {
         for leaked in [false, true] {
             with_descriptor(|mut runtime| {
-                Route::Flat.lower(
+                Route::Flat.lower_and_read(
                     &mut runtime,
                     &[
                         Operation::AllocateQubit { id: 0 },
@@ -1306,7 +1394,7 @@ mod measurement_followups {
 fn shot_end_rejects_undelivered_native_measurements() {
     for route in Route::ALL {
         let mut runtime = start(crate::selene_runtimes::selene_simple_runtime().unwrap(), 1);
-        let ops = route.lower(&mut runtime, &[QuantumOp::Measure(0, 7).into()]);
+        let ops = route.lower_and_read(&mut runtime, &[QuantumOp::Measure(0, 7).into()]);
         assert_eq!(
             ops.iter()
                 .filter(|op| matches!(op, QuantumOp::Measure(..)))
@@ -1336,7 +1424,7 @@ fn shot_end_rejects_undelivered_native_measurements() {
         );
         runtime.reset().unwrap();
         runtime.shot_start(1, Some(7)).unwrap();
-        route.lower(&mut runtime, &[QuantumOp::Measure(0, 7).into()]);
+        route.lower_and_read(&mut runtime, &[QuantumOp::Measure(0, 7).into()]);
         runtime.provide_measurement_outcomes(vec![(7, 1)]).unwrap();
         match route {
             Route::Scheduled => {
@@ -1347,5 +1435,58 @@ fn shot_end_rejects_undelivered_native_measurements() {
             }
         }
         assert!(runtime.shot_end().unwrap().measurements[&7]);
+    }
+}
+
+#[test]
+fn lazy_measurements_wait_for_a_result_read_on_every_route() {
+    for route in Route::ALL {
+        let mut runtime = start(crate::selene_runtimes::selene_soft_rz_runtime().unwrap(), 2);
+        let initial = route.lower_raw(
+            &mut runtime,
+            &[
+                Operation::AllocateQubit { id: 7 },
+                Operation::AllocateQubit { id: 9 },
+                QuantumOp::Reset(7).into(),
+                QuantumOp::X(7).into(),
+                QuantumOp::Measure(7, 31).into(),
+                Operation::ReleaseQubit { id: 7 },
+                QuantumOp::Reset(9).into(),
+                QuantumOp::X(9).into(),
+                QuantumOp::Measure(9, 47).into(),
+            ],
+        );
+        assert!(
+            initial.is_empty(),
+            "measurement submission forced work: {route:?}: {initial:?}"
+        );
+        assert!(runtime.force_result(31).unwrap());
+        let first = route.lower_raw(&mut runtime, &[]);
+        assert!(
+            first
+                .iter()
+                .any(|op| matches!(op, QuantumOp::Measure(_, 31)))
+        );
+        assert!(
+            !first
+                .iter()
+                .any(|op| matches!(op, QuantumOp::Measure(_, 47)))
+        );
+        runtime.provide_measurement_outcomes(vec![(31, 1)]).unwrap();
+        assert_eq!(route.lower_raw(&mut runtime, &[]), Vec::<QuantumOp>::new());
+        assert!(runtime.force_result(47).unwrap());
+        let second = route.lower_raw(&mut runtime, &[]);
+        assert!(
+            second
+                .iter()
+                .any(|op| matches!(op, QuantumOp::Measure(_, 47)))
+        );
+        runtime.provide_measurement_outcomes(vec![(47, 1)]).unwrap();
+        if matches!(route, Route::Scheduled) {
+            runtime.drain_pending_scheduled_operations().unwrap();
+        } else {
+            runtime.drain_pending_operations().unwrap();
+        }
+        runtime.shot_end().unwrap();
     }
 }

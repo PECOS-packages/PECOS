@@ -92,9 +92,11 @@ Important fields include:
   barriers, and result recording.
 - `lowered_quantum_ops`: gates after the selected runtime has scheduled and
   lowered the source operations.
-- `lowered_quantum_ops_complete`: the runtime's attestation that the lowered
-  gate stream completely represents the lowerable source operations in that
-  chunk.
+- `lowered_quantum_ops_complete`: the producer's attestation that the chunk
+  contains all gates emitted by that lowering call, with complete provenance.
+- `runtime_lowering_deferred`: the runtime accepted source work but emitted no
+  gates in this chunk. Its output can appear in a later chunk; replay also
+  requires the final `trace_complete` drain attestation.
 - `named_result_traces`: provenance emitted for named `result(...)` records.
 - `named_results`: the shot's complete typed named outputs, in call order per
   tag, on the `named_results` chunk only. Unlike `named_result_traces`, it
@@ -117,6 +119,32 @@ across shots or restart at zero; clean native instances remain reusable in both
 modes. It can also be declared on the runtime plugin object.
 Capture-only traces with unhandled events have `runtime_events_complete=false`
 and cannot be replayed as audited circuits.
+
+## Lazy Measurements
+
+A measurement request gives the selected Selene runtime ownership of scheduling
+that measurement. PECOS does not force it when submitting the request. When the
+program reads a future, PECOS first consumes any available result; otherwise it
+asks the runtime to make that particular result available and executes the work
+the runtime releases. After each native measurement batch, PECOS returns the
+outcomes before asking for more batches. It polls any work made ready by that
+feedback before resuming the program. Outstanding work is drained before shot
+completion.
+
+This applies to simulation, tracing, and DEM construction. Forcing requests
+before their reads can change the runtime's batching, native gates, and idle
+durations even when ideal measurement outcomes agree. Build the DEM with the
+same runtime and configuration used for simulation.
+
+Rust callers using `QisRuntime` directly should call `force_result(program_id)`
+when they need a pending result, then extract ready work with an empty lowering
+call. Deliver each emitted batch's measurement outcomes before extracting more
+work; an empty extraction while feedback is outstanding does not certify that
+the scheduler is drained. The runtime's native future ID is resolved internally. Older runtimes
+without targeted forcing retain the generic drain fallback. Leakage-aware
+reads retain the compatibility local barrier required by public runtimes that
+do not implement forcing for that measurement kind; it occurs at the read,
+not when the measurement is submitted.
 
 ## Replaying a Stored Trace
 

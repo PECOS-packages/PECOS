@@ -134,8 +134,16 @@ fn soft_rz_control_engine_flushes_native_tail() {
         for read_result in [false, true] {
             for tracing in [false, true] {
                 let output = run(true, &program(PULSE_TAIL, explicit, read_result), tracing);
-                assert_eq!(output.terminal_batches.len(), 1);
-                let tail = &output.terminal_batches[0];
+                assert_eq!(
+                    output.terminal_batches.len(),
+                    if read_result { 1 } else { 2 }
+                );
+                let tail: Vec<_> = output
+                    .terminal_batches
+                    .iter()
+                    .flatten()
+                    .filter(|gate| gate.qubits.as_slice() == [QubitId(1)])
+                    .collect();
                 // Qubit 1's lifetime starts in the tail, so its prep is queued
                 // with the pulse. Measurement keeps qubit 0 on slot 0, static or
                 // explicit, so qubit 1 always has slot 1.
@@ -180,12 +188,13 @@ fn terminal_measurement_adds_no_empty_batch() {
     for soft in [false, true] {
         for read_result in [false, true] {
             let output = run(soft, &program("", true, read_result), true);
-            assert_eq!(output.terminal_batches, Vec::<Vec<Gate>>::new());
-            assert!(
-                !output
+            assert_eq!(output.terminal_batches.is_empty(), !soft || read_result);
+            assert_eq!(
+                output
                     .trace
                     .iter()
-                    .any(|chunk| chunk.stage == "terminal_flush")
+                    .any(|chunk| chunk.stage == "terminal_flush"),
+                soft && !read_result
             );
             assert_eq!(
                 output
@@ -231,13 +240,15 @@ fn simple_runtime_has_no_deferred_terminal_pulse() {
 fn soft_rz_flushes_prep_before_an_absorbed_rz_tail() {
     let tail = "call void @__quantum__qis__reset__body(i64 1)\ncall void @__quantum__qis__rz__body(double 0.3, i64 1)";
     let output = run(true, &program(tail, true, false), true);
-    assert_eq!(output.terminal_batches.len(), 1);
-    assert_eq!(output.terminal_batches[0].len(), 1);
-    assert_eq!(output.terminal_batches[0][0].gate_type, GateType::PZ);
-    assert_eq!(
-        output.terminal_batches[0][0].qubits.as_slice(),
-        &[QubitId(1)]
-    );
+    assert_eq!(output.terminal_batches.len(), 2);
+    let tail: Vec<_> = output
+        .terminal_batches
+        .iter()
+        .flatten()
+        .filter(|gate| gate.qubits.as_slice() == [QubitId(1)])
+        .collect();
+    assert_eq!(tail.len(), 1);
+    assert_eq!(tail[0].gate_type, GateType::PZ);
 }
 
 fn reset_fixture(mode: ScheduledTransport) -> QisEngine {

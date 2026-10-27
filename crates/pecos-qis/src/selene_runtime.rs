@@ -458,6 +458,8 @@ pub struct SeleneRuntime {
 
     /// Program slots allocated by native measurement, including delivered slots.
     native_result_slots: BTreeSet<usize>,
+    /// Latest native future per program slot, plus the qubit for a leaked read.
+    program_to_runtime_results: BTreeMap<usize, (u64, Option<u64>)>,
 
     /// Native future to program slot and source leakage kind, retained through scheduling.
     runtime_to_program_results: BTreeMap<u64, (usize, bool)>,
@@ -471,6 +473,8 @@ pub struct SeleneRuntime {
     /// Virtual-Z hypothesis for provenance matching; never alters emitted gates.
     submitted_rz_phases: BTreeMap<usize, f64>,
     source_trace_metadata: VecDeque<SourceTraceMetadata>,
+    /// Source work held while a provenance barrier awaits measurement feedback.
+    deferred_source_operations: VecDeque<Operation>,
 
     /// Shot metadata waiting for a lazily loaded runtime plugin.
     pending_shot_start: Option<(u64, Option<u64>)>,
@@ -614,11 +618,13 @@ impl SeleneRuntime {
             pending_measurements: Vec::new(),
             program_to_runtime_qubits: BTreeMap::new(),
             native_result_slots: BTreeSet::new(),
+            program_to_runtime_results: BTreeMap::new(),
             runtime_to_program_results: BTreeMap::new(),
             emitted_measurements: BTreeMap::new(),
             last_gate_time_end_nanos: Vec::new(),
             submitted_rz_phases: BTreeMap::new(),
             source_trace_metadata: VecDeque::new(),
+            deferred_source_operations: VecDeque::new(),
             pending_shot_start: None,
             active_shot: None,
             custom_events: Vec::new(),
@@ -663,8 +669,14 @@ impl SeleneRuntime {
         let mut pending_global_metadata = TraceMetadata::new();
         let mut pending_qubit_metadata: BTreeMap<usize, TraceMetadata> = BTreeMap::new();
 
-        for op in operations {
-            match op {
+        let mut pending = std::mem::take(&mut self.deferred_source_operations);
+        pending.extend(operations.iter().cloned());
+        while let Some(op) = pending.pop_front() {
+            if self.has_pending_feedback() {
+                pending.push_front(op);
+                break;
+            }
+            match &op {
                 Operation::TraceMetadata { metadata, qubit } => {
                     if let Some(qubit) = qubit {
                         let pending = pending_qubit_metadata.entry(*qubit).or_default();
@@ -676,13 +688,32 @@ impl SeleneRuntime {
                 Operation::Quantum(qop) => {
                     let metadata = Self::take_pending_trace_metadata_for_source_op(
                         qop,
-                        &mut pending_global_metadata,
-                        &mut pending_qubit_metadata,
+                        &mut pending_global_metadata.clone(),
+                        &mut pending_qubit_metadata.clone(),
                     )?;
                     if !metadata.is_empty() {
                         self.begin_source_metadata(qop, &mut lowered_ops)
                             .map_err(|error| self.operation_lowering_error(qop, &error))?;
                     }
+                    if let QuantumOp::Idle(_, qubit) = qop {
+                        let slot = self.runtime_qubit_for_program(*qubit)?;
+                        self.call_runtime_local_barrier(&[slot])?;
+                        let emitted = self.drain_runtime_operations()?;
+                        Self::push_lowered_ops_with_source_metadata(
+                            &mut lowered_ops,
+                            emitted,
+                            &mut self.source_trace_metadata,
+                        )?;
+                    }
+                    if self.has_pending_feedback() {
+                        pending.push_front(op);
+                        break;
+                    }
+                    Self::take_pending_trace_metadata_for_source_op(
+                        qop,
+                        &mut pending_global_metadata,
+                        &mut pending_qubit_metadata,
+                    )?;
                     let mut emitted_ops = Vec::new();
                     self.submit_quantum_op_with_metadata(qop, metadata, &mut emitted_ops)?;
                     Self::push_lowered_ops_with_source_metadata(
@@ -701,10 +732,16 @@ impl SeleneRuntime {
                 }
                 Operation::ReleaseQubit { id } => {
                     lowered_ops.extend(self.lower_runtime_release(*id)?);
+                    if self.has_pending_feedback()
+                        && self.program_to_runtime_qubits.contains_key(id)
+                    {
+                        pending.push_front(op);
+                        break;
+                    }
                 }
                 _ => {
                     let mut emitted_ops = Vec::new();
-                    self.submit_operation_to_runtime(op, &mut emitted_ops)?;
+                    self.submit_operation_to_runtime(&op, &mut emitted_ops)?;
                     Self::push_lowered_ops_with_source_metadata(
                         &mut lowered_ops,
                         emitted_ops,
@@ -720,6 +757,25 @@ impl SeleneRuntime {
             emitted_ops,
             &mut self.source_trace_metadata,
         )?;
+
+        if !pending.is_empty() {
+            if !pending_global_metadata.is_empty() {
+                self.deferred_source_operations
+                    .push_back(Operation::TraceMetadata {
+                        metadata: pending_global_metadata,
+                        qubit: None,
+                    });
+            }
+            for (qubit, metadata) in pending_qubit_metadata {
+                self.deferred_source_operations
+                    .push_back(Operation::TraceMetadata {
+                        metadata,
+                        qubit: Some(qubit),
+                    });
+            }
+            self.deferred_source_operations.extend(pending);
+            return Ok(lowered_ops);
+        }
 
         if !pending_global_metadata.is_empty() {
             return Err(RuntimeError::ExecutionError(format!(
@@ -1007,6 +1063,11 @@ impl SeleneRuntime {
 
     fn check_end_admission(&mut self) -> Result<()> {
         self.check_batch_failure()?;
+        if !self.deferred_source_operations.is_empty() {
+            return Err(self.latch_batch_failure(RuntimeError::ExecutionError(
+                "shot ended with deferred source operations".into(),
+            )));
+        }
         if self
             .emitted_measurements
             .values()
@@ -1508,6 +1569,18 @@ impl SeleneRuntime {
 
     fn prepare_runtime_input(&mut self, operations: &[Operation]) -> Result<()> {
         self.check_batch_failure()?;
+        let queued;
+        let operations = if self.deferred_source_operations.is_empty() {
+            operations
+        } else {
+            queued = self
+                .deferred_source_operations
+                .iter()
+                .chain(operations)
+                .cloned()
+                .collect::<Vec<_>>();
+            &queued
+        };
         // Validate the complete input before allocation, barriers, metadata
         // matching, or any gate can mutate the plugin.
         for op in operations {
@@ -1626,11 +1699,13 @@ impl SeleneRuntime {
         self.explicit_qubit_handles.clear();
         self.released_qubit_handles.clear();
         self.native_result_slots.clear();
+        self.program_to_runtime_results.clear();
         self.runtime_to_program_results.clear();
         self.emitted_measurements.clear();
         self.last_gate_time_end_nanos.clear();
         self.submitted_rz_phases.clear();
         self.source_trace_metadata.clear();
+        self.deferred_source_operations.clear();
         exit_result
     }
 
@@ -1980,7 +2055,9 @@ impl SeleneRuntime {
         self.native_result_slots.insert(program_result);
         self.runtime_to_program_results
             .insert(runtime_result, (program_result, false));
-        self.force_runtime_result(runtime_result)
+        self.program_to_runtime_results
+            .insert(program_result, (runtime_result, None));
+        Ok(())
     }
 
     fn call_runtime_measure_leaked(
@@ -2013,10 +2090,9 @@ impl SeleneRuntime {
         self.native_result_slots.insert(program_result);
         self.runtime_to_program_results
             .insert(runtime_result, (program_result, true));
-        // Soft-RZ's force_result only matches Measure, not MeasureLeaked.
-        // Release this qubit's queued work before PECOS needs the leaked result.
-        self.call_runtime_local_barrier(&[runtime_qubit])?;
-        self.force_runtime_result(runtime_result)
+        self.program_to_runtime_results
+            .insert(program_result, (runtime_result, Some(runtime_qubit)));
+        Ok(())
     }
 
     fn call_runtime_local_barrier(&mut self, qubits: &[u64]) -> Result<()> {
@@ -2301,11 +2377,19 @@ impl SeleneRuntime {
     }
 
     fn lower_runtime_release(&mut self, program_qubit: usize) -> Result<Vec<LoweredQuantumOp>> {
-        if self.scheduled_mode == Some(true) {
-            // Scheduled extraction has no source annotations to retire. Submit
-            // qfree in source order and let the plugin own its pending work;
-            // a host-inserted barrier/drain here would commit a schedule before
-            // later operations in this input have reached the native scheduler.
+        let has_source_provenance = self
+            .program_to_runtime_qubits
+            .get(&program_qubit)
+            .and_then(|slot| usize::try_from(*slot).ok())
+            .is_some_and(|slot| {
+                self.source_trace_metadata
+                    .iter()
+                    .any(|record| Self::quantum_op_qubits(&record.op).contains(&slot))
+            });
+        if self.scheduled_mode == Some(true) || !has_source_provenance {
+            // Without source annotations there is no provenance to retire.
+            // Submit qfree in source order and let the plugin own pending work;
+            // a host barrier would prematurely commit its schedule.
             self.release_runtime_qubit(program_qubit)?;
             return Ok(Vec::new());
         }
@@ -2323,6 +2407,9 @@ impl SeleneRuntime {
             let slot = usize::try_from(slot).map_err(|_| {
                 RuntimeError::ExecutionError("runtime qubit id exceeds usize".into())
             })?;
+            if self.has_pending_feedback() {
+                return Ok(lowered);
+            }
             self.finish_source_lifetime(slot)?;
         }
         self.release_runtime_qubit(program_qubit)?;
@@ -2367,6 +2454,12 @@ impl SeleneRuntime {
         Ok(())
     }
 
+    fn has_pending_feedback(&self) -> bool {
+        self.emitted_measurements
+            .values()
+            .any(|pending| !pending.is_empty())
+    }
+
     fn drain_runtime_operations(&mut self) -> Result<Vec<QuantumOp>> {
         self.drain_runtime_operations_bounded(false)
     }
@@ -2374,6 +2467,15 @@ impl SeleneRuntime {
     fn drain_runtime_operations_bounded(&mut self, terminal: bool) -> Result<Vec<QuantumOp>> {
         self.check_batch_failure()?;
         if !self.native_shot.plugin_engaged {
+            return Ok(Vec::new());
+        }
+        // A second extraction in the same lowering call must not cross the
+        // feedback boundary established by the first one.
+        if self
+            .emitted_measurements
+            .values()
+            .any(|pending| !pending.is_empty())
+        {
             return Ok(Vec::new());
         }
         let mut lowered_ops = Vec::new();
@@ -2447,12 +2549,22 @@ impl SeleneRuntime {
                     self.latch_batch_failure(RuntimeError::ExecutionError(e.to_string()))
                 })?;
             }
+            let has_measurement = batch.operations.iter().any(|op| {
+                matches!(
+                    op,
+                    RuntimeScheduledOp::Measure { .. } | RuntimeScheduledOp::MeasureLeaked { .. }
+                )
+            });
             if self.scheduled_output.is_some() {
                 if let Err(error) = self.retain_scheduled_batch(batch) {
                     return Err(self.latch_batch_failure(error));
                 }
             } else {
                 lowered_ops.extend(self.convert_runtime_batch(batch)?);
+            }
+            // Return outcomes before asking the runtime to schedule another batch.
+            if has_measurement {
+                break;
             }
         }
 
@@ -3284,11 +3396,13 @@ impl Clone for SeleneRuntime {
             pending_measurements: self.pending_measurements.clone(),
             program_to_runtime_qubits: self.program_to_runtime_qubits.clone(),
             native_result_slots: self.native_result_slots.clone(),
+            program_to_runtime_results: self.program_to_runtime_results.clone(),
             runtime_to_program_results: self.runtime_to_program_results.clone(),
             emitted_measurements: self.emitted_measurements.clone(),
             last_gate_time_end_nanos: self.last_gate_time_end_nanos.clone(),
             submitted_rz_phases: self.submitted_rz_phases.clone(),
             source_trace_metadata: self.source_trace_metadata.clone(),
+            deferred_source_operations: self.deferred_source_operations.clone(),
             pending_shot_start: self.pending_shot_start,
             active_shot: self.active_shot,
             custom_events: self.custom_events.clone(),
@@ -3480,6 +3594,32 @@ impl QisRuntime for SeleneRuntime {
 
     fn supports_operation_lowering(&self) -> bool {
         true
+    }
+
+    fn yields_at_measurements(&self) -> bool {
+        true
+    }
+
+    fn force_result(&mut self, program_result: usize) -> Result<bool> {
+        self.check_batch_failure()?;
+        let (runtime_result, leaked_qubit) = self
+            .program_to_runtime_results
+            .get(&program_result)
+            .copied()
+            .ok_or_else(|| {
+                RuntimeError::ExecutionError(format!(
+                    "no native measurement for program result {program_result}"
+                ))
+            })?;
+        self.with_native_mutation(|runtime| {
+            // Some public runtimes do not force leakage-aware measurements.
+            // Keep their compatibility barrier at the read, never at submission.
+            if let Some(qubit) = leaked_qubit {
+                runtime.call_runtime_local_barrier(&[qubit])?;
+            }
+            runtime.force_runtime_result(runtime_result)?;
+            Ok(true)
+        })
     }
 
     fn drain_pending_operations(&mut self) -> Result<Vec<QuantumOp>> {
@@ -3731,11 +3871,13 @@ impl QisRuntime for SeleneRuntime {
         self.explicit_qubit_handles.clear();
         self.released_qubit_handles.clear();
         self.native_result_slots.clear();
+        self.program_to_runtime_results.clear();
         self.runtime_to_program_results.clear();
         self.emitted_measurements.clear();
         self.last_gate_time_end_nanos.clear();
         self.submitted_rz_phases.clear();
         self.source_trace_metadata.clear();
+        self.deferred_source_operations.clear();
         self.custom_events.clear();
         self.unhandled_custom_events = false;
         self.batch_adapter = None;
@@ -3827,11 +3969,13 @@ impl QisRuntime for SeleneRuntime {
         self.explicit_qubit_handles.clear();
         self.released_qubit_handles.clear();
         self.native_result_slots.clear();
+        self.program_to_runtime_results.clear();
         self.runtime_to_program_results.clear();
         self.emitted_measurements.clear();
         self.last_gate_time_end_nanos.clear();
         self.submitted_rz_phases.clear();
         self.source_trace_metadata.clear();
+        self.deferred_source_operations.clear();
         self.custom_events.clear();
         self.unhandled_custom_events = false;
         self.batch_adapter = None;
@@ -4411,10 +4555,34 @@ mod tests {
                 Self::Flat => runtime.lower_operations(ops).map(|_| ()),
                 Self::Metadata => runtime.lower_operations_with_metadata(ops).map(|_| ()),
                 Self::Scheduled => runtime.lower_scheduled_operations(ops).map(|_| ()),
+            }?;
+            for op in ops {
+                if let Operation::Quantum(
+                    QuantumOp::Measure(_, result) | QuantumOp::MeasureLeaked(_, result),
+                ) = op
+                {
+                    runtime.force_result(*result)?;
+                    self.lower(runtime, &[])?;
+                }
             }
+            Ok(())
         }
 
         fn lower_qubit_slots(self, runtime: &mut SeleneRuntime, ops: &[Operation]) -> Vec<u64> {
+            let mut slots = self.lower_qubit_slots_raw(runtime, ops);
+            for op in ops {
+                if let Operation::Quantum(
+                    QuantumOp::Measure(_, result) | QuantumOp::MeasureLeaked(_, result),
+                ) = op
+                {
+                    runtime.force_result(*result).unwrap();
+                    slots.extend(self.lower_qubit_slots_raw(runtime, &[]));
+                }
+            }
+            slots
+        }
+
+        fn lower_qubit_slots_raw(self, runtime: &mut SeleneRuntime, ops: &[Operation]) -> Vec<u64> {
             let lowered = match self {
                 Self::Flat => runtime.lower_operations(ops).unwrap(),
                 Self::Metadata => runtime
@@ -4585,11 +4753,12 @@ mod tests {
                     QuantumOp::Measure(0, 0).into(),
                 ],
             );
-            let original = first[first.len() - 2];
-            assert_ne!(original, first[first.len() - 1]);
-            runtime
-                .provide_measurement_outcomes(Vec::from([(0, 0), (1, 1)]))
-                .unwrap();
+            let original = *first.last().unwrap();
+            runtime.provide_measurement_outcomes(vec![(1, 1)]).unwrap();
+            let next = mode.lower_qubit_slots_raw(&mut runtime, &[]);
+            assert_eq!(next.len(), 1);
+            assert_ne!(original, next[0]);
+            runtime.provide_measurement_outcomes(vec![(0, 0)]).unwrap();
             let second = mode.lower_qubit_slots(
                 &mut runtime,
                 &[QuantumOp::H(1).into(), QuantumOp::Measure(1, 2).into()],
@@ -5952,12 +6121,14 @@ mod tests {
             .unwrap();
         assert_eq!(first, []);
         assert_eq!(runtime.source_trace_metadata.len(), 1);
-        let second = runtime
+        let mut second = runtime
             .lower_operations_with_metadata(&[
                 QuantumOp::RXY(0.25, 0.0, 0).into(),
                 QuantumOp::Measure(0, 0).into(),
             ])
             .unwrap();
+        runtime.force_result(0).unwrap();
+        second.extend(runtime.lower_operations_with_metadata(&[]).unwrap());
         assert!(second.iter().any(|op| matches!(op.op, QuantumOp::RXY(..))));
         assert!(second.iter().all(|op| op.metadata.is_empty()));
         assert!(
@@ -6002,7 +6173,7 @@ mod tests {
         assert_eq!(released, [LoweredQuantumOp::new(QuantumOp::Reset(0), old)]);
         assert!(runtime.source_trace_metadata.is_empty());
         let fresh = TraceMetadata::from([("source_label".into(), "new lifetime".into())]);
-        let lowered = runtime
+        let mut lowered = runtime
             .lower_operations_with_metadata(&[
                 Operation::AllocateQubit { id: 9 },
                 Operation::TraceMetadata {
@@ -6013,6 +6184,8 @@ mod tests {
                 QuantumOp::Measure(9, 0).into(),
             ])
             .unwrap();
+        runtime.force_result(0).unwrap();
+        lowered.extend(runtime.lower_operations_with_metadata(&[]).unwrap());
         assert_eq!(runtime.program_to_runtime_qubits[&9], slot);
         assert_eq!(
             lowered,
@@ -6021,8 +6194,8 @@ mod tests {
                 LoweredQuantumOp::from(QuantumOp::Measure(0, 0)),
             ]
         );
-        // Flat routes retain the source-provenance boundary. Scheduled extraction
-        // leaves queued work with the plugin until its normal extraction boundary.
+        // Without source provenance, every route leaves queued work with the
+        // plugin across release and reuse until a result is requested.
         for mode in LoweringRoute::ALL {
             let mut runtime = crate::selene_runtimes::selene_soft_rz_runtime().unwrap();
             runtime.set_num_qubits(1);
@@ -6040,11 +6213,7 @@ mod tests {
             let slot = runtime.program_to_runtime_qubits[&7];
             assert_eq!(
                 mode.lower_qubit_slots(&mut runtime, &[Operation::ReleaseQubit { id: 7 },]),
-                if matches!(mode, LoweringRoute::Scheduled) {
-                    vec![]
-                } else {
-                    vec![slot]
-                },
+                Vec::<u64>::new(),
                 "{mode:?}"
             );
             assert!(runtime.source_trace_metadata.is_empty());
@@ -6057,11 +6226,7 @@ mod tests {
                         QuantumOp::Measure(9, 0).into(),
                     ]
                 ),
-                if matches!(mode, LoweringRoute::Scheduled) {
-                    vec![slot, slot, slot]
-                } else {
-                    vec![slot, slot]
-                },
+                vec![slot, slot, slot],
                 "{mode:?}"
             );
             assert_eq!(runtime.program_to_runtime_qubits[&9], slot);
@@ -6162,12 +6327,16 @@ mod tests {
                 ])
                 .unwrap();
             let error = match retirement {
-                "emission" => runtime
-                    .lower_operations_with_metadata(&[
-                        QuantumOp::RXY(0.25, 0.0, 0).into(),
-                        QuantumOp::Measure(0, 0).into(),
-                    ])
-                    .unwrap_err(),
+                "emission" => {
+                    runtime
+                        .lower_operations_with_metadata(&[
+                            QuantumOp::RXY(0.25, 0.0, 0).into(),
+                            QuantumOp::Measure(0, 0).into(),
+                        ])
+                        .unwrap();
+                    runtime.force_result(0).unwrap();
+                    runtime.lower_operations_with_metadata(&[]).unwrap_err()
+                }
                 "release" => runtime
                     .lower_operations_with_metadata(&[Operation::ReleaseQubit { id: 0 }])
                     .unwrap_err(),

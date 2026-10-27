@@ -57,6 +57,7 @@ extern selene_future_result_t selene_qubit_lazy_measure(SeleneInstance *instance
 extern selene_future_result_t selene_qubit_lazy_measure_leaked(SeleneInstance *instance, uint64_t q);
 extern selene_bool_result_t selene_future_read_bool(SeleneInstance *instance, uint64_t r);
 extern selene_u64_result_t selene_future_read_u64(SeleneInstance *instance, uint64_t r);
+extern selene_void_result_t selene_simulate_delay(SeleneInstance *instance, uint64_t delay);
 extern selene_void_result_t selene_refcount_increment(SeleneInstance *instance, uint64_t r);
 extern selene_void_result_t selene_refcount_decrement(SeleneInstance *instance, uint64_t r);
 extern selene_void_result_t selene_print_bool(SeleneInstance *instance, selene_string_t tag, bool value);
@@ -175,6 +176,7 @@ int abi_oracle(void (*set_measurements)(void)) {
     selene_bool_result_t b = selene_future_read_bool(instance, future.reference);
     selene_u64_result_t u = selene_future_read_u64(instance, leaked.reference);
     CHECK(b.error_code == 0 && b.value && u.error_code == 0 && u.value == 1);
+    OK(selene_simulate_delay(instance, 101));
     OK(selene_refcount_increment(instance, future.reference));
     OK(selene_refcount_decrement(instance, future.reference));
     OK(selene_random_seed(instance, 42));

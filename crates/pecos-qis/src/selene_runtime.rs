@@ -1556,6 +1556,15 @@ impl SeleneRuntime {
         // Validate the complete input before allocation, barriers, metadata
         // matching, or any gate can mutate the plugin.
         for op in operations {
+            if matches!(op,
+                Operation::Quantum(QuantumOp::Measure(_, id) | QuantumOp::MeasureLeaked(_, id))
+                | Operation::AllocateResult { id }
+                if *id >= pecos_qis_ffi_types::RUNTIME_REQUEST_RESULT_ID
+            ) {
+                return Err(RuntimeError::ExecutionError(
+                    "measurement result ID is reserved for the dynamic bridge".into(),
+                ));
+            }
             if let Operation::Quantum(QuantumOp::Idle(duration, _)) = op {
                 seconds_to_nanoseconds(*duration)?;
             }
@@ -2223,6 +2232,73 @@ impl SeleneRuntime {
             }
             RuntimeRequest::GlobalBarrier { sleep_ns } => {
                 self.call_runtime_global_barrier(*sleep_ns)?;
+                Ok(0)
+            }
+            RuntimeRequest::SimulateDelay { nanoseconds } => {
+                let lib = self
+                    .library
+                    .as_ref()
+                    .ok_or_else(|| RuntimeError::FfiError("Selene runtime is not loaded".into()))?;
+                let instance = self.instance.ok_or_else(|| {
+                    RuntimeError::FfiError("Selene runtime is not initialized".into())
+                })?;
+                let call = unsafe { Self::runtime_plugin_descriptor(lib)? }
+                    .simulate_delay_fn
+                    .ok_or_else(|| {
+                        RuntimeError::FfiError(
+                            "simulate_delay is not supported by the runtime plugin".into(),
+                        )
+                    })?;
+                self.native_shot.work_submitted = true;
+                self.native_work.submitted();
+                let errno = unsafe { call(instance, *nanoseconds) };
+                if errno != 0 {
+                    return Err(RuntimeError::FfiError(format!(
+                        "simulate_delay failed with errno {errno}"
+                    )));
+                }
+                Ok(0)
+            }
+            RuntimeRequest::IncrementFutureRefcount { result_id }
+            | RuntimeRequest::DecrementFutureRefcount { result_id } => {
+                let (future, _) = self
+                    .program_to_runtime_results
+                    .get(result_id)
+                    .copied()
+                    .ok_or_else(|| {
+                        RuntimeError::ExecutionError(format!(
+                            "reference-count request for unknown measurement future {result_id}"
+                        ))
+                    })?;
+                let lib = self
+                    .library
+                    .as_ref()
+                    .ok_or_else(|| RuntimeError::FfiError("Selene runtime is not loaded".into()))?;
+                let instance = self.instance.ok_or_else(|| {
+                    RuntimeError::FfiError("Selene runtime is not initialized".into())
+                })?;
+                let descriptor = unsafe { Self::runtime_plugin_descriptor(lib)? };
+                let (name, call) =
+                    if matches!(request, RuntimeRequest::IncrementFutureRefcount { .. }) {
+                        (
+                            "increment_future_refcount",
+                            descriptor.increment_future_refcount_fn,
+                        )
+                    } else {
+                        (
+                            "decrement_future_refcount",
+                            descriptor.decrement_future_refcount_fn,
+                        )
+                    };
+                self.native_shot.work_submitted = true;
+                self.native_work.submitted();
+                let errno = unsafe { call(instance, future) };
+                if errno != 0 {
+                    return Err(RuntimeError::FfiError(format!(
+                        "{name} failed with errno {errno}"
+                    )));
+                }
+                // The runtime owns the count and decides when to retire a future.
                 Ok(0)
             }
             RuntimeRequest::Custom { tag, data } => {
@@ -3571,7 +3647,9 @@ fn operation_capacity(
                     }
                     peak = peak.max(live.len());
                 }
-                if let Some(id) = result_id {
+                if let Some(id) = result_id
+                    && *id != pecos_qis_ffi_types::RUNTIME_REQUEST_RESULT_ID
+                {
                     include_result(&mut results, *id);
                 }
             }

@@ -99,8 +99,10 @@ pub struct ExecutionContext {
     ///
     /// Ordinary measurements use 0/1. Leakage-aware measurements may also use 2.
     pub measurement_results: Mutex<Vec<Option<u64>>>,
-    /// Result slots with a measurement or synchronous runtime request queued
-    /// or completed in this shot. Request reads do not create measurement provenance.
+    /// Response to the one synchronous runtime request in flight. This has no
+    /// measurement ID and never grows the measurement vector.
+    runtime_response: Mutex<Option<u64>>,
+    /// Result slots with a measurement queued or completed in this shot.
     measured_results: Mutex<BTreeSet<usize>>,
     /// Typed storage for named results from all `print_*` entry points.
     pub named_results: Mutex<BTreeMap<String, NamedResult>>,
@@ -174,6 +176,7 @@ impl ExecutionContext {
             pending_ops: Mutex::new(Vec::new()),
             measurement_results: Mutex::new(Vec::new()),
             measured_results: Mutex::new(BTreeSet::new()),
+            runtime_response: Mutex::new(None),
             named_results: Mutex::new(BTreeMap::new()),
             named_result_traces: Mutex::new(Vec::new()),
             pending_result_reads: Mutex::new(Vec::new()),
@@ -209,6 +212,9 @@ impl ExecutionContext {
         }
         if let Ok(mut results) = self.measurement_results.lock() {
             results.clear();
+        }
+        if let Ok(mut response) = self.runtime_response.lock() {
+            *response = None;
         }
         self.reset_program_rng();
         self.program_shot.store(0, Ordering::SeqCst);
@@ -789,6 +795,13 @@ pub unsafe extern "C" fn pecos_set_measurement_outcome_with_context(
     let Ok(index) = usize::try_from(result_id) else {
         return 3;
     };
+    if index == pecos_qis_ffi_types::RUNTIME_REQUEST_RESULT_ID {
+        let Ok(mut response) = ctx.runtime_response.lock() else {
+            return 2;
+        };
+        *response = Some(value);
+        return 0;
+    }
     let Some(len) = index.checked_add(1) else {
         return 3;
     };
@@ -1196,6 +1209,13 @@ fn lookup_measurement_outcome(result_id: u64) -> Result<Option<u64>, &'static st
     let index = usize::try_from(result_id).map_err(|_| "result ID does not fit in usize")?;
     // SAFETY: The registered context is live throughout execution.
     let ctx = unsafe { &*ctx };
+    if index == pecos_qis_ffi_types::RUNTIME_REQUEST_RESULT_ID {
+        return ctx
+            .runtime_response
+            .lock()
+            .map(|response| *response)
+            .map_err(|_| "poisoned runtime response");
+    }
     let measured = ctx
         .measured_results
         .lock()

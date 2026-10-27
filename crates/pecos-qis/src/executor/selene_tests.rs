@@ -4,7 +4,7 @@ use super::*;
 use crate::test_env::ENV_MUTEX;
 
 // Explicit public ABI surface: adding or removing an entry requires review.
-const SELENE_EXPORTS: [&str; 43] = [
+const SELENE_EXPORTS: [&str; 44] = [
     "selene_qalloc",
     "selene_qfree",
     "selene_rxy",
@@ -33,6 +33,7 @@ const SELENE_EXPORTS: [&str; 43] = [
     "selene_get_current_shot",
     "selene_local_barrier",
     "selene_global_barrier",
+    "selene_simulate_delay",
     "selene_shot_count",
     "selene_on_shot_start",
     "selene_on_shot_end",
@@ -459,11 +460,15 @@ fn rust_adapter_transfers_are_thread_local() {
 #[cfg(unix)]
 #[test]
 fn incompatible_ffi_libraries_fail_before_any_rust_data_is_accessed() {
+    let mismatch = format!(
+        "ABI version 0, expected {}",
+        pecos_qis_ffi_types::QIS_FFI_ABI_VERSION
+    );
     for (body, expected) in [
         ("int unrelated(void) { return 0; }", "missing ABI version"),
         (
             "unsigned long long pecos_qis_ffi_abi_version(void) { return 0; }",
-            "ABI version 0, expected 1",
+            mismatch.as_str(),
         ),
     ] {
         let dir = tempfile::tempdir().unwrap();

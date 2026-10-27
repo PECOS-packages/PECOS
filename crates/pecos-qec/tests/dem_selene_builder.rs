@@ -411,3 +411,43 @@ fn integer_outputs_bind_raw_ids_by_probe_correlation() {
         Some(&Attribute::String("probe_correlated_result_ids".into()))
     );
 }
+
+#[test]
+fn classical_delay_trace_uses_existing_idle_noise_in_nanoseconds() {
+    use pecos_core::gate_type::GateType;
+    use pecos_qec::IdleNoiseFamily;
+    use std::collections::BTreeMap;
+
+    let source = include_str!("fixtures/dem_programs/explicit_only.ll").replace(
+        "  %lazy_measure =",
+        "  %delay = call i32 @selene_simulate_delay(ptr null, i64 101)\n  %lazy_measure =",
+    );
+    let source = format!("{source}\ndeclare i32 @selene_simulate_delay(ptr, i64)\n");
+    let rate_per_nanosecond = 0.0001;
+    let build = DetectorErrorModel::builder()
+        .with_program(program(&source))
+        .with_qubits(1)
+        .with_detectors(vec![vec![0]])
+        .with_observables(vec![])
+        .with_noise(
+            NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_linear(IdleNoiseFamily::new(
+                rate_per_nanosecond,
+                BTreeMap::from([("X".into(), 1.0)]),
+            )),
+        )
+        .build()
+        .unwrap();
+    let idles: Vec<_> = build
+        .circuit
+        .iter_gate_batches()
+        .filter(|gate| gate.as_gate().gate_type == GateType::Idle)
+        .map(|gate| gate.as_gate().params[0])
+        .collect();
+    assert_eq!(idles, [101.0]);
+    let (mechanisms, _) = build.dem.to_mechanisms();
+    assert_eq!(mechanisms.len(), 1);
+    let (probability, detectors, observables) = &mechanisms[0];
+    assert!((probability - 101.0 * rate_per_nanosecond).abs() < 1e-12);
+    assert_eq!(detectors, &[0]);
+    assert_eq!(observables.as_slice(), [] as [u32; 0]);
+}

@@ -208,9 +208,9 @@ runtime = (Path({str(library)!r}), {program!r})
         text=True,
         timeout=40,
     )
-    assert (
-        completed.returncode == 0
-    ), f"Isolated test exited with {completed.returncode}\nstdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+    assert completed.returncode == 0, (
+        f"Isolated test exited with {completed.returncode}\nstdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+    )
 
 
 @pytest.mark.parametrize("method", ["run", "run_with_workers", "reset"])
@@ -477,7 +477,9 @@ def test_repeated_program_result_ids_reach_python_adapter(tmp_path, scheduled_su
     """
     result = simulation((library, program), lambda _: RepeatedSlotAdapter()).run(2).to_dict()
     assert result["latest"] == [1, 1]
-    assert any(ids == [7, 7] for ids in seen)
+    # Native polling after each call may split measurements across batches.
+    # Each shot must still preserve both occurrences of the same program slot.
+    assert [source for ids in seen for source in ids] == [7, 7, 7, 7]
 
 
 @pytest.mark.parametrize("global_exposure", [False, True])
@@ -516,8 +518,17 @@ def test_spectator_exchange_through_monte_carlo(event_runtime, global_exposure, 
         local_probability=probability,
         global_probability=probability,
     )
+    # Explicit preparation makes the qubit live for spectator exposure.
+    program = (
+        event_runtime[1]
+        .replace(
+            "declare void @setup",
+            "declare void @___reset(i64)\ndeclare void @setup",
+        )
+        .replace("  %q = call i64 @___qalloc()", "  %q = call i64 @___qalloc()\n  call void @___reset(i64 %q)")
+    )
     built = (
-        simulation(event_runtime, factory, backend=backend)
+        simulation(event_runtime, factory, program=program, backend=backend)
         .noise(pr.scheduled_event_idle_noise(profile, factory))
         .build()
     )

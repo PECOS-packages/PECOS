@@ -26,6 +26,13 @@ unsafe extern "C" fn global(instance: RuntimeInstance, delay: u64) -> i32 {
 }
 
 fn with_runtime(run: impl FnOnce(SeleneRuntime)) {
+    with_config(|_| {}, run);
+}
+
+fn with_config(
+    configure: impl FnOnce(&mut RuntimePluginDescriptorV1),
+    run: impl FnOnce(SeleneRuntime),
+) {
     let executable = std::env::current_exe().unwrap();
     let source = crate::selene_runtimes::find_library_in_dir(
         executable.parent().unwrap(),
@@ -43,6 +50,7 @@ fn with_runtime(run: impl FnOnce(SeleneRuntime)) {
     descriptor.local_barrier_fn = local;
     descriptor.global_barrier_fn = global;
     descriptor.custom_call_fn = None;
+    configure(&mut descriptor);
     let fixture = unsafe { libloading::Library::new(&plugin).unwrap() };
     unsafe {
         fixture
@@ -143,12 +151,14 @@ fn program_barriers_reach_runtime_and_produce_timed_trace_idles() {
             declare i64 @__quantum__rt__qubit_allocate()
             declare i32 @selene_local_barrier(ptr, ptr, i64, i64)
             declare i32 @selene_global_barrier(ptr, i64)
+            declare i32 @selene_simulate_delay(ptr, i64)
             declare void @__quantum__qis__r1xy__body(double, double, i64)
             define i64 @qmain(i64 %shot) {
                 %a = call i64 @__quantum__rt__qubit_allocate()
                 %b = call i64 @__quantum__rt__qubit_allocate()
                 %l = call i32 @selene_local_barrier(ptr null, ptr @qubits, i64 2, i64 23)
                 %g = call i32 @selene_global_barrier(ptr null, i64 37)
+                %d = call i32 @selene_simulate_delay(ptr null, i64 101)
                 call void @__quantum__qis__r1xy__body(double 0.5, double 0.0, i64 %a)
                 ret i64 0
             }
@@ -189,9 +199,64 @@ fn program_barriers_reach_runtime_and_produce_timed_trace_idles() {
         assert!(
             gates
                 .iter()
-                .any(|gate| gate.gate_type == "Idle" && gate.params == [60e-9]),
+                .any(|gate| gate.gate_type == "Idle" && gate.params == [161e-9]),
             "{gates:?}"
         );
         assert_eq!(traces.last().unwrap().stage, "trace_complete");
     });
+}
+
+#[test]
+fn classical_delay_missing_callback_and_native_errors_fail() {
+    unsafe extern "C" fn fail(_: RuntimeInstance, _: u64) -> i32 {
+        84
+    }
+    for missing in [false, true] {
+        with_config(
+            |d| d.simulate_delay_fn = if missing { None } else { Some(fail) },
+            |mut runtime| {
+                let error = runtime
+                    .lower_operations(&[Operation::RuntimeRequest {
+                        request: RuntimeRequest::SimulateDelay { nanoseconds: 101 },
+                        result_id: Some(0),
+                    }])
+                    .unwrap_err()
+                    .to_string();
+                assert!(
+                    error.contains(if missing {
+                        "simulate_delay is not supported"
+                    } else {
+                        "simulate_delay failed with errno 84"
+                    }),
+                    "{error}"
+                );
+                assert!(runtime.lower_operations(&[]).is_err());
+                assert!(CALLS.with_borrow(Vec::is_empty));
+            },
+        );
+    }
+}
+
+#[test]
+fn classical_delay_preserves_full_width_nanoseconds_without_a_barrier() {
+    thread_local! { static DELAY: Cell<u64> = const { Cell::new(0) }; }
+    unsafe extern "C" fn capture(_: RuntimeInstance, delay: u64) -> i32 {
+        DELAY.set(delay);
+        0
+    }
+    with_config(
+        |d| d.simulate_delay_fn = Some(capture),
+        |mut runtime| {
+            for value in [0, 1, u64::MAX] {
+                runtime
+                    .lower_operations(&[Operation::RuntimeRequest {
+                        request: RuntimeRequest::SimulateDelay { nanoseconds: value },
+                        result_id: None,
+                    }])
+                    .unwrap();
+                assert_eq!(DELAY.get(), value);
+            }
+            assert!(CALLS.with_borrow(Vec::is_empty));
+        },
+    );
 }

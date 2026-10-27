@@ -17,7 +17,12 @@ pub use operations::{
 /// Version of the ownership-transferring Rust data interface between the host
 /// and dynamically loaded QIS FFI library. Bump when shared types or exported
 /// function contracts change incompatibly; both artifacts must be rebuilt.
-pub const QIS_FFI_ABI_VERSION: u64 = 1;
+pub const QIS_FFI_ABI_VERSION: u64 = 2;
+
+/// Reserved dynamic bridge token for the one synchronous runtime request in
+/// flight. Stored separately from measurement slots; never exposed as a future.
+/// `u64::MAX` remains the bridge's no-request/completion sentinel.
+pub const RUNTIME_REQUEST_RESULT_ID: usize = usize::MAX - 1;
 
 const DEFAULT_OPERATION_CAPACITY: usize = 1024;
 const DEFAULT_MEASUREMENT_CAPACITY: usize = 256;

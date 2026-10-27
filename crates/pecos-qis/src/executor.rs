@@ -3752,7 +3752,8 @@ attributes #0 = { "EntryPoint" }
         }
 
         // A stand-in runtime that needs a helper library. Loading a program never
-        // calls into the runtime, and the stand-in's bytes, and so the program's
+        // executes operations in the runtime; the ABI marker is checked at load.
+        // The stand-in's bytes, and so the program's
         // cache key, stay the same when the helper disappears.
         let dir = tempfile::tempdir().expect("temporary directory");
         let compile = |args: &[&std::ffi::OsStr]| {
@@ -3781,7 +3782,10 @@ attributes #0 = { "EntryPoint" }
         let runtime = dir.path().join("libpecos_test_runtime.so");
         std::fs::write(
             &runtime_source,
-            "int pecos_test_helper(void);\nint pecos_test_runtime(void) { return pecos_test_helper(); }\n",
+            format!(
+                "int pecos_test_helper(void);\nint pecos_test_runtime(void) {{ return pecos_test_helper(); }}\nunsigned long long pecos_qis_ffi_abi_version(void) {{ return {}; }}\n",
+                pecos_qis_ffi_types::QIS_FFI_ABI_VERSION,
+            ),
         )
         .expect("write runtime source");
         let library_dir = dir.path().as_os_str().to_owned();

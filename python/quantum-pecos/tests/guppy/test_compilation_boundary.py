@@ -142,46 +142,39 @@ def test_hosted_operations_keep_their_order_through_lowering() -> None:
     data = hosted_program.compile().to_bytes()
     trace = capture_qis_operation_trace(Qis(compilation_pipeline.compile_hugr_to_qis(data)), 2, seed=42)
 
-    assert [chunk["stage"] for chunk in trace] == [
-        "pending_start",
-        "measurement_feedback",
-        "pending_continue",
-        "measurement_feedback",
-        "named_results",
-        "trace_complete",
-    ]
+    assert trace[0]["stage"] == "pending_start"
+    assert [chunk["stage"] for chunk in trace[-2:]] == ["named_results", "trace_complete"]
+    assert sum(chunk["stage"] == "measurement_feedback" for chunk in trace) == 2
     # Seed 42 measures a = 1, so count = 1 and the loop applies h(b) once.
     assert trace[-1]["measurement_results"] == {"0": 1, "1": 0}
-    source_chunks = [chunk for chunk in trace if chunk["operations"]]
-    assert [[_operation_shape(op) for op in chunk["operations"]] for chunk in source_chunks] == [
-        [
-            ("AllocateQubit", 0),
-            ("Reset", 0),
-            ("AllocateQubit", 1),
-            ("Reset", 1),
-            ("Barrier",),
-            ("TraceMetadata", 0, ("host_id", "pair:0")),
-            ("TraceMetadata", 0, ("local_role", "basis_prefix")),
-            ("RXY", 0),
-            ("RZ", 0),
-            ("Barrier",),
-            ("RXY", 1),
-            ("RZZ", 0, 1),
-            ("RZ", 0),
-            ("RXY", 1),
-            ("RZ", 1),
-            ("TraceMetadata", None, ("host_id", "pair:0")),
-            ("AllocateResult", 0),
-            ("Measure", 0, 0),
-            ("ReleaseQubit", 0),
-        ],
-        [
-            ("RXY", 1),
-            ("RZ", 1),
-            ("AllocateResult", 1),
-            ("Measure", 1, 1),
-            ("ReleaseQubit", 1),
-        ],
+    # Request acknowledgements can divide source chunks. Gate/metadata order
+    # is a source property and must hold across those scheduling boundaries.
+    source_operations = [op for chunk in trace for op in chunk["operations"] if "RuntimeRequest" not in op]
+    assert [_operation_shape(op) for op in source_operations] == [
+        ("AllocateQubit", 0),
+        ("Reset", 0),
+        ("AllocateQubit", 1),
+        ("Reset", 1),
+        ("Barrier",),
+        ("TraceMetadata", 0, ("host_id", "pair:0")),
+        ("TraceMetadata", 0, ("local_role", "basis_prefix")),
+        ("RXY", 0),
+        ("RZ", 0),
+        ("Barrier",),
+        ("RXY", 1),
+        ("RZZ", 0, 1),
+        ("RZ", 0),
+        ("RXY", 1),
+        ("RZ", 1),
+        ("TraceMetadata", None, ("host_id", "pair:0")),
+        ("AllocateResult", 0),
+        ("Measure", 0, 0),
+        ("ReleaseQubit", 0),
+        ("RXY", 1),
+        ("RZ", 1),
+        ("AllocateResult", 1),
+        ("Measure", 1, 1),
+        ("ReleaseQubit", 1),
     ]
     feedback_chunks = [chunk for chunk in trace if chunk["stage"] == "measurement_feedback"]
     assert all(chunk["operations"] == [] for chunk in feedback_chunks)

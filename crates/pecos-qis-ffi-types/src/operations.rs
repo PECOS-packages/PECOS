@@ -20,12 +20,16 @@ pub struct NamedResultTrace {
 }
 
 /// Program requests handled by the runtime, in source order.
-/// Barrier delays use Selene's integer nanosecond units. Custom data is opaque.
+/// Timing requests use Selene's integer nanosecond units. Custom data is opaque.
+/// Future references are program result IDs, mapped to native futures on submission.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum RuntimeRequest {
     LocalBarrier { qubits: Vec<usize>, sleep_ns: u64 },
     GlobalBarrier { sleep_ns: u64 },
     Custom { tag: u64, data: Vec<u8> },
+    SimulateDelay { nanoseconds: u64 },
+    IncrementFutureRefcount { result_id: usize },
+    DecrementFutureRefcount { result_id: usize },
 }
 
 /// High-level quantum operations that include both QIS and control flow

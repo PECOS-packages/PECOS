@@ -1013,30 +1013,27 @@ pub fn reset_collection_read_count() {
     COLLECTION_MODE_READ_COUNT.with(|c| c.set(0));
 }
 
-/// Increment the reference count of a future (Guppy/HUGR-LLVM style)
-///
-/// This function is called when a future value is copied or shared.
-/// In the minimal interface, this is a no-op since we don't do reference counting.
+/// Increment a Guppy/HUGR-LLVM future's native runtime reference count.
 ///
 /// # Safety
-/// This function is safe to call from C/LLVM code. The `future_id` parameter is ignored.
+/// The future ID must be a nonnegative program result ID. Callers must follow
+/// the execution guard and recovery discipline.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ___inc_future_refcount(_future_id: i64) {
-    // No-op in the minimal interface - we don't do reference counting
-    // The runtime will clean up measurement results when the shot completes
+pub unsafe extern "C-unwind" fn ___inc_future_refcount(future_id: i64) {
+    checkpoint!();
+    let result = checked_ffi_id!("___inc_future_refcount", future_id, u64);
+    unsafe { crate::selene::selene_refcount_increment(std::ptr::null_mut(), result) };
 }
 
-/// Decrement the reference count of a future (Guppy/HUGR-LLVM style)
-///
-/// This function is called when a future value is no longer needed.
-/// In the minimal interface, this is a no-op since we don't do reference counting.
+/// Decrement a Guppy/HUGR-LLVM future's native runtime reference count.
 ///
 /// # Safety
-/// This function is safe to call from C/LLVM code. The `future_id` parameter is ignored.
+/// The same requirements as [`___inc_future_refcount`] apply.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ___dec_future_refcount(_future_id: i64) {
-    // No-op in the minimal interface - we don't do reference counting
-    // The runtime will clean up measurement results when the shot completes
+pub unsafe extern "C-unwind" fn ___dec_future_refcount(future_id: i64) {
+    checkpoint!();
+    let result = checked_ffi_id!("___dec_future_refcount", future_id, u64);
+    unsafe { crate::selene::selene_refcount_decrement(std::ptr::null_mut(), result) };
 }
 
 /// Teardown function (called at program end)
@@ -2393,14 +2390,30 @@ mod tests {
     }
 
     #[test]
-    fn test_future_refcount_noops() {
-        // These are no-ops but should not crash
+    fn test_future_refcounts_queue_runtime_requests() {
+        setup_test();
         unsafe {
-            ___inc_future_refcount(0);
-            ___dec_future_refcount(0);
-            ___inc_future_refcount(999);
-            ___dec_future_refcount(999);
+            ___inc_future_refcount(7);
+            ___dec_future_refcount(7);
         }
+        let ops = with_interface(pecos_qis_ffi_types::OperationCollector::take_operations);
+        assert_eq!(
+            ops,
+            [
+                Operation::RuntimeRequest {
+                    request: pecos_qis_ffi_types::RuntimeRequest::IncrementFutureRefcount {
+                        result_id: 7
+                    },
+                    result_id: None,
+                },
+                Operation::RuntimeRequest {
+                    request: pecos_qis_ffi_types::RuntimeRequest::DecrementFutureRefcount {
+                        result_id: 7
+                    },
+                    result_id: None,
+                },
+            ]
+        );
     }
 
     // --- Setup/teardown tests ---

@@ -239,6 +239,18 @@ with that delay; negative, non-finite, overflowing or fractional-nanosecond valu
 fail before submission. Only runtime timestamps determine emitted Idle operations
 and idle noise. If a runtime ignores barrier delays, PECOS preserves that behavior.
 The pinned public Simple and SoftRZ runtimes currently ignore those delay arguments.
+`selene_simulate_delay(nanoseconds)` instead forwards elapsed classical time to the
+runtime's dedicated `simulate_delay` callback. It is not replaced by a barrier.
+Missing callback support or a native error fails the execution.
+
+Future reference-count increments and decrements, including Guppy's
+`___inc_future_refcount` and `___dec_future_refcount`, reach the native future
+associated with the program result. PECOS processes work released by the callback
+and returns measurement feedback before resuming the program. The runtime owns the
+counts and lifetime; PECOS neither forces a measurement nor substitutes cleanup.
+Unknown program futures and native callback errors fail the execution. Synchronous
+request responses use separate storage: barriers, delays and reference-count calls
+do not consume measurement IDs or change Guppy DEM/decoder measurement bindings.
 
 Custom runtime calls forward their tag and opaque bytes through the same generic
 plugin interface. Dynamic execution processes all emitted work, including measurement
@@ -247,6 +259,15 @@ custom-call support and native errors fail the execution. Collection-only execut
 cannot obtain a custom response and rejects the call. These program-to-runtime calls
 are distinct from runtime-to-simulator custom events, whose physical meaning still
 requires an explicit handler.
+
+**Remaining custom-call limitation:** program qubit and future handles are mapped
+to native handles internally. A frontend that embeds these handles in opaque
+custom-call bytes can therefore send the wrong native identity. For example, after
+freeing and reallocating a qubit, a runtime may reuse native handle `0` while the
+program receives handle `1`. Handle-bearing payloads (or native handles returned by
+custom calls for use by the program) are not yet supported generally. Forwarding
+opaque bytes alone does not establish compatibility for these contracts; PECOS
+must preserve native handle identity at the frontend boundary to support them.
 
 Time-cursor writes and reads retain per-execution state as in Selene; they do not
 change the runtime clock. State dumping is unsupported and reports an error.

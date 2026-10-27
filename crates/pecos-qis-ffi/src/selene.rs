@@ -5,7 +5,7 @@
 //! Instance pointers and string ownership flags are ignored, as in the Selene ABI.
 
 use crate::ffi;
-use pecos_qis_ffi_types::{Operation, RuntimeRequest};
+use pecos_qis_ffi_types::{Operation, RUNTIME_REQUEST_RESULT_ID, RuntimeRequest};
 use std::ffi::{c_char, c_int};
 use std::sync::atomic::Ordering;
 
@@ -267,7 +267,7 @@ pub unsafe extern "C-unwind" fn selene_future_read_u64(
     }
 }
 
-/// Reference counting is a no-op in operation collection mode.
+/// Forward the future reference-count increment to the runtime.
 ///
 /// # Safety
 /// Instance pointers are ignored. Execution must obey the non-nested guard
@@ -275,12 +275,20 @@ pub unsafe extern "C-unwind" fn selene_future_read_u64(
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn selene_refcount_increment(
     _instance: *mut SeleneInstance,
-    _r: u64,
+    r: u64,
 ) -> SeleneVoidResult {
-    SeleneVoidResult { error_code: 0 }
+    let queued = queue_runtime_request(
+        usize::try_from(r)
+            .map(|result_id| RuntimeRequest::IncrementFutureRefcount { result_id })
+            .map_err(|_| "future reference exceeds usize".into()),
+    );
+    SeleneVoidResult {
+        error_code: unsafe { finish_runtime_request(queued, "selene_refcount_increment") }
+            .error_code,
+    }
 }
 
-/// Reference counting is a no-op in operation collection mode.
+/// Forward the future reference-count decrement to the runtime.
 ///
 /// # Safety
 /// Instance pointers are ignored. Execution must obey the non-nested guard
@@ -288,9 +296,17 @@ pub unsafe extern "C-unwind" fn selene_refcount_increment(
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn selene_refcount_decrement(
     _instance: *mut SeleneInstance,
-    _r: u64,
+    r: u64,
 ) -> SeleneVoidResult {
-    SeleneVoidResult { error_code: 0 }
+    let queued = queue_runtime_request(
+        usize::try_from(r)
+            .map(|result_id| RuntimeRequest::DecrementFutureRefcount { result_id })
+            .map_err(|_| "future reference exceeds usize".into()),
+    );
+    SeleneVoidResult {
+        error_code: unsafe { finish_runtime_request(queued, "selene_refcount_decrement") }
+            .error_code,
+    }
 }
 
 /// Record typed named output.
@@ -514,20 +530,14 @@ fn queue_runtime_request(request: Result<RuntimeRequest, String>) -> Result<Opti
     }
     let result_id = if dynamic {
         let ctx = crate::get_execution_context().ok_or("no execution context")?;
-        let mut producers = unsafe { &*ctx }
-            .measured_results
+        // Requests are synchronous, so one separate response slot is enough.
+        // Never allocate a program result: that would change Guppy measurement
+        // identities and the DEM/decoder binding merely by making a host call.
+        *unsafe { &*ctx }
+            .runtime_response
             .lock()
-            .map_err(|_| "poisoned result producer slots")?;
-        Some(crate::with_interface(|interface| {
-            // QIS programs may supply result IDs without allocating them through
-            // this collector. Never overwrite one with a host acknowledgement.
-            loop {
-                let id = interface.allocate_result();
-                if producers.insert(id) {
-                    break id;
-                }
-            }
-        }))
+            .map_err(|_| "poisoned runtime response")? = None;
+        Some(RUNTIME_REQUEST_RESULT_ID)
     } else {
         None
     };
@@ -571,6 +581,22 @@ unsafe fn finish_runtime_request(
     SeleneU64Result {
         error_code: 1,
         value: 0,
+    }
+}
+
+/// Notify the runtime of elapsed classical time, in integer nanoseconds.
+///
+/// # Safety
+/// Instance pointers are ignored. Execution must obey the non-nested guard
+/// and recovery discipline documented in this module.
+#[unsafe(no_mangle)]
+pub unsafe extern "C-unwind" fn selene_simulate_delay(
+    _instance: *mut SeleneInstance,
+    nanoseconds: u64,
+) -> SeleneVoidResult {
+    let queued = queue_runtime_request(Ok(RuntimeRequest::SimulateDelay { nanoseconds }));
+    SeleneVoidResult {
+        error_code: unsafe { finish_runtime_request(queued, "selene_simulate_delay") }.error_code,
     }
 }
 
@@ -667,7 +693,7 @@ pub unsafe extern "C-unwind" fn selene_get_current_shot(
     }
 }
 
-/// Read the program time cursor, independently of the runtime clock.
+/// Return one shot per PECOS program invocation.
 ///
 /// # Safety
 /// Instance pointers are ignored. Execution must obey the non-nested guard
@@ -967,6 +993,41 @@ mod tests {
     }
 
     #[test]
+    fn delay_and_refcounts_are_collected_in_source_order() {
+        let mut ctx = Context(crate::ExecutionContext::new());
+        ctx.register();
+        unsafe {
+            assert_eq!(
+                selene_simulate_delay(std::ptr::null_mut(), u64::MAX).error_code,
+                0
+            );
+            assert_eq!(
+                selene_refcount_increment(std::ptr::null_mut(), 7).error_code,
+                0
+            );
+            assert_eq!(
+                selene_refcount_decrement(std::ptr::null_mut(), 7).error_code,
+                0
+            );
+        }
+        let expected = [
+            RuntimeRequest::SimulateDelay {
+                nanoseconds: u64::MAX,
+            },
+            RuntimeRequest::IncrementFutureRefcount { result_id: 7 },
+            RuntimeRequest::DecrementFutureRefcount { result_id: 7 },
+        ]
+        .map(|request| Operation::RuntimeRequest {
+            request,
+            result_id: None,
+        });
+        assert_eq!(
+            crate::with_interface(pecos_qis_ffi_types::OperationCollector::take_operations),
+            expected
+        );
+    }
+
+    #[test]
     fn unsupported_diagnostics_and_static_custom_calls_fail() {
         let mut ctx = Context(crate::ExecutionContext::new());
         ctx.register();
@@ -1014,13 +1075,29 @@ mod tests {
     }
 
     #[test]
-    fn request_responses_do_not_reuse_explicit_measurement_slots() {
+    fn request_responses_do_not_consume_or_reuse_measurement_slots() {
         let mut ctx = Context(crate::ExecutionContext::new());
         ctx.register();
         ctx.0.dynamic_mode_active.store(true, Ordering::SeqCst);
         crate::queue_measurement(0, 0, false);
         let id = queue_runtime_request(Ok(RuntimeRequest::GlobalBarrier { sleep_ns: 0 })).unwrap();
-        assert_eq!(id, Some(1));
+        assert_eq!(id, Some(RUNTIME_REQUEST_RESULT_ID));
+        assert_eq!(
+            crate::with_interface(pecos_qis_ffi_types::OperationCollector::allocate_result),
+            0
+        );
+        assert_eq!(*ctx.0.measured_results.lock().unwrap(), [0].into());
+        unsafe {
+            crate::pecos_set_measurement_outcome_with_context(
+                &raw mut ctx.0,
+                RUNTIME_REQUEST_RESULT_ID as u64,
+                u64::MAX,
+            )
+        };
+        assert_eq!(*ctx.0.runtime_response.lock().unwrap(), Some(u64::MAX));
+        assert!(ctx.0.measurement_results.lock().unwrap().is_empty());
+        queue_runtime_request(Ok(RuntimeRequest::GlobalBarrier { sleep_ns: 0 })).unwrap();
+        assert_eq!(*ctx.0.runtime_response.lock().unwrap(), None);
         assert_eq!(ctx.0.pending_result_reads.lock().unwrap().len(), 0);
     }
 

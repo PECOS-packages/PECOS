@@ -22,6 +22,9 @@ impl Route {
                 QuantumOp::Measure(_, result) | QuantumOp::MeasureLeaked(_, result),
             ) = op
             {
+                if runtime.has_pending_feedback() {
+                    break;
+                }
                 runtime.force_result(*result).unwrap();
                 output.extend(self.lower_raw(runtime, &[]));
             }
@@ -729,7 +732,12 @@ fn soft_rz_outstanding_metadata_is_bounded_across_h_chunks() {
                 );
             } else {
                 runtime.lower_operations(&ops).unwrap();
-                assert!(runtime.source_trace_metadata.is_empty());
+                assert!(
+                    runtime
+                        .source_trace_metadata
+                        .iter()
+                        .all(|record| matches!(record.op, QuantumOp::RZ(..)))
+                );
             }
             assert!(
                 runtime.source_trace_metadata.len() <= 2,
@@ -740,8 +748,8 @@ fn soft_rz_outstanding_metadata_is_bounded_across_h_chunks() {
         if !labelled {
             runtime.lower_operations(&[QuantumOp::H(0).into()]).unwrap();
             assert!(
-                runtime.source_trace_metadata.is_empty(),
-                "unlabelled queued work needs no records"
+                !runtime.source_trace_metadata.is_empty(),
+                "unlabelled queued work must guard against later labels"
             );
         }
     }
@@ -861,7 +869,11 @@ fn rpp_uses_each_runtime_native_set_on_every_route() {
             runtime
                 .provide_measurement_outcomes(results.clone())
                 .unwrap();
-            let tail = route.lower_raw(&mut runtime, &[]);
+            let mut tail = route.lower_raw(&mut runtime, &[]);
+            if !runtime.has_pending_feedback() {
+                runtime.force_result(1).unwrap();
+                tail.extend(route.lower_raw(&mut runtime, &[]));
+            }
             results.extend(simulate(&mut sim, &tail));
             assert_eq!(results, [(0, 1), (1, 1)]);
         }
@@ -892,7 +904,7 @@ fn native_set_identity_survives_named_construction_clone_and_reset() {
 }
 
 #[test]
-fn scheduled_release_does_not_extract_before_later_submissions() {
+fn scheduled_release_polls_between_native_submissions_without_barriers() {
     use selene_core::operation::plugin::RuntimeGetOperationHandle;
     use std::cell::{Cell, RefCell};
 
@@ -989,15 +1001,17 @@ fn scheduled_release_does_not_extract_before_later_submissions() {
         ])
         .unwrap();
     let calls = CALLS.with_borrow(Clone::clone);
-    assert_eq!(
-        calls.get(..3),
-        Some(["reset", "release", "reset"].as_slice()),
-        "{calls:?}"
-    );
-    assert!(
-        calls[3..].iter().all(|call| *call == "extract"),
-        "{calls:?}"
-    );
+    let submissions: Vec<_> = calls
+        .iter()
+        .copied()
+        .filter(|call| *call != "extract")
+        .collect();
+    assert_eq!(submissions, ["reset", "release", "reset"], "{calls:?}");
+    for (index, call) in calls.iter().enumerate() {
+        if *call != "extract" {
+            assert_eq!(calls.get(index + 1), Some(&"extract"), "{calls:?}");
+        }
+    }
     assert!(batches.is_empty(), "submission must remain lazy");
     runtime.force_result(47).unwrap();
     batches.extend(runtime.lower_scheduled_operations(&[]).unwrap());
@@ -1059,8 +1073,22 @@ mod measurement_followups {
         static FAIL_SETTER: Cell<bool> = const { Cell::new(false) };
         static PAD: Cell<usize> = const { Cell::new(0) };
         static REQUIRE_FEEDBACK: Cell<bool> = const { Cell::new(false) };
+        static MIN_SUBMITTED: Cell<usize> = const { Cell::new(2) };
+        static GETTER_VALUE: Cell<Option<u64>> = const { Cell::new(None) };
+        static FORCE_VALUE: Cell<Option<u64>> = const { Cell::new(None) };
+        static FAIL_GETTER: Cell<bool> = const { Cell::new(false) };
+        static INVERT_FEEDBACK: Cell<bool> = const { Cell::new(false) };
+        static END_RELEASES: Cell<bool> = const { Cell::new(false) };
+        static END_CALLS: Cell<usize> = const { Cell::new(0) };
+        static END_TAIL_EMITTED: Cell<bool> = const { Cell::new(false) };
+        static PULSE_RELEASES: Cell<bool> = const { Cell::new(false) };
+        static NATIVE_CALLS: RefCell<Vec<&'static str>> = const { RefCell::new(Vec::new()) };
+        static ORIGINAL: Cell<Option<RuntimePluginDescriptorV1>> = const { Cell::new(None) };
     }
     fn allocate(leaked: bool, output: *mut u64) -> i32 {
+        if REQUIRE_FEEDBACK.get() && EMITTED.get() > DELIVERED.with_borrow(Vec::len) {
+            return 78;
+        }
         SUBMITTED.with_borrow_mut(|submitted| {
             let id = 100 + submitted.len() as u64;
             submitted.push((id, leaked));
@@ -1076,6 +1104,9 @@ mod measurement_followups {
     }
     unsafe extern "C" fn force(_: RuntimeInstance, result: u64) -> i32 {
         FORCED.with_borrow_mut(|calls| calls.push(result));
+        if let Some(value) = FORCE_VALUE.get() {
+            GETTER_VALUE.set(Some(value));
+        }
         if FORCE_RELEASES.get() {
             RELEASE.set(
                 RELEASE
@@ -1091,6 +1122,9 @@ mod measurement_followups {
     }
     unsafe extern "C" fn set_bool(_: RuntimeInstance, id: u64, value: bool) -> i32 {
         DELIVERED.with_borrow_mut(|calls| calls.push((id, false, u64::from(value))));
+        if INVERT_FEEDBACK.get() {
+            GETTER_VALUE.set(Some(u64::from(!value)));
+        }
         i32::from(FAIL_SETTER.get())
     }
     unsafe extern "C" fn set_u64(_: RuntimeInstance, id: u64, value: u64) -> i32 {
@@ -1106,9 +1140,23 @@ mod measurement_followups {
             unsafe { (out.interface.set_batch_time)(out.instance, 0, 0) };
             return 0;
         }
+        if END_RELEASES.get()
+            && END_CALLS.get() == 1
+            && DELIVERED.with_borrow(Vec::len) == 2
+            && !END_TAIL_EMITTED.replace(true)
+        {
+            unsafe {
+                (out.interface.set_batch_time)(out.instance, 2, 0);
+                (out.interface.rxy)(out.instance, 0, PI, 0.0);
+            }
+            return 0;
+        }
         let emitted = EMITTED.get();
         let next = SUBMITTED.with_borrow(|submitted| {
-            if submitted.len() < 2 || emitted >= RELEASE.get() {
+            if submitted.len() < MIN_SUBMITTED.get()
+                || emitted >= RELEASE.get()
+                || emitted >= submitted.len()
+            {
                 return None;
             }
             Some(submitted[if REVERSE.get() { 1 - emitted } else { emitted }])
@@ -1124,6 +1172,283 @@ mod measurement_followups {
         }
         0
     }
+    unsafe extern "C" fn get_bool(_: RuntimeInstance, _: u64, out: *mut i8) -> i32 {
+        unsafe {
+            *out = GETTER_VALUE.get().map_or(-1, |v| i8::from(v != 0));
+        }
+        i32::from(FAIL_GETTER.get())
+    }
+    unsafe extern "C" fn get_u64(_: RuntimeInstance, _: u64, out: *mut u64) -> i32 {
+        unsafe {
+            *out = GETTER_VALUE.get().unwrap_or(u64::MAX);
+        }
+        i32::from(FAIL_GETTER.get())
+    }
+    unsafe extern "C" fn end(instance: RuntimeInstance) -> i32 {
+        END_CALLS.set(END_CALLS.get() + 1);
+        if END_RELEASES.get() {
+            RELEASE.set(2);
+            0
+        } else {
+            unsafe { (ORIGINAL.get().unwrap().shot_end_fn)(instance) }
+        }
+    }
+    unsafe extern "C" fn rxy(instance: RuntimeInstance, q: u64, theta: f64, phi: f64) -> i32 {
+        if REQUIRE_FEEDBACK.get() && EMITTED.get() > DELIVERED.with_borrow(Vec::len) {
+            return 79;
+        }
+        NATIVE_CALLS.with_borrow_mut(|v| v.push("rxy"));
+        if PULSE_RELEASES.get() {
+            RELEASE.set(1);
+        }
+        unsafe { (ORIGINAL.get().unwrap().rxy_gate_fn)(instance, q, theta, phi) }
+    }
+    unsafe extern "C" fn rz(instance: RuntimeInstance, q: u64, theta: f64) -> i32 {
+        if REQUIRE_FEEDBACK.get() && EMITTED.get() > DELIVERED.with_borrow(Vec::len) {
+            return 80;
+        }
+        NATIVE_CALLS.with_borrow_mut(|v| v.push("rz"));
+        unsafe { (ORIGINAL.get().unwrap().rz_gate_fn)(instance, q, theta) }
+    }
+
+    #[test]
+    fn submission_waits_for_feedback_before_the_next_native_call() {
+        for route in Route::ALL {
+            with_descriptor(|mut runtime| {
+                MIN_SUBMITTED.set(1);
+                REQUIRE_FEEDBACK.set(true);
+                let first = route.lower_raw(
+                    &mut runtime,
+                    &[
+                        QuantumOp::Measure(0, 7).into(),
+                        QuantumOp::Measure(0, 8).into(),
+                    ],
+                );
+                assert_eq!(first, [QuantumOp::Measure(0, 7)]);
+                assert_eq!(SUBMITTED.with_borrow(Vec::len), 1);
+                runtime.provide_measurement_outcomes(vec![(7, 0)]).unwrap();
+                assert!(
+                    route
+                        .lower_raw(&mut runtime, &[])
+                        .contains(&QuantumOp::Measure(0, 8))
+                );
+                assert_eq!(SUBMITTED.with_borrow(Vec::len), 2);
+            });
+        }
+    }
+
+    #[test]
+    fn feedback_can_interrupt_a_decomposed_gate() {
+        for route in Route::ALL {
+            with_descriptor(|mut runtime| {
+                MIN_SUBMITTED.set(1);
+                REQUIRE_FEEDBACK.set(true);
+                PULSE_RELEASES.set(true);
+                RELEASE.set(0);
+                let first = route.lower_raw(
+                    &mut runtime,
+                    &[QuantumOp::Measure(0, 7).into(), QuantumOp::H(0).into()],
+                );
+                assert_eq!(first, [QuantumOp::Measure(0, 7)]);
+                assert_eq!(NATIVE_CALLS.with_borrow(Clone::clone), ["rxy"]);
+                runtime.provide_measurement_outcomes(vec![(7, 0)]).unwrap();
+                route.lower_raw(&mut runtime, &[]);
+                assert_eq!(NATIVE_CALLS.with_borrow(Clone::clone), ["rxy", "rz"]);
+            });
+        }
+    }
+
+    #[test]
+    fn end_feedback_finishes_before_instance_reuse_on_every_route() {
+        for route in Route::ALL {
+            with_descriptor(|mut runtime| {
+                MIN_SUBMITTED.set(1);
+                REQUIRE_FEEDBACK.set(true);
+                RELEASE.set(0);
+                END_RELEASES.set(true);
+                assert_eq!(
+                    route.lower_raw(
+                        &mut runtime,
+                        &[
+                            QuantumOp::Measure(0, 7).into(),
+                            QuantumOp::Measure(0, 8).into(),
+                        ]
+                    ),
+                    Vec::<QuantumOp>::new()
+                );
+                match route {
+                    Route::Flat | Route::Metadata => assert_eq!(
+                        runtime.finish_operations().unwrap(),
+                        [LoweredQuantumOp::from(QuantumOp::Measure(0, 7))],
+                    ),
+                    Route::Scheduled => assert_eq!(
+                        runtime
+                            .finish_scheduled_operations()
+                            .unwrap()
+                            .iter()
+                            .flat_map(|batch| &batch.measurements)
+                            .map(|m| m.program_result)
+                            .collect::<Vec<_>>(),
+                        [7],
+                    ),
+                }
+                let instance = runtime.instance;
+                assert!(runtime.shot_start(1, None).is_err());
+                runtime.provide_measurement_outcomes(vec![(7, 0)]).unwrap();
+                assert!(
+                    route
+                        .lower_raw(&mut runtime, &[])
+                        .contains(&QuantumOp::Measure(0, 8))
+                );
+                runtime.provide_measurement_outcomes(vec![(8, 0)]).unwrap();
+                assert!(
+                    route
+                        .lower_raw(&mut runtime, &[])
+                        .contains(&QuantumOp::RXY(PI, 0.0, 0))
+                );
+                assert_eq!(END_CALLS.get(), 1);
+                runtime.shot_start(1, None).unwrap();
+                assert_eq!(runtime.instance, instance);
+            });
+        }
+    }
+
+    #[test]
+    fn native_getters_preserve_pending_values_and_failures() {
+        for leaked in [false, true] {
+            with_descriptor(|mut runtime| {
+                RELEASE.set(0);
+                let op = if leaked {
+                    QuantumOp::MeasureLeaked(0, 7)
+                } else {
+                    QuantumOp::Measure(0, 7)
+                };
+                Route::Flat.lower_raw(&mut runtime, &[op.into()]);
+                assert_eq!(runtime.read_result(7).unwrap(), None);
+                let value = if leaked { 1_u64 << 40 } else { 1 };
+                GETTER_VALUE.set(Some(value));
+                assert_eq!(runtime.read_result(7).unwrap(), Some(value));
+                FAIL_GETTER.set(true);
+                let error = runtime.read_result(7).unwrap_err().to_string();
+                assert!(
+                    error.contains("native result read failed with errno 1"),
+                    "{error}"
+                );
+                FAIL_GETTER.set(false);
+                assert!(
+                    runtime.read_result(7).is_err(),
+                    "a native failure must remain latched"
+                );
+            });
+        }
+    }
+
+    // Real worker execution proves that physical feedback cannot bypass a
+    // runtime's getter, including futures resolved without physical operations.
+    #[test]
+    fn engine_reads_runtime_values_and_processes_end_feedback() {
+        use pecos_engines::{ClassicalEngine, ControlEngine, Engine, EngineStage, StateVecEngine};
+        let _lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+        for mode in [0, 1, 2, 3] {
+            with_descriptor(|mut runtime| {
+                runtime.reset().unwrap();
+                MIN_SUBMITTED.set(1);
+                REQUIRE_FEEDBACK.set(true);
+                RELEASE.set(if mode == 0 { 2 } else { 0 });
+                INVERT_FEEDBACK.set(mode == 0);
+                FORCE_VALUE.set(match mode {
+                    1 => Some(1),
+                    3 => Some(1_u64 << 40),
+                    _ => None,
+                });
+                END_RELEASES.set(mode == 2);
+                let tail = if mode == 2 {
+                    "%n = call i32 @__quantum__qis__m__body(i64 0, i64 8)\nret i64 0"
+                } else if mode == 3 {
+                    "%id = call i64 @___lazy_measure_leaked(i64 0)\n%value = call i64 @___read_future_uint(i64 %id)\ncall void @print_uint_selene(ptr @label, i64 8, i64 %value)\nret i64 0"
+                } else {
+                    "%read = call i1 @___read_future_bool(i64 7)\n%value = zext i1 %read to i64\ncall void @print_uint_selene(ptr @label, i64 8, i64 %value)\nret i64 0"
+                };
+                let measure = if mode == 3 {
+                    ""
+                } else {
+                    "%m = call i32 @__quantum__qis__m__body(i64 0, i64 7)"
+                };
+                let source = format!(
+                    r#"
+                    @label = private constant [8 x i8] c"observed"
+                    declare void @print_uint_selene(ptr, i64, i64)
+                    declare i64 @___lazy_measure_leaked(i64)
+                    declare i64 @___read_future_uint(i64)
+                    declare i32 @__quantum__qis__m__body(i64, i64)
+                    declare i1 @___read_future_bool(i64)
+                    define i64 @qmain(i64 %shot) {{
+                        {measure}
+                        {tail}
+                    }}
+                "#
+                );
+                let mut engine = crate::QisEngine::new(
+                    Box::new(crate::QisHeliosInterface::new()),
+                    Box::new(runtime),
+                );
+                engine.set_num_qubits_hint(1);
+                engine
+                    .load_program(source.as_bytes(), crate::ProgramFormat::LlvmIrText)
+                    .unwrap();
+                let mut quantum = StateVecEngine::new(1);
+                let mut stage = engine.start(()).unwrap();
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+                loop {
+                    assert!(std::time::Instant::now() < deadline);
+                    match stage {
+                        EngineStage::NeedsProcessing(commands) => {
+                            stage = engine
+                                .continue_processing(quantum.process(commands).unwrap())
+                                .unwrap();
+                        }
+                        EngineStage::Complete(shot) => {
+                            if mode != 2 {
+                                assert_eq!(
+                                    shot.data["observed"],
+                                    pecos_engines::shot_results::Data::U64(if mode == 3 {
+                                        1_u64 << 40
+                                    } else {
+                                        1
+                                    })
+                                );
+                            }
+                            break;
+                        }
+                    }
+                }
+                assert_eq!(END_CALLS.get(), 1);
+                assert_eq!(LOCAL_BARRIERS.get(), 0);
+                assert_eq!(
+                    FORCED.with_borrow(Clone::clone),
+                    if mode == 1 || mode == 3 {
+                        vec![100]
+                    } else {
+                        vec![]
+                    }
+                );
+                assert_eq!(
+                    DELIVERED.with_borrow(Vec::len),
+                    if mode == 1 || mode == 3 {
+                        0
+                    } else if mode == 0 {
+                        1
+                    } else {
+                        2
+                    }
+                );
+                if mode == 2 {
+                    assert!(END_TAIL_EMITTED.get());
+                }
+            });
+        }
+    }
+
     #[test]
     fn read_targets_latest_native_future_for_reused_program_slot() {
         with_descriptor(|mut runtime| {
@@ -1216,6 +1541,12 @@ mod measurement_followups {
         let library = unsafe { libloading::Library::new(&public.plugin_path).unwrap() };
         let mut descriptor =
             Box::new(unsafe { SeleneRuntime::runtime_plugin_descriptor(&library).unwrap() });
+        ORIGINAL.set(Some(*descriptor));
+        descriptor.get_bool_result_fn = get_bool;
+        descriptor.get_u64_result_fn = get_u64;
+        descriptor.shot_end_fn = end;
+        descriptor.rxy_gate_fn = rxy;
+        descriptor.rz_gate_fn = rz;
         descriptor.measure_fn = measure;
         descriptor.measure_leaked_fn = measure_leaked;
         descriptor.force_result_fn = force;
@@ -1249,6 +1580,16 @@ mod measurement_followups {
         FAIL_SETTER.set(false);
         PAD.set(0);
         REQUIRE_FEEDBACK.set(false);
+        MIN_SUBMITTED.set(2);
+        GETTER_VALUE.set(None);
+        FORCE_VALUE.set(None);
+        FAIL_GETTER.set(false);
+        INVERT_FEEDBACK.set(false);
+        END_RELEASES.set(false);
+        END_CALLS.set(0);
+        END_TAIL_EMITTED.set(false);
+        PULSE_RELEASES.set(false);
+        NATIVE_CALLS.with_borrow_mut(Vec::clear);
         let mut runtime = SeleneRuntime::new(plugin);
         runtime.init_args.clone_from(&public.init_args);
         run(start(runtime, 1));

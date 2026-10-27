@@ -366,6 +366,27 @@ pub trait QisRuntime: Send + Sync + dyn_clone::DynClone {
         ))
     }
 
+    /// The runtime owns future values and shot completion, as in Selene.
+    ///
+    /// Consumers poll ready work instead of inserting terminal barriers, query
+    /// native futures instead of returning simulator outcomes directly, and
+    /// allow the end hook to decide what pending work to release.
+    fn uses_native_runtime_protocol(&self) -> bool {
+        false
+    }
+
+    /// Read a native future after returning any physical measurement feedback.
+    /// `None` means the future is pending. The value belongs to the runtime and
+    /// may differ from an individual physical measurement outcome.
+    ///
+    /// # Errors
+    /// Returns an error if native result reads are unsupported or fail.
+    fn read_result(&mut self, _program_result: usize) -> Result<Option<u64>> {
+        Err(RuntimeError::ExecutionError(
+            "native result reads are unsupported".into(),
+        ))
+    }
+
     /// Ask the scheduler to make a program measurement result available for a read.
     ///
     /// Measurement submission alone must not force execution. Return `true` when

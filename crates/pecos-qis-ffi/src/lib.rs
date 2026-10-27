@@ -754,10 +754,13 @@ pub unsafe extern "C" fn pecos_set_measurement_result_with_context(
     unsafe { pecos_set_measurement_outcome_with_context(ctx, result_id, u64::from(value)) }
 }
 
-/// Set measurement outcome on an explicit context.
+/// Set a runtime future value on an explicit context.
+///
+/// Integer futures retain all 64 bits. Physical outcome validation belongs to
+/// the simulator/runtime feedback path; Boolean reads validate their own type.
 ///
 /// Returns 0 on success, 1 for a null context, 2 for a poisoned lock,
-/// and 3 for an unrepresentable result ID or an outcome greater than 2.
+/// and 3 for an unrepresentable result ID.
 ///
 /// # Safety
 /// A non-null context must remain live throughout the call.
@@ -778,9 +781,6 @@ pub unsafe extern "C" fn pecos_set_measurement_outcome_with_context(
     let Some(len) = index.checked_add(1) else {
         return 3;
     };
-    if value > 2 {
-        return 3;
-    }
     let Ok(mut results) = ctx.measurement_results.lock() else {
         return 2;
     };

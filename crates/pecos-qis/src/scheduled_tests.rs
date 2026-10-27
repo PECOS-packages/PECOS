@@ -407,7 +407,7 @@ fn deferred_schedule_drains_without_inserting_barriers() {
 }
 
 #[test]
-fn shot_end_requires_a_successful_terminal_drain() {
+fn shot_end_does_not_require_a_host_barrier() {
     let mut runtime = crate::selene_runtimes::selene_soft_rz_runtime().unwrap();
     runtime.set_num_qubits(4);
     runtime.shot_start(33, None).unwrap();
@@ -415,15 +415,13 @@ fn shot_end_requires_a_successful_terminal_drain() {
         runtime
             .lower_scheduled_operations(&[QuantumOp::RXY(0.25, 0.5, 0).into()])
             .unwrap(),
-        []
+        Vec::<ScheduledBatch>::new()
     );
-    assert!(
-        runtime.shot_end().is_err(),
-        "shot_end discarded pending native work"
+    assert_eq!(
+        runtime.finish_scheduled_operations().unwrap(),
+        Vec::<ScheduledBatch>::new()
     );
-    let batches = runtime.drain_pending_scheduled_operations().unwrap();
-    assert!(batches.iter().any(|b| !b.operations.is_empty()));
-    runtime.shot_end().unwrap();
+    runtime.shot_start(34, None).unwrap();
 }
 
 #[test]
@@ -453,7 +451,7 @@ fn clone_guard_rejects_before_loading_a_valid_runtime() {
 }
 
 #[test]
-fn new_submission_invalidates_terminal_drain_and_prevents_shot_replacement() {
+fn new_submission_requires_shot_end_before_replacement() {
     let mut runtime = crate::selene_runtimes::selene_soft_rz_runtime().unwrap();
     runtime.set_num_qubits(4);
     runtime.shot_start(40, None).unwrap();
@@ -464,16 +462,11 @@ fn new_submission_invalidates_terminal_drain_and_prevents_shot_replacement() {
     runtime
         .lower_scheduled_operations(&[QuantumOp::RXY(0.25, 0.5, 1).into()])
         .unwrap();
-    assert!(runtime.shot_end().is_err());
     assert!(runtime.shot_start(41, None).is_err());
-    assert!(
-        !runtime
-            .drain_pending_scheduled_operations()
-            .unwrap()
-            .is_empty(),
-        "new submission must produce pending scheduled operations"
+    assert_eq!(
+        runtime.finish_scheduled_operations().unwrap(),
+        Vec::<ScheduledBatch>::new()
     );
-    runtime.shot_end().unwrap();
     runtime.shot_start(41, None).unwrap();
 }
 
@@ -490,7 +483,7 @@ fn non_finite_source_angles_have_a_specific_diagnostic() {
 }
 
 #[test]
-fn measurement_feedback_invalidates_terminal_drain() {
+fn measurement_feedback_must_precede_shot_end() {
     let mut runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
     runtime.set_num_qubits(1);
     runtime.shot_start(42, None).unwrap();
@@ -500,17 +493,17 @@ fn measurement_feedback_invalidates_terminal_drain() {
             QuantumOp::Measure(0, 0).into(),
         ])
         .unwrap();
-    runtime.drain_pending_scheduled_operations().unwrap();
-    runtime
-        .provide_measurement_outcomes(Vec::from([(0, 0)]))
-        .unwrap();
     assert!(
         runtime.shot_end().is_err(),
-        "feedback must invalidate terminal drain"
+        "emitted measurements require feedback"
     );
-    assert!(runtime.shot_start(43, None).is_err());
-    runtime.drain_pending_scheduled_operations().unwrap();
-    runtime.provide_measurement_outcomes(Vec::new()).unwrap();
+    // Failed admission is sticky, so test successful feedback on a fresh shot.
+    runtime.reset().unwrap();
+    runtime.shot_start(43, None).unwrap();
+    runtime
+        .lower_scheduled_operations(&[QuantumOp::Measure(0, 0).into()])
+        .unwrap();
+    runtime.provide_measurement_outcomes(vec![(0, 0)]).unwrap();
     runtime.shot_end().unwrap();
 }
 

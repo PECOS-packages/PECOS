@@ -48,6 +48,7 @@ struct CompletedRun {
     terminal_batches: Vec<Vec<Gate>>,
     trace: Vec<OperationTraceChunk>,
     probabilities: Vec<f64>,
+    measurement: Option<Data>,
 }
 
 fn run(soft: bool, source: &str, tracing: bool) -> CompletedRun {
@@ -102,7 +103,7 @@ fn run(soft: bool, source: &str, tracing: bool) -> CompletedRun {
                 stage = engine.continue_processing(measurements).unwrap();
             }
             EngineStage::Complete(shot) => {
-                assert_eq!(shot.data.get("measurement_0"), Some(&Data::U32(1)));
+                let measurement = shot.data.get("measurement_0").cloned();
                 // A completed shot cannot flush or finalize its plugin twice.
                 assert!(matches!(
                     engine
@@ -121,6 +122,7 @@ fn run(soft: bool, source: &str, tracing: bool) -> CompletedRun {
                     terminal_batches,
                     trace: trace.lock().unwrap().clone(),
                     probabilities,
+                    measurement,
                 };
             }
         }
@@ -129,81 +131,68 @@ fn run(soft: bool, source: &str, tracing: bool) -> CompletedRun {
 }
 
 #[test]
-fn soft_rz_control_engine_flushes_native_tail() {
+fn soft_rz_owns_unobserved_work_at_shot_end() {
     for explicit in [false, true] {
         for read_result in [false, true] {
             for tracing in [false, true] {
                 let output = run(true, &program(PULSE_TAIL, explicit, read_result), tracing);
-                assert_eq!(
-                    output.terminal_batches.len(),
-                    if read_result { 1 } else { 2 }
-                );
-                let tail: Vec<_> = output
-                    .terminal_batches
-                    .iter()
-                    .flatten()
-                    .filter(|gate| gate.qubits.as_slice() == [QubitId(1)])
-                    .collect();
-                // Qubit 1's lifetime starts in the tail, so its prep is queued
-                // with the pulse. Measurement keeps qubit 0 on slot 0, static or
-                // explicit, so qubit 1 always has slot 1.
-                assert_eq!(
-                    tail.iter().map(|gate| gate.gate_type).collect::<Vec<_>>(),
-                    [GateType::PZ, GateType::RXY1Q]
-                );
+                assert_eq!(output.terminal_batches, Vec::<Vec<Gate>>::new());
+                assert_eq!(output.measurement, read_result.then_some(Data::U32(1)));
+                // SoftRZ discards its uncommitted tail at shot_end. The host
+                // must not turn it into physical pulses with an extra barrier.
                 assert!(
-                    tail.iter()
-                        .all(|gate| gate.qubits.as_slice() == [QubitId(1)])
+                    output
+                        .batches
+                        .iter()
+                        .flatten()
+                        .all(|gate| gate.qubits.as_slice() != [QubitId(1)])
                 );
-                assert!(output.probabilities[3] > 1.0 - 1e-10);
+                assert!(output.probabilities[usize::from(read_result)] > 1.0 - 1e-10);
             }
         }
     }
 }
 
 #[test]
-fn terminal_lowering_keeps_source_labels() {
+fn source_labels_do_not_force_terminal_work() {
     let tail = format!(
         "call void @pecos_qis_trace_metadata_direct(ptr @key, i64 12, ptr @label, i64 4)\n{PULSE_TAIL}"
     );
     let output = run(true, &program(&tail, true, true), true);
-    assert_eq!(output.terminal_batches.len(), 1);
-    let terminal: Vec<_> = output
-        .trace
-        .iter()
-        .filter(|chunk| chunk.stage == "terminal_flush")
-        .collect();
-    assert_eq!(terminal.len(), 1);
-    assert!(terminal[0].lowered_quantum_ops_complete);
-    assert_eq!(terminal[0].lowered_quantum_ops.len(), 1);
-    let gate = &terminal[0].lowered_quantum_ops[0];
-    assert_eq!(gate.gate_type, "RXY1Q");
-    assert_eq!(gate.qubits, [1]);
-    assert_eq!(gate.metadata["source_label"], "tail");
+    assert_eq!(output.terminal_batches, Vec::<Vec<Gate>>::new());
+    assert!(
+        output
+            .trace
+            .iter()
+            .flat_map(|chunk| &chunk.lowered_quantum_ops)
+            .all(|gate| !gate.metadata.contains_key("source_label"))
+    );
     assert_eq!(output.trace.last().unwrap().stage, "trace_complete");
 }
 
 #[test]
-fn terminal_measurement_adds_no_empty_batch() {
+fn terminal_measurement_follows_runtime_completion_policy() {
     for soft in [false, true] {
         for read_result in [false, true] {
             let output = run(soft, &program("", true, read_result), true);
-            assert_eq!(output.terminal_batches.is_empty(), !soft || read_result);
-            assert_eq!(
-                output
+            assert_eq!(output.terminal_batches, Vec::<Vec<Gate>>::new());
+            assert!(
+                !output
                     .trace
                     .iter()
-                    .any(|chunk| chunk.stage == "terminal_flush"),
-                soft && !read_result
+                    .any(|chunk| chunk.stage == "terminal_flush")
             );
             assert_eq!(
-                output
-                    .batches
-                    .iter()
-                    .filter(|gates| !gates.is_empty())
-                    .count(),
-                1
+                output.measurement,
+                (!soft || read_result).then_some(Data::U32(1))
             );
+            let physical_measurements = output
+                .batches
+                .iter()
+                .flatten()
+                .filter(|gate| gate.gate_type == GateType::MZ)
+                .count();
+            assert_eq!(physical_measurements, usize::from(!soft || read_result));
             assert_eq!(output.trace.last().unwrap().stage, "trace_complete");
         }
     }
@@ -237,18 +226,12 @@ fn simple_runtime_has_no_deferred_terminal_pulse() {
 }
 
 #[test]
-fn soft_rz_flushes_prep_before_an_absorbed_rz_tail() {
+fn soft_rz_unobserved_prep_and_absorbed_phase_remain_unemitted() {
     let tail = "call void @__quantum__qis__reset__body(i64 1)\ncall void @__quantum__qis__rz__body(double 0.3, i64 1)";
     let output = run(true, &program(tail, true, false), true);
-    assert_eq!(output.terminal_batches.len(), 2);
-    let tail: Vec<_> = output
-        .terminal_batches
-        .iter()
-        .flatten()
-        .filter(|gate| gate.qubits.as_slice() == [QubitId(1)])
-        .collect();
-    assert_eq!(tail.len(), 1);
-    assert_eq!(tail[0].gate_type, GateType::PZ);
+    assert_eq!(output.terminal_batches, Vec::<Vec<Gate>>::new());
+    assert_eq!(output.batches, Vec::<Vec<Gate>>::new());
+    assert!(output.probabilities[0] > 1.0 - 1e-10);
 }
 
 fn reset_fixture(mode: ScheduledTransport) -> QisEngine {
@@ -1995,11 +1978,7 @@ fn soft_rz_unsupported_leaked_read_fails_promptly_without_certifying_trace() {
         assert!(
             error
                 .to_string()
-                .contains("runtime must implement force_result"),
-            "{error}"
-        );
-        assert!(
-            error.to_string().contains("leakage-aware measurements"),
+                .contains("native result is unavailable after force_result"),
             "{error}"
         );
         let retry = engine
@@ -2096,7 +2075,7 @@ fn soft_rz_large_scheduled_gate_only_tail_completes() {
         let mut quantum = deferred_read_quantum(mode);
         let stage = engine.start(()).unwrap();
         finish_deferred_read_shot(&mut engine, &mut quantum, stage).unwrap();
-        assert_eq!(engine.scheduled_drain_round, 2);
+        assert_eq!(engine.scheduled_drain_round, 0);
         assert!(engine.get_results().is_ok());
     }
 }

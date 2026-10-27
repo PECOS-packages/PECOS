@@ -378,16 +378,17 @@ def event_runtime_proxy(tmp_path: Path) -> Path:
     if platform.system() == "Windows":
         pytest.skip("Synthetic dlopen proxy requires a POSIX C compiler")
     compiler = shutil.which("cc")
-    if compiler is None:
-        pytest.skip("Synthetic runtime proxy requires a C compiler")
+    assert compiler is not None, "Synthetic runtime proxy requires a C compiler"
     repo = Path(__file__).resolve().parents[4]
     lock = tomllib.loads((repo / "Cargo.lock").read_text())
     source = next(p["source"] for p in lock["package"] if p["name"] == "selene-core")
     revision = source.rsplit("#", 1)[1]
     cargo_home = Path(os.environ.get("CARGO_HOME", Path.home() / ".cargo"))
     includes = list((cargo_home / "git/checkouts").glob(f"selene-*/{revision[:7]}/selene-core/c/include"))
-    if len(includes) != 1:
-        pytest.skip("Pinned Selene C headers unavailable; fetch Rust dependencies first")
+    assert includes, "Pinned Selene C headers unavailable; fetch Rust dependencies first"
+    # SSH and HTTPS Cargo caches can contain the same pinned ABI headers.
+    assert len({(path / "selene/runtime.h").read_bytes() for path in includes}) == 1
+    includes.sort()
     library = tmp_path / ("event_proxy.dylib" if platform.system() == "Darwin" else "event_proxy.so")
     args = [
         compiler,
@@ -506,8 +507,8 @@ def test_custom_runtime_rejects_unknown_native_gate_name() -> None:
 
 
 @pytest.mark.parametrize("runtime_name", ["selene_simple_runtime", "selene_soft_rz_runtime"])
-def test_flat_runtime_flushes_native_tail_after_last_measurement(runtime_name: str) -> None:
-    """Queued work after the last measurement reaches the final lowered batch."""
+def test_flat_runtime_owns_tail_after_last_result_read(runtime_name: str) -> None:
+    """A result read forces its future; the native end hook owns the later tail."""
     import pecos
     import pecos_rslib as pr
 
@@ -515,12 +516,14 @@ def test_flat_runtime_flushes_native_tail_after_last_measurement(runtime_name: s
         define i64 @qmain(i64 %shot) #0 {
             call void @__quantum__qis__x__body(i64 0)
             %m = call i32 @__quantum__qis__m__body(i64 0, i64 0)
+            %read = call i1 @___read_future_bool(i64 0)
             call void @__quantum__qis__x__body(i64 1)
             call void @__quantum__qis__rz__body(double 0.3, i64 1)
             ret i64 0
         }
         declare void @__quantum__qis__x__body(i64)
         declare i32 @__quantum__qis__m__body(i64, i64)
+        declare i1 @___read_future_bool(i64)
         declare void @__quantum__qis__rz__body(double, i64)
         attributes #0 = { "EntryPoint" }
     """
@@ -538,6 +541,15 @@ def test_flat_runtime_flushes_native_tail_after_last_measurement(runtime_name: s
     )
     assert results["measurement_0"] == [1] * shots
 
+    trace = pecos.capture_qis_operation_trace(pecos.Qis(program), 2, runtime=runtime_name)
+    tail_pulses = [
+        gate
+        for chunk in trace
+        for gate in chunk["lowered_quantum_ops"]
+        if gate["qubits"] == [1] and gate["gate_type"] == "RXY1Q"
+    ]
+    assert len(tail_pulses) == int(runtime_name == "selene_simple_runtime")
+
 
 def test_upstream_soft_rz_plugin_object_lowers_rpp_before_submission() -> None:
     """Selene's own soft-RZ plugin object carries soft-RZ's gate set, so rpp is decomposed."""
@@ -552,10 +564,13 @@ def test_upstream_soft_rz_plugin_object_lowers_rpp_before_submission() -> None:
             call void @___rpp(i64 0, i64 1, double 3.141592653589793, double 0.0)
             %m0 = call i32 @__quantum__qis__m__body(i64 0, i64 0)
             %m1 = call i32 @__quantum__qis__m__body(i64 1, i64 1)
+            %read0 = call i1 @___read_future_bool(i64 0)
+            %read1 = call i1 @___read_future_bool(i64 1)
             ret i64 0
         }
         declare void @___rpp(i64, i64, double, double)
         declare i32 @__quantum__qis__m__body(i64, i64)
+        declare i1 @___read_future_bool(i64)
         attributes #0 = { "EntryPoint" }
     """
     shots = 5

@@ -551,9 +551,9 @@ fn shotless_reset_retires_unsettled_instance() {
 }
 
 #[test]
-fn undrained_finish_retires_instance_before_reuse() {
+fn native_end_preserves_instance_and_runtime_clock() {
     fixture_with_runtime(
-        "undrained_finish_retires_instance_before_reuse",
+        "native_end_preserves_instance_and_runtime_clock",
         "PECOS_REUSE_UNDRAINED_FINISH",
         false,
         &timed_soft_runtime(4),
@@ -585,12 +585,13 @@ fn undrained_finish_retires_instance_before_reuse() {
                 fresh.shot_start(1, None).unwrap();
                 let mut expected = fresh.lower_operations(&ops).unwrap();
                 expected.extend(fresh.drain_pending_operations().unwrap());
-                assert_eq!(
-                    actual, expected,
-                    "the discarded batch must not shift the next shot's clock"
-                );
-                assert_eq!(INITS.lock().unwrap().len(), 2);
-                assert_eq!(EXITS.lock().unwrap().len(), 1);
+                // SoftRZ advances its clock when queuing a pulse, even if
+                // shot_end later discards it. Preserve that native clock;
+                // neither a barrier nor instance replacement may rewrite it.
+                expected.insert(0, QuantumOp::Idle(1e-8, 0));
+                assert_eq!(actual, expected);
+                assert_eq!(INITS.lock().unwrap().len(), 1);
+                assert_eq!(EXITS.lock().unwrap().len(), 0);
             }
         },
     );

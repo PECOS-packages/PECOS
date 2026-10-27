@@ -96,7 +96,7 @@ Important fields include:
   contains all gates emitted by that lowering call, with complete provenance.
 - `runtime_lowering_deferred`: the runtime accepted source work but emitted no
   gates in this chunk. Its output can appear in a later chunk; replay also
-  requires the final `trace_complete` drain attestation.
+  requires the final `trace_complete` completion attestation.
 - `named_result_traces`: provenance emitted for named `result(...)` records.
 - `named_results`: the shot's complete typed named outputs, in call order per
   tag, on the `named_results` chunk only. Unlike `named_result_traces`, it
@@ -128,23 +128,31 @@ not require a runtime to succeed on a program that also fails under Selene.
 
 A measurement request gives the selected Selene runtime ownership of scheduling
 that measurement. PECOS does not force it when submitting the request. When the
-program reads a future, PECOS first consumes any available result; otherwise it
-asks the runtime to make that particular result available and executes the work
-the runtime releases. After each native measurement batch, PECOS returns the
+program reads a future, PECOS queries the runtime's native Boolean or unsigned
+integer getter. If the value is pending, it calls `force_result` once, processes
+the work released by the runtime, and queries the getter again. Physical simulator
+outcomes are feedback to the runtime; the native getter determines the value
+returned to the program. After each native measurement batch, PECOS returns the
 outcomes before asking for more batches. It polls any work made ready by that
-feedback before resuming the program. Outstanding work is drained before shot
-completion.
+feedback before resuming source submissions or the program. The host also polls
+ready work after each native call, including calls within a decomposed gate.
+
+At completion PECOS calls the runtime's `shot_end` hook and processes its output,
+including measurements and work released by their feedback. It adds no terminal
+barrier. A runtime may discard unobserved requests at end, as the public SoftRZ
+runtime does. Traces contain the operations actually emitted by the runtime.
 
 This applies to simulation, tracing, and DEM construction. Forcing requests
 before their reads can change the runtime's batching, native gates, and idle
 durations even when ideal measurement outcomes agree. Build the DEM with the
 same runtime and configuration used for simulation.
 
-Rust callers using `QisRuntime` directly should call `force_result(program_id)`
-when they need a pending result, then extract ready work with an empty lowering
-call. Deliver each emitted batch's measurement outcomes before extracting more
-work; an empty extraction while feedback is outstanding does not certify that
-the scheduler is drained. The runtime's native future ID is resolved internally.
+Rust callers using `QisRuntime` directly should query `read_result(program_id)`,
+call `force_result(program_id)` if it returns `None`, then extract ready work with
+empty lowering calls. Deliver each emitted batch's measurement outcomes before
+extracting more work, and query `read_result` again after processing ready work.
+An empty extraction while feedback is outstanding is not completion. The adapter
+resolves the native future ID and result type internally.
 PECOS uses native `force_result` for both ordinary and leakage-aware measurements,
 following Selene's result-read protocol. It does not substitute a qubit or global barrier:
 that could force later measurements on a reused physical qubit and change timing.

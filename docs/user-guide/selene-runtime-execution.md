@@ -236,9 +236,11 @@ Flat and metadata routes release queued work on an Idle's qubit before emitting
 the Idle. Scheduled extraction accepts decomposable gates but continues to reject
 source Idle and trace metadata. Measurement requests remain lazy: the runtime
 determines when they execute, and PECOS forces a specific result only when the
-program reads it. Leakage-aware reads release queued work on the measured qubit
-so their results are available even when a plugin's result forcing only recognizes
-ordinary measurements. Each emitted measurement batch receives feedback before
+program reads it. Both ordinary and leakage-aware reads use the native
+`force_result` contract. An unsatisfiable read fails promptly; PECOS does not
+insert a compatibility barrier that could change the runtime's timing. The pinned
+public SoftRZ runtime requires an upstream fix to force leakage-aware results.
+Each emitted measurement batch receives feedback before
 the next extraction. Unannotated qubit release adds no host barrier; provenance
 barriers defer remaining source work when feedback is needed. See [lazy measurements](runtime-qis-tracing.md#lazy-measurements).
 

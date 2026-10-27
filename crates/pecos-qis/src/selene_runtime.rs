@@ -458,8 +458,8 @@ pub struct SeleneRuntime {
 
     /// Program slots allocated by native measurement, including delivered slots.
     native_result_slots: BTreeSet<usize>,
-    /// Latest native future per program slot, plus the qubit for a leaked read.
-    program_to_runtime_results: BTreeMap<usize, (u64, Option<u64>)>,
+    /// Latest native future per program slot, for either measurement kind.
+    program_to_runtime_results: BTreeMap<usize, u64>,
 
     /// Native future to program slot and source leakage kind, retained through scheduling.
     runtime_to_program_results: BTreeMap<u64, (usize, bool)>,
@@ -2056,7 +2056,7 @@ impl SeleneRuntime {
         self.runtime_to_program_results
             .insert(runtime_result, (program_result, false));
         self.program_to_runtime_results
-            .insert(program_result, (runtime_result, None));
+            .insert(program_result, runtime_result);
         Ok(())
     }
 
@@ -2091,7 +2091,7 @@ impl SeleneRuntime {
         self.runtime_to_program_results
             .insert(runtime_result, (program_result, true));
         self.program_to_runtime_results
-            .insert(program_result, (runtime_result, Some(runtime_qubit)));
+            .insert(program_result, runtime_result);
         Ok(())
     }
 
@@ -3602,7 +3602,7 @@ impl QisRuntime for SeleneRuntime {
 
     fn force_result(&mut self, program_result: usize) -> Result<bool> {
         self.check_batch_failure()?;
-        let (runtime_result, leaked_qubit) = self
+        let runtime_result = self
             .program_to_runtime_results
             .get(&program_result)
             .copied()
@@ -3612,11 +3612,8 @@ impl QisRuntime for SeleneRuntime {
                 ))
             })?;
         self.with_native_mutation(|runtime| {
-            // Some public runtimes do not force leakage-aware measurements.
-            // Keep their compatibility barrier at the read, never at submission.
-            if let Some(qubit) = leaked_qubit {
-                runtime.call_runtime_local_barrier(&[qubit])?;
-            }
+            // Both measurement kinds use the native future contract. A qubit
+            // barrier could also force a later measurement after physical reuse.
             runtime.force_runtime_result(runtime_result)?;
             Ok(true)
         })
@@ -4841,55 +4838,65 @@ mod tests {
     #[test]
     fn explicit_measurement_lifetime_survives_until_release() {
         for mode in LoweringRoute::ALL {
-            for leaked in [false, true] {
-                for mut runtime in [
+            // SoftRZ cannot force leaked results in the pinned version; its
+            // fail-closed behavior is covered by the unsupported-read tests.
+            for (leaked, mut runtime) in [
+                (
+                    false,
                     crate::selene_runtimes::selene_simple_runtime().unwrap(),
+                ),
+                (
+                    true,
+                    crate::selene_runtimes::selene_simple_runtime().unwrap(),
+                ),
+                (
+                    false,
                     crate::selene_runtimes::selene_soft_rz_runtime().unwrap(),
-                ] {
-                    runtime.set_num_qubits(1);
-                    runtime.shot_start(0, Some(7)).unwrap();
-                    mode.lower(
-                        &mut runtime,
-                        &[
-                            Operation::AllocateQubit { id: 71 },
-                            QuantumOp::Reset(71).into(),
-                        ],
-                    )
-                    .unwrap();
-                    let original = runtime.program_to_runtime_qubits[&71];
-                    for result in 0..2 {
-                        let measurement = if leaked {
-                            QuantumOp::MeasureLeaked(71, result)
-                        } else {
-                            QuantumOp::Measure(71, result)
-                        };
-                        // Separate submissions exercise persistence after feedback,
-                        // including a continuation with no allocation records.
-                        mode.lower(&mut runtime, &[measurement.into()]).unwrap();
-                        assert_eq!(
-                            runtime.program_to_runtime_qubits.get(&71),
-                            Some(&original),
-                            "measurement released a live handle: mode={mode:?}, leaked={leaked}"
-                        );
-                        runtime
-                            .provide_measurement_outcomes(Vec::from([(result, 0)]))
-                            .unwrap();
-                        mode.lower(&mut runtime, &[QuantumOp::Reset(71).into()])
-                            .unwrap();
-                        assert_eq!(runtime.program_to_runtime_qubits[&71], original);
-                    }
-                    mode.lower(&mut runtime, &[Operation::ReleaseQubit { id: 71 }])
+                ),
+            ] {
+                runtime.set_num_qubits(1);
+                runtime.shot_start(0, Some(7)).unwrap();
+                mode.lower(
+                    &mut runtime,
+                    &[
+                        Operation::AllocateQubit { id: 71 },
+                        QuantumOp::Reset(71).into(),
+                    ],
+                )
+                .unwrap();
+                let original = runtime.program_to_runtime_qubits[&71];
+                for result in 0..2 {
+                    let measurement = if leaked {
+                        QuantumOp::MeasureLeaked(71, result)
+                    } else {
+                        QuantumOp::Measure(71, result)
+                    };
+                    // Separate submissions exercise persistence after feedback,
+                    // including a continuation with no allocation records.
+                    mode.lower(&mut runtime, &[measurement.into()]).unwrap();
+                    assert_eq!(
+                        runtime.program_to_runtime_qubits.get(&71),
+                        Some(&original),
+                        "measurement released a live handle: mode={mode:?}, leaked={leaked}"
+                    );
+                    runtime
+                        .provide_measurement_outcomes(Vec::from([(result, 0)]))
                         .unwrap();
-                    assert!(!runtime.program_to_runtime_qubits.contains_key(&71));
-                    // A one-slot runtime can allocate again only after release.
-                    mode.lower(&mut runtime, &[Operation::AllocateQubit { id: 93 }])
+                    mode.lower(&mut runtime, &[QuantumOp::Reset(71).into()])
                         .unwrap();
-                    assert_eq!(runtime.program_to_runtime_qubits.len(), 1);
-                    mode.lower(&mut runtime, &[Operation::ReleaseQubit { id: 93 }])
-                        .unwrap();
-                    mode.drain(&mut runtime);
-                    runtime.shot_end().unwrap();
+                    assert_eq!(runtime.program_to_runtime_qubits[&71], original);
                 }
+                mode.lower(&mut runtime, &[Operation::ReleaseQubit { id: 71 }])
+                    .unwrap();
+                assert!(!runtime.program_to_runtime_qubits.contains_key(&71));
+                // A one-slot runtime can allocate again only after release.
+                mode.lower(&mut runtime, &[Operation::AllocateQubit { id: 93 }])
+                    .unwrap();
+                assert_eq!(runtime.program_to_runtime_qubits.len(), 1);
+                mode.lower(&mut runtime, &[Operation::ReleaseQubit { id: 93 }])
+                    .unwrap();
+                mode.drain(&mut runtime);
+                runtime.shot_end().unwrap();
             }
         }
     }

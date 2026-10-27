@@ -240,27 +240,28 @@ fn scheduled_route_accepts_h_cx_and_ccx_as_native_batches() {
 }
 
 #[test]
-fn soft_rz_measure_leaked_releases_result_before_unrelated_x() {
+fn soft_rz_unsupported_leaked_force_does_not_flush_a_reused_qubit() {
+    // The pinned plugin only recognizes ordinary measurements in force_result.
+    // A compatibility barrier would flush through the later lifetime instead.
     for route in Route::ALL {
-        let mut runtime = start(crate::selene_runtimes::selene_soft_rz_runtime().unwrap(), 2);
-        let lowered = route.lower_and_read(
+        let mut runtime = start(crate::selene_runtimes::selene_soft_rz_runtime().unwrap(), 1);
+        let lowered = route.lower_raw(
             &mut runtime,
             &[
-                Operation::AllocateQubit { id: 0 },
-                QuantumOp::Reset(0).into(),
-                Operation::AllocateQubit { id: 1 },
-                QuantumOp::Reset(1).into(),
-                QuantumOp::MeasureLeaked(0, 17).into(),
-                QuantumOp::X(1).into(),
+                Operation::AllocateQubit { id: 7 },
+                QuantumOp::Reset(7).into(),
+                QuantumOp::MeasureLeaked(7, 31).into(),
+                Operation::ReleaseQubit { id: 7 },
+                Operation::AllocateQubit { id: 9 },
+                QuantumOp::Reset(9).into(),
+                QuantumOp::X(9).into(),
+                QuantumOp::Measure(9, 47).into(),
             ],
         );
-        let results = simulate(&mut StateVecAoS::new(2), &lowered);
-        assert_eq!(results, [(17, 0)], "{route:?}: {lowered:?}");
-        runtime.provide_measurement_outcomes(results).unwrap();
-        assert_eq!(
-            runtime.get_classical_state().measurements.get(&17),
-            Some(&false)
-        );
+        assert!(lowered.is_empty(), "{route:?}: {lowered:?}");
+        runtime.force_result(31).unwrap();
+        let lowered = route.lower_raw(&mut runtime, &[]);
+        assert!(lowered.is_empty(), "{route:?}: {lowered:?}");
     }
 }
 
@@ -1048,6 +1049,8 @@ mod measurement_followups {
 
     thread_local! {
         static FORCED: RefCell<Vec<u64>> = const { RefCell::new(Vec::new()) };
+        static FORCE_RELEASES: Cell<bool> = const { Cell::new(false) };
+        static LOCAL_BARRIERS: Cell<usize> = const { Cell::new(0) };
         static SUBMITTED: RefCell<Vec<(u64, bool)>> = const { RefCell::new(Vec::new()) };
         static DELIVERED: RefCell<Vec<(u64, bool, u64)>> = const { RefCell::new(Vec::new()) };
         static EMITTED: Cell<usize> = const { Cell::new(0) };
@@ -1073,9 +1076,17 @@ mod measurement_followups {
     }
     unsafe extern "C" fn force(_: RuntimeInstance, result: u64) -> i32 {
         FORCED.with_borrow_mut(|calls| calls.push(result));
+        if FORCE_RELEASES.get() {
+            RELEASE.set(
+                RELEASE
+                    .get()
+                    .max(usize::try_from(result - 100 + 1).unwrap()),
+            );
+        }
         0
     }
     unsafe extern "C" fn local(_: RuntimeInstance, _: *const u64, _: u64, _: u64) -> i32 {
+        LOCAL_BARRIERS.set(LOCAL_BARRIERS.get() + 1);
         0
     }
     unsafe extern "C" fn set_bool(_: RuntimeInstance, id: u64, value: bool) -> i32 {
@@ -1131,6 +1142,66 @@ mod measurement_followups {
         });
     }
 
+    #[test]
+    fn forcing_either_measurement_kind_preserves_later_qubit_lifetime() {
+        for route in Route::ALL {
+            for leaked in [false, true] {
+                with_descriptor(|mut runtime| {
+                    RELEASE.set(0);
+                    FORCE_RELEASES.set(true);
+                    REQUIRE_FEEDBACK.set(true);
+                    let first = if leaked {
+                        QuantumOp::MeasureLeaked(7, 31)
+                    } else {
+                        QuantumOp::Measure(7, 31)
+                    };
+                    let ops = route.lower_raw(
+                        &mut runtime,
+                        &[
+                            Operation::AllocateQubit { id: 7 },
+                            first.into(),
+                            Operation::ReleaseQubit { id: 7 },
+                            Operation::AllocateQubit { id: 9 },
+                            QuantumOp::Measure(9, 47).into(),
+                        ],
+                    );
+                    assert!(ops.is_empty(), "{route:?}: {ops:?}");
+                    assert!(FORCED.with_borrow(Vec::is_empty));
+                    runtime.force_result(31).unwrap();
+                    assert_eq!(FORCED.with_borrow(Clone::clone), [100]);
+                    assert_eq!(LOCAL_BARRIERS.get(), 0);
+                    let first = if leaked {
+                        QuantumOp::MeasureLeaked(0, 31)
+                    } else {
+                        QuantumOp::Measure(0, 31)
+                    };
+                    assert_eq!(route.lower_raw(&mut runtime, &[]), [first]);
+                    let value = if leaked { 2 } else { 1 };
+                    runtime
+                        .provide_measurement_outcomes(vec![(31, value)])
+                        .unwrap();
+                    assert_eq!(route.lower_raw(&mut runtime, &[]), Vec::<QuantumOp>::new());
+                    runtime.force_result(47).unwrap();
+                    assert_eq!(FORCED.with_borrow(Clone::clone), [100, 101]);
+                    assert_eq!(LOCAL_BARRIERS.get(), 0);
+                    let expected = match route {
+                        Route::Flat | Route::Metadata => {
+                            vec![QuantumOp::Idle(1e-9, 0), QuantumOp::Measure(0, 47)]
+                        }
+                        Route::Scheduled => vec![QuantumOp::Measure(0, 47)],
+                    };
+                    assert_eq!(route.lower_raw(&mut runtime, &[]), expected);
+                    runtime.provide_measurement_outcomes(vec![(47, 0)]).unwrap();
+                    assert_eq!(route.lower_raw(&mut runtime, &[]), Vec::<QuantumOp>::new());
+                    assert_eq!(
+                        DELIVERED.with_borrow(Clone::clone),
+                        [(100, leaked, value.into()), (101, false, 0)]
+                    );
+                });
+            }
+        }
+    }
+
     fn with_descriptor(run: impl FnOnce(SeleneRuntime)) {
         let executable = std::env::current_exe().unwrap();
         let source = crate::selene_runtimes::find_library_in_dir(
@@ -1168,6 +1239,8 @@ mod measurement_followups {
                 .unwrap()((&raw mut *descriptor).cast());
         };
         FORCED.with_borrow_mut(Vec::clear);
+        FORCE_RELEASES.set(false);
+        LOCAL_BARRIERS.set(0);
         SUBMITTED.with_borrow_mut(Vec::clear);
         DELIVERED.with_borrow_mut(Vec::clear);
         EMITTED.set(0);

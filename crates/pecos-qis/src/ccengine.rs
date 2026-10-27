@@ -1821,7 +1821,9 @@ impl QisEngine {
                 return Ok(Some(lowered.commands));
             }
             return Err(self.latch_terminal_error(format!(
-                "runtime released no measurement for worker-requested result {result_id}"
+                "runtime released no measurement for worker-requested result {result_id}; \
+                 the runtime must implement force_result for the requested measurement kind, \
+                 including leakage-aware measurements"
             )));
         }
         // While the worker is blocked, imported credits are finite. Each

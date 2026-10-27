@@ -140,11 +140,19 @@ Rust callers using `QisRuntime` directly should call `force_result(program_id)`
 when they need a pending result, then extract ready work with an empty lowering
 call. Deliver each emitted batch's measurement outcomes before extracting more
 work; an empty extraction while feedback is outstanding does not certify that
-the scheduler is drained. The runtime's native future ID is resolved internally. Older runtimes
-without targeted forcing retain the generic drain fallback. Leakage-aware
-reads retain the compatibility local barrier required by public runtimes that
-do not implement forcing for that measurement kind; it occurs at the read,
-not when the measurement is submitted.
+the scheduler is drained. The runtime's native future ID is resolved internally.
+Selene runtimes must implement native `force_result` for both ordinary and
+leakage-aware measurements. PECOS does not substitute a qubit or global barrier:
+that could force later measurements on a reused physical qubit and change timing.
+If a requested result cannot make progress, execution fails promptly and the
+trace is not certified complete.
+
+The pinned public SoftRZ runtime does not implement `force_result` for
+leakage-aware measurements. A read that depends on forcing one therefore fails
+with a runtime-contract error; it requires a fix in the runtime. Ordinary
+SoftRZ reads and both measurement kinds in the Simple runtime are supported.
+Non-Selene `QisRuntime` implementations without targeted forcing retain their
+generic drain path.
 
 ## Replaying a Stored Trace
 

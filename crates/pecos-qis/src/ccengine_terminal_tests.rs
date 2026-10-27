@@ -1933,10 +1933,7 @@ fn migrated_shot_replacement_leaves_original_host_tls_empty() {
     x.join().unwrap();
 }
 
-#[test]
-fn selene_leaked_lazy_measure_reads_two_under_leakage_noise() {
-    use pecos_engines::{QuantumSystem, noise::general::GeneralNoiseModel};
-    let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+fn leaked_lazy_read_program() -> String {
     // Both SeleneFutureResult and SeleneU64Result use a hidden return pointer
     // on Windows, and two registers on the other supported 64-bit targets.
     #[cfg(not(windows))]
@@ -1949,7 +1946,7 @@ fn selene_leaked_lazy_measure_reads_two_under_leakage_noise() {
         "declare void @selene_qubit_lazy_measure_leaked(ptr sret({i32, i64}), ptr, i64)\ndeclare void @selene_future_read_u64(ptr sret({i32, i64}), ptr, i64)",
         "%out = alloca {i32, i64}\ncall void @selene_qubit_lazy_measure_leaked(ptr sret({i32, i64}) %out, ptr null, i64 0)\n%future = load {i32, i64}, ptr %out\n%id = extractvalue {i32, i64} %future, 1\ncall void @selene_future_read_u64(ptr sret({i32, i64}) %out, ptr null, i64 %id)\n%read = load {i32, i64}, ptr %out",
     );
-    let source = format!(
+    format!(
         r"
         {declarations}
         declare void @__quantum__qis__x__body(i64)
@@ -1962,7 +1959,70 @@ fn selene_leaked_lazy_measure_reads_two_under_leakage_noise() {
             ret i64 %status
         }}
     "
-    );
+    )
+}
+
+#[test]
+fn soft_rz_unsupported_leaked_read_fails_promptly_without_certifying_trace() {
+    let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+    for mode in [
+        ScheduledTransport::Off,
+        ScheduledTransport::V6,
+        ScheduledTransport::V7,
+    ] {
+        let mut engine = QisEngine::new(
+            Box::new(crate::QisHeliosInterface::new()),
+            Box::new(crate::selene_soft_rz_runtime().unwrap()),
+        );
+        engine.set_num_qubits_hint(2);
+        engine.scheduled_transport = mode;
+        let trace = OperationTraceStore::default();
+        if mode == ScheduledTransport::Off {
+            engine.set_operation_trace_collector(Arc::clone(&trace));
+        }
+        engine
+            .load_program(
+                leaked_lazy_read_program().as_bytes(),
+                ProgramFormat::LlvmIrText,
+            )
+            .unwrap();
+        let started = Instant::now();
+        let error = engine
+            .start(())
+            .err()
+            .expect("unsupported forcing must fail at the read");
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(
+            error
+                .to_string()
+                .contains("runtime must implement force_result"),
+            "{error}"
+        );
+        assert!(
+            error.to_string().contains("leakage-aware measurements"),
+            "{error}"
+        );
+        let retry = engine
+            .continue_processing(ByteMessage::outcomes_builder().build())
+            .err()
+            .unwrap();
+        assert_eq!(error.to_string(), retry.to_string());
+        assert!(
+            !trace
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|chunk| chunk.stage == "trace_complete")
+        );
+        engine.reset_all().unwrap();
+    }
+}
+
+#[test]
+fn selene_leaked_lazy_measure_reads_two_under_leakage_noise() {
+    use pecos_engines::{QuantumSystem, noise::general::GeneralNoiseModel};
+    let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+    let source = leaked_lazy_read_program();
     let mut engine = dynamic_read_engine(&source);
     let noise = GeneralNoiseModel::builder()
         .with_p1(1.0)

@@ -11,18 +11,23 @@ mod operations;
 pub use named_results::{NamedResult, ProgramError};
 
 pub use operations::{
-    LoweredQuantumOp, NamedResultTrace, Operation, QuantumOp, RuntimeRequest, TraceMetadata,
+    LoweredQuantumOp, NamedResultTrace, Operation, QuantumOp, RuntimeRequest, SeleneRequest,
+    TraceMetadata,
 };
 
 /// Version of the ownership-transferring Rust data interface between the host
 /// and dynamically loaded QIS FFI library. Bump when shared types or exported
 /// function contracts change incompatibly; both artifacts must be rebuilt.
-pub const QIS_FFI_ABI_VERSION: u64 = 2;
+pub const QIS_FFI_ABI_VERSION: u64 = 3;
 
 /// Reserved dynamic bridge token for the one synchronous runtime request in
 /// flight. Stored separately from measurement slots; never exposed as a future.
 /// `u64::MAX` remains the bridge's no-request/completion sentinel.
 pub const RUNTIME_REQUEST_RESULT_ID: usize = usize::MAX - 1;
+
+/// Internal feedback lane for runtime-emitted measurements with no source producer.
+/// Occurrences are queued in emission order; this token is never a program result.
+pub const RUNTIME_OWNED_MEASUREMENT_ID: usize = usize::MAX;
 
 const DEFAULT_OPERATION_CAPACITY: usize = 1024;
 const DEFAULT_MEASUREMENT_CAPACITY: usize = 256;

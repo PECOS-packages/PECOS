@@ -15,7 +15,7 @@ fn program(tail: &str, explicit_handles: bool, read_result: bool) -> String {
         ""
     };
     let read = if read_result {
-        "%read = call i1 @___read_future_bool(i64 0)"
+        "%raw_read = call i32 @__quantum__rt__result_get_one(i64 0)\n%read = icmp ne i32 %raw_read, 0"
     } else {
         ""
     };
@@ -36,7 +36,7 @@ fn program(tail: &str, explicit_handles: bool, read_result: bool) -> String {
         declare void @__quantum__qis__rz__body(double, i64)
         declare void @__quantum__qis__reset__body(i64)
         declare i32 @__quantum__qis__m__body(i64, i64)
-        declare i1 @___read_future_bool(i64)
+        declare i32 @__quantum__rt__result_get_one(i64)
         declare void @pecos_qis_trace_metadata_direct(ptr, i64, ptr, i64)
         attributes #0 = {{ "EntryPoint" }}
         "#
@@ -750,50 +750,34 @@ fn result_get_one_feedback_uses_the_host_measurement() {
 #[test]
 fn same_result_slot_feedback_reads_the_new_measurement() {
     let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
-    for (ty, reader, first, second) in [
-        ("i1", "___read_future_bool", "%first", "%second"),
-        (
-            "i32",
-            "__quantum__rt__result_get_one",
-            "%first_bool",
-            "%second_bool",
-        ),
-    ] {
-        let conversions = if ty == "i32" {
-            "%first_bool = icmp ne i32 %first, 0\n%second_bool = icmp ne i32 %second, 0"
-        } else {
-            ""
-        };
-        let source = format!(
-            r#"
-            declare void @__quantum__qis__x__body(i64)
-            declare i32 @__quantum__qis__m__body(i64, i64)
-            declare {ty} @{reader}(i64)
-            declare void @panic(i32, ptr)
-            define void @main() #0 {{
-                call void @__quantum__qis__x__body(i64 0)
-                %m0 = call i32 @__quantum__qis__m__body(i64 0, i64 0)
-                %first = call {ty} @{reader}(i64 0)
-                call void @__quantum__qis__x__body(i64 0)
-                %m1 = call i32 @__quantum__qis__m__body(i64 0, i64 0)
-                %second = call {ty} @{reader}(i64 0)
-                {conversions}
-                %second_zero = xor i1 {second}, true
-                %correct = and i1 {first}, %second_zero
-                br i1 %correct, label %done, label %failure
-            failure:
-                call void @panic(i32 1058, ptr null)
-                ret void
-            done:
-                ret void
-            }}
-            attributes #0 = {{ "EntryPoint" }}
-        "#
-        );
-        let mut engine = dynamic_read_engine(&source);
-        let shot = drive_dynamic_read_shot(&mut engine).unwrap();
-        assert_eq!(shot.data.get("measurement_0"), Some(&Data::U32(0)));
-    }
+    let source = r#"
+        declare void @__quantum__qis__x__body(i64)
+        declare i32 @__quantum__qis__m__body(i64, i64)
+        declare i32 @__quantum__rt__result_get_one(i64)
+        declare void @panic(i32, ptr)
+        define void @main() #0 {
+            call void @__quantum__qis__x__body(i64 0)
+            %m0 = call i32 @__quantum__qis__m__body(i64 0, i64 0)
+            %first = call i32 @__quantum__rt__result_get_one(i64 0)
+            call void @__quantum__qis__x__body(i64 0)
+            %m1 = call i32 @__quantum__qis__m__body(i64 0, i64 0)
+            %second = call i32 @__quantum__rt__result_get_one(i64 0)
+            %first_bool = icmp ne i32 %first, 0
+            %second_bool = icmp ne i32 %second, 0
+            %second_zero = xor i1 %second_bool, true
+            %correct = and i1 %first_bool, %second_zero
+            br i1 %correct, label %done, label %failure
+        failure:
+            call void @panic(i32 1058, ptr null)
+            ret void
+        done:
+            ret void
+        }
+        attributes #0 = { "EntryPoint" }
+    "#;
+    let mut engine = dynamic_read_engine(source);
+    let shot = drive_dynamic_read_shot(&mut engine).unwrap();
+    assert_eq!(shot.data.get("measurement_0"), Some(&Data::U32(0)));
 }
 
 #[test]
@@ -833,9 +817,11 @@ fn never_measured_failure_surfaces_from_start_and_continue() {
             let error = drive_dynamic_read_shot(&mut engine).unwrap_err();
             assert!(started.elapsed() < Duration::from_secs(5));
             assert!(
-                error
-                    .to_string()
-                    .contains("QIS measurement result 7 unavailable: never measured"),
+                error.to_string().contains(if ty == "i1" {
+                    "native result read failed"
+                } else {
+                    "QIS measurement result 7 unavailable: never measured"
+                }),
                 "{error}"
             );
             assert!(
@@ -1970,10 +1956,10 @@ fn soft_rz_unsupported_leaked_read_fails_promptly_without_certifying_trace() {
             )
             .unwrap();
         let started = Instant::now();
-        let error = engine
-            .start(())
-            .err()
-            .expect("unsupported forcing must fail at the read");
+        let result = engine.start(()).and_then(|stage| {
+            finish_deferred_read_shot(&mut engine, &mut deferred_read_quantum(mode), stage)
+        });
+        let error = result.expect_err("unsupported forcing must fail at the read");
         assert!(started.elapsed() < Duration::from_secs(5));
         assert!(
             error
@@ -2020,12 +2006,13 @@ fn scheduled_remeasured_slot_reads_and_records_latest_outcome() {
     let source = r"
         declare void @__quantum__qis__x__body(i64)
         declare i32 @__quantum__qis__m__body(i64, i64)
-        declare i1 @___read_future_bool(i64)
+        declare i32 @__quantum__rt__result_get_one(i64)
         define i64 @qmain(i64 %shot) {
             %first = call i32 @__quantum__qis__m__body(i64 0, i64 7)
             call void @__quantum__qis__x__body(i64 0)
             %second = call i32 @__quantum__qis__m__body(i64 0, i64 7)
-            %read = call i1 @___read_future_bool(i64 7)
+            %raw = call i32 @__quantum__rt__result_get_one(i64 7)
+            %read = icmp ne i32 %raw, 0
             %bad = xor i1 %read, true
             %status = zext i1 %bad to i64
             ret i64 %status

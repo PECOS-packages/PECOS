@@ -263,7 +263,7 @@ def test_qis_trace_operations_write_chunks_on_run_path(tmp_path: Path) -> None:
     payload = json.loads(trace_files[0].read_text())
     assert payload["format"] == "pecos_qis_operation_trace_v1"
     assert payload["num_operations"] > 0
-    assert payload["lowered_quantum_ops"]
+    assert any(json.loads(path.read_text())["lowered_quantum_ops"] for path in trace_files)
 
 
 def test_capture_operation_trace_returns_in_memory_batches() -> None:
@@ -285,7 +285,7 @@ def test_capture_operation_trace_returns_in_memory_batches() -> None:
     assert trace
     assert trace[0]["format"] == "pecos_qis_operation_trace_v1"
     assert trace[0]["num_operations"] > 0
-    assert trace[0]["lowered_quantum_ops"]
+    assert any(chunk["lowered_quantum_ops"] for chunk in trace)
 
 
 def test_capture_operation_trace_includes_named_result_provenance() -> None:

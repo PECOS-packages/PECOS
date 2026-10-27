@@ -525,14 +525,14 @@ def test_flat_runtime_owns_tail_after_last_result_read(runtime_name: str) -> Non
         define i64 @qmain(i64 %shot) #0 {
             call void @__quantum__qis__x__body(i64 0)
             %m = call i32 @__quantum__qis__m__body(i64 0, i64 0)
-            %read = call i1 @___read_future_bool(i64 0)
+            %read = call i32 @__quantum__rt__result_get_one(i64 0)
             call void @__quantum__qis__x__body(i64 1)
             call void @__quantum__qis__rz__body(double 0.3, i64 1)
             ret i64 0
         }
         declare void @__quantum__qis__x__body(i64)
         declare i32 @__quantum__qis__m__body(i64, i64)
-        declare i1 @___read_future_bool(i64)
+        declare i32 @__quantum__rt__result_get_one(i64)
         declare void @__quantum__qis__rz__body(double, i64)
         attributes #0 = { "EntryPoint" }
     """
@@ -560,8 +560,8 @@ def test_flat_runtime_owns_tail_after_last_result_read(runtime_name: str) -> Non
     assert len(tail_pulses) == int(runtime_name == "selene_simple_runtime")
 
 
-def test_upstream_soft_rz_plugin_object_lowers_rpp_before_submission() -> None:
-    """Selene's own soft-RZ plugin object carries soft-RZ's gate set, so rpp is decomposed."""
+def test_upstream_soft_rz_plugin_rejects_unsupported_native_rpp() -> None:
+    """Native calls preserve the runtime ABI, including its rejection of RPP."""
     import pecos
     import pecos_rslib as pr
 
@@ -573,27 +573,23 @@ def test_upstream_soft_rz_plugin_object_lowers_rpp_before_submission() -> None:
             call void @___rpp(i64 0, i64 1, double 3.141592653589793, double 0.0)
             %m0 = call i32 @__quantum__qis__m__body(i64 0, i64 0)
             %m1 = call i32 @__quantum__qis__m__body(i64 1, i64 1)
-            %read0 = call i1 @___read_future_bool(i64 0)
-            %read1 = call i1 @___read_future_bool(i64 1)
+            %read0 = call i32 @__quantum__rt__result_get_one(i64 0)
+            %read1 = call i32 @__quantum__rt__result_get_one(i64 1)
             ret i64 0
         }
         declare void @___rpp(i64, i64, double, double)
         declare i32 @__quantum__qis__m__body(i64, i64)
-        declare i1 @___read_future_bool(i64)
+        declare i32 @__quantum__rt__result_get_one(i64)
         attributes #0 = { "EntryPoint" }
     """
-    shots = 5
     classical = pecos.selene_engine(plugin_package.SoftRZRuntimePlugin()).interface(pr.qis_helios_interface())
-    results = (
-        pecos.sim(pecos.Qis(program))
-        .classical(classical)
-        .qubits(2)
-        .quantum(pr.state_vector())
-        .seed(42)
-        .workers(1)
-        .run(shots)
-        .to_dict()
-    )
-    # rpp(pi, 0) is XX up to global phase, so |00> becomes |11>.
-    assert results["measurement_0"] == [1] * shots
-    assert results["measurement_1"] == [1] * shots
+    with pytest.raises(RuntimeError, match="rpp failed with errno"):
+        (
+            pecos.sim(pecos.Qis(program))
+            .classical(classical)
+            .qubits(2)
+            .quantum(pr.state_vector())
+            .seed(42)
+            .workers(1)
+            .run(1)
+        )

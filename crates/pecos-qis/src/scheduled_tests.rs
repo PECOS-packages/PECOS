@@ -80,7 +80,7 @@ fn native_callbacks_preserve_original_batch_and_result_namespaces() {
 
 #[test]
 fn invalid_batches_do_not_escape_and_failures_require_reset() {
-    for case in 0..5 {
+    for case in 0..4 {
         let mut runtime = synthetic();
         let mut bad = batch();
         match case {
@@ -92,7 +92,6 @@ fn invalid_batches_do_not_escape_and_failures_require_reset() {
                 }
             }
             2 => bad.operations[0] = RuntimeScheduledOp::Reset { qubit_id: u64::MAX },
-            3 => runtime.runtime_to_program_results.clear(),
             _ => bad.operations.push(RuntimeScheduledOp::Custom {
                 tag: 7302,
                 data: vec![0; MAX_PAYLOAD_BYTES],
@@ -631,4 +630,26 @@ fn callback_reservation_matches_both_transport_layouts() {
             allowance - expected - layout.framing_bytes(0)
         );
     }
+}
+
+#[test]
+fn scheduled_internal_measurement_has_feedback_without_source_provenance() {
+    let mut runtime = synthetic();
+    runtime.runtime_to_program_results.clear();
+    let batches = runtime
+        .collect_scheduled(|runtime| {
+            runtime.retain_scheduled_batch(batch())?;
+            Ok(vec![])
+        })
+        .unwrap();
+    let measurement = &batches[0].measurements[0];
+    assert_eq!(measurement.runtime_result, 901);
+    assert_eq!(
+        measurement.program_result,
+        pecos_qis_ffi_types::RUNTIME_OWNED_MEASUREMENT_ID
+    );
+    assert_eq!(
+        runtime.emitted_measurements[&measurement.program_result].front(),
+        Some(&(901, false))
+    );
 }

@@ -174,8 +174,12 @@ exit; their behavior is unchanged.
 
 ## Native gate lowering
 
-All Selene runtimes receive gates through their native entry points. Flat,
-metadata and scheduled lowering share the same decomposition table for H, Pauli,
+Native Selene and Helios ABI calls are forwarded unchanged, including their
+qubit handles and runtime errors. The runtime decides whether each call is supported.
+The `native_gates` setting does not rewrite these calls.
+
+For high-level QIR operations, flat, metadata and scheduled lowering share the
+same decomposition table for H, Pauli,
 phase, controlled and rotation gates. PECOS simulates only the operations emitted
 by the plugin: RXY1Q, RZ, RZZ, RXYXY2Q, reset and measurement, together with the
 existing idle/timing operations. Each runtime declares its accepted ABI gate
@@ -186,7 +190,7 @@ Reset, measure, and measure_leaked are mandatory lifetime operations.
 When rpp is available, RXYXY2Q is submitted natively. Otherwise PECOS lowers it
 using four RXY pulses and one RZZ: on each qubit apply RXY(-pi/2, phi+pi/2),
 then RZZ(theta) on the pair, then RXY(pi/2, phi+pi/2) on each qubit. Noise applies
-separately to these emitted native gates. Every input is checked against the
+separately to these emitted native gates. Every high-level QIR input is checked against the
 declared set before any of its operations are submitted. If no registered
 lowering fits, the error identifies the source operation, qubits, runtime,
 declared set, missing entry points, and how to declare a custom set.
@@ -245,10 +249,10 @@ Missing callback support or a native error fails the execution.
 
 Future reference-count increments and decrements, including Guppy's
 `___inc_future_refcount` and `___dec_future_refcount`, reach the native future
-associated with the program result. PECOS processes work released by the callback
+returned by the runtime. PECOS processes work released by the callback
 and returns measurement feedback before resuming the program. The runtime owns the
 counts and lifetime; PECOS neither forces a measurement nor substitutes cleanup.
-Unknown program futures and native callback errors fail the execution. Synchronous
+The runtime validates native futures; native callback errors fail the execution. Synchronous
 request responses use separate storage: barriers, delays and reference-count calls
 do not consume measurement IDs or change Guppy DEM/decoder measurement bindings.
 
@@ -260,14 +264,36 @@ cannot obtain a custom response and rejects the call. These program-to-runtime c
 are distinct from runtime-to-simulator custom events, whose physical meaning still
 requires an explicit handler.
 
-**Remaining custom-call limitation:** program qubit and future handles are mapped
-to native handles internally. A frontend that embeds these handles in opaque
-custom-call bytes can therefore send the wrong native identity. For example, after
-freeing and reallocating a qubit, a runtime may reuse native handle `0` while the
-program receives handle `1`. Handle-bearing payloads (or native handles returned by
-custom calls for use by the program) are not yet supported generally. Forwarding
-opaque bytes alone does not establish compatibility for these contracts; PECOS
-must preserve native handle identity at the frontend boundary to support them.
+The Selene and Helios/Guppy ABIs preserve native qubit and future handles during
+native runtime execution. Allocation and lazy-measurement requests return the
+runtime's full unsigned 64-bit handle after processing emitted work. This does
+not force an unresolved measurement. Gates, reads, reference counts and scoped
+barriers accept those same handles, including handles returned by custom calls.
+Allocation exhaustion preserves Selene's `u64::MAX` sentinel. Native callback
+errors stop the shot; PECOS does not repair or reinterpret a runtime's decision.
+
+QIR result slots and native future handles are separate namespaces. QIR callers
+use QIR result reads; Selene callers use native future reads. Dense source
+measurement IDs remain internal provenance for named outputs, traces and DEMs.
+Standard physical measurements emitted inside custom calls execute through the
+same quantum-engine feedback loop. Their outcomes use an internal FIFO transport
+lane and are returned to the native future without becoming source result slots.
+Operation tracing rejects these measurements because their source relationship
+is unknown; ordinary simulation remains supported.
+
+An opaque custom call can retire or recycle existing futures. PECOS therefore
+invalidates cached native-future provenance after that call. Logical QIR reads
+of an earlier measurement fail if their native association is no longer known;
+a new explicit measurement establishes a new association. Native reads still
+return the runtime's values, but a named output based on a subsequent read cannot
+certify an operation trace until a new explicit measurement establishes its
+source relationship. Values read before the custom call retain their provenance.
+Any read without established provenance prevents audited tracing for the entire
+shot, including unused reads, repeated reads and integer outputs. This audit is
+conservative: even a harmless custom call invalidates cached future associations
+because PECOS cannot infer its lifetime contract. Pending measurements that cross
+the opaque call also lose their source association; their feedback still runs.
+Opaque payloads and responses are never rewritten to guess their schema.
 
 Time-cursor writes and reads retain per-execution state as in Selene; they do not
 change the runtime clock. State dumping is unsupported and reports an error.
@@ -413,3 +439,10 @@ by the program. Successful end allows instance reuse without requiring a forced
 drain. A continuous runtime clock is preserved, including time advanced by queued
 work the runtime later discards; the next trace uses the configured clock model.
 This does not provide automatic mid-shot growth or native snapshots.
+
+Source annotations can span native-call chunks. PECOS retains them until the
+compatible source gate arrives and rejects unmatched annotations at shot
+completion. Native extraction budgets persist across measurement feedback
+rounds within one source request, so runtime-owned feedback cannot reset the
+processing bound. Dynamic builders compile the source without running an unused
+static collection pass before the selected runtime executes it.

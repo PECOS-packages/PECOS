@@ -87,6 +87,12 @@ pub struct ExecutionContext {
     pub cancel_requested: AtomicBool,
     /// Flag indicating dynamic execution mode is active
     pub dynamic_mode_active: AtomicBool,
+    /// Select the native Selene handle protocol for the Selene/Helios ABI.
+    native_selene_handles: AtomicBool,
+    /// Native future identity to dense source measurement provenance.
+    native_future_sources: Mutex<BTreeMap<u64, usize>>,
+    /// Sticky audit failure independent of optional per-output read attribution.
+    native_provenance_unknown: AtomicBool,
     /// The result ID that is being waited for
     pub waiting_for_result: AtomicU64,
     /// Mutex for signaling between worker and main thread
@@ -170,6 +176,9 @@ impl ExecutionContext {
         Self {
             cancel_requested: AtomicBool::new(false),
             dynamic_mode_active: AtomicBool::new(false),
+            native_selene_handles: AtomicBool::new(false),
+            native_future_sources: Mutex::new(BTreeMap::new()),
+            native_provenance_unknown: AtomicBool::new(false),
             waiting_for_result: AtomicU64::new(u64::MAX),
             sync_state: Mutex::new(DynamicSyncState::default()),
             sync_condvar: Condvar::new(),
@@ -216,6 +225,11 @@ impl ExecutionContext {
         if let Ok(mut response) = self.runtime_response.lock() {
             *response = None;
         }
+        if let Ok(mut sources) = self.native_future_sources.lock() {
+            sources.clear();
+        }
+        self.native_provenance_unknown
+            .store(false, Ordering::SeqCst);
         self.reset_program_rng();
         self.program_shot.store(0, Ordering::SeqCst);
         self.time_cursor.store(0, Ordering::SeqCst);
@@ -673,6 +687,30 @@ pub fn execute_pending_and_get_results() -> bool {
 
 // --- FFI functions for cross-library dynamic circuit coordination ---
 
+/// Select native Selene handles on an explicit execution context.
+///
+/// # Safety
+/// The non-null context must be live and not executing a program.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pecos_set_native_selene_handles(
+    ctx: *mut ExecutionContext,
+    enabled: bool,
+) -> i32 {
+    let Some(ctx) = (unsafe { ctx.as_ref() }) else {
+        return 1;
+    };
+    ctx.native_selene_handles.store(enabled, Ordering::SeqCst);
+    0
+}
+
+pub(crate) fn uses_native_selene_handles() -> bool {
+    get_execution_context().is_some_and(|ctx| {
+        unsafe { &*ctx }
+            .native_selene_handles
+            .load(Ordering::SeqCst)
+    })
+}
+
 /// Enable dynamic mode on an explicit context.
 ///
 /// Returns 0 on success, 1 for a null context, 2 for a poisoned lock.
@@ -941,7 +979,8 @@ pub unsafe extern "C" fn pecos_get_named_results_json_with_context(
 /// Get named result traces json on an explicit context.
 ///
 /// Returns 0 on success, 1 for a null context, 2 for a poisoned lock,
-/// and 3 for invalid data or serialization failure. Empty results return null.
+/// 3 for invalid data or serialization failure, and 4 for unknown native future
+/// provenance. Empty results return null.
 /// Free the output with `pecos_free_named_results_json`.
 ///
 /// # Safety
@@ -960,6 +999,9 @@ pub unsafe extern "C" fn pecos_get_named_result_traces_json_with_context(
     let Some(ctx) = (unsafe { ctx.as_ref() }) else {
         return 1;
     };
+    if ctx.native_provenance_unknown.load(Ordering::SeqCst) {
+        return 4;
+    }
     let Ok(values) = ctx.named_result_traces.lock() else {
         return 2;
     };

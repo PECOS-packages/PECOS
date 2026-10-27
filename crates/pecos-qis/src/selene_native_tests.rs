@@ -1368,7 +1368,7 @@ mod measurement_followups {
                 } else if mode == 3 {
                     "%id = call i64 @___lazy_measure_leaked(i64 0)\n%value = call i64 @___read_future_uint(i64 %id)\ncall void @print_uint_selene(ptr @label, i64 8, i64 %value)\nret i64 0"
                 } else {
-                    "%read = call i1 @___read_future_bool(i64 7)\n%value = zext i1 %read to i64\ncall void @print_uint_selene(ptr @label, i64 8, i64 %value)\nret i64 0"
+                    "%read = call i32 @__quantum__rt__result_get_one(i64 7)\n%value = zext i32 %read to i64\ncall void @print_uint_selene(ptr @label, i64 8, i64 %value)\nret i64 0"
                 };
                 let measure = if mode == 3 {
                     ""
@@ -1382,7 +1382,7 @@ mod measurement_followups {
                     declare i64 @___lazy_measure_leaked(i64)
                     declare i64 @___read_future_uint(i64)
                     declare i32 @__quantum__qis__m__body(i64, i64)
-                    declare i1 @___read_future_bool(i64)
+                    declare i32 @__quantum__rt__result_get_one(i64)
                     define i64 @qmain(i64 %shot) {{
                         {measure}
                         {tail}
@@ -1669,16 +1669,21 @@ mod measurement_followups {
                         request(88, 10),
                     ],
                 );
-                assert!(first.contains(&QuantumOp::Measure(0, 7)));
+                let internal = pecos_qis_ffi_types::RUNTIME_OWNED_MEASUREMENT_ID;
+                assert!(first.contains(&QuantumOp::Measure(0, internal)));
                 assert!(!runtime.runtime_responses.contains_key(&10));
-                runtime.provide_measurement_outcomes(vec![(7, 0)]).unwrap();
+                runtime
+                    .provide_measurement_outcomes(vec![(internal, 0)])
+                    .unwrap();
                 assert!(
                     route
                         .lower_raw(&mut runtime, &[])
-                        .contains(&QuantumOp::Measure(0, 8))
+                        .contains(&QuantumOp::Measure(0, internal))
                 );
                 assert!(!runtime.runtime_responses.contains_key(&10));
-                runtime.provide_measurement_outcomes(vec![(8, 1)]).unwrap();
+                runtime
+                    .provide_measurement_outcomes(vec![(internal, 1)])
+                    .unwrap();
                 assert_eq!(route.lower_raw(&mut runtime, &[]), []);
                 assert_eq!(runtime.read_result(9).unwrap(), Some(u64::MAX));
                 assert_eq!(runtime.read_result(10).unwrap(), Some(u64::MAX));
@@ -1807,16 +1812,16 @@ mod measurement_followups {
             let source = r#"
                 @payload = private constant [3 x i8] c"\00\FF\07"
                 @label = private constant [8 x i8] c"observed"
-                declare i32 @__quantum__qis__m__body(i64, i64)
+                declare i64 @___lazy_measure(i64)
                 declare { i32, i64 } @selene_custom_runtime_call(ptr, i64, ptr, i64)
                 declare void @___inc_future_refcount(i64)
                 declare void @___dec_future_refcount(i64)
                 declare void @print_uint_selene(ptr, i64, i64)
                 define i64 @qmain(i64 %shot) {
-                    %m = call i32 @__quantum__qis__m__body(i64 0, i64 0)
-                    %n = call i32 @__quantum__qis__m__body(i64 0, i64 1)
-                    call void @___inc_future_refcount(i64 0)
-                    call void @___dec_future_refcount(i64 1)
+                    %m = call i64 @___lazy_measure(i64 0)
+                    %n = call i64 @___lazy_measure(i64 0)
+                    call void @___inc_future_refcount(i64 %m)
+                    call void @___dec_future_refcount(i64 %n)
                     %b = call { i32, i64 } @selene_custom_runtime_call(ptr null, i64 88, ptr @payload, i64 3)
                     %value = extractvalue { i32, i64 } %b, 1
                     call void @print_uint_selene(ptr @label, i64 8, i64 %value)

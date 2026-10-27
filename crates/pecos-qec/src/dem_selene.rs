@@ -19,7 +19,9 @@ use pecos_qis::{
     OperationTraceChunk, OperationTraceStore, QisEngineBuilder, SeleneRuntime,
     helios_interface_builder, qis_engine, selene_simple_runtime,
 };
-use pecos_qis_ffi_types::{NamedResult, NamedResultTrace, Operation, QuantumOp};
+use pecos_qis_ffi_types::{
+    NamedResult, NamedResultTrace, Operation, QuantumOp, RuntimeRequest, SeleneRequest,
+};
 use pecos_quantum::{Attribute, TickCircuit, pass};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -155,7 +157,7 @@ fn validate_shot(shot: &[OperationTraceChunk]) -> Result<(), DemBuildError> {
         if chunk
             .operations
             .iter()
-            .any(|op| matches!(op, Operation::Quantum(_)))
+            .any(|op| matches!(op, Operation::Quantum(_) | Operation::RuntimeRequest { .. }))
             && chunk.lowered_quantum_ops.is_empty()
             && !chunk.runtime_lowering_deferred
         {
@@ -197,9 +199,11 @@ fn source_ids(shot: &[OperationTraceChunk]) -> Result<Vec<usize>, DemBuildError>
         .iter()
         .flat_map(|chunk| &chunk.operations)
         .filter_map(|operation| match operation {
-            Operation::Quantum(QuantumOp::Measure(_, id) | QuantumOp::MeasureLeaked(_, id)) => {
-                Some(*id)
-            }
+            Operation::Quantum(QuantumOp::Measure(_, id) | QuantumOp::MeasureLeaked(_, id))
+            | Operation::RuntimeRequest {
+                request: RuntimeRequest::Native(SeleneRequest::Measure { result_id: id, .. }),
+                ..
+            } => Some(*id),
             _ => None,
         })
         .collect();
@@ -888,6 +892,25 @@ mod tests {
         let mut last = chunk(1, "trace_complete");
         last.measurement_results.insert(7, 1);
         vec![first, last]
+    }
+
+    #[test]
+    fn native_measurements_preserve_dense_source_ids_and_require_lowered_output() {
+        let mut shot = trace();
+        shot[0].operations = vec![Operation::RuntimeRequest {
+            request: RuntimeRequest::Native(SeleneRequest::Measure {
+                qubit: 0,
+                result_id: 7,
+                leaked: false,
+            }),
+            result_id: Some(pecos_qis_ffi_types::RUNTIME_REQUEST_RESULT_ID),
+        }];
+        assert_eq!(source_ids(&shot).unwrap(), [7]);
+        validate_shot(&shot).unwrap();
+        shot[0].lowered_quantum_ops.clear();
+        assert!(validate_shot(&shot).is_err());
+        shot[0].runtime_lowering_deferred = true;
+        validate_shot(&shot).unwrap();
     }
 
     fn deferred_trace() -> TraceShot {

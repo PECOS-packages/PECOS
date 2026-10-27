@@ -239,6 +239,7 @@ fn check_context_status(status: i32, operation: &str) -> Result<(), InterfaceErr
         0 => return Ok(()),
         1 => "null execution context",
         2 => "poisoned execution context lock",
+        4 => "unknown native future provenance; cannot certify an operation trace",
         _ => "invalid data or serialization failure",
     };
     Err(InterfaceError::ExecutionError(format!(
@@ -2320,6 +2321,23 @@ impl QisInterface for QisHeliosInterface {
         self.execution_context = Some(Arc::new(context));
         self.dynamic_mode = true;
         Ok(())
+    }
+
+    fn set_native_selene_handles(&mut self, enabled: bool) -> Result<(), InterfaceError> {
+        let lib = Self::get_qis_ffi_lib_singleton()?;
+        let configure: Symbol<unsafe extern "C" fn(*mut ExecutionContext, bool) -> i32> = unsafe {
+            lib.get(b"pecos_set_native_selene_handles\0").map_err(|e| {
+                InterfaceError::ExecutionError(format!("Missing native handle configuration: {e}"))
+            })?
+        };
+        let context = self
+            .execution_context
+            .as_ref()
+            .ok_or_else(|| InterfaceError::ExecutionError("no dynamic context".into()))?;
+        check_context_status(
+            unsafe { configure(context.0, enabled) },
+            "configure native Selene handles",
+        )
     }
 
     fn disable_dynamic_mode(&mut self) -> Result<(), InterfaceError> {

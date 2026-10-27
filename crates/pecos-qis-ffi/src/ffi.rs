@@ -797,7 +797,14 @@ pub unsafe extern "C-unwind" fn pecos_qis_trace_metadata_direct(
 // They provide the same functionality as the QIS-style functions above but with
 // different names to support Selene-generated LLVM IR.
 
-ffi_gate_1q!(___reset, Reset);
+/// Reset a Selene qubit using the selected runtime protocol.
+///
+/// # Safety
+/// Callers must obey the execution guard and recovery discipline.
+#[unsafe(no_mangle)]
+pub unsafe extern "C-unwind" fn ___reset(qubit: i64) {
+    unsafe { crate::selene::selene_qubit_reset(std::ptr::null_mut(), qubit.cast_unsigned()) };
+}
 
 /// RXY rotation (Selene-style)
 ///
@@ -806,6 +813,13 @@ ffi_gate_1q!(___reset, Reset);
 /// non-negative qubit ID that fits in usize. Invalid IDs produce a program error.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn ___rxy(qubit: i64, theta: f64, phi: f64) {
+    if crate::uses_native_selene_handles() {
+        unsafe {
+            crate::selene::selene_rxy(std::ptr::null_mut(), qubit.cast_unsigned(), theta, phi)
+        };
+        return;
+    }
+
     // Delegate to the QIS-style function
     unsafe { __quantum__qis__r1xy__body(theta, phi, qubit) };
 }
@@ -817,6 +831,11 @@ pub unsafe extern "C-unwind" fn ___rxy(qubit: i64, theta: f64, phi: f64) {
 /// non-negative qubit ID that fits in usize. Invalid IDs produce a program error.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn ___rz(qubit: i64, theta: f64) {
+    if crate::uses_native_selene_handles() {
+        unsafe { crate::selene::selene_rz(std::ptr::null_mut(), qubit.cast_unsigned(), theta) };
+        return;
+    }
+
     // Delegate to the QIS-style function
     unsafe { __quantum__qis__rz__body(theta, qubit) };
 }
@@ -828,6 +847,18 @@ pub unsafe extern "C-unwind" fn ___rz(qubit: i64, theta: f64) {
 /// non-negative qubit IDs that fit in usize. Invalid IDs produce a program error.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn ___rzz(qubit1: i64, qubit2: i64, theta: f64) {
+    if crate::uses_native_selene_handles() {
+        unsafe {
+            crate::selene::selene_rzz(
+                std::ptr::null_mut(),
+                qubit1.cast_unsigned(),
+                qubit2.cast_unsigned(),
+                theta,
+            )
+        };
+        return;
+    }
+
     // Delegate to the QIS-style function
     unsafe { __quantum__qis__rzz__body(theta, qubit1, qubit2) };
 }
@@ -838,6 +869,20 @@ pub unsafe extern "C-unwind" fn ___rzz(qubit1: i64, qubit2: i64, theta: f64) {
 /// Called from C/LLVM code. Qubits must be valid non-negative IDs that fit in usize.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn ___rpp(qubit1: i64, qubit2: i64, theta: f64, phi: f64) {
+    if crate::uses_native_selene_handles() {
+        unsafe {
+            crate::selene::native_request(
+                pecos_qis_ffi_types::SeleneRequest::Rpp {
+                    qubits: [qubit1.cast_unsigned(), qubit2.cast_unsigned()],
+                    theta,
+                    phi,
+                },
+                "___rpp",
+            )
+        };
+        return;
+    }
+
     checkpoint!();
     let q1 = checked_ffi_id!("___rpp", qubit1, usize);
     let q2 = checked_ffi_id!("___rpp", qubit2, usize);
@@ -852,6 +897,12 @@ pub unsafe extern "C-unwind" fn ___rpp(qubit1: i64, qubit2: i64, theta: f64, phi
 /// This function is safe to call from C/LLVM code.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn ___qalloc() -> i64 {
+    if crate::uses_native_selene_handles() {
+        return unsafe { crate::selene::selene_qalloc(std::ptr::null_mut()) }
+            .value
+            .cast_signed();
+    }
+
     // Delegate to the QIS-style function
     unsafe { __quantum__rt__qubit_allocate() }
 }
@@ -863,6 +914,11 @@ pub unsafe extern "C-unwind" fn ___qalloc() -> i64 {
 /// non-negative qubit ID that fits in usize. Invalid IDs produce a program error.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn ___qfree(qubit: i64) {
+    if crate::uses_native_selene_handles() {
+        unsafe { crate::selene::selene_qfree(std::ptr::null_mut(), qubit.cast_unsigned()) };
+        return;
+    }
+
     // Delegate to the QIS-style function
     unsafe { __quantum__rt__qubit_release(qubit) };
 }
@@ -893,6 +949,14 @@ ffi_gate_2q!(___cx, CX);
 /// Returns the allocated result ID as i64.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn ___lazy_measure(qubit: i64) -> i64 {
+    if crate::uses_native_selene_handles() {
+        return unsafe {
+            crate::selene::selene_qubit_lazy_measure(std::ptr::null_mut(), qubit.cast_unsigned())
+        }
+        .reference
+        .cast_signed();
+    }
+
     checkpoint!(0);
     let qubit_id = checked_ffi_id!(stringify!(___lazy_measure), qubit, usize);
     let allocated_id = with_interface(|interface| {
@@ -913,6 +977,17 @@ pub unsafe extern "C-unwind" fn ___lazy_measure(qubit: i64) -> i64 {
 /// The same requirements as [`___lazy_measure`] apply.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn ___lazy_measure_leaked(qubit: i64) -> i64 {
+    if crate::uses_native_selene_handles() {
+        return unsafe {
+            crate::selene::selene_qubit_lazy_measure_leaked(
+                std::ptr::null_mut(),
+                qubit.cast_unsigned(),
+            )
+        }
+        .reference
+        .cast_signed();
+    }
+
     checkpoint!(0);
     let qubit_id = checked_ffi_id!(stringify!(___lazy_measure_leaked), qubit, usize);
     let allocated_id = with_interface(|interface| {
@@ -943,6 +1018,13 @@ pub unsafe extern "C-unwind" fn ___lazy_measure_leaked(qubit: i64) -> i64 {
 /// Returns the boolean measurement result (true = 1, false = 0).
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn ___read_future_bool(future_id: i64) -> bool {
+    if crate::uses_native_selene_handles() {
+        return unsafe {
+            crate::selene::selene_future_read_bool(std::ptr::null_mut(), future_id.cast_unsigned())
+        }
+        .value;
+    }
+
     checkpoint!(false);
     log::debug!("___read_future_bool called with future_id={future_id}");
     let result_id = checked_ffi_id!(stringify!(___read_future_bool), future_id, usize);
@@ -989,6 +1071,13 @@ pub unsafe extern "C-unwind" fn ___read_future_bool(future_id: i64) -> bool {
 /// The same requirements as [`___read_future_bool`] apply.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn ___read_future_uint(future_id: i64) -> u64 {
+    if crate::uses_native_selene_handles() {
+        return unsafe {
+            crate::selene::selene_future_read_u64(std::ptr::null_mut(), future_id.cast_unsigned())
+        }
+        .value;
+    }
+
     checkpoint!(0);
     log::debug!("___read_future_uint called with future_id={future_id}");
     let result_id = checked_ffi_id!(stringify!(___read_future_uint), future_id, usize);
@@ -1003,6 +1092,35 @@ pub unsafe extern "C-unwind" fn ___read_future_uint(future_id: i64) -> u64 {
     // behavior so bounded probing and repeat-until-success termination remain
     // consistent with ordinary measurements.
     u64::from(unsafe { ___read_future_bool(future_id) })
+}
+
+/// Eager measurement in the Selene Helios ABI.
+///
+/// # Safety
+/// Callers must obey the execution guard and recovery discipline.
+#[unsafe(no_mangle)]
+pub unsafe extern "C-unwind" fn ___measure(qubit: u64) -> bool {
+    unsafe { crate::selene::selene_qubit_measure(std::ptr::null_mut(), qubit) }.value
+}
+
+/// Scoped barrier in the Selene Helios ABI.
+///
+/// # Safety
+/// The input must contain `length` readable qubit handles.
+#[unsafe(no_mangle)]
+pub unsafe extern "C-unwind" fn ___barrier(qubits: *const u64, length: u64) {
+    unsafe { crate::selene::selene_local_barrier(std::ptr::null_mut(), qubits, length, 0) };
+}
+
+/// Scoped sleep in the Selene Helios ABI, in integer nanoseconds.
+///
+/// # Safety
+/// The input must contain `length` readable qubit handles.
+#[unsafe(no_mangle)]
+pub unsafe extern "C-unwind" fn ___sleep(qubits: *const u64, length: u64, nanoseconds: u64) {
+    unsafe {
+        crate::selene::selene_local_barrier(std::ptr::null_mut(), qubits, length, nanoseconds)
+    };
 }
 
 /// Reset the collection mode read counter.
@@ -1020,6 +1138,16 @@ pub fn reset_collection_read_count() {
 /// the execution guard and recovery discipline.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn ___inc_future_refcount(future_id: i64) {
+    if crate::uses_native_selene_handles() {
+        unsafe {
+            crate::selene::selene_refcount_increment(
+                std::ptr::null_mut(),
+                future_id.cast_unsigned(),
+            )
+        };
+        return;
+    }
+
     checkpoint!();
     let result = checked_ffi_id!("___inc_future_refcount", future_id, u64);
     unsafe { crate::selene::selene_refcount_increment(std::ptr::null_mut(), result) };
@@ -1031,6 +1159,16 @@ pub unsafe extern "C-unwind" fn ___inc_future_refcount(future_id: i64) {
 /// The same requirements as [`___inc_future_refcount`] apply.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn ___dec_future_refcount(future_id: i64) {
+    if crate::uses_native_selene_handles() {
+        unsafe {
+            crate::selene::selene_refcount_decrement(
+                std::ptr::null_mut(),
+                future_id.cast_unsigned(),
+            )
+        };
+        return;
+    }
+
     checkpoint!();
     let result = checked_ffi_id!("___dec_future_refcount", future_id, u64);
     unsafe { crate::selene::selene_refcount_decrement(std::ptr::null_mut(), result) };

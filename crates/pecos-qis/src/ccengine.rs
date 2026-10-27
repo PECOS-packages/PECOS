@@ -587,8 +587,12 @@ impl QisEngine {
             pending.outstanding -= 1;
             if pending.outstanding == 0 {
                 self.pending_measurements.remove(&result_id);
-                self.measurement_results.insert(result_id, value);
-                current.push((result_id, value));
+                if result_id != pecos_qis_ffi_types::RUNTIME_OWNED_MEASUREMENT_ID
+                    || !self.runtime.uses_native_runtime_protocol()
+                {
+                    self.measurement_results.insert(result_id, value);
+                    current.push((result_id, value));
+                }
                 debug!("QisEngine: Stored current result_id={result_id}, value={value}");
             }
         }
@@ -1511,7 +1515,9 @@ impl QisEngine {
             lowered_quantum_ops_complete,
             runtime_lowering_deferred: self.runtime.supports_operation_lowering()
                 && lowered_quantum_ops.is_some_and(|lowered| lowered.is_empty)
-                && ops.iter().any(|op| matches!(op, Operation::Quantum(_))),
+                && ops.iter().any(|op| {
+                    matches!(op, Operation::Quantum(_) | Operation::RuntimeRequest { .. })
+                }),
             runtime_events_complete: self.runtime.runtime_events_complete(),
             named_result_traces: Vec::new(),
             named_results: BTreeMap::new(),
@@ -1654,23 +1660,35 @@ impl QisEngine {
         );
     }
 
-    fn trace_named_result_traces_from_dynamic_handle(&mut self) {
+    fn trace_named_result_traces_from_dynamic_handle(&mut self) -> Result<(), PecosError> {
+        if self.operation_trace_dir.is_none() && self.operation_trace_collector.is_none() {
+            return Ok(());
+        }
         let (named_result_traces, named_results) = if let Some(state) = &self.dynamic_state
             && let Some(handle) = &state.sync_handle
         {
-            let traces = handle.get_named_result_traces().unwrap_or_else(|e| {
-                debug!("QisEngine: Failed to get named result traces: {e}");
-                Vec::new()
-            });
-            let results = handle.get_named_results().unwrap_or_else(|e| {
-                debug!("QisEngine: Failed to get named results: {e}");
-                BTreeMap::new()
-            });
+            let traces = handle.get_named_result_traces().map_err(|e| {
+                PecosError::Generic(format!("Failed to get named result traces: {e}"))
+            })?;
+            let results = handle
+                .get_named_results()
+                .map_err(|e| PecosError::Generic(format!("Failed to get named results: {e}")))?;
             (traces, results)
         } else {
             (Vec::new(), BTreeMap::new())
         };
+        if named_result_traces.iter().any(|trace| {
+            trace
+                .result_ids
+                .iter()
+                .any(|id| *id >= pecos_qis_ffi_types::RUNTIME_REQUEST_RESULT_ID)
+        }) {
+            return Err(self.latch_terminal_error(
+                "named output has unknown native future provenance after an opaque custom call; cannot certify an operation trace".into()
+            ));
+        }
         self.trace_named_result_traces_chunk(&named_result_traces, named_results);
+        Ok(())
     }
 
     /// Start the LLVM program execution in a worker thread
@@ -1696,6 +1714,10 @@ impl QisEngine {
         interface
             .enable_dynamic_mode()
             .map_err(|e| PecosError::Generic(format!("Failed to enable dynamic mode: {e}")))?;
+
+        interface
+            .set_native_selene_handles(self.runtime.uses_native_runtime_protocol())
+            .map_err(|e| PecosError::Generic(format!("Failed to configure Selene handles: {e}")))?;
 
         // Get the sync handle BEFORE moving the interface
         // This handle uses the same singleton library as the worker, ensuring TLS consistency
@@ -1912,7 +1934,14 @@ impl QisEngine {
         for op in operations {
             if let Operation::Quantum(
                 QuantumOp::Measure(_, result_id) | QuantumOp::MeasureLeaked(_, result_id),
-            ) = op
+            )
+            | Operation::RuntimeRequest {
+                request:
+                    pecos_qis_ffi_types::RuntimeRequest::Native(
+                        pecos_qis_ffi_types::SeleneRequest::Measure { result_id, .. },
+                    ),
+                ..
+            } = op
             {
                 let pending = self.pending_measurements.entry(*result_id).or_default();
                 pending.outstanding += 1;
@@ -1922,12 +1951,27 @@ impl QisEngine {
         }
     }
 
-    /// Every emission must consume an imported credit. The returned count
-    /// bounds the number of progressing drains while the worker is blocked.
+    /// Source emissions consume imported credits. Native runtime-owned emissions
+    /// use a separate feedback lane, bounded by the runtime extraction budget.
     fn register_emitted_measurements(&mut self) -> Result<usize, PecosError> {
         let mut consumed = 0;
         for index in 0..self.measurement_mapping.len() {
             let result_id = self.measurement_mapping[index];
+            if result_id == pecos_qis_ffi_types::RUNTIME_OWNED_MEASUREMENT_ID
+                && self.runtime.uses_native_runtime_protocol()
+            {
+                if self.operation_trace_dir.is_some() || self.operation_trace_collector.is_some() {
+                    return Err(self.latch_terminal_error(
+                        "runtime-owned measurement has no source provenance; operation tracing cannot certify it".into()
+                    ));
+                }
+                self.pending_measurements
+                    .entry(result_id)
+                    .or_default()
+                    .outstanding += 1;
+                consumed += 1;
+                continue;
+            }
             let Some(pending) = self
                 .pending_measurements
                 .get_mut(&result_id)
@@ -2288,7 +2332,7 @@ impl QisEngine {
                 return Ok(commands);
             }
         }
-        self.trace_named_result_traces_from_dynamic_handle();
+        self.trace_named_result_traces_from_dynamic_handle()?;
         self.trace_complete_chunk();
         if let Some(ref mut state) = self.dynamic_state {
             state.finalized = true;
@@ -3527,7 +3571,7 @@ mod tests {
         }
     }
 
-    // Compatibility: Selene rejects dangling global and qubit-scoped metadata in its chunk.
+    // Source annotations may cross chunks, but must be consumed before shot completion.
     #[cfg(feature = "selene-runtimes")]
     #[test]
     fn prep_metadata_dangling_selene() {
@@ -3542,7 +3586,7 @@ mod tests {
             ),
         ] {
             let mut engine = prep_test_engine(true);
-            let error = engine
+            engine
                 .lower_operations_to_commands(&[
                     QuantumOp::Reset(7).into(),
                     Operation::TraceMetadata {
@@ -3550,8 +3594,8 @@ mod tests {
                         qubit,
                     },
                 ])
-                .err()
-                .expect("dangling metadata must fail in its own chunk");
+                .unwrap();
+            let error = engine.runtime.finish_operations().unwrap_err();
             assert!(error.to_string().contains(message), "{error}");
         }
     }

@@ -4,12 +4,13 @@ use super::*;
 use crate::test_env::ENV_MUTEX;
 
 // Explicit public ABI surface: adding or removing an entry requires review.
-const SELENE_EXPORTS: [&str; 44] = [
+const SELENE_EXPORTS: [&str; 45] = [
     "selene_qalloc",
     "selene_qfree",
     "selene_rxy",
     "selene_rz",
     "selene_rzz",
+    "selene_rpp",
     "selene_qubit_reset",
     "selene_qubit_measure",
     "selene_qubit_lazy_measure",

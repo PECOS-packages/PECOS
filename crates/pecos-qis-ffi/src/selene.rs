@@ -5,7 +5,7 @@
 //! Instance pointers and string ownership flags are ignored, as in the Selene ABI.
 
 use crate::ffi;
-use pecos_qis_ffi_types::{Operation, RUNTIME_REQUEST_RESULT_ID, RuntimeRequest};
+use pecos_qis_ffi_types::{Operation, RUNTIME_REQUEST_RESULT_ID, RuntimeRequest, SeleneRequest};
 use std::ffi::{c_char, c_int};
 use std::sync::atomic::Ordering;
 
@@ -83,6 +83,10 @@ fn c_size_t(length: u64) -> usize {
 /// and recovery discipline documented in this module.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn selene_qalloc(_instance: *mut SeleneInstance) -> SeleneU64Result {
+    if crate::uses_native_selene_handles() {
+        return unsafe { native_request(SeleneRequest::Qalloc, "selene_qalloc") };
+    }
+
     let id = unsafe { ffi::__quantum__rt__qubit_allocate() };
     if id < 0 {
         return SeleneU64Result {
@@ -106,6 +110,13 @@ pub unsafe extern "C-unwind" fn selene_qfree(
     _instance: *mut SeleneInstance,
     q: u64,
 ) -> SeleneVoidResult {
+    if crate::uses_native_selene_handles() {
+        return SeleneVoidResult {
+            error_code: unsafe { native_request(SeleneRequest::Qfree(q), "selene_qfree") }
+                .error_code,
+        };
+    }
+
     unsafe { ffi::__quantum__rt__qubit_release(q.cast_signed()) };
     SeleneVoidResult { error_code: 0 }
 }
@@ -122,6 +133,22 @@ pub unsafe extern "C-unwind" fn selene_rxy(
     theta: f64,
     phi: f64,
 ) -> SeleneVoidResult {
+    if crate::uses_native_selene_handles() {
+        return SeleneVoidResult {
+            error_code: unsafe {
+                native_request(
+                    SeleneRequest::Rxy {
+                        qubit: q,
+                        theta,
+                        phi,
+                    },
+                    "selene_rxy",
+                )
+            }
+            .error_code,
+        };
+    }
+
     unsafe { ffi::__quantum__qis__r1xy__body(theta, phi, q.cast_signed()) };
     SeleneVoidResult { error_code: 0 }
 }
@@ -137,6 +164,15 @@ pub unsafe extern "C-unwind" fn selene_rz(
     q: u64,
     theta: f64,
 ) -> SeleneVoidResult {
+    if crate::uses_native_selene_handles() {
+        return SeleneVoidResult {
+            error_code: unsafe {
+                native_request(SeleneRequest::Rz { qubit: q, theta }, "selene_rz")
+            }
+            .error_code,
+        };
+    }
+
     unsafe { ffi::__quantum__qis__rz__body(theta, q.cast_signed()) };
     SeleneVoidResult { error_code: 0 }
 }
@@ -153,7 +189,53 @@ pub unsafe extern "C-unwind" fn selene_rzz(
     q2: u64,
     theta: f64,
 ) -> SeleneVoidResult {
+    if crate::uses_native_selene_handles() {
+        return SeleneVoidResult {
+            error_code: unsafe {
+                native_request(
+                    SeleneRequest::Rzz {
+                        qubits: [q1, q2],
+                        theta,
+                    },
+                    "selene_rzz",
+                )
+            }
+            .error_code,
+        };
+    }
+
     unsafe { ffi::__quantum__qis__rzz__body(theta, q1.cast_signed(), q2.cast_signed()) };
+    SeleneVoidResult { error_code: 0 }
+}
+
+/// Forward a two-qubit phased rotation through the Selene ABI.
+///
+/// # Safety
+/// Callers must obey the execution guard and recovery discipline.
+#[unsafe(no_mangle)]
+pub unsafe extern "C-unwind" fn selene_rpp(
+    _instance: *mut SeleneInstance,
+    q1: u64,
+    q2: u64,
+    theta: f64,
+    phi: f64,
+) -> SeleneVoidResult {
+    if crate::uses_native_selene_handles() {
+        return SeleneVoidResult {
+            error_code: unsafe {
+                native_request(
+                    SeleneRequest::Rpp {
+                        qubits: [q1, q2],
+                        theta,
+                        phi,
+                    },
+                    "selene_rpp",
+                )
+            }
+            .error_code,
+        };
+    }
+    unsafe { ffi::___rpp(q1.cast_signed(), q2.cast_signed(), theta, phi) };
     SeleneVoidResult { error_code: 0 }
 }
 
@@ -167,6 +249,13 @@ pub unsafe extern "C-unwind" fn selene_qubit_reset(
     _instance: *mut SeleneInstance,
     q: u64,
 ) -> SeleneVoidResult {
+    if crate::uses_native_selene_handles() {
+        return SeleneVoidResult {
+            error_code: unsafe { native_request(SeleneRequest::Reset(q), "selene_qubit_reset") }
+                .error_code,
+        };
+    }
+
     unsafe { ffi::__quantum__qis__reset__body(q.cast_signed()) };
     SeleneVoidResult { error_code: 0 }
 }
@@ -181,6 +270,17 @@ pub unsafe extern "C-unwind" fn selene_qubit_measure(
     _instance: *mut SeleneInstance,
     q: u64,
 ) -> SeleneBoolResult {
+    if crate::uses_native_selene_handles() {
+        let future = unsafe { native_measure(q, false) };
+        if future.error_code != 0 {
+            return SeleneBoolResult {
+                error_code: future.error_code,
+                value: false,
+            };
+        }
+        return unsafe { selene_future_read_bool(std::ptr::null_mut(), future.value) };
+    }
+
     let result = unsafe { ffi::__quantum__rt__result_allocate() };
     let placeholder = unsafe { ffi::__quantum__qis__m__body(q.cast_signed(), result) };
     let value = if crate::is_dynamic_mode_active() {
@@ -204,6 +304,14 @@ pub unsafe extern "C-unwind" fn selene_qubit_lazy_measure(
     _instance: *mut SeleneInstance,
     q: u64,
 ) -> SeleneFutureResult {
+    if crate::uses_native_selene_handles() {
+        let result = unsafe { native_measure(q, false) };
+        return SeleneFutureResult {
+            error_code: result.error_code,
+            reference: result.value,
+        };
+    }
+
     let result = unsafe { ffi::__quantum__rt__result_allocate() };
     unsafe { ffi::__quantum__qis__m__body(q.cast_signed(), result) };
     SeleneFutureResult {
@@ -222,6 +330,14 @@ pub unsafe extern "C-unwind" fn selene_qubit_lazy_measure_leaked(
     _instance: *mut SeleneInstance,
     q: u64,
 ) -> SeleneFutureResult {
+    if crate::uses_native_selene_handles() {
+        let result = unsafe { native_measure(q, true) };
+        return SeleneFutureResult {
+            error_code: result.error_code,
+            reference: result.value,
+        };
+    }
+
     let result = unsafe { ffi::___lazy_measure_leaked(q.cast_signed()) };
     SeleneFutureResult {
         error_code: 0,
@@ -239,6 +355,14 @@ pub unsafe extern "C-unwind" fn selene_future_read_bool(
     _instance: *mut SeleneInstance,
     r: u64,
 ) -> SeleneBoolResult {
+    if crate::uses_native_selene_handles() {
+        let response = unsafe { native_read(r, true) };
+        return SeleneBoolResult {
+            error_code: response.error_code,
+            value: response.value != 0,
+        };
+    }
+
     let value = unsafe { ffi::__quantum__rt__result_get_one(r.cast_signed()) };
     SeleneBoolResult {
         error_code: 0,
@@ -256,6 +380,10 @@ pub unsafe extern "C-unwind" fn selene_future_read_u64(
     _instance: *mut SeleneInstance,
     r: u64,
 ) -> SeleneU64Result {
+    if crate::uses_native_selene_handles() {
+        return unsafe { native_read(r, false) };
+    }
+
     let value = if crate::is_dynamic_mode_active() {
         unsafe { ffi::___read_future_uint(r.cast_signed()) }
     } else {
@@ -277,6 +405,21 @@ pub unsafe extern "C-unwind" fn selene_refcount_increment(
     _instance: *mut SeleneInstance,
     r: u64,
 ) -> SeleneVoidResult {
+    if crate::uses_native_selene_handles() {
+        return SeleneVoidResult {
+            error_code: unsafe {
+                native_request(
+                    SeleneRequest::Refcount {
+                        future: r,
+                        increment: true,
+                    },
+                    "selene_refcount_increment",
+                )
+            }
+            .error_code,
+        };
+    }
+
     let queued = queue_runtime_request(
         usize::try_from(r)
             .map(|result_id| RuntimeRequest::IncrementFutureRefcount { result_id })
@@ -298,6 +441,21 @@ pub unsafe extern "C-unwind" fn selene_refcount_decrement(
     _instance: *mut SeleneInstance,
     r: u64,
 ) -> SeleneVoidResult {
+    if crate::uses_native_selene_handles() {
+        return SeleneVoidResult {
+            error_code: unsafe {
+                native_request(
+                    SeleneRequest::Refcount {
+                        future: r,
+                        increment: false,
+                    },
+                    "selene_refcount_decrement",
+                )
+            }
+            .error_code,
+        };
+    }
+
     let queued = queue_runtime_request(
         usize::try_from(r)
             .map(|result_id| RuntimeRequest::DecrementFutureRefcount { result_id })
@@ -519,6 +677,80 @@ unsafe fn copy_input<T: Copy>(data: *const T, length: u64) -> Result<Vec<T>, Str
     Ok(unsafe { std::slice::from_raw_parts(data, count) }.to_vec())
 }
 
+// All owned request data is moved into the collector before waiting. No locks
+// or destructors remain live across the execution guard's transfer boundary.
+pub(crate) unsafe fn native_request(request: SeleneRequest, entry: &str) -> SeleneU64Result {
+    let queued = queue_runtime_request(Ok(RuntimeRequest::Native(request)));
+    unsafe { finish_runtime_request(queued, entry) }
+}
+
+unsafe fn native_measure(qubit: u64, leaked: bool) -> SeleneU64Result {
+    let result_id = crate::with_interface(pecos_qis_ffi_types::OperationCollector::allocate_result);
+    let response = unsafe {
+        native_request(
+            SeleneRequest::Measure {
+                qubit,
+                result_id,
+                leaked,
+            },
+            "selene lazy measurement",
+        )
+    };
+    if response.error_code == 0 {
+        let registered = register_native_future(response.value, result_id);
+        if let Err(reason) = registered {
+            unsafe { ffi::fatal_ffi_input("selene lazy measurement", reason) };
+        }
+    }
+    response
+}
+
+fn register_native_future(future: u64, result_id: usize) -> Result<(), String> {
+    let ctx = crate::get_execution_context().ok_or("no execution context")?;
+    unsafe { &*ctx }
+        .native_future_sources
+        .lock()
+        .map_err(|_| "poisoned native future provenance")?
+        .insert(future, result_id);
+    Ok(())
+}
+
+unsafe fn native_read(future: u64, boolean: bool) -> SeleneU64Result {
+    let response = unsafe {
+        native_request(
+            SeleneRequest::ReadFuture { future, boolean },
+            "selene future read",
+        )
+    };
+    if response.error_code == 0
+        && let Err(reason) = record_native_read(future)
+    {
+        unsafe { ffi::fatal_ffi_input("selene future provenance", reason) };
+    }
+    response
+}
+
+fn record_native_read(future: u64) -> Result<(), String> {
+    let ctx = crate::get_execution_context().ok_or("no execution context")?;
+    let ctx = unsafe { &*ctx };
+    let source = ctx
+        .native_future_sources
+        .lock()
+        .map_err(|_| "poisoned native future provenance")?
+        .get(&future)
+        .copied();
+    if source.is_none() {
+        ctx.native_provenance_unknown.store(true, Ordering::SeqCst);
+    }
+    // A custom-created future is readable, but has no observed source
+    // measurement. Audited DEM binding rejects this reserved provenance ID.
+    ctx.pending_result_reads
+        .lock()
+        .map_err(|_| "poisoned result provenance")?
+        .push(source.unwrap_or(RUNTIME_REQUEST_RESULT_ID));
+    Ok(())
+}
+
 fn queue_runtime_request(request: Result<RuntimeRequest, String>) -> Result<Option<usize>, String> {
     let request = request?;
     let dynamic = crate::is_dynamic_mode_active();
@@ -613,6 +845,21 @@ pub unsafe extern "C-unwind" fn selene_local_barrier(
     qubit_ids_length: u64,
     sleep_time: u64,
 ) -> SeleneVoidResult {
+    if crate::uses_native_selene_handles() {
+        let queued = queue_runtime_request(unsafe { copy_input(qubit_ids, qubit_ids_length) }.map(
+            |qubits| {
+                RuntimeRequest::Native(SeleneRequest::LocalBarrier {
+                    qubits,
+                    sleep_ns: sleep_time,
+                })
+            },
+        ));
+        return SeleneVoidResult {
+            error_code: unsafe { finish_runtime_request(queued, "selene_local_barrier") }
+                .error_code,
+        };
+    }
+
     let queued = queue_runtime_request(
         unsafe { copy_input(qubit_ids, qubit_ids_length) }.and_then(|ids| {
             let qubits = ids
@@ -890,7 +1137,27 @@ pub unsafe extern "C-unwind" fn selene_custom_runtime_call(
     let queued = queue_runtime_request(
         unsafe { copy_input(data, data_length) }.map(|data| RuntimeRequest::Custom { tag, data }),
     );
-    unsafe { finish_runtime_request(queued, "selene_custom_runtime_call") }
+    let response = unsafe { finish_runtime_request(queued, "selene_custom_runtime_call") };
+    if response.error_code == 0 && crate::uses_native_selene_handles() {
+        // The opaque contract may retire/recycle futures, including handles
+        // returned earlier. Subsequent reads remain executable, but a source
+        // relationship cannot be inferred across this boundary.
+        let cleared = invalidate_native_future_provenance();
+        if let Err(reason) = cleared {
+            unsafe { ffi::fatal_ffi_input("selene custom future provenance", reason) };
+        }
+    }
+    response
+}
+
+fn invalidate_native_future_provenance() -> Result<(), String> {
+    let ctx = crate::get_execution_context().ok_or("no execution context")?;
+    unsafe { &*ctx }
+        .native_future_sources
+        .lock()
+        .map_err(|_| "poisoned native future provenance")?
+        .clear();
+    Ok(())
 }
 
 unsafe extern "C-unwind" {

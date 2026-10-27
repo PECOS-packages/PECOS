@@ -447,3 +447,25 @@ def test_surface_module_legacy_names_remain_compatible() -> None:
     assert capture_guppy_operation_trace is pecos.capture_qis_operation_trace
     assert trace_guppy_into_tick_circuit is pecos.trace_program_to_tick_circuit
     assert normalize_traced_qis_tick_circuit is normalize_traced_tick_circuit
+
+
+@pytest.mark.parametrize("leaked", [False, True])
+def test_native_measurement_provenance_uses_source_slot(leaked) -> None:
+    trace = _completed_trace()
+    trace[0]["operations"][-1] = {
+        "RuntimeRequest": {
+            "request": {"Native": {"Measure": {"qubit": 0, "result_id": 7, "leaked": leaked}}},
+            "result_id": 2**64 - 2,
+        },
+    }
+    replayed = pecos.qis_operation_trace_to_tick_circuit(trace)
+    assert replayed.get_meta("qis_source_measurement_ids") == "[7]"
+
+
+def test_native_request_cannot_silently_lose_lowered_gates() -> None:
+    trace = _completed_trace()
+    trace[0]["operations"] = [{"RuntimeRequest": {"request": {"Custom": {"tag": 1, "data": []}}, "result_id": None}}]
+    trace[0]["num_operations"] = 1
+    trace[0]["lowered_quantum_ops"] = []
+    with pytest.raises(ValueError, match="does not contain lowered_quantum_ops"):
+        pecos.qis_operation_trace_to_tick_circuit(trace)

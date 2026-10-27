@@ -154,6 +154,15 @@ pub trait QisInterface: Send + Sync {
         ))
     }
 
+    /// Select native Selene handles when the execution runtime speaks that protocol.
+    /// Interfaces without a Selene ABI need no configuration.
+    ///
+    /// # Errors
+    /// Returns an error if the interface cannot configure its execution context.
+    fn set_native_selene_handles(&mut self, _enabled: bool) -> Result<(), InterfaceError> {
+        Ok(())
+    }
+
     /// Disable dynamic execution mode
     ///
     /// # Errors

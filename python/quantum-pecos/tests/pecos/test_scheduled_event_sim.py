@@ -464,13 +464,13 @@ def test_repeated_program_result_ids_reach_python_adapter(tmp_path, scheduled_su
     declare void @print_int_selene(ptr, i64, i64)
     declare i32 @__quantum__qis__m__body(i64, i64)
     declare void @__quantum__qis__x__body(i64)
-    declare i1 @___read_future_bool(i64)
+    declare i32 @__quantum__rt__result_get_one(i64)
     define i64 @qmain(i64 %shot) {
         %first = call i32 @__quantum__qis__m__body(i64 0, i64 7)
         call void @__quantum__qis__x__body(i64 0)
         %second = call i32 @__quantum__qis__m__body(i64 0, i64 7)
-        %read = call i1 @___read_future_bool(i64 7)
-        %value = zext i1 %read to i64
+        %read = call i32 @__quantum__rt__result_get_one(i64 7)
+        %value = zext i32 %read to i64
         call void @print_int_selene(ptr @tag, i64 6, i64 %value)
         ret i64 0
     }

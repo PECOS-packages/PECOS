@@ -416,7 +416,7 @@ fn empty_input_preserves_shot_engagement() {
                                 Vec::<QuantumOp>::new()
                             ),
                             2 => assert_eq!(
-                                runtime.drain_runtime_operations_bounded(false).unwrap(),
+                                runtime.drain_runtime_operations().unwrap(),
                                 Vec::<QuantumOp>::new()
                             ),
                             3 => {

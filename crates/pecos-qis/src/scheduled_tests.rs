@@ -173,7 +173,7 @@ fn byte_budget_applies_to_one_native_batch() {
 #[test]
 fn preflight_rejects_unsupported_inputs_without_loading_plugin() {
     for op in [
-        QuantumOp::Idle(1e-9, 0).into(),
+        QuantumOp::Idle(0.5e-9, 0).into(),
         QuantumOp::H(usize::MAX).into(),
         QuantumOp::CX(0, usize::MAX).into(),
         QuantumOp::CCX(0, 1, usize::MAX).into(),

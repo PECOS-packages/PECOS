@@ -10,7 +10,14 @@ mod operations;
 
 pub use named_results::{NamedResult, ProgramError};
 
-pub use operations::{LoweredQuantumOp, NamedResultTrace, Operation, QuantumOp, TraceMetadata};
+pub use operations::{
+    LoweredQuantumOp, NamedResultTrace, Operation, QuantumOp, RuntimeRequest, TraceMetadata,
+};
+
+/// Version of the ownership-transferring Rust data interface between the host
+/// and dynamically loaded QIS FFI library. Bump when shared types or exported
+/// function contracts change incompatibly; both artifacts must be rebuilt.
+pub const QIS_FFI_ABI_VERSION: u64 = 1;
 
 const DEFAULT_OPERATION_CAPACITY: usize = 1024;
 const DEFAULT_MEASUREMENT_CAPACITY: usize = 256;

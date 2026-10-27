@@ -5,7 +5,9 @@
 //! Instance pointers and string ownership flags are ignored, as in the Selene ABI.
 
 use crate::ffi;
+use pecos_qis_ffi_types::{Operation, RuntimeRequest};
 use std::ffi::{c_char, c_int};
+use std::sync::atomic::Ordering;
 
 /// Opaque Selene instance; operation collection uses thread-local state.
 #[repr(C)]
@@ -444,7 +446,7 @@ pub unsafe extern "C-unwind" fn selene_print_panic(
     SeleneVoidResult { error_code: 0 }
 }
 
-/// State dumping is unsupported; return success.
+/// State dumping requires simulator support and is currently unsupported.
 ///
 /// # Safety
 /// Instance pointers are ignored. Execution must obey the non-nested guard
@@ -456,10 +458,16 @@ pub unsafe extern "C-unwind" fn selene_dump_state(
     _qubits: *const u64,
     _qubits_length: u64,
 ) -> SeleneVoidResult {
-    SeleneVoidResult { error_code: 0 }
+    unsafe {
+        ffi::fatal_ffi_input(
+            "selene_dump_state",
+            "state dumping is unsupported by the PECOS execution interface".into(),
+        );
+    };
+    SeleneVoidResult { error_code: 1 }
 }
 
-/// Time cursors are unused; return success.
+/// Store the program's time cursor, as in Selene; this does not schedule work.
 ///
 /// # Safety
 /// Instance pointers are ignored. Execution must obey the non-nested guard
@@ -467,27 +475,136 @@ pub unsafe extern "C-unwind" fn selene_dump_state(
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn selene_set_tc(
     _instance: *mut SeleneInstance,
-    _time_cursor: u64,
+    time_cursor: u64,
 ) -> SeleneVoidResult {
-    SeleneVoidResult { error_code: 0 }
+    if let Some(ctx) = crate::get_execution_context() {
+        unsafe { &*ctx }
+            .time_cursor
+            .store(time_cursor, Ordering::SeqCst);
+        SeleneVoidResult { error_code: 0 }
+    } else {
+        SeleneVoidResult { error_code: 1 }
+    }
 }
 
-/// Local barriers are unused; return success.
+// Copy ABI input before waiting or transferring to the C guard. No borrowed
+// buffers, owned payloads, or locks may remain on transfer-capable frames.
+unsafe fn copy_input<T: Copy>(data: *const T, length: u64) -> Result<Vec<T>, String> {
+    let count = usize::try_from(length).map_err(|_| "input length exceeds usize")?;
+    if count > (isize::MAX as usize) / std::mem::size_of::<T>() {
+        return Err("input length exceeds isize::MAX bytes".into());
+    }
+    if count == 0 {
+        return Ok(Vec::new());
+    }
+    if data.is_null() || !data.is_aligned() {
+        return Err("nonempty input has a null or unaligned pointer".into());
+    }
+    Ok(unsafe { std::slice::from_raw_parts(data, count) }.to_vec())
+}
+
+fn queue_runtime_request(request: Result<RuntimeRequest, String>) -> Result<Option<usize>, String> {
+    let request = request?;
+    let dynamic = crate::is_dynamic_mode_active();
+    if !dynamic && matches!(request, RuntimeRequest::Custom { .. }) {
+        return Err(
+            "custom runtime calls require dynamic execution to obtain the runtime's response"
+                .into(),
+        );
+    }
+    let result_id = if dynamic {
+        let ctx = crate::get_execution_context().ok_or("no execution context")?;
+        let mut producers = unsafe { &*ctx }
+            .measured_results
+            .lock()
+            .map_err(|_| "poisoned result producer slots")?;
+        Some(crate::with_interface(|interface| {
+            // QIS programs may supply result IDs without allocating them through
+            // this collector. Never overwrite one with a host acknowledgement.
+            loop {
+                let id = interface.allocate_result();
+                if producers.insert(id) {
+                    break id;
+                }
+            }
+        }))
+    } else {
+        None
+    };
+    crate::with_interface(|interface| {
+        interface.queue_operation(Operation::RuntimeRequest { request, result_id });
+    });
+    Ok(result_id)
+}
+
+// This frame owns only scalar state when it transfers. Runtime request reads
+// deliberately do not record measurement provenance for named outputs.
+unsafe fn finish_runtime_request(
+    queued: Result<Option<usize>, String>,
+    entry: &str,
+) -> SeleneU64Result {
+    let id = match queued {
+        Ok(Some(id)) => id,
+        Ok(None) => {
+            return SeleneU64Result {
+                error_code: 0,
+                value: 0,
+            };
+        }
+        Err(reason) => {
+            unsafe { ffi::fatal_ffi_input(entry, reason) };
+            return SeleneU64Result {
+                error_code: 1,
+                value: 0,
+            };
+        }
+    };
+    if let Some(value) = crate::read_dynamic_result(id as u64, false) {
+        return SeleneU64Result {
+            error_code: 0,
+            value,
+        };
+    }
+    if let Some(transfer) = ffi::PROGRAM_PANIC_TRANSFER.get() {
+        unsafe { transfer() };
+    }
+    SeleneU64Result {
+        error_code: 1,
+        value: 0,
+    }
+}
+
+/// Forward a scoped barrier and its nanosecond delay to the runtime.
 ///
 /// # Safety
+/// A nonempty qubit buffer must contain the specified number of readable IDs.
 /// Instance pointers are ignored. Execution must obey the non-nested guard
 /// and recovery discipline documented in this module.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn selene_local_barrier(
     _instance: *mut SeleneInstance,
-    _qubit_ids: *const u64,
-    _qubit_ids_length: u64,
-    _sleep_time: u64,
+    qubit_ids: *const u64,
+    qubit_ids_length: u64,
+    sleep_time: u64,
 ) -> SeleneVoidResult {
-    SeleneVoidResult { error_code: 0 }
+    let queued = queue_runtime_request(
+        unsafe { copy_input(qubit_ids, qubit_ids_length) }.and_then(|ids| {
+            let qubits = ids
+                .into_iter()
+                .map(|id| usize::try_from(id).map_err(|_| "qubit ID exceeds usize".into()))
+                .collect::<Result<Vec<_>, String>>()?;
+            Ok(RuntimeRequest::LocalBarrier {
+                qubits,
+                sleep_ns: sleep_time,
+            })
+        }),
+    );
+    SeleneVoidResult {
+        error_code: unsafe { finish_runtime_request(queued, "selene_local_barrier") }.error_code,
+    }
 }
 
-/// Global barriers are unused; return success.
+/// Forward a global barrier and its nanosecond delay to the runtime.
 ///
 /// # Safety
 /// Instance pointers are ignored. Execution must obey the non-nested guard
@@ -495,9 +612,14 @@ pub unsafe extern "C-unwind" fn selene_local_barrier(
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn selene_global_barrier(
     _instance: *mut SeleneInstance,
-    _sleep_time: u64,
+    sleep_time: u64,
 ) -> SeleneVoidResult {
-    SeleneVoidResult { error_code: 0 }
+    let queued = queue_runtime_request(Ok(RuntimeRequest::GlobalBarrier {
+        sleep_ns: sleep_time,
+    }));
+    SeleneVoidResult {
+        error_code: unsafe { finish_runtime_request(queued, "selene_global_barrier") }.error_code,
+    }
 }
 
 /// Instance teardown is a no-op; return success.
@@ -510,16 +632,23 @@ pub unsafe extern "C-unwind" fn selene_exit(_instance: *mut SeleneInstance) -> S
     SeleneVoidResult { error_code: 0 }
 }
 
-/// Return the operation collection mode constant.
+/// Read the program time cursor, independently of the runtime clock.
 ///
 /// # Safety
 /// Instance pointers are ignored. Execution must obey the non-nested guard
 /// and recovery discipline documented in this module.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn selene_get_tc(_instance: *mut SeleneInstance) -> SeleneU64Result {
-    SeleneU64Result {
-        error_code: 0,
-        value: 0,
+    if let Some(ctx) = crate::get_execution_context() {
+        SeleneU64Result {
+            error_code: 0,
+            value: unsafe { &*ctx }.time_cursor.load(Ordering::SeqCst),
+        }
+    } else {
+        SeleneU64Result {
+            error_code: 1,
+            value: 0,
+        }
     }
 }
 
@@ -538,7 +667,7 @@ pub unsafe extern "C-unwind" fn selene_get_current_shot(
     }
 }
 
-/// Return the operation collection mode constant.
+/// Read the program time cursor, independently of the runtime clock.
 ///
 /// # Safety
 /// Instance pointers are ignored. Execution must obey the non-nested guard
@@ -719,22 +848,23 @@ pub unsafe extern "C-unwind" fn selene_random_f64(
     }
 }
 
-/// Custom runtime calls are unsupported; return zero.
+/// Forward opaque custom data and return the runtime response after processing its work.
 ///
 /// # Safety
+/// A nonempty data buffer must contain the specified number of readable bytes.
 /// Instance pointers are ignored. Execution must obey the non-nested guard
 /// and recovery discipline documented in this module.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn selene_custom_runtime_call(
     _instance: *mut SeleneInstance,
-    _tag: u64,
-    _data: *const u8,
-    _data_length: u64,
+    tag: u64,
+    data: *const u8,
+    data_length: u64,
 ) -> SeleneU64Result {
-    SeleneU64Result {
-        error_code: 0,
-        value: 0,
-    }
+    let queued = queue_runtime_request(
+        unsafe { copy_input(data, data_length) }.map(|data| RuntimeRequest::Custom { tag, data }),
+    );
+    unsafe { finish_runtime_request(queued, "selene_custom_runtime_call") }
 }
 
 unsafe extern "C-unwind" {
@@ -772,6 +902,148 @@ pub unsafe extern "C" fn pecos_call_void_main_with_setjmp(main: unsafe extern "C
 mod tests {
     use super::*;
     use std::mem::{align_of, offset_of, size_of};
+
+    struct Context(crate::ExecutionContext);
+    impl Context {
+        fn register(&mut self) {
+            unsafe { crate::pecos_register_execution_context(&raw mut self.0) };
+            crate::with_interface(pecos_qis_ffi_types::OperationCollector::reset);
+        }
+    }
+    impl Drop for Context {
+        fn drop(&mut self) {
+            unsafe { crate::pecos_register_execution_context(std::ptr::null_mut()) };
+        }
+    }
+
+    #[test]
+    fn time_cursor_is_context_local_and_resets_between_shots() {
+        let mut first = Context(crate::ExecutionContext::new());
+        let mut second = Context(crate::ExecutionContext::new());
+        first.register();
+        unsafe {
+            assert_eq!(selene_set_tc(std::ptr::null_mut(), u64::MAX).error_code, 0);
+            assert_eq!(selene_get_tc(std::ptr::null_mut()).value, u64::MAX);
+            second.register();
+            assert_eq!(selene_get_tc(std::ptr::null_mut()).value, 0);
+            first.register();
+            assert_eq!(selene_get_tc(std::ptr::null_mut()).value, u64::MAX);
+            first.0.reset_outputs();
+            assert_eq!(selene_get_tc(std::ptr::null_mut()).value, 0);
+        }
+    }
+
+    #[test]
+    fn barriers_preserve_scope_and_integer_nanoseconds_in_collection() {
+        let mut ctx = Context(crate::ExecutionContext::new());
+        ctx.register();
+        let qubits = [3, 1];
+        unsafe {
+            assert_eq!(
+                selene_local_barrier(std::ptr::null_mut(), qubits.as_ptr(), 2, 23).error_code,
+                0
+            );
+            assert_eq!(
+                selene_global_barrier(std::ptr::null_mut(), u64::MAX).error_code,
+                0
+            );
+        }
+        assert_eq!(
+            crate::with_interface(pecos_qis_ffi_types::OperationCollector::take_operations),
+            [
+                Operation::RuntimeRequest {
+                    request: RuntimeRequest::LocalBarrier {
+                        qubits: vec![3, 1],
+                        sleep_ns: 23
+                    },
+                    result_id: None
+                },
+                Operation::RuntimeRequest {
+                    request: RuntimeRequest::GlobalBarrier { sleep_ns: u64::MAX },
+                    result_id: None
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn unsupported_diagnostics_and_static_custom_calls_fail() {
+        let mut ctx = Context(crate::ExecutionContext::new());
+        ctx.register();
+        unsafe {
+            assert_ne!(
+                selene_dump_state(
+                    std::ptr::null_mut(),
+                    SeleneString {
+                        data: std::ptr::null(),
+                        length: 0,
+                        owned: false
+                    },
+                    std::ptr::null(),
+                    0
+                )
+                .error_code,
+                0
+            );
+            assert!(
+                ctx.0
+                    .program_error
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .unwrap()
+                    .to_string()
+                    .contains("state dumping is unsupported")
+            );
+            ctx.0.reset_outputs();
+            assert_ne!(
+                selene_custom_runtime_call(std::ptr::null_mut(), 0, std::ptr::null(), 0).error_code,
+                0
+            );
+            assert!(
+                ctx.0
+                    .program_error
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .unwrap()
+                    .to_string()
+                    .contains("require dynamic execution")
+            );
+        }
+    }
+
+    #[test]
+    fn request_responses_do_not_reuse_explicit_measurement_slots() {
+        let mut ctx = Context(crate::ExecutionContext::new());
+        ctx.register();
+        ctx.0.dynamic_mode_active.store(true, Ordering::SeqCst);
+        crate::queue_measurement(0, 0, false);
+        let id = queue_runtime_request(Ok(RuntimeRequest::GlobalBarrier { sleep_ns: 0 })).unwrap();
+        assert_eq!(id, Some(1));
+        assert_eq!(ctx.0.pending_result_reads.lock().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn invalid_request_buffers_fail_without_queuing() {
+        let mut ctx = Context(crate::ExecutionContext::new());
+        ctx.register();
+        unsafe {
+            assert_ne!(
+                selene_local_barrier(std::ptr::null_mut(), std::ptr::null(), 1, 0).error_code,
+                0
+            );
+            assert_ne!(
+                selene_custom_runtime_call(std::ptr::null_mut(), 0, std::ptr::null(), u64::MAX)
+                    .error_code,
+                0
+            );
+        }
+        assert_eq!(
+            crate::with_interface(pecos_qis_ffi_types::OperationCollector::take_operations),
+            []
+        );
+    }
 
     #[test]
     fn c_abi_layouts() {

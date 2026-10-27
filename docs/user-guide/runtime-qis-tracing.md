@@ -137,6 +137,12 @@ outcomes before asking for more batches. It polls any work made ready by that
 feedback before resuming source submissions or the program. The host also polls
 ready work after each native call, including calls within a decomposed gate.
 
+Explicit barrier requests and their nanosecond delays reach the runtime. Source
+Idle requests use the same timing interface; PECOS derives physical Idles only
+from emitted timestamps. A runtime that ignores a delay remains authoritative.
+Opaque custom calls also reach the runtime, and synchronous responses wait until
+its emitted work and feedback have been processed. See [runtime request semantics](selene-runtime-execution.md).
+
 At completion PECOS calls the runtime's `shot_end` hook and processes its output,
 including measurements and work released by their feedback. It adds no terminal
 barrier. A runtime may discard unobserved requests at end, as the public SoftRZ

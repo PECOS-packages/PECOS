@@ -269,7 +269,7 @@ fn soft_rz_unsupported_leaked_force_does_not_flush_a_reused_qubit() {
 }
 
 #[test]
-fn idle_releases_queued_work_on_its_qubit_before_passthrough() {
+fn idle_delegates_to_local_barrier_without_inventing_a_physical_delay() {
     for route in [Route::Flat, Route::Metadata] {
         let mut runtime = start(crate::selene_runtimes::selene_soft_rz_runtime().unwrap(), 1);
         let lowered = route.lower_and_read(
@@ -282,7 +282,9 @@ fn idle_releases_queued_work_on_its_qubit_before_passthrough() {
             ],
         );
         assert!(
-            matches!(lowered.last(), Some(QuantumOp::Idle(0.001, 0))),
+            !lowered
+                .iter()
+                .any(|op| matches!(op, QuantumOp::Idle(0.001, 0))),
             "{lowered:?}"
         );
         assert!(
@@ -511,18 +513,14 @@ fn reduced_native_set_rejects_before_any_plugin_submission() {
 }
 
 #[test]
-fn scheduled_idle_error_explains_missing_native_entry_point() {
+fn scheduled_idle_delegates_to_runtime_barrier() {
     let mut runtime = start(crate::selene_runtimes::selene_simple_runtime().unwrap(), 1);
-    let error = runtime
-        .lower_scheduled_operations(&[QuantumOp::Idle(0.25, 0).into()])
-        .unwrap_err()
-        .to_string();
-    assert!(error.contains("Idle(0.25, 0)"), "{error}");
-    assert!(
-        error.contains("scheduled extraction has no native idle entry point"),
-        "{error}"
+    assert_eq!(
+        runtime
+            .lower_scheduled_operations(&[QuantumOp::Idle(0.25, 0).into()])
+            .unwrap(),
+        []
     );
-    assert!(error.contains(&runtime.plugin_path), "{error}");
 }
 
 #[test]
@@ -1527,6 +1525,181 @@ mod measurement_followups {
         }
     }
 
+    unsafe extern "C" fn custom_request(
+        _: RuntimeInstance,
+        tag: u64,
+        data: *const c_void,
+        len: usize,
+        out: *mut u64,
+    ) -> i32 {
+        let data = unsafe { std::slice::from_raw_parts(data.cast::<u8>(), len) };
+        if data != [0, 255, 7] {
+            return 71;
+        }
+        if tag == 99 {
+            return 79;
+        }
+        if tag == 88 && DELIVERED.with_borrow(Vec::len) != 2 {
+            return 72;
+        }
+        if tag == 42 {
+            RELEASE.set(2);
+        }
+        unsafe {
+            *out = u64::MAX;
+        }
+        0
+    }
+
+    #[test]
+    fn custom_requests_release_work_and_preserve_full_width_responses() {
+        for route in Route::ALL {
+            with_descriptor(|mut runtime| {
+                RELEASE.set(0);
+                REQUIRE_FEEDBACK.set(true);
+                let request = |tag, result_id| Operation::RuntimeRequest {
+                    request: RuntimeRequest::Custom {
+                        tag,
+                        data: vec![0, 255, 7],
+                    },
+                    result_id: Some(result_id),
+                };
+                let first = route.lower_raw(
+                    &mut runtime,
+                    &[
+                        QuantumOp::Measure(0, 7).into(),
+                        QuantumOp::Measure(0, 8).into(),
+                        request(42, 9),
+                        request(88, 10),
+                    ],
+                );
+                assert!(first.contains(&QuantumOp::Measure(0, 7)));
+                assert!(!runtime.runtime_responses.contains_key(&10));
+                runtime.provide_measurement_outcomes(vec![(7, 0)]).unwrap();
+                assert!(
+                    route
+                        .lower_raw(&mut runtime, &[])
+                        .contains(&QuantumOp::Measure(0, 8))
+                );
+                assert!(!runtime.runtime_responses.contains_key(&10));
+                runtime.provide_measurement_outcomes(vec![(8, 1)]).unwrap();
+                assert_eq!(route.lower_raw(&mut runtime, &[]), []);
+                assert_eq!(runtime.read_result(9).unwrap(), Some(u64::MAX));
+                assert_eq!(runtime.read_result(10).unwrap(), Some(u64::MAX));
+                assert!(FORCED.with_borrow(Vec::is_empty));
+            });
+        }
+    }
+
+    #[test]
+    fn later_measurement_reusing_a_request_slot_reads_the_native_future() {
+        for leaked in [false, true] {
+            with_descriptor(|mut runtime| {
+                RELEASE.set(0);
+                Route::Flat.lower_raw(
+                    &mut runtime,
+                    &[Operation::RuntimeRequest {
+                        request: RuntimeRequest::Custom {
+                            tag: 0,
+                            data: vec![0, 255, 7],
+                        },
+                        result_id: Some(7),
+                    }],
+                );
+                assert_eq!(runtime.read_result(7).unwrap(), Some(u64::MAX));
+                GETTER_VALUE.set(Some(1));
+                Route::Flat.lower_raw(
+                    &mut runtime,
+                    &[if leaked {
+                        QuantumOp::MeasureLeaked(0, 7)
+                    } else {
+                        QuantumOp::Measure(0, 7)
+                    }
+                    .into()],
+                );
+                assert_eq!(runtime.read_result(7).unwrap(), Some(1));
+            });
+        }
+    }
+
+    #[test]
+    fn custom_request_errors_are_terminal() {
+        with_descriptor(|mut runtime| {
+            let error = runtime
+                .lower_operations(&[Operation::RuntimeRequest {
+                    request: RuntimeRequest::Custom {
+                        tag: 99,
+                        data: vec![0, 255, 7],
+                    },
+                    result_id: Some(0),
+                }])
+                .unwrap_err()
+                .to_string();
+            assert!(
+                error.contains("custom_call failed with errno 79"),
+                "{error}"
+            );
+            assert!(runtime.lower_operations(&[]).is_err());
+        });
+    }
+
+    #[test]
+    fn engine_waits_for_custom_request_feedback_before_resuming_program() {
+        use pecos_engines::{ClassicalEngine, ControlEngine, Engine, EngineStage, StateVecEngine};
+        let _lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+        with_descriptor(|mut runtime| {
+            runtime.reset().unwrap();
+            RELEASE.set(0);
+            REQUIRE_FEEDBACK.set(true);
+            let source = r#"
+                @payload = private constant [3 x i8] c"\00\FF\07"
+                @label = private constant [8 x i8] c"observed"
+                declare i32 @__quantum__qis__m__body(i64, i64)
+                declare { i32, i64 } @selene_custom_runtime_call(ptr, i64, ptr, i64)
+                declare void @print_uint_selene(ptr, i64, i64)
+                define i64 @qmain(i64 %shot) {
+                    %m = call i32 @__quantum__qis__m__body(i64 0, i64 0)
+                    %n = call i32 @__quantum__qis__m__body(i64 0, i64 1)
+                    %a = call { i32, i64 } @selene_custom_runtime_call(ptr null, i64 42, ptr @payload, i64 3)
+                    %b = call { i32, i64 } @selene_custom_runtime_call(ptr null, i64 88, ptr @payload, i64 3)
+                    %value = extractvalue { i32, i64 } %b, 1
+                    call void @print_uint_selene(ptr @label, i64 8, i64 %value)
+                    ret i64 0
+                }
+            "#;
+            let mut engine = crate::QisEngine::new(
+                Box::new(crate::QisHeliosInterface::new()),
+                Box::new(runtime),
+            );
+            engine.set_num_qubits_hint(1);
+            engine
+                .load_program(source.as_bytes(), crate::ProgramFormat::LlvmIrText)
+                .unwrap();
+            let mut quantum = StateVecEngine::new(1);
+            let mut stage = engine.start(()).unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            loop {
+                assert!(std::time::Instant::now() < deadline);
+                match stage {
+                    EngineStage::NeedsProcessing(commands) => {
+                        stage = engine
+                            .continue_processing(quantum.process(commands).unwrap())
+                            .unwrap();
+                    }
+                    EngineStage::Complete(shot) => {
+                        assert_eq!(
+                            shot.data["observed"],
+                            pecos_engines::shot_results::Data::U64(u64::MAX)
+                        );
+                        break;
+                    }
+                }
+            }
+            assert_eq!(DELIVERED.with_borrow(Vec::len), 2);
+            assert!(FORCED.with_borrow(Vec::is_empty));
+        });
+    }
+
     fn with_descriptor(run: impl FnOnce(SeleneRuntime)) {
         let executable = std::env::current_exe().unwrap();
         let source = crate::selene_runtimes::find_library_in_dir(
@@ -1543,6 +1716,7 @@ mod measurement_followups {
             Box::new(unsafe { SeleneRuntime::runtime_plugin_descriptor(&library).unwrap() });
         ORIGINAL.set(Some(*descriptor));
         descriptor.get_bool_result_fn = get_bool;
+        descriptor.custom_call_fn = Some(custom_request);
         descriptor.get_u64_result_fn = get_u64;
         descriptor.shot_end_fn = end;
         descriptor.rxy_gate_fn = rxy;
@@ -1902,5 +2076,213 @@ fn lazy_measurements_wait_for_a_result_read_on_every_route() {
             runtime.drain_pending_operations().unwrap();
         }
         runtime.shot_end().unwrap();
+    }
+}
+
+#[test]
+fn explicit_delays_follow_runtime_timestamps_on_all_routes() {
+    use selene_core::runtime::{
+        RuntimeInterface, RuntimeInterfaceFactory, plugin::RuntimePluginInterface,
+    };
+
+    for soft in [false, true] {
+        let make = || {
+            start(
+                if soft {
+                    crate::selene_runtimes::selene_soft_rz_runtime().unwrap()
+                } else {
+                    crate::selene_runtimes::selene_simple_runtime().unwrap()
+                },
+                2,
+            )
+        };
+        let requests = [
+            QuantumOp::Reset(0).into(),
+            QuantumOp::Reset(1).into(),
+            Operation::RuntimeRequest {
+                request: RuntimeRequest::LocalBarrier {
+                    qubits: vec![1],
+                    sleep_ns: 23,
+                },
+                result_id: None,
+            },
+            QuantumOp::RXY(0.5, 0.0, 1).into(),
+            Operation::RuntimeRequest {
+                request: RuntimeRequest::GlobalBarrier { sleep_ns: 37 },
+                result_id: None,
+            },
+            QuantumOp::Idle(11e-9, 0).into(),
+            QuantumOp::RXY(0.5, 0.0, 0).into(),
+            Operation::Barrier,
+        ];
+        let mut scheduled = make();
+        let batches = scheduled.lower_scheduled_operations(&requests).unwrap();
+        let mut reference = RuntimePluginInterface::new_from_file(&scheduled.plugin_path)
+            .unwrap()
+            .init(2, 0.into(), &scheduled.init_args)
+            .unwrap();
+        reference.shot_start(0, 7).unwrap();
+        let mut direct = Vec::new();
+        let mut qubits = BTreeMap::new();
+        let drain = |reference: &mut selene_core::runtime::plugin::RuntimePlugin,
+                     output: &mut Vec<_>| {
+            while let Some(batch) = reference.get_next_operations().unwrap() {
+                let timing = batch.runtime_source().unwrap();
+                let ops = batch
+                    .iter_ops()
+                    .map(|op| match *op {
+                        selene_core::operation::Operation::Reset { qubit_id } => {
+                            RuntimeScheduledOp::Reset { qubit_id }
+                        }
+                        selene_core::operation::Operation::RXYGate {
+                            qubit_id,
+                            theta,
+                            phi,
+                        } => RuntimeScheduledOp::Rxy {
+                            qubit_id,
+                            theta,
+                            phi,
+                        },
+                        _ => panic!("unexpected direct Selene operation {op:?}"),
+                    })
+                    .collect::<Vec<_>>();
+                output.push((u64::from(timing.start()), u64::from(timing.duration()), ops));
+            }
+        };
+        drain(&mut reference, &mut direct);
+        for op in &requests {
+            if let Operation::Quantum(qop) = op {
+                for_each_quantum_qubit(qop, |q| {
+                    qubits.entry(q).or_insert_with(|| {
+                        let native = reference.qalloc().unwrap();
+                        drain(&mut reference, &mut direct);
+                        native
+                    });
+                });
+            }
+            match op {
+                Operation::Quantum(QuantumOp::Reset(q)) => reference.reset(qubits[q]).unwrap(),
+                Operation::Quantum(QuantumOp::RXY(theta, phi, q)) => {
+                    reference.rxy_gate(qubits[q], *theta, *phi).unwrap();
+                }
+                Operation::Quantum(QuantumOp::Idle(_, q)) => {
+                    reference.local_barrier(&[qubits[q]], 11).unwrap();
+                }
+                Operation::RuntimeRequest {
+                    request:
+                        RuntimeRequest::LocalBarrier {
+                            qubits: ids,
+                            sleep_ns,
+                        },
+                    ..
+                } => reference
+                    .local_barrier(
+                        &ids.iter().map(|q| qubits[q]).collect::<Vec<_>>(),
+                        *sleep_ns,
+                    )
+                    .unwrap(),
+                Operation::RuntimeRequest {
+                    request: RuntimeRequest::GlobalBarrier { sleep_ns },
+                    ..
+                } => reference.global_barrier(*sleep_ns).unwrap(),
+                Operation::Barrier => reference.global_barrier(0).unwrap(),
+                _ => panic!("unexpected request {op:?}"),
+            }
+            drain(&mut reference, &mut direct);
+        }
+        let actual: Vec<_> = batches
+            .iter()
+            .map(|b| (b.start_time_nanos, b.duration_nanos, b.operations.clone()))
+            .collect();
+        assert_eq!(
+            actual, direct,
+            "PECOS must match Selene's plugin hosting calls"
+        );
+        let mut expected = Vec::new();
+        let mut end = BTreeMap::new();
+        for batch in &batches {
+            for op in &batch.operations {
+                let (q, gate) = match *op {
+                    RuntimeScheduledOp::Reset { qubit_id } => (
+                        qubit_id,
+                        QuantumOp::Reset(usize::try_from(qubit_id).unwrap()),
+                    ),
+                    RuntimeScheduledOp::Rxy {
+                        qubit_id,
+                        theta,
+                        phi,
+                    } => (
+                        qubit_id,
+                        QuantumOp::RXY(theta, phi, usize::try_from(qubit_id).unwrap()),
+                    ),
+                    _ => panic!("unexpected operation {op:?}"),
+                };
+                let previous = end.get(&q).copied().unwrap_or(0);
+                if batch.start_time_nanos > previous {
+                    expected.push(QuantumOp::Idle(
+                        nanoseconds_to_seconds(batch.start_time_nanos - previous),
+                        usize::try_from(q).unwrap(),
+                    ));
+                }
+                expected.push(gate);
+                end.insert(q, batch.start_time_nanos + batch.duration_nanos);
+            }
+        }
+        // These public runtimes currently ignore barrier sleep arguments.
+        // Compare the same program with zero sleeps: PECOS must not add them.
+        let without_delays: Vec<_> = requests
+            .iter()
+            .cloned()
+            .map(|op| match op {
+                Operation::RuntimeRequest {
+                    request: RuntimeRequest::LocalBarrier { qubits, .. },
+                    result_id,
+                } => Operation::RuntimeRequest {
+                    request: RuntimeRequest::LocalBarrier {
+                        qubits,
+                        sleep_ns: 0,
+                    },
+                    result_id,
+                },
+                Operation::RuntimeRequest {
+                    request: RuntimeRequest::GlobalBarrier { .. },
+                    result_id,
+                } => Operation::RuntimeRequest {
+                    request: RuntimeRequest::GlobalBarrier { sleep_ns: 0 },
+                    result_id,
+                },
+                Operation::Quantum(QuantumOp::Idle(_, q)) => QuantumOp::Idle(0.0, q).into(),
+                other => other,
+            })
+            .collect();
+        assert_eq!(
+            make().lower_scheduled_operations(&without_delays).unwrap(),
+            batches
+        );
+        for route in [Route::Flat, Route::Metadata] {
+            assert_eq!(
+                route.lower_raw(&mut make(), &requests),
+                expected,
+                "{soft} {route:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn invalid_source_delays_fail_before_native_submission() {
+    for duration in [-1.0, f64::NAN, f64::INFINITY, 0.5e-9, 1e-25, 1e30] {
+        let mut runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
+        let error = runtime
+            .lower_operations(&[
+                QuantumOp::Reset(0).into(),
+                QuantumOp::Idle(duration, 0).into(),
+            ])
+            .unwrap_err();
+        assert!(error.to_string().contains("nanoseconds"));
+        assert!(!runtime.native_shot.work_submitted);
+    }
+    for (seconds, nanos) in [(0.0, 0), (11e-9, 11), (1e-6, 1000)] {
+        assert_eq!(seconds_to_nanoseconds(seconds).unwrap(), nanos);
     }
 }

@@ -900,6 +900,9 @@ impl QisEngine {
                     Operation::ReleaseQubit { id } => {
                         self.release_qubit_slot(*id);
                     }
+                    Operation::RuntimeRequest { .. } => {
+                        return Err(PecosError::Generic("runtime requests require a runtime that supports native request forwarding".into()));
+                    }
                     Operation::AllocateResult { .. }
                     | Operation::RecordOutput { .. }
                     | Operation::Barrier => {}
@@ -1103,7 +1106,8 @@ impl QisEngine {
                         true
                     });
                 }
-                Operation::AllocateResult { .. }
+                Operation::RuntimeRequest { .. }
+                | Operation::AllocateResult { .. }
                 | Operation::RecordOutput { .. }
                 | Operation::Barrier => {}
             }
@@ -1857,6 +1861,13 @@ impl QisEngine {
         result_id: u64,
         result_key: usize,
     ) -> Result<Option<ByteMessage>, PecosError> {
+        // A synchronous native request must finish processing emitted work and
+        // feedback before the worker sees its response (Selene process_runtime).
+        let lowered = self.lower_operations_terminal(&[])?;
+        self.trace_operations_chunk("native_request", &[], Some(result_id), Some(&lowered));
+        if !lowered.is_empty {
+            return Ok(Some(lowered.commands));
+        }
         let value = self.runtime.read_result(result_key).map_err(|error| {
             self.latch_terminal_error(format!(
                 "failed to read runtime result {result_id}: {error}"

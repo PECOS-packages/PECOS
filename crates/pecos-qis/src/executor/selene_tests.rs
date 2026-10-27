@@ -4,7 +4,7 @@ use super::*;
 use crate::test_env::ENV_MUTEX;
 
 // Explicit public ABI surface: adding or removing an entry requires review.
-const SELENE_EXPORTS: [&str; 42] = [
+const SELENE_EXPORTS: [&str; 43] = [
     "selene_qalloc",
     "selene_qfree",
     "selene_rxy",
@@ -45,6 +45,7 @@ const SELENE_EXPORTS: [&str; 42] = [
     "selene_random_u32_bounded",
     "selene_random_f64",
     "selene_custom_runtime_call",
+    "pecos_qis_ffi_abi_version",
     "pecos_call_qmain_with_setjmp",
     "pecos_call_void_main_with_setjmp",
 ];
@@ -453,4 +454,38 @@ fn rust_adapter_transfers_are_thread_local() {
             });
         }
     });
+}
+
+#[cfg(unix)]
+#[test]
+fn incompatible_ffi_libraries_fail_before_any_rust_data_is_accessed() {
+    for (body, expected) in [
+        ("int unrelated(void) { return 0; }", "missing ABI version"),
+        (
+            "unsigned long long pecos_qis_ffi_abi_version(void) { return 0; }",
+            "ABI version 0, expected 1",
+        ),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("incompatible.c");
+        let library = dir.path().join("incompatible.so");
+        std::fs::write(&source, body).unwrap();
+        let output = Command::new("cc")
+            .args(["-shared", "-fPIC"])
+            .arg(&source)
+            .arg("-o")
+            .arg(&library)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let lib = unsafe { Library::new(&library).unwrap() };
+        let error = QisHeliosInterface::validate_qis_ffi_abi(&lib).unwrap_err();
+        assert!(error.contains(expected), "{error}");
+    }
+    let current = QisHeliosInterface::get_qis_ffi_lib_singleton().unwrap();
+    QisHeliosInterface::validate_qis_ffi_abi(current.inner()).unwrap();
 }

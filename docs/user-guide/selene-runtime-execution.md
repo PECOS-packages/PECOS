@@ -1,5 +1,9 @@
 # Selene runtime execution
 
+PECOS checks the QIS FFI library's data ABI before transferring operations or
+results. An older or incompatible library fails at load time; rebuild or reinstall
+the matching host and FFI artifacts together.
+
 These rules apply to the flat, metadata and scheduled lowering routes of
 `SeleneRuntime`. Python QIS `sim()` requires `.qubits(N)`; the inference rules below
 concern Rust and direct-runtime callers. For timing and noise on the scheduled
@@ -229,9 +233,28 @@ virtual Z anchors; required labels still fail when retired without an emission.
 Recording labels and releasing a qubit add no scheduling barriers. Records remain
 queued across physical-slot reuse until emission or native shot completion.
 
-Flat and metadata routes release queued work on an Idle's qubit before emitting
-the Idle. Scheduled extraction accepts decomposable gates but continues to reject
-source Idle and trace metadata. Measurement requests remain lazy: the runtime
+All routes forward explicit local/global barriers with their original scope and
+integer nanosecond delay. Source `Idle(seconds, qubit)` becomes a local barrier
+with that delay; negative, non-finite, overflowing or fractional-nanosecond values
+fail before submission. Only runtime timestamps determine emitted Idle operations
+and idle noise. If a runtime ignores barrier delays, PECOS preserves that behavior.
+The pinned public Simple and SoftRZ runtimes currently ignore those delay arguments.
+
+Custom runtime calls forward their tag and opaque bytes through the same generic
+plugin interface. Dynamic execution processes all emitted work, including measurement
+feedback, before returning the runtime's full unsigned 64-bit response. Missing
+custom-call support and native errors fail the execution. Collection-only execution
+cannot obtain a custom response and rejects the call. These program-to-runtime calls
+are distinct from runtime-to-simulator custom events, whose physical meaning still
+requires an explicit handler.
+
+Time-cursor writes and reads retain per-execution state as in Selene; they do not
+change the runtime clock. State dumping is unsupported and reports an error.
+Scheduled extraction accepts decomposable gates and source Idle, but rejects source
+trace metadata. Source Idle annotations are also rejected in flat/metadata lowering:
+a delay request has no unique physical emission to which a label can safely attach.
+
+Measurement requests remain lazy: the runtime
 determines when they execute, and PECOS forces a specific result only when the
 program reads it. Both ordinary and leakage-aware reads use the native
 `force_result` contract. An unsatisfiable read fails promptly; PECOS does not

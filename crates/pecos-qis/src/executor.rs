@@ -980,6 +980,20 @@ impl QisHeliosInterface {
             .cloned()
     }
 
+    fn validate_qis_ffi_abi(lib: &Library) -> Result<(), String> {
+        let version: Symbol<unsafe extern "C" fn() -> u64> = unsafe {
+            lib.get(b"pecos_qis_ffi_abi_version\0")
+        }.map_err(|_| "incompatible QIS FFI library: missing ABI version; rebuild or reinstall the matching host and FFI library".to_string())?;
+        let actual = unsafe { version() };
+        let expected = pecos_qis_ffi_types::QIS_FFI_ABI_VERSION;
+        if actual != expected {
+            return Err(format!(
+                "incompatible QIS FFI library: ABI version {actual}, expected {expected}; rebuild or reinstall the matching host and FFI library"
+            ));
+        }
+        Ok(())
+    }
+
     /// Get or initialize the process-wide QIS FFI library singleton.
     ///
     /// This ensures that all code in the process uses the same library instance,
@@ -1001,6 +1015,8 @@ impl QisHeliosInterface {
                     true,
                 ) {
                     Ok((lib_global, lib)) => {
+                        Self::validate_qis_ffi_abi(&lib)
+                            .map_err(|error| format!("{error} ({})", lib_path.display()))?;
                         debug!("QIS FFI library singleton initialized successfully");
                         Ok(SharedLibrary {
                             _global_handle: std::mem::ManuallyDrop::new(lib_global),

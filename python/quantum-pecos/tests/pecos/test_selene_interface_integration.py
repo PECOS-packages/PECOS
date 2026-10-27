@@ -168,16 +168,25 @@ def test_selene_engine_uses_plugin_when_cargo_target_is_empty(tmp_path: Path) ->
 @pytest.mark.parametrize("operation", ["run", "run_with_workers", "build", "capture_operation_trace"])
 def test_qis_default_runtime_is_resolved_lazily(tmp_path: Path, operation: str) -> None:
     """QIS configuration needs no runtime; execution resolves the default."""
+    from pecos_rslib import pecos_rslib as native
+
     empty_cargo_target = tmp_path / "empty-cargo-target"
     empty_cargo_target.mkdir()
     probe = tmp_path / "qis_lazy_runtime_probe.py"
     probe.write_text(
         textwrap.dedent(
             '''
+            import importlib.util
             import sys
 
-            import pecos_rslib
             import pytest
+
+            # Load the extension without its package wrapper, which normally
+            # registers the wheel's bundled runtimes. This fixture must make
+            # the default runtime unavailable even when testing a full wheel.
+            spec = importlib.util.spec_from_file_location("pecos_rslib", sys.argv[2])
+            pecos_rslib = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(pecos_rslib)
 
             program = pecos_rslib.Qis("""
                 define i64 @qmain(i64 %0) #0 {
@@ -217,7 +226,7 @@ def test_qis_default_runtime_is_resolved_lazily(tmp_path: Path, operation: str) 
     env = {key: value for key, value in os.environ.items() if not key.startswith(("PECOS", "CARGO"))}
     env["CARGO_TARGET_DIR"] = str(empty_cargo_target)
     completed = subprocess.run(
-        [sys.executable, str(probe), operation],
+        [sys.executable, str(probe), operation, native.__file__],
         cwd=tmp_path,
         env=env,
         check=False,

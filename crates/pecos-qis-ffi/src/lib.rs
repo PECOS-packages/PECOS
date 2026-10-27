@@ -99,7 +99,8 @@ pub struct ExecutionContext {
     ///
     /// Ordinary measurements use 0/1. Leakage-aware measurements may also use 2.
     pub measurement_results: Mutex<Vec<Option<u64>>>,
-    /// Result slots with a measurement queued or completed in this shot.
+    /// Result slots with a measurement or synchronous runtime request queued
+    /// or completed in this shot. Request reads do not create measurement provenance.
     measured_results: Mutex<BTreeSet<usize>>,
     /// Typed storage for named results from all `print_*` entry points.
     pub named_results: Mutex<BTreeMap<String, NamedResult>>,
@@ -113,10 +114,18 @@ pub struct ExecutionContext {
     program_rng: Mutex<Option<pecos_random::PCGRandom>>,
     /// Host-assigned job-wide shot index, separate from all random seeds.
     program_shot: AtomicU64,
+    /// Selene program time cursor; independent of runtime scheduling.
+    time_cursor: AtomicU64,
     /// Live libc allocations owned by this program execution, keyed by address.
     pub program_allocations: Mutex<BTreeSet<usize>>,
     /// Number of allocations actually freed for this context.
     pub program_allocation_frees: AtomicUsize,
+}
+
+/// Identify the shared operation/result ABI before the host accesses Rust data.
+#[unsafe(no_mangle)]
+pub extern "C" fn pecos_qis_ffi_abi_version() -> u64 {
+    pecos_qis_ffi_types::QIS_FFI_ABI_VERSION
 }
 
 static LIVE_PROGRAM_ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
@@ -171,6 +180,7 @@ impl ExecutionContext {
             program_error: Mutex::new(None),
             program_rng: Mutex::new(None),
             program_shot: AtomicU64::new(0),
+            time_cursor: AtomicU64::new(0),
             program_allocations: Mutex::new(BTreeSet::new()),
             program_allocation_frees: AtomicUsize::new(0),
         }
@@ -202,6 +212,7 @@ impl ExecutionContext {
         }
         self.reset_program_rng();
         self.program_shot.store(0, Ordering::SeqCst);
+        self.time_cursor.store(0, Ordering::SeqCst);
         self.release_program_allocations();
         if let Ok(mut named) = self.named_results.lock() {
             named.clear();

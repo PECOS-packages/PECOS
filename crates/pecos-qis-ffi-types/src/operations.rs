@@ -19,6 +19,15 @@ pub struct NamedResultTrace {
     pub result_ids: Vec<usize>,
 }
 
+/// Program requests handled by the runtime, in source order.
+/// Barrier delays use Selene's integer nanosecond units. Custom data is opaque.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum RuntimeRequest {
+    LocalBarrier { qubits: Vec<usize>, sleep_ns: u64 },
+    GlobalBarrier { sleep_ns: u64 },
+    Custom { tag: u64, data: Vec<u8> },
+}
+
 /// High-level quantum operations that include both QIS and control flow
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Operation {
@@ -54,6 +63,13 @@ pub enum Operation {
     RecordOutput {
         result_id: usize,
         register_name: String,
+    },
+
+    /// Synchronous runtime request. The response slot belongs to the host
+    /// protocol, not to a physical measurement or a native future.
+    RuntimeRequest {
+        request: RuntimeRequest,
+        result_id: Option<usize>,
     },
 
     /// Classical control flow marker

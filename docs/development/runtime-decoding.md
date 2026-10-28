@@ -48,7 +48,11 @@ with QuantumSystem noise/simulation and feedback. QisEngine intercepts the
 host-only Decode request before runtime lowering, retaining it while preceding
 ready batches and their measurement feedback execute. It then invokes the
 session exactly once and responds on the existing synchronous response lane,
-which is separate from measurement IDs and native future handles.
+which is separate from measurement IDs and native future handles. Execution
+continues live; a captured trace is never substituted for the running shot.
+QuantumSystem still drives every noise/quantum-engine continuation to completion,
+including internal measurements consumed by the noise controller. Those internal
+outcomes are not added to the program detector buffer or exposed to the provider.
 
 An empty lowering poll processes work already ready. Decoding inserts no barrier,
 forces no unread future, changes no native timestamp and does not advance the
@@ -93,8 +97,14 @@ PECOS checks the declaration, not a proof of the physical experiment.
 | Failure/reuse | Invalid identities, shapes, mappings, unsupported boundaries, provider errors and decoder errors abort the shot. Factories and counters restart for the next shot; failed sessions cannot be reused. |
 
 Names and mappings must describe the actual program data. Supplying the correct
-number of arbitrary Boolean values does not establish a valid model. The live
-integration tests use independent reset/measurement regions with a known
+number of arbitrary Boolean values does not establish a valid model. This ABI
+checks the selected window, declared mappings, width and binary encoding; it
+does not carry a named measurement-record schema or prove which reads formed
+each parity. Binding the window to the program's observed-record schema remains
+a caller obligation. A same-width buffer built from the wrong reads cannot be
+detected from these bytes alone. The future provenance contract must make that
+binding explicit rather than describe dimensional checks as semantic validation.
+The live integration tests use independent reset/measurement regions with a known
 one-bit response. They establish host feedback behavior, not adaptive fault
 distance or a production streaming decoder.
 
@@ -130,8 +140,11 @@ geometry, noise parameters and support topology, schema, temporal horizon,
 initialization/readout family and boundary-state identity. Keep detector/output
 relabelings, placement translations and supported Clifford frame transforms
 separate using `DemSliceInstance`. Use bounded provider caches; do not use the
-entire Boolean history as the sole key. If a future-dependent output cannot yet
-be propagated, retain a supported symbolic interface or defer the decision;
+entire Boolean history as the sole key. Discard historical detail once a proved
+sufficient boundary state summarizes it. Keep path selection and classical frame
+tracking distinct from physical fault provenance and conditional probabilities.
+If a future-dependent output cannot yet be propagated, retain a supported
+symbolic interface or defer the decision;
 do not guess the future Clifford suffix.
 
 Before allowing overlapping commits, introduce a typed boundary handoff carrying
@@ -162,7 +175,8 @@ Four cases require explicit admission rules:
 4. **Unavailable future operations.** Decoding cannot force program progress
    past its own dependent decision. Require enough already available evidence
    for the commit, a justified boundary model, or an explicit latency protocol.
-   Preserve `BufferTooSmall` and static adaptive-DEM rejection; never pad with
+   Preserve `BufferTooSmall` and `from_guppy` rejection of unsupported control
+   flow until a replacement soundness contract is implemented; never pad with
    invented operations or regard a soft boundary as permission to truncate a
    correlation touching the commit.
 

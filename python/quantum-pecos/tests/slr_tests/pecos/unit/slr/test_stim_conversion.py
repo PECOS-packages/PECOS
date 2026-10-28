@@ -1,8 +1,10 @@
 """Tests for Stim circuit to/from SLR conversion."""
 
+import re
+
 import pytest
 import stim
-from pecos.slr import CReg, For, Main, Parallel, QReg, Repeat, Return, SlrConverter, While, rad
+from pecos.slr import Comment, CReg, For, Main, Parallel, QReg, Repeat, Return, SlrConverter, While, rad
 from pecos.slr.qeclib import qubit
 from pecos.slr.qeclib.qubit.measures import Measure
 
@@ -397,6 +399,225 @@ def test_repeated_mx_and_my_agree() -> None:
     samples = SlrConverter(prog).stim().compile_sampler(seed=7).sample(200)
     assert (samples[:, 0] == samples[:, 1]).all()
     assert (samples[:, 2] == samples[:, 3]).all()
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        pytest.param("X 0\nMR 0\nM 0", id="mr"),
+        pytest.param("H 0\nZ 0\nMRX 0\nMX 0", id="mrx"),
+        pytest.param("H 0\nS 0\nZ 0\nMRY 0\nMY 0", id="mry"),
+        pytest.param("X 0\nM !0\nM 0", id="inverted-z"),
+        pytest.param("H 0\nMX !0\nMX 0", id="inverted-x"),
+        pytest.param("REPEAT 2 {\n X 0\n M 0\n}\nX 1\nM 1", id="repeat"),
+        pytest.param(
+            "M 1\nREPEAT 2 {\n REPEAT 2 {\n X 0\n M 0\n }\n M 0\n}\nX 1\nM 1",
+            id="nested-repeat",
+        ),
+        pytest.param("H 0\nS 0\nMY !0\nMY 0", id="inverted-y"),
+        pytest.param("X 0\nMR !0\nM 0", id="inverted-mr"),
+        pytest.param("H 0\nZ 0\nMRX !0\nMX 0", id="inverted-mrx"),
+        pytest.param("H 0\nS 0\nZ 0\nMRY !0\nMY 0", id="inverted-mry"),
+        pytest.param("X 1\nM 0 !1 1 0", id="mixed-inversion"),
+    ],
+)
+def test_record_order_regression(source: str) -> None:
+    """Every deterministic source record keeps its value and classical index."""
+    _assert_records_match_stim(stim.Circuit(source))
+
+
+def _assert_records_match_stim(circuit: stim.Circuit) -> None:
+    """Converted records equal Stim's reference sample, each written to its own bit."""
+    expected = circuit.reference_sample()
+    prog = _return_declared_cregs(SlrConverter.from_stim(circuit))
+    assert sum(len(var) for var in prog.vars if isinstance(var, CReg)) == len(expected)
+    samples = SlrConverter(prog).stim().compile_sampler(seed=7).sample(50)
+    assert samples.shape == (50, len(expected))
+    assert (samples == expected).all(), (samples[0], expected)
+    qasm = SlrConverter(prog).qasm(skip_headers=True)
+    # Program order is record order, so the k-th measurement must write c[k].
+    assert re.findall(r"-> c\[(\d+)\]", qasm) == [str(index) for index in range(len(expected))]
+
+
+@pytest.mark.parametrize(
+    ("source", "gate"),
+    [
+        ("MPP X0*Z1", "MPP"),
+        ("MXX 0 1", "MXX"),
+        ("MYY 0 1", "MYY"),
+        ("MZZ 0 1", "MZZ"),
+        ("MPAD 1", "MPAD"),
+        ("HERALDED_ERASE(0.1) 0", "HERALDED_ERASE"),
+        ("HERALDED_PAULI_CHANNEL_1(0.1, 0, 0, 0) 0", "HERALDED_PAULI_CHANNEL_1"),
+        ("REPEAT 2 {\n MPAD 1\n}", "MPAD"),
+    ],
+)
+def test_unsupported_records_rejected(source: str, gate: str) -> None:
+    """Unsupported record producers must never become comments."""
+    with pytest.raises(NotImplementedError, match=f"Unsupported measurement-producing Stim gate {gate}"):
+        SlrConverter.from_stim(stim.Circuit(source))
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "X 0\nM 0\nCX rec[-1] 1\nM 1",
+        "M 0\nCX rec[-1] 1 2 3",
+        "CX sweep[0] 1",
+        "SQRT_X 0",
+        "ISWAP 0 1",
+        "C_XYZ 0",
+    ],
+)
+def test_unsupported_state_changes_rejected(source: str) -> None:
+    """Unsupported targets and unitaries must not disappear or change pairing."""
+    circuit = stim.Circuit(source)
+    instruction = next(inst for inst in circuit if inst.name not in ["X", "M"])
+    with pytest.raises(NotImplementedError, match=instruction.name) as exc:
+        SlrConverter.from_stim(circuit)
+    assert str(instruction) in str(exc.value)
+
+
+def test_record_annotations_still_convert() -> None:
+    """DETECTOR and OBSERVABLE_INCLUDE reference records; they are annotations, not feedback."""
+    circuit = stim.Circuit.generated("repetition_code:memory", distance=3, rounds=2)
+    _assert_records_match_stim(circuit.without_noise())
+    qasm = SlrConverter(SlrConverter.from_stim(circuit)).qasm(skip_headers=True)
+    assert "// DETECTOR" in qasm
+    assert "// OBSERVABLE_INCLUDE" in qasm
+
+
+@pytest.mark.parametrize(
+    "source",
+    ["DEPOLARIZE1(0.1) 0", "PAULI_CHANNEL_1(0.1, 0.2, 0.3) 0", "M(0.5) 0", "MR(0.1) 0", "E[tag](0.1) X0 Z1"],
+)
+def test_noise_is_visible(source: str) -> None:
+    """Omitted noise is visible even when attached to a converted measurement."""
+    circuit = stim.Circuit(source)
+    prog = _return_declared_cregs(SlrConverter.from_stim(circuit))
+    qasm = SlrConverter(prog).qasm(skip_headers=True)
+    assert f"// Noise: {circuit[0]}" in qasm
+    assert "Unsupported Stim gate" not in qasm
+    if circuit.num_measurements:
+        assert "measure q[0] -> c[0]" in qasm
+
+
+@pytest.mark.parametrize("source", ["I 0", "II 0 1"])
+def test_identity_emits_no_operations(source: str) -> None:
+    """Both identity gates must remain supported no-ops."""
+    prog = SlrConverter.from_stim(stim.Circuit(source))
+    assert all(isinstance(op, QReg) for op in prog.ops)
+    assert len(SlrConverter(prog).stim()) == 0
+
+
+_GATE_EXAMPLES = {
+    "DEPOLARIZE1": "DEPOLARIZE1(0.1) 0",
+    "DEPOLARIZE2": "DEPOLARIZE2(0.1) 0 1",
+    "X_ERROR": "X_ERROR(0.1) 0",
+    "Y_ERROR": "Y_ERROR(0.1) 0",
+    "Z_ERROR": "Z_ERROR(0.1) 0",
+    "I_ERROR": "I_ERROR(0.1) 0",
+    "II_ERROR": "II_ERROR(0.1) 0 1",
+    "PAULI_CHANNEL_1": "PAULI_CHANNEL_1(0.1, 0.2, 0.3) 0",
+    "PAULI_CHANNEL_2": "PAULI_CHANNEL_2(" + ",".join(["0.01"] * 15) + ") 0 1",
+    "HERALDED_ERASE": "HERALDED_ERASE(0.1) 0",
+    "HERALDED_PAULI_CHANNEL_1": "HERALDED_PAULI_CHANNEL_1(0.1, 0, 0, 0) 0",
+    "E": "E(0.1) X0 Z1",
+    "ELSE_CORRELATED_ERROR": "ELSE_CORRELATED_ERROR(0.1) X0 Z1",
+    "MPP": "MPP X0*Z1",
+    "SPP": "SPP X0*Z1",
+    "SPP_DAG": "SPP_DAG X0*Z1",
+    "MPAD": "MPAD 1",
+    "DETECTOR": "DETECTOR(4, 5) rec[-1]",
+    "OBSERVABLE_INCLUDE": "OBSERVABLE_INCLUDE(3) rec[-1]",
+    "QUBIT_COORDS": "QUBIT_COORDS(1, 2) 0",
+    "SHIFT_COORDS": "SHIFT_COORDS(1, 2)",
+    "TICK": "TICK",
+    "REPEAT": "REPEAT 2 {\n H 0\n}",
+}
+_MEASUREMENT_PREP_BASES = {"M": "Z", "MX": "X", "MY": "Y", "MR": "Z", "MRX": "X", "MRY": "Y"}
+# Each prepares qubit 0 in the -1 eigenstate of the basis, so records are deterministic.
+_MINUS_EIGENSTATE_PREPS = {"Z": "X 0", "X": "H 0\nZ 0", "Y": "H 0\nS 0\nZ 0"}
+# State-changing gates the converter supports; any other one must be rejected.
+_CONVERTED_STATE_GATES = {
+    "I",
+    "II",
+    "H",
+    "X",
+    "Y",
+    "Z",
+    "S",
+    "S_DAG",
+    "CX",
+    "CY",
+    "CZ",
+    "SWAP",
+    "R",
+    "RX",
+    "RY",
+    "M",
+    "MX",
+    "MY",
+    "MR",
+    "MRX",
+    "MRY",
+}
+
+
+@pytest.mark.parametrize("name", sorted(stim.gate_data()))
+def test_stim_gate_catalog(name: str) -> None:
+    """Every installed Stim gate is rejected or checked for its semantics."""
+    data = stim.gate_data(name)
+    if name in _GATE_EXAMPLES:
+        instruction = _GATE_EXAMPLES[name]
+    else:
+        assert data.is_single_qubit_gate or data.is_two_qubit_gate, name
+        instruction = name + (" 0 1" if data.is_two_qubit_gate else " 0")
+    # Keep tableau width observable even when an identity emits nothing.
+    prefix = stim.Circuit("H 1\nH 1")
+    if name == "ELSE_CORRELATED_ERROR":
+        prefix += stim.Circuit("E(0.1) X0")
+    elif name in ["DETECTOR", "OBSERVABLE_INCLUDE"]:
+        prefix += stim.Circuit("M 0")
+    elif name in _MEASUREMENT_PREP_BASES:
+        prefix += stim.Circuit(_MINUS_EIGENSTATE_PREPS[_MEASUREMENT_PREP_BASES[name]])
+    circuit = prefix + stim.Circuit(instruction)
+    try:
+        prog = SlrConverter.from_stim(circuit)
+    except NotImplementedError as exc:
+        assert name not in _CONVERTED_STATE_GATES, exc
+        assert name in str(exc), name
+        return
+    is_state_gate = data.is_unitary or data.is_reset or data.produces_measurements
+    assert not is_state_gate or name in _CONVERTED_STATE_GATES, f"{name} converted but is not listed as supported"
+    prefix_prog = SlrConverter.from_stim(prefix)
+    prefix_ops = [op for op in prefix_prog.ops if not isinstance(op, (QReg, CReg))]
+    payload = [op for op in prog.ops if not isinstance(op, (QReg, CReg))][len(prefix_ops) :]
+    if name == "REPEAT":
+        assert stim.Tableau.from_circuit(circuit) == stim.Tableau.from_circuit(SlrConverter(prog).stim())
+    elif data.is_noisy_gate and not data.produces_measurements:
+        assert len(payload) == 1, name
+        assert isinstance(payload[0], Comment), name
+        qasm = SlrConverter(prog).qasm(skip_headers=True)
+        assert f"// Noise: {circuit[-1]}" in qasm, name
+    elif not (data.is_unitary or data.is_noisy_gate or data.produces_measurements or data.is_reset):
+        assert len(payload) == 1, name
+        assert isinstance(payload[0], Comment), name
+        qasm = SlrConverter(prog).qasm(skip_headers=True)
+        assert f"// {circuit[-1]}" in qasm, name
+    elif data.is_unitary:
+        assert stim.Tableau.from_circuit(circuit) == stim.Tableau.from_circuit(SlrConverter(prog).stim()), name
+    elif data.produces_measurements:
+        assert name in _MEASUREMENT_PREP_BASES, f"Add a deterministic preparation for {name}"
+        _assert_records_match_stim(circuit)
+    elif data.is_reset:
+        basis = {"R": "Z", "RX": "X", "RY": "Y"}[name]
+        check = stim.Circuit(_MINUS_EIGENSTATE_PREPS[basis] + "\n" + instruction + "\nM" + basis + " 0")
+        _assert_records_match_stim(check)
+        converted = SlrConverter(SlrConverter.from_stim(check)).stim()
+        assert any(inst.name == "R" for inst in converted), name
+    else:
+        pytest.fail(f"Unclassified Stim gate: {name}")
 
 
 if __name__ == "__main__":

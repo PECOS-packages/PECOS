@@ -8,7 +8,9 @@ use pecos_core::clifford::Clifford;
 use pecos_core::{Angle64, BitSet, QubitId};
 use pecos_quantum::ToMatrix;
 use pecos_random::PecosRng;
-use pecos_simulators::{CliffordGateable, Gens, MeasurementResult, QuantumSimulator, SparseStabY};
+use pecos_simulators::{
+    CliffordGateable, GensBitSet, MeasurementResult, QuantumSimulator, SparseStabY,
+};
 use rand::RngExt;
 use std::collections::BTreeSet;
 use std::fmt::Write;
@@ -150,7 +152,7 @@ fn assert_set(actual: &BitSet, expected: &BitSet, label: &str) {
     );
 }
 
-fn assert_gens(actual: &Gens, expected: &Gens) {
+fn assert_gens(actual: &GensBitSet, expected: &GensBitSet) {
     for (left, right, label) in [
         (&actual.row_x, &expected.row_x, "row X"),
         (&actual.row_z, &expected.row_z, "row Z"),
@@ -208,7 +210,7 @@ fn check_gate(name: &str, pair: bool) {
 }
 
 // Lossless packing, not a hash: n <= 5 needs 4*n*n + 2*n <= 110 bits.
-fn tableau_bits(gens: &Gens, num_qubits: usize) -> u128 {
+fn tableau_bits(gens: &GensBitSet, num_qubits: usize) -> u128 {
     let mut bits = 0u128;
     for sets in [&gens.row_x, &gens.row_z, &gens.col_x, &gens.col_z] {
         for set in sets {
@@ -302,7 +304,7 @@ fn gate_matrix(gate: Clifford, targets: &[QubitId], num_qubits: usize) -> DMatri
     })
 }
 
-fn row_matrix(gens: &Gens, row: usize, num_qubits: usize) -> DMatrix<Complex64> {
+fn row_matrix(gens: &GensBitSet, row: usize, num_qubits: usize) -> DMatrix<Complex64> {
     let mut matrix = DMatrix::identity(1, 1);
     for qubit in (0..num_qubits).rev() {
         let pauli = match (

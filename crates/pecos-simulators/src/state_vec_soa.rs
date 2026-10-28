@@ -2970,6 +2970,7 @@ where
 
     #[inline]
     fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "CX");
         for &(q0, q1) in pairs {
             let control = q0.index();
             let target = q1.index();
@@ -3053,6 +3054,7 @@ where
 
     #[inline]
     fn cz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "CZ");
         for &(qa, qb) in pairs {
             let q1 = qa.index();
             let q2 = qb.index();
@@ -3113,6 +3115,7 @@ where
 
     #[inline]
     fn swap(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SWAP");
         for &(qa, qb) in pairs {
             let q1 = qa.index();
             let q2 = qb.index();
@@ -3176,6 +3179,7 @@ where
 
     #[inline]
     fn cy(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "CY");
         for &(q0, q1) in pairs {
             let control = q0.index();
             let target = q1.index();
@@ -3274,6 +3278,7 @@ where
     #[inline]
     fn sxx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         const HALF: f64 = 0.5;
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SXX");
 
         for &(qa, qb) in pairs {
             let q1 = qa.index();
@@ -3383,6 +3388,7 @@ where
     #[inline]
     fn sxxdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         const HALF: f64 = 0.5;
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SXXDG");
 
         for &(qa, qb) in pairs {
             let q1 = qa.index();
@@ -3491,6 +3497,7 @@ where
     #[inline]
     fn syy(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         const HALF: f64 = 0.5;
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SYY");
 
         for &(qa, qb) in pairs {
             let q1 = qa.index();
@@ -3599,6 +3606,7 @@ where
     #[inline]
     fn syydg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         const HALF: f64 = 0.5;
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SYYDG");
 
         for &(qa, qb) in pairs {
             let q1 = qa.index();
@@ -3706,6 +3714,7 @@ where
 
     #[inline]
     fn szz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SZZ");
         // SZZ = diag(1, i, i, 1). Only the odd-parity amplitudes change.
 
         for &(qa, qb) in pairs {
@@ -3774,6 +3783,7 @@ where
 
     #[inline]
     fn szzdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SZZDG");
         // SZZdg = diag(1, -i, -i, 1). Only the odd-parity amplitudes change.
 
         for &(qa, qb) in pairs {
@@ -3842,6 +3852,7 @@ where
 
     #[inline]
     fn iswap(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "ISWAP");
         // iSWAP matrix:
         // [[1, 0, 0, 0],
         //  [0, 0, i, 0],
@@ -3935,6 +3946,7 @@ where
 
     #[inline]
     fn g(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "G");
         // G = CZ.H(q1).H(q2).CZ
         // Traced through the decomposition, the actual matrix is:
         // [[1,  1,  1, -1],
@@ -4386,6 +4398,7 @@ where
 
     #[inline]
     fn rzz(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "RZZ");
         let theta = theta.to_radians_signed();
         let cos_pos = (theta / 2.0).cos();
         let sin_pos = (theta / 2.0).sin();
@@ -4454,6 +4467,7 @@ where
 
     #[inline]
     fn rxx(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "RXX");
         let theta = theta.to_radians_signed();
         let cos = (theta / 2.0).cos();
         let sin = (theta / 2.0).sin();
@@ -4524,6 +4538,7 @@ where
 
     #[inline]
     fn ryy(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "RYY");
         let theta = theta.to_radians_signed();
         let cos = (theta / 2.0).cos();
         let sin = (theta / 2.0).sin();

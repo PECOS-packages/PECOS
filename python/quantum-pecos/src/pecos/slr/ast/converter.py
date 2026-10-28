@@ -33,6 +33,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from pecos.slr._qubit_args import expand_qubit_args, gate_target_groups
 from pecos.slr.ast._block_substitution import BodyRemap, substitute_stmt
 from pecos.slr.ast.nodes import (
     AllocatorArg,
@@ -627,46 +628,13 @@ class SlrToAst:
             msg = f"Unknown gate type: {gate_name}"
             raise ValueError(msg)
 
-        # Check if qargs contains tuples of qubit pairs (for multi-qubit gates)
-        # Pattern: CX((q1, q2), (q3, q4), ...) where each tuple is one gate application
-        if gate.qargs and gate_kind.arity > 1 and isinstance(gate.qargs[0], tuple):
-            # Each element of qargs is a tuple of qubits for one gate application
-            gates = []
-            for qubit_tuple in gate.qargs:
-                # Expand any registers in the tuple
-                expanded_tuple = self._expand_qubit_args(list(qubit_tuple))
-                targets = tuple(self._convert_qubit_ref(q) for q in expanded_tuple)
-                params: tuple = ()
-                if gate.params:
-                    params = tuple(self._convert_expression(p) for p in gate.params)
-                gates.append(GateOp(gate=gate_kind, targets=targets, params=params))
-            return ("__FLATTEN__", gates)
-
-        # Expand full registers into individual qubits
-        expanded_qargs = self._expand_qubit_args(gate.qargs)
-
-        # For single-qubit gates applied to full register, generate multiple gates
-        if gate_kind.arity == 1 and len(expanded_qargs) > 1:
-            # Return a special marker to generate multiple gate operations
-            gates = []
-            for q in expanded_qargs:
-                target = self._convert_qubit_ref(q)
-                params: tuple = ()
-                if gate.params:
-                    params = tuple(self._convert_expression(p) for p in gate.params)
-                gates.append(GateOp(gate=gate_kind, targets=(target,), params=params))
-            # Return flattening marker
-            return ("__FLATTEN__", gates)
-
-        # Convert targets
-        targets = tuple(self._convert_qubit_ref(q) for q in expanded_qargs)
-
-        # Convert parameters if present
-        params = ()
-        if gate.params:
-            params = tuple(self._convert_expression(p) for p in gate.params)
-
-        return GateOp(gate=gate_kind, targets=targets, params=params)
+        groups = gate_target_groups(gate.qargs, gate_kind.arity, gate_name)
+        params = tuple(self._convert_expression(p) for p in gate.params) if gate.params else ()
+        gates = [
+            GateOp(gate=gate_kind, targets=tuple(self._convert_qubit_ref(q) for q in group), params=params)
+            for group in groups
+        ]
+        return ("__FLATTEN__", gates)
 
     def _convert_prep(self, gate: Any, basis: str = "PZ") -> Statement:
         """Convert an SLR prep gate to an AST PrepareOp.
@@ -680,11 +648,8 @@ class SlrToAst:
             raise ValueError(msg)
 
         # A stray STRING qarg on ANY prep gate is rejected loudly.
-        # `_expand_qubit_args` silently drops strings, so a basis
-        # string (`PZ(q, "X")`, the legacy `Prep(q, "X")`, etc.)
-        # would otherwise be silently dropped and the gate lowered as
-        # its plain basis -- a miscompile under the prep-basis
-        # symmetry rule. The prep basis is the gate identity; pass NO string.
+        # Give a basis-specific diagnostic before general qubit validation.
+        # The prep basis is the gate identity; pass NO string.
         for arg in gate.qargs:
             if isinstance(arg, str):
                 msg = (
@@ -696,7 +661,7 @@ class SlrToAst:
                 raise NotImplementedError(msg)
 
         # Expand full registers into individual qubits
-        expanded_qargs = self._expand_qubit_args(gate.qargs)
+        expanded_qargs = expand_qubit_args(gate.qargs, gate.sym)
 
         if not expanded_qargs:
             msg = "Prep gate has no expanded qubit arguments"
@@ -717,7 +682,7 @@ class SlrToAst:
     def _convert_measure(self, gate: Any) -> MeasureOp:
         """Convert an SLR Measure gate to an AST MeasureOp."""
         # Expand full registers into individual qubits
-        expanded_qargs = self._expand_qubit_args(gate.qargs)
+        expanded_qargs = expand_qubit_args(gate.qargs, gate.sym)
         targets = tuple(self._convert_qubit_ref(q) for q in expanded_qargs)
 
         # Convert classical output bits if present
@@ -727,32 +692,6 @@ class SlrToAst:
             results = tuple(self._convert_bit_ref(b) for b in expanded_cout)
 
         return MeasureOp(targets=targets, results=results)
-
-    def _expand_qubit_args(self, qargs: list) -> list:
-        """Expand qubit arguments, converting full registers to individual qubits.
-
-        Filters out non-qubit arguments like strings (a stray basis
-        string on a prep gate is rejected upstream in `_convert_prep`).
-        """
-        expanded = []
-        for q in qargs:
-            if isinstance(q, str):
-                # Skip non-qubit string arguments
-                continue
-            if isinstance(q, list):
-                # This is a slice (list of qubits) - recursively expand
-                expanded.extend(self._expand_qubit_args(q))
-            elif hasattr(q, "size") and hasattr(q, "elems"):
-                # This is a full register (QReg) - expand to all qubits
-                expanded.extend(q.elems)
-            elif hasattr(q, "index") and isinstance(q.index, int):
-                # This is an individual qubit with integer index
-                expanded.append(q)
-            elif hasattr(q, "reg"):
-                # This is an individual qubit reference
-                expanded.append(q)
-            # Skip other non-qubit arguments
-        return expanded
 
     def _expand_bit_args(self, bits: list) -> list:
         """Expand bit arguments, converting full registers to individual bits."""

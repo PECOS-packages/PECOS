@@ -1173,6 +1173,7 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecAoS<R> {
     // -------------------------------------------------------------------------
 
     fn sxx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SXX");
         for &(q1, q2) in pairs {
             self.apply_two_qubit_pauli_root(q1.0, q2.0, false, false);
         }
@@ -1180,6 +1181,7 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecAoS<R> {
     }
 
     fn sxxdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SXXDG");
         for &(q1, q2) in pairs {
             self.apply_two_qubit_pauli_root(q1.0, q2.0, false, true);
         }
@@ -1187,6 +1189,7 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecAoS<R> {
     }
 
     fn syy(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SYY");
         for &(q1, q2) in pairs {
             self.apply_two_qubit_pauli_root(q1.0, q2.0, true, false);
         }
@@ -1194,6 +1197,7 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecAoS<R> {
     }
 
     fn syydg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SYYDG");
         for &(q1, q2) in pairs {
             self.apply_two_qubit_pauli_root(q1.0, q2.0, true, true);
         }
@@ -1201,6 +1205,7 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecAoS<R> {
     }
 
     fn szz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SZZ");
         for &(q1, q2) in pairs {
             self.apply_szz_root(q1.0, q2.0, false);
         }
@@ -1208,6 +1213,7 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecAoS<R> {
     }
 
     fn szzdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SZZDG");
         for &(q1, q2) in pairs {
             self.apply_szz_root(q1.0, q2.0, true);
         }
@@ -1215,6 +1221,7 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecAoS<R> {
     }
 
     fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "CX");
         if pairs.len() == 1 {
             // Single pair: relabel the affected support indices in O(k).
             self.ensure_sorted();
@@ -1242,6 +1249,7 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecAoS<R> {
     }
 
     fn cz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "CZ");
         if pairs.len() == 1 {
             // Single pair: simple path
             let q1_mask = 1usize << pairs[0].0.0;
@@ -1275,6 +1283,7 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecAoS<R> {
     }
 
     fn cy(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "CY");
         // CY: if control=1, apply Y to target
         // Y|0⟩ = i|1⟩, Y|1⟩ = -i|0⟩
 
@@ -1322,6 +1331,7 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecAoS<R> {
     }
 
     fn swap(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SWAP");
         if pairs.len() == 1 {
             // Single SWAP: simple path
             let mask1 = 1usize << pairs[0].0.0;
@@ -1362,6 +1372,7 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecAoS<R> {
     }
 
     fn iswap(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "ISWAP");
         // iSWAP: |00⟩→|00⟩, |01⟩→i|10⟩, |10⟩→i|01⟩, |11⟩→|11⟩
         // Swaps bits when they differ, multiplies by i for each swap
 
@@ -1682,6 +1693,7 @@ impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecAoS<R> {
     }
 
     fn rzz(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "RZZ");
         let theta = theta.to_radians_signed();
         let half = theta / 2.0;
         // Same parity: e^{-i*theta/2}, different parity: e^{i*theta/2}

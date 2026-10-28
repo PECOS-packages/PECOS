@@ -15,7 +15,7 @@ import json
 from collections.abc import Callable
 from typing import TYPE_CHECKING, ClassVar
 
-from pecos.guppy_gen._certificate import certify_surface_measurement_layout
+from pecos.guppy_gen._certificate import certify_measurement_layout
 from pecos.guppy_gen._module_loader import _get_temp_dir, load_guppy_source
 from pecos.qec.surface.schedule import compute_cnot_schedule
 
@@ -2856,5 +2856,7 @@ def make_surface_code(
         check_plan=check_plan,
         clifford_frame_policy=clifford_frame_policy,
     )
-    certify_surface_measurement_layout(program, abstract_tc)
+    from pecos.qec.surface.decode import _surface_result_classifier
+
+    certify_measurement_layout(program, abstract_tc, _surface_result_classifier, family="surface")
     return program

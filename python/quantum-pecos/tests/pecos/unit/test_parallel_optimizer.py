@@ -12,9 +12,52 @@
 """Tests for the ParallelOptimizer transformation pass."""
 
 import pytest
-from pecos.slr import Block, CReg, If, Main, Parallel, QReg, Repeat
+from pecos.slr import Barrier, Block, CReg, If, LoopVar, Main, Parallel, QReg, Repeat, SlrConverter
 from pecos.slr.qeclib import qubit as qb
 from pecos.slr.transforms import ParallelOptimizer
+
+
+@pytest.mark.parametrize("index", [0, 1])
+@pytest.mark.parametrize("symbolic_first", [False, True])
+def test_symbolic_result_orders_concrete_writes(index: int, *, symbolic_first: bool) -> None:
+    """An unresolved result bit overlaps every concrete bit of its register."""
+    q, c = QReg("q", 2), CReg("c", 2)
+    symbolic, concrete = c[LoopVar("i")], c[index]
+    first, second = (symbolic, concrete) if symbolic_first else (concrete, symbolic)
+    operations = [qb.H(q[0]), qb.H(q[0]), qb.Measure(q[0]) > first, qb.Measure(q[1]) > second]
+    optimized = ParallelOptimizer().transform(Main(q, c, Parallel(*operations)))
+    # The shared result forces each operation into its own dependency level.
+    assert optimized.ops[0].ops == operations
+
+
+@pytest.mark.parametrize("index", [0, 1])
+@pytest.mark.parametrize("symbolic_first", [False, True])
+def test_symbolic_qubit_orders_concrete_gates(index: int, *, symbolic_first: bool) -> None:
+    """An unresolved qubit overlaps every concrete qubit of its register, without raising."""
+    q = QReg("q", 2)
+    symbolic, concrete = qb.X(q[LoopVar("i")]), qb.H(q[index])
+    operations = [symbolic, concrete] if symbolic_first else [concrete, symbolic]
+    optimized = ParallelOptimizer().transform(Main(q, Parallel(*operations)))
+    assert optimized.ops[0].ops == operations
+
+
+@pytest.mark.parametrize("kind", ["overwrite", "read", "barrier"])
+def test_classical_operations_are_parallel_barriers(kind: str) -> None:
+    """Operations before and after a classical action stay on their respective sides."""
+    q, c = QReg("q", 2), CReg("c", 2)
+    action = {"overwrite": c[0].set(0), "read": c[1].set(c[0]), "barrier": Barrier()}[kind]
+    program = Main(
+        q,
+        c,
+        qb.X(q[0]),
+        Parallel(qb.H(q[0]), qb.H(q[0]), qb.Measure(q[0]) > c[0], action, qb.X(q[1])),
+    )
+
+    def statements(qasm):
+        return [line for line in qasm.splitlines() if line and not line.startswith("//")]
+
+    expected = statements(SlrConverter(program, optimize_parallel=False).qasm())
+    assert statements(SlrConverter(program).qasm()) == expected
 
 
 def test_basic_parallel_optimization() -> None:

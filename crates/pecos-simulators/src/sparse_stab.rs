@@ -13,7 +13,9 @@
 use crate::{CliffordGateable, GensGeneric, MeasurementResult, QuantumSimulator};
 use core::fmt::Debug;
 use core::mem;
-use pecos_core::{BitSet, IndexSet, QubitId, RngManageable, SortedVecSet, VecSet};
+use pecos_core::{
+    AdaptiveIndexSet, BitSet, IndexSet, QubitId, RngManageable, SortedVecSet, VecSet,
+};
 use pecos_random::rng_ext::RngProbabilityExt;
 use pecos_random::{PecosRng, Rng, SeedableRng};
 
@@ -34,6 +36,7 @@ use pecos_random::{PecosRng, Rng, SeedableRng};
 /// - Signs (± and ±i) for each generator
 ///
 /// # Type Parameters
+/// - S: Index storage, defaults to `AdaptiveIndexSet` for O(n + nnz) tableau memory
 /// - R: A random number generator type, defaults to `PecosRng`
 ///
 /// # Examples
@@ -102,7 +105,7 @@ use pecos_random::{PecosRng, Rng, SeedableRng};
 ///
 /// Generic sparse stabilizer simulator over set type S.
 #[derive(Clone, Debug)]
-pub struct SparseStabGeneric<S: IndexSet = BitSet, R: SeedableRng + Rng + Debug = PecosRng> {
+pub struct SparseStabGeneric<S: IndexSet = SparseStabSet, R: SeedableRng + Rng + Debug = PecosRng> {
     pub(crate) num_qubits: usize,
     pub(crate) stabs: GensGeneric<S>,
     pub(crate) destabs: GensGeneric<S>,
@@ -113,10 +116,13 @@ pub struct SparseStabGeneric<S: IndexSet = BitSet, R: SeedableRng + Rng + Debug 
     track_destab_signs: bool,
 }
 
-/// Default sparse stabilizer simulator using `BitSet` for O(1) toggle operations.
-pub type SparseStab<R = PecosRng> = SparseStabGeneric<BitSet, R>;
+/// Default row, column and sign storage for `SparseStab` and `Gens`.
+pub type SparseStabSet = AdaptiveIndexSet;
 
-/// Sparse stabilizer simulator using `BitSet` (same as `SparseStab`).
+/// Default sparse stabilizer simulator using adaptive dense/sparse index storage.
+pub type SparseStab<R = PecosRng> = SparseStabGeneric<SparseStabSet, R>;
+
+/// Sparse stabilizer simulator using explicit `BitSet` storage.
 pub type SparseStabBitSet<R = PecosRng> = SparseStabGeneric<BitSet, R>;
 
 /// Sparse stabilizer simulator using `SortedVecSet` for O(n+m) XOR operations.
@@ -129,7 +135,7 @@ pub type SparseStabBitSet<R = PecosRng> = SparseStabGeneric<BitSet, R>;
 /// - O(n+m) XOR operations (merge algorithm)
 /// - Best Vec-based option for d >= 5
 ///
-/// For best overall performance, use `SparseStab` (BitSet-based) instead.
+/// `SparseStab` uses adaptive storage to balance compact-span speed and sparse memory.
 pub type SparseStabVecSet<R = PecosRng> = SparseStabGeneric<SortedVecSet, R>;
 
 /// Alias for `SparseStabVecSet`.
@@ -144,7 +150,7 @@ pub type SparseStabUnsortedVecSet<R = PecosRng> = SparseStabGeneric<VecSet<usize
 /// Constructors for `SparseStab` with the default set and RNG types.
 ///
 /// These methods provide ergonomic construction without needing to specify types.
-impl SparseStabGeneric<BitSet, PecosRng> {
+impl SparseStabGeneric<AdaptiveIndexSet, PecosRng> {
     /// Create a new stabilizer simulator with the default RNG.
     ///
     /// This is the most common constructor - it uses the default `PecosRng` seeded
@@ -183,6 +189,25 @@ impl SparseStabGeneric<BitSet, PecosRng> {
     /// // Create a simulator with a specific seed for reproducibility
     /// let state = SparseStab::with_seed(2, 42);
     /// ```
+    #[inline]
+    #[must_use]
+    pub fn with_seed(num_qubits: usize, seed: u64) -> Self {
+        let rng = PecosRng::seed_from_u64(seed);
+        Self::with_rng(num_qubits, rng)
+    }
+}
+
+/// Constructors for `SparseStabBitSet` with the default RNG type.
+impl SparseStabGeneric<BitSet, PecosRng> {
+    /// Create a new BitSet-based stabilizer simulator with the default RNG.
+    #[inline]
+    #[must_use]
+    pub fn new(num_qubits: usize) -> Self {
+        let rng = rand::make_rng();
+        Self::with_rng(num_qubits, rng)
+    }
+
+    /// Create a new BitSet-based stabilizer simulator with a specific seed.
     #[inline]
     #[must_use]
     pub fn with_seed(num_qubits: usize, seed: u64) -> Self {
@@ -341,10 +366,15 @@ where
     pub fn gens_data(&self, is_stab: bool) -> crate::GensData {
         let gens = if is_stab { &self.stabs } else { &self.destabs };
 
-        let col_x: Vec<Vec<usize>> = gens.col_x.iter().map(|s| s.iter().collect()).collect();
-        let col_z: Vec<Vec<usize>> = gens.col_z.iter().map(|s| s.iter().collect()).collect();
-        let row_x: Vec<Vec<usize>> = gens.row_x.iter().map(|s| s.iter().collect()).collect();
-        let row_z: Vec<Vec<usize>> = gens.row_z.iter().map(|s| s.iter().collect()).collect();
+        let sorted = |set: &S| {
+            let mut indices: Vec<_> = set.iter().collect();
+            indices.sort_unstable();
+            indices
+        };
+        let col_x: Vec<Vec<usize>> = gens.col_x.iter().map(sorted).collect();
+        let col_z: Vec<Vec<usize>> = gens.col_z.iter().map(sorted).collect();
+        let row_x: Vec<Vec<usize>> = gens.row_x.iter().map(sorted).collect();
+        let row_z: Vec<Vec<usize>> = gens.row_z.iter().map(sorted).collect();
 
         (col_x, col_z, row_x, row_z)
     }
@@ -509,10 +539,12 @@ where
         for stab_id in anticom_stabs_col.iter() {
             let weight = self.stabs.row_x[stab_id].len() + self.stabs.row_z[stab_id].len();
 
-            if weight < smallest_wt {
+            if (weight, stab_id) < (smallest_wt, removed_id.unwrap_or(usize::MAX)) {
                 smallest_wt = weight;
                 removed_id = Some(stab_id);
-                // Early termination: weight 1 is optimal (single-qubit Pauli)
+                // Weight 1 here forces row_x = {q}, row_z = {}: X_q up to phase.
+                // Independent generators cannot contain two such rows, so this
+                // is the unique minimum regardless of iteration order.
                 if weight == 1 {
                     break;
                 }
@@ -522,8 +554,7 @@ where
         let id = removed_id.expect("Critical error: removed_id was None");
 
         anticom_stabs_col.remove(id);
-        // Use take_clearing: takes the row contents but preserves capacity for reuse.
-        // This enables toggle_unchecked in CX gate since rows will have capacity.
+        // Take the row contents, leaving empty rows; capacity may be preserved.
         let removed_row_x = self.stabs.row_x[id].take_clearing();
         let removed_row_z = self.stabs.row_z[id].take_clearing();
 
@@ -2259,10 +2290,12 @@ where
         for stab_id in self.stabs.col_x[q].iter().copied() {
             let weight = self.stabs.row_x[stab_id].len() + self.stabs.row_z[stab_id].len();
 
-            if weight < smallest_wt {
+            if (weight, stab_id) < (smallest_wt, removed_id.unwrap_or(usize::MAX)) {
                 smallest_wt = weight;
                 removed_id = Some(stab_id);
-                // Early termination: weight 1 is optimal (single-qubit Pauli)
+                // Weight 1 here forces row_x = {q}, row_z = {}: X_q up to phase.
+                // Independent generators cannot contain two such rows, so this
+                // is the unique minimum regardless of iteration order.
                 if weight == 1 {
                     break;
                 }
@@ -3667,6 +3700,12 @@ where
 // ============================================================================
 // StabilizerSimulator implementations
 // ============================================================================
+
+impl StabilizerSimulator for SparseStabGeneric<AdaptiveIndexSet, PecosRng> {
+    fn with_seed(num_qubits: usize, seed: u64) -> Self {
+        Self::with_seed(num_qubits, seed)
+    }
+}
 
 impl StabilizerSimulator for SparseStabGeneric<BitSet, PecosRng> {
     fn with_seed(num_qubits: usize, seed: u64) -> Self {
@@ -5909,7 +5948,7 @@ mod tests {
     use crate::stabilizer_test_utils;
 
     // ========================================================================
-    // SparseStab (BitSet) Tests
+    // SparseStab (adaptive storage) Tests
     // ========================================================================
 
     #[test]

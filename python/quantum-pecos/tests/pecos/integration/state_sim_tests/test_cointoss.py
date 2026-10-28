@@ -21,6 +21,8 @@ from pecos.circuits import QuantumCircuit
 from pecos.engines.circuit_runners.timing_runner import TimingRunner
 from pecos.exceptions import NotSupportedGateError
 from pecos.simulators import CoinToss
+from pecos.simulators.batch_validation import GATE_ARITIES
+from pecos_rslib import _gate_bindings_symbols
 
 MEASURE_SYMBOLS = (
     "Measure",
@@ -166,15 +168,21 @@ def test_measurement_rule_follows_bindings_or_prefix(route, symbol, binding, mea
 @pytest.mark.parametrize("container", [list, tuple, set, frozenset, iter])
 @pytest.mark.parametrize("simulate_gate", [True, False])
 @pytest.mark.parametrize("prob", [0.5, 1.0])
-def test_all_measurement_batches_are_atomic(route, symbol, container, simulate_gate, prob):
+def test_all_measurement_batches_are_atomic(route, symbol, container, simulate_gate, prob, monkeypatch):
     state = CoinToss(4, seed=42, prob=prob)
     fresh = CoinToss(4, seed=42, prob=prob)
     assert list(container([0, 4])) == [0, 4]
-    with pytest.raises(ValueError, match="qubit 4") as error:
+    calls = []
+    original = state.mz
+
+    def record_measurement(qubit):
+        calls.append(qubit)
+        return original(qubit)
+
+    monkeypatch.setattr(state, "mz", record_measurement)
+    with pytest.raises(ValueError, match="qubit 4"):
         _dispatch(state, route, symbol, container([0, 4]), simulate_gate=simulate_gate)
-    for entry in error.traceback:
-        if entry.name in {"run_gate", "run_circuit"}:
-            assert entry.frame.f_locals.get("measurement_results", {}) == {}
+    assert calls == []
     state.prob = fresh.prob = 0.5
     assert [state.mz(0) for _ in range(32)] == [fresh.mz(0) for _ in range(32)]
 
@@ -182,20 +190,30 @@ def test_all_measurement_batches_are_atomic(route, symbol, container, simulate_g
 @pytest.mark.parametrize("symbol", MEASURE_SYMBOLS)
 @pytest.mark.parametrize("simulate_gate", [True, False])
 @pytest.mark.parametrize("prob", [0.5, 1.0])
-def test_measurement_batch_failure_preserves_results_and_rng(symbol, simulate_gate, prob):
+def test_measurement_batch_failure_preserves_results_and_rng(symbol, simulate_gate, prob, monkeypatch):
     """An invalid second location must not record a one or consume a coin toss."""
     state = CoinToss(4, prob=prob, seed=42)
     fresh = CoinToss(4, prob=prob, seed=42)
     locations = {0, 4}
     assert list(locations) == [0, 4]  # Ensure the invalid location really is second.
 
-    with pytest.raises(ValueError, match="qubit 4") as error:
-        state.run_circuit(_items(symbol, locations, simulate_gate=simulate_gate))
+    calls = []
+    original = state.mz
 
-    # run_circuit owns the result dict locally and cannot return it on failure.
-    # Inspect its exception frame to detect results recorded before rejection.
+    def record_measurement(qubit):
+        calls.append(qubit)
+        return original(qubit)
+
+    monkeypatch.setattr(state, "mz", record_measurement)
+    # Seed a real result with an earlier, valid batch. The failing batch must
+    # neither invoke a measurement nor change the accumulated result.
+    items = [("MZForced", [3], {"forced_outcome": 1}), (symbol, locations, {"simulate_gate": simulate_gate})]
+    circuit = SimpleNamespace(items=lambda: iter(items))
+    with pytest.raises(ValueError, match="qubit 4") as error:
+        state.run_circuit(circuit)
+    assert calls == []
     frame = next(entry.frame for entry in error.traceback if entry.name == "run_circuit")
-    assert frame.f_locals["measurement_results"] == fresh.run_circuit(_items(symbol, set())) == {}
+    assert frame.f_locals["measurement_results"] == {3: 1}
     state.prob = fresh.prob = 0.5
     probe = _items("Measure", {0, 1, 2, 3})
     assert [state.run_circuit(probe) for _ in range(32)] == [fresh.run_circuit(probe) for _ in range(32)]
@@ -220,8 +238,8 @@ def test_bare_int_measurement_is_validated(location):
         (0, [{}, {0: 1}, {0: 1}, {0: 1}, {}, {}, {}, {0: 1}]),
     ],
 )
-def test_valid_measurement_batches_match_dev(symbol, locations, expected):
-    """Enabled batches retain dev's prefix-measurement output and RNG draws."""
+def test_valid_measurement_batches_match_seeded_coin_stream(symbol, locations, expected):
+    """Enabled measurement spellings share the pinned output and RNG stream."""
     state = CoinToss(4, seed=42)
     circuit = _items(symbol, locations)
     assert [state.run_circuit(circuit) for _ in expected] == expected
@@ -238,11 +256,142 @@ def test_nonmeasurement_batches_preserve_rng(route, symbol):
 
 
 def test_circuit_validation_uses_instance_measurement_binding():
-    """A known prefix spelling rebound to a measurement is pre-checked."""
+    """A non-prefixed alias of a measurement binding is pre-checked."""
     state = CoinToss(4, seed=42)
-    state.bindings["measure X"] = state.bindings["MX"]
-    with pytest.raises(ValueError, match="measure X"):
-        state.run_circuit(_items("measure X", {0, 4}))
+    state.bindings["custom coin"] = state.bindings["MX"]
+    with pytest.raises(ValueError, match="custom coin"):
+        state.run_circuit(_items("custom coin", {0, 4}))
+
+
+class IndexScalar:
+    def __init__(self, value):
+        self.value = value
+
+    def __index__(self):
+        return self.value
+
+
+@pytest.mark.parametrize("route", ["gate", "circuit", "hybrid"])
+@pytest.mark.parametrize("symbol", ["MZ", "X", "custom coin", "measure custom"])
+def test_custom_binding_dispatches_and_returns_results(route, symbol):
+    state = CoinToss(4, prob=1, seed=42)
+    calls = []
+
+    def measure(sim, qubit, **params):
+        calls.append((qubit, params["tag"]))
+        return sim.mz(qubit)
+
+    state.bindings[symbol] = measure
+    assert _dispatch(state, route, symbol, [2, 0, 2], tag="kept") == {0: 1, 2: 1}
+    assert calls == [(2, "kept"), (0, "kept"), (2, "kept")]
+    calls.clear()
+    assert _dispatch(state, route, symbol, [0], tag="kept", simulate_gate=False) == {}
+    assert calls == []
+
+
+@pytest.mark.parametrize("route", ["gate", "circuit", "hybrid"])
+@pytest.mark.parametrize("symbol", ["MZ", "X", "measure custom"])
+@pytest.mark.parametrize("disabled", [False, True])
+def test_custom_binding_known_arity_is_atomic(route, symbol, disabled):
+    state = CoinToss(4, seed=42)
+    calls = []
+
+    def measure(sim, qubit, **_params):
+        calls.append(qubit)
+        return sim.mz(qubit)
+
+    state.bindings[symbol] = measure
+    with pytest.raises(ValueError, match=f"{symbol}: qubit 4"):
+        _dispatch(state, route, symbol, [0, 4], simulate_gate=not disabled)
+    assert calls == []
+
+
+@pytest.mark.parametrize("route", ["gate", "circuit"])
+def test_custom_binding_unknown_arity_and_known_pair(route):
+    state = CoinToss(4)
+    calls = []
+
+    def pair_binding(_state, location, **_params):
+        calls.append(location)
+        return 7
+
+    state.bindings["custom pair"] = pair_binding
+    state.bindings["CX"] = pair_binding
+    assert _dispatch(state, route, "custom pair", [(0, 1)]) == {(0, 1): 7}
+    assert _dispatch(state, route, "CX", [(1, 2)]) == {(1, 2): 7}
+    assert calls == [(0, 1), (1, 2)]
+    with pytest.raises(ValueError, match="CX requires distinct qubits"):
+        _dispatch(state, route, "CX", [(0, 1), (2, 2)])
+    assert calls == [(0, 1), (1, 2)]
+
+
+@pytest.mark.parametrize("route", ["gate", "circuit", "hybrid"])
+@pytest.mark.parametrize("symbol", ["I", "X", "CX", "Measure", "measure custom"])
+def test_builtin_noop_binding_keeps_permissive_locations(route, symbol):
+    state = CoinToss(4)
+    state.bindings[symbol] = state.bindings["X"]
+    assert _dispatch(state, route, symbol, [(0, 0), -1, 99, [0], None], simulate_gate=False) == {}
+    # HybridEngine's output lookup is irrelevant to a no-op; use no output mapping.
+    if route == "hybrid":
+        pc.HybridEngine.run_gate(state, {}, symbol, [(0, 0), -1, 99, [0], None])
+    else:
+        assert _dispatch(state, route, symbol, [(0, 0), -1, 99, [0], None]) == {}
+
+
+NATIVE_MEASUREMENTS = [entry for entry in _gate_bindings_symbols() if entry[1]]
+
+
+@pytest.mark.parametrize("route", ["gate", "circuit", "hybrid"])
+@pytest.mark.parametrize(("symbol", "measurement", "mode", "arity"), NATIVE_MEASUREMENTS)
+def test_every_native_measurement_has_a_working_binding(route, symbol, measurement, mode, arity):
+    state = CoinToss(4, prob=1)
+    assert measurement
+    assert arity == GATE_ARITIES[symbol] == 1
+    assert symbol in state.bindings
+    params = {"forced_outcome": -1} if mode == "forced_outcome" else {}
+    assert _dispatch(state, route, symbol, [0, 2], **params) == {0: 1, 2: 1}
+
+
+@pytest.mark.parametrize("route", ["gate", "circuit", "hybrid"])
+@pytest.mark.parametrize("symbol", [entry[0] for entry in NATIVE_MEASUREMENTS if "forced_outcome" in entry[2]])
+@pytest.mark.parametrize("outcome", [-1, 0, 1, False, True, IndexScalar(1)])
+def test_native_forced_outcomes_and_rng(route, symbol, outcome):
+    state = CoinToss(4, seed=42)
+    fresh = CoinToss(4, seed=42)
+    value = outcome.value if isinstance(outcome, IndexScalar) else outcome
+    expected = {}
+    for q in [2, 0]:
+        if fresh.mz(q) if value == -1 else value:
+            expected[q] = 1
+    assert _dispatch(state, route, symbol, [2, 0], forced_outcome=outcome) == expected
+    assert [state.mz(0) for _ in range(32)] == [fresh.mz(0) for _ in range(32)]
+
+
+@pytest.mark.parametrize("route", ["gate", "circuit", "hybrid"])
+@pytest.mark.parametrize("disabled", [False, True])
+@pytest.mark.parametrize("params", [{}, {"forced_outcome": 2}, {"forced_outcome": None}, {"forced_outcome": 1.0}])
+def test_forced_measurement_bad_params_precede_dispatch(route, disabled, params, monkeypatch):
+    state = CoinToss(4)
+    calls = []
+    monkeypatch.setattr(state, "mz", calls.append)
+    with pytest.raises(ValueError, match=r"MZForced requires.*forced_outcome"):
+        _dispatch(state, route, "MZForced", [0, 1], simulate_gate=not disabled, **params)
+    assert calls == []
+
+
+@pytest.mark.parametrize("route", ["gate", "circuit"])
+@pytest.mark.parametrize("value", [0, 2, -1, 4])
+@pytest.mark.parametrize("scalar_type", [int, IndexScalar])
+def test_integer_like_scalar_batch(route, value, scalar_type):
+    state = CoinToss(4, prob=1)
+    location = scalar_type(value)
+    if value in (-1, 4):
+        with pytest.raises(ValueError, match=f"MZ: qubit {value} is out of bounds"):
+            _dispatch(state, route, "MZ", location)
+    else:
+        result = _dispatch(state, route, "MZ", location)
+        assert result == {location: 1}
+        assert next(iter(result)) is location
 
 
 def test_fixed_prob() -> None:

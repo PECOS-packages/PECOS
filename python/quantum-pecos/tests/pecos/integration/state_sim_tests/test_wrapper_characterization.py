@@ -34,7 +34,7 @@ from pecos.simulators.quantum_simulator import QuantumSimulator
 from pecos_rslib import AngleSource, GateRegistry
 
 # GPU expectations (CuStateVec/MPS/CudaStateVec) are unverified until run on a CUDA host.
-# CoinToss run_gate assertions are input-independent no-op pins of current dispatch.
+# CoinToss ignores built-in non-measuring gates and returns its measurement results.
 QUANTUM = ("StateVec", "SparseStabPy", "CuStateVec", "MPS", "CudaStateVec")
 PAULI = ("PauliProp",)
 WRAPPERS = (*QUANTUM, *PAULI, "CoinToss")
@@ -261,7 +261,7 @@ def test_public_hybrid_engine(state):
     output = {"m": pecos.BitInt(2, 0)}
     circuit = QuantumCircuit()
     circuit.append("Measure", {1}, var=("m", 1))
-    # KNOWN-WRONG (#1480): CoinToss measures through HybridEngine but drops its own run_gate measurements.
+    # CoinToss measures through both HybridEngine and its own dispatch methods.
     assert pecos.HybridEngine.__module__ == "pecos.engines.hybrid_engine_old"
     pecos.HybridEngine().run_circuit(state, output, {}, circuit, None)
     assert int(output["m"]) == 2

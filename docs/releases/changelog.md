@@ -43,17 +43,26 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   is validated for every iterable batch container; other CoinToss gates remain
   no-ops.
 
-- **Breaking:** CoinToss now measures MX/MY/MZ and all iterable batch containers
-  (set, frozenset, list, tuple, and generator), as well as bare integers, in
-  `run_circuit` and `run_gate`, where measurements were previously silently
-  skipped. `run_gate` returns measurement results, recording only ones under
-  their original location keys. Both methods validate the whole measurement
-  batch first and honour `simulate_gate=False` by skipping coin draws. A spelling
-  measures if its binding measures; an unbound case-insensitive "measure"-prefixed
-  spelling also measures in `run_circuit` and `run_gate`, while the public
-  `pecos.HybridEngine`, which dispatches through bindings, rejects it as
-  unsupported. Non-measuring gates remain no-ops.
-  Locations are measured in container order, including duplicates. Outcomes and
+- **Breaking:** CoinToss now measures MX/MY/MZ and iterable measurement batches
+  (set, frozenset, list, tuple, and generator) through both `run_circuit` and
+  `run_gate`. Previously, `run_gate` discarded measurements; `run_circuit`
+  measured prefixed spellings only in sets or as bare Python integers.
+  Both methods accept integer-like scalar locations and return nonzero binding
+  results under their original location keys. Every bound spelling dispatches
+  through its binding, including custom measurement callables.
+  Built-in measurements and custom bindings with known arities or measurement
+  prefixes validate the whole batch before dispatch, even with
+  `simulate_gate=False`; built-in no-op bindings retain their permissive inputs.
+  Custom bindings with unknown arities cannot be pre-checked.
+  All native measurement spellings have bindings, including `measure X`,
+  `measure Y`, and `MZForced`. Native Z measurement spellings honour
+  `forced_outcome` (-1 draws a coin, 0/1 return that outcome without a coin);
+  `MZForced` requires the parameter.
+  An unbound case-insensitive "measure"-prefixed spelling also measures in
+  `run_circuit` and `run_gate`. The public `pecos.HybridEngine` validates these
+  unbound prefixed batches before rejecting them as unsupported when enabled.
+  Rebinding a prefixed spelling can make it non-measuring.
+  Locations execute in container order, including duplicates. Outcomes and
   coin use change for circuits that relied on the old silent skips or ignored
   `simulate_gate=False`.
 

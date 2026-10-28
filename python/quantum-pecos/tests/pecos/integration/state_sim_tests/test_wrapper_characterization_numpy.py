@@ -99,3 +99,16 @@ def test_numpy_unhashable_pair_tail_is_atomic(name):
 def test_hybrid_numpy_zero_dimensional_zero_raises():
     with pytest.raises(TypeError, match=r"len\(\) of unsized object"):
         pecos.HybridEngine.run_gate(simulators.SparseStabPy(2), {}, "X", np.array(0))
+
+
+@pytest.mark.parametrize("value", [0, 2, -1, 4])
+def test_cointoss_numpy_scalar_measurement(value):
+    state = CoinToss(4, prob=1)
+    location = np.int64(value)
+    if value in (-1, 4):
+        with pytest.raises(ValueError, match=f"MZ: qubit {value} is out of bounds"):
+            state.run_gate("MZ", location)
+    else:
+        result = state.run_gate("MZ", location)
+        assert result == {location: 1}
+        assert next(iter(result)) is location

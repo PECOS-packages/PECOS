@@ -656,7 +656,7 @@ impl SymbolicSparseStabVecSet {
 
         for stab_id in &anticom_stabs_col {
             let weight = self.stabs.row_x[*stab_id].len() + self.stabs.row_z[*stab_id].len();
-            if weight < smallest_wt {
+            if (weight, *stab_id) < (smallest_wt, removed_id.unwrap_or(usize::MAX)) {
                 smallest_wt = weight;
                 removed_id = Some(*stab_id);
             }

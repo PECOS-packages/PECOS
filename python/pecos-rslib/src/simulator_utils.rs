@@ -27,6 +27,114 @@ use std::collections::HashMap;
 use crate::dtypes::AngleParam;
 use crate::sparse_stab_bindings::adjust_tableau_string;
 
+/// Validate a pair before dispatch can panic inside a simulator.
+/// Growable Pauli trackers have no fixed capacity.
+pub(crate) fn validate_pair(
+    gate: &str,
+    a: usize,
+    b: usize,
+    capacity: Option<usize>,
+) -> PyResult<()> {
+    if a == b {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "{gate} requires distinct qubits; repeated qubit {a}"
+        )));
+    }
+    for qubit in [a, b] {
+        validate_qubit(gate, qubit, capacity)?;
+    }
+    Ok(())
+}
+
+/// Check a fixed-register operand before invoking a simulator.
+pub(crate) fn validate_qubit(gate: &str, qubit: usize, capacity: Option<usize>) -> PyResult<()> {
+    if let Some(size) = capacity
+        && qubit >= size
+    {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "{gate}: qubit {qubit} is outside the {size}-qubit register"
+        )));
+    }
+    Ok(())
+}
+
+/// Extract a single caller-supplied index with an actionable error.
+pub(crate) fn extract_qubit(gate: &str, location: &Bound<'_, PyAny>) -> PyResult<usize> {
+    location.extract().map_err(|_| {
+        pyo3::exceptions::PyValueError::new_err(format!(
+            "{gate}: expected a non-negative qubit index, got {location:?}"
+        ))
+    })
+}
+
+/// Extract operands exactly once, with a gate-named error for malformed locations.
+pub(crate) fn extract_pair(
+    gate: &str,
+    location: &Bound<'_, PyAny>,
+) -> PyResult<(QubitId, QubitId)> {
+    let invalid_location = || {
+        pyo3::exceptions::PyValueError::new_err(format!(
+            "{gate}: expected a 2-tuple of non-negative qubit indices, got {location:?}"
+        ))
+    };
+    let tuple = location.cast::<PyTuple>().map_err(|_| invalid_location())?;
+    if tuple.len() != 2 {
+        return Err(invalid_location());
+    }
+    let (a, b): (usize, usize) = tuple.extract().map_err(|_| invalid_location())?;
+    Ok((QubitId(a), QubitId(b)))
+}
+
+fn named_locations_iter<'py>(
+    symbol: &str,
+    locations: &Bound<'py, PyAny>,
+) -> PyResult<Bound<'py, pyo3::types::PyIterator>> {
+    locations.try_iter().map_err(|_| {
+        pyo3::exceptions::PyValueError::new_err(format!(
+            "{symbol}: expected an iterable of locations, got {locations:?}"
+        ))
+    })
+}
+
+fn extract_validated_single(
+    symbol: &str,
+    location: &Bound<'_, PyAny>,
+    capacity: Option<usize>,
+) -> PyResult<usize> {
+    let invalid = || {
+        pyo3::exceptions::PyValueError::new_err(format!(
+            "{symbol}: expected a non-negative qubit index or 1-tuple, got {location:?}"
+        ))
+    };
+    let qubit = if let Ok(tuple) = location.cast::<PyTuple>() {
+        if tuple.len() != 1 {
+            return Err(invalid());
+        }
+        tuple
+            .get_item(0)?
+            .extract::<usize>()
+            .map_err(|_| invalid())?
+    } else {
+        location.extract::<usize>().map_err(|_| invalid())?
+    };
+    validate_qubit(symbol, qubit, capacity)?;
+    Ok(qubit)
+}
+
+fn collect_validated_pairs(
+    symbol: &str,
+    locations: &Bound<'_, PyAny>,
+    capacity: Option<usize>,
+) -> PyResult<Vec<(QubitId, QubitId)>> {
+    named_locations_iter(symbol, locations)?
+        .map(|location| {
+            let (a, b) = extract_pair(symbol, &location?)?;
+            validate_pair(symbol, a.0, b.0, capacity)?;
+            Ok((a, b))
+        })
+        .collect()
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Symbol {
     I,
@@ -1039,14 +1147,35 @@ use pecos_core::{Angle64, QubitId};
 use pecos_simulators::{CliffordGateable, MeasurementResult};
 use pyo3::types::{PySet, PyTuple};
 
-/// Reject a symbol outside a simulator's declared surface before execution can be skipped.
-pub(crate) fn validate_supported_symbol(
+/// Extracted operands retained through both dispatch paths.
+pub(crate) struct ValidatedLocations {
+    pub qubits: Vec<usize>,
+    pub pairs: Option<Vec<(QubitId, QubitId)>>,
+}
+
+/// Validate the symbol and its entire location set before any dispatch.
+/// Both batch and per-location paths, including circuit/fault replay, enter here.
+pub(crate) fn validate_gate_locations(
     symbol: &str,
     locations: &Bound<'_, PySet>,
     supports: fn(&SymbolEntry) -> bool,
-) -> PyResult<()> {
-    if resolve_symbol(symbol).is_some_and(supports) {
-        return Ok(());
+    capacity: Option<usize>,
+) -> PyResult<ValidatedLocations> {
+    if let Some(entry) = resolve_symbol(symbol).filter(|entry| supports(entry)) {
+        if entry.qubit_count() == 2 {
+            return Ok(ValidatedLocations {
+                qubits: Vec::new(),
+                pairs: Some(collect_validated_pairs(symbol, locations, capacity)?),
+            });
+        }
+        let qubits = locations
+            .iter()
+            .map(|location| extract_validated_single(symbol, &location, capacity))
+            .collect::<PyResult<Vec<_>>>()?;
+        return Ok(ValidatedLocations {
+            qubits,
+            pairs: None,
+        });
     }
 
     let arity = locations.iter().next().map_or(1, |location| {
@@ -1057,23 +1186,6 @@ pub(crate) fn validate_supported_symbol(
     let gate_kind = if arity == 2 { "two" } else { "single" };
     Err(pyo3::exceptions::PyValueError::new_err(format!(
         "Unsupported {gate_kind}-qubit gate: {symbol}"
-    )))
-}
-
-/// Extract a single qubit index from a Python location.
-/// Handles both bare ints and 1-tuples like `(0,)` (the `GateBindingsDict` wraps ints in tuples).
-pub fn extract_single_qubit(location: &Bound<'_, PyAny>) -> PyResult<usize> {
-    if let Ok(q) = location.extract::<usize>() {
-        return Ok(q);
-    }
-    if let Ok(tuple) = location.cast::<PyTuple>()
-        && tuple.len() == 1
-    {
-        return tuple.get_item(0)?.extract::<usize>();
-    }
-    Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(format!(
-        "Expected int or 1-tuple for single-qubit location, got {:?}",
-        location.get_type().name()?
     )))
 }
 
@@ -1160,30 +1272,6 @@ pub fn extract_angles(
     Ok(angles.into_iter().map(|angle| angle.0).collect())
 }
 
-/// Collect single-qubit locations from a Python set into a Vec of `QubitIds`.
-fn collect_single_qubits(locations: &Bound<'_, PySet>) -> PyResult<Vec<QubitId>> {
-    locations
-        .iter()
-        .map(|l| Ok(QubitId(extract_single_qubit(&l)?)))
-        .collect()
-}
-
-/// Collect single-qubit locations as raw usize values.
-fn collect_single_qubit_indices(locations: &Bound<'_, PySet>) -> PyResult<Vec<usize>> {
-    locations.iter().map(|l| extract_single_qubit(&l)).collect()
-}
-
-/// Collect two-qubit pair locations from a Python set.
-fn collect_pairs(locations: &Bound<'_, PySet>) -> PyResult<Vec<(QubitId, QubitId)>> {
-    locations
-        .iter()
-        .map(|l| {
-            let t: (usize, usize) = l.extract()?;
-            Ok((QubitId(t.0), QubitId(t.1)))
-        })
-        .collect()
-}
-
 /// Build a measurement output dict from qubit indices and results.
 fn build_meas_output(
     py: Python<'_>,
@@ -1206,7 +1294,8 @@ fn build_meas_output(
 pub fn try_clifford_batch_dispatch<S: CliffordGateable>(
     sim: &mut S,
     symbol: &str,
-    locations: &Bound<'_, PySet>,
+    qubits: &[usize],
+    pairs: Option<&[(QubitId, QubitId)]>,
     py: Python<'_>,
 ) -> PyResult<Option<Py<PyDict>>> {
     match symbol {
@@ -1219,7 +1308,7 @@ pub fn try_clifford_batch_dispatch<S: CliffordGateable>(
         | "F2" | "F2dg" | "F2d" | "F3" | "F3dg" | "F3d" | "F4" | "F4dg" | "F4d" | "Q" | "SX"
         | "SqrtX" | "Qd" | "SXdg" | "SqrtXd" | "SqrtXdg" | "R" | "SY" | "SqrtY" | "Rd" | "SYdg"
         | "SqrtYd" | "SqrtYdg" | "S" | "SZ" | "SqrtZ" | "Sd" | "SZdg" | "SqrtZd" | "SqrtZdg" => {
-            let qubits = collect_single_qubits(locations)?;
+            let qubits: Vec<QubitId> = qubits.iter().copied().map(QubitId).collect();
             match symbol {
                 "X" => {
                     sim.x(&qubits);
@@ -1297,97 +1386,95 @@ pub fn try_clifford_batch_dispatch<S: CliffordGateable>(
 
         // Preparations (no return value)
         "PZ" | "Init" | "Init +Z" | "init |0>" | "leak" | "leak |0>" | "unleak |0>" => {
-            sim.pz(&collect_single_qubits(locations)?);
+            sim.pz(&qubits.iter().copied().map(QubitId).collect::<Vec<_>>());
             return Ok(Some(PyDict::new(py).into()));
         }
         "PNZ" | "Init -Z" | "init |1>" | "leak |1>" | "unleak |1>" => {
-            sim.pnz(&collect_single_qubits(locations)?);
+            sim.pnz(&qubits.iter().copied().map(QubitId).collect::<Vec<_>>());
             return Ok(Some(PyDict::new(py).into()));
         }
         "PX" | "Init +X" | "init |+>" => {
-            sim.px(&collect_single_qubits(locations)?);
+            sim.px(&qubits.iter().copied().map(QubitId).collect::<Vec<_>>());
             return Ok(Some(PyDict::new(py).into()));
         }
         "PNX" | "Init -X" | "init |->" => {
-            sim.pnx(&collect_single_qubits(locations)?);
+            sim.pnx(&qubits.iter().copied().map(QubitId).collect::<Vec<_>>());
             return Ok(Some(PyDict::new(py).into()));
         }
         "PY" | "Init +Y" | "init |+i>" => {
-            sim.py(&collect_single_qubits(locations)?);
+            sim.py(&qubits.iter().copied().map(QubitId).collect::<Vec<_>>());
             return Ok(Some(PyDict::new(py).into()));
         }
         "PNY" | "Init -Y" | "init |-i>" => {
-            sim.pny(&collect_single_qubits(locations)?);
+            sim.pny(&qubits.iter().copied().map(QubitId).collect::<Vec<_>>());
             return Ok(Some(PyDict::new(py).into()));
         }
 
         // Measurements (return outcomes)
         "MZ" | "Measure" | "measure Z" | "Measure +Z" => {
-            let qubits = collect_single_qubit_indices(locations)?;
             let qubit_ids: Vec<QubitId> = qubits.iter().map(|&q| QubitId(q)).collect();
             let results = sim.mz(&qubit_ids);
-            return Ok(Some(build_meas_output(py, &qubits, results)?));
+            return Ok(Some(build_meas_output(py, qubits, results)?));
         }
         "MX" | "Measure +X" => {
-            let qubits = collect_single_qubit_indices(locations)?;
             let qubit_ids: Vec<QubitId> = qubits.iter().map(|&q| QubitId(q)).collect();
             let results = sim.mx(&qubit_ids);
-            return Ok(Some(build_meas_output(py, &qubits, results)?));
+            return Ok(Some(build_meas_output(py, qubits, results)?));
         }
         "MY" | "Measure +Y" => {
-            let qubits = collect_single_qubit_indices(locations)?;
             let qubit_ids: Vec<QubitId> = qubits.iter().map(|&q| QubitId(q)).collect();
             let results = sim.my(&qubit_ids);
-            return Ok(Some(build_meas_output(py, &qubits, results)?));
+            return Ok(Some(build_meas_output(py, qubits, results)?));
         }
 
         // Two-qubit Clifford gates (no return value)
         "CX" | "CNOT" | "CY" | "CZ" | "SZZ" | "SZZdg" | "SXX" | "SXXdg" | "SYY" | "SYYdg"
         | "SqrtZZ" | "SqrtZZd" | "SqrtXX" | "SqrtXXd" | "SqrtYY" | "SqrtYYd" | "SWAP" | "G"
         | "G2" | "Gdg" | "ISWAP" | "ISWAPdg" => {
-            let pairs = collect_pairs(locations)?;
+            let pairs = pairs
+                .expect("internal dispatch invariant: two-qubit symbol has no validated pairs");
             match symbol {
                 "CX" | "CNOT" => {
-                    sim.cx(&pairs);
+                    sim.cx(pairs);
                 }
                 "CY" => {
-                    sim.cy(&pairs);
+                    sim.cy(pairs);
                 }
                 "CZ" => {
-                    sim.cz(&pairs);
+                    sim.cz(pairs);
                 }
                 "SZZ" | "SqrtZZ" => {
-                    sim.szz(&pairs);
+                    sim.szz(pairs);
                 }
                 "SZZdg" | "SqrtZZd" => {
-                    sim.szzdg(&pairs);
+                    sim.szzdg(pairs);
                 }
                 "SXX" | "SqrtXX" => {
-                    sim.sxx(&pairs);
+                    sim.sxx(pairs);
                 }
                 "SXXdg" | "SqrtXXd" => {
-                    sim.sxxdg(&pairs);
+                    sim.sxxdg(pairs);
                 }
                 "SYY" | "SqrtYY" => {
-                    sim.syy(&pairs);
+                    sim.syy(pairs);
                 }
                 "SYYdg" | "SqrtYYd" => {
-                    sim.syydg(&pairs);
+                    sim.syydg(pairs);
                 }
                 "SWAP" => {
-                    sim.swap(&pairs);
+                    sim.swap(pairs);
                 }
                 "G" | "G2" => {
-                    sim.g(&pairs);
+                    sim.g(pairs);
                 }
                 "Gdg" => {
-                    sim.gdg(&pairs);
+                    sim.gdg(pairs);
                 }
                 "ISWAP" => {
-                    sim.iswap(&pairs);
+                    sim.iswap(pairs);
                 }
                 "ISWAPdg" => {
-                    sim.iswapdg(&pairs);
+                    sim.iswapdg(pairs);
                 }
                 _ => unreachable!(),
             }

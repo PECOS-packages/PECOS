@@ -13,6 +13,7 @@
 
 import math
 
+import pytest
 from pecos.slr import CReg, If, Main, QReg, Repeat, rad
 from pecos.slr.ast import slr_to_ast
 from pecos.slr.ast.nodes import (
@@ -89,22 +90,9 @@ class TestTypeCheckerArityErrors:
         assert result.errors[0].code == "E201"
 
     def test_two_qubit_gate_wrong_arity(self) -> None:
-        """Two-qubit gate with wrong number of targets."""
-        prog = Program(
-            name="test",
-            allocator=AllocatorDecl(name="q", capacity=3),
-            body=(
-                GateOp(
-                    gate=GateKind.CX,
-                    targets=(SlotRef(allocator="q", index=0),),  # CX takes 2 qubits
-                ),
-            ),
-        )
-
-        result = check_types(prog)
-
-        assert result.valid is False
-        assert "expects 2 qubit(s), got 1" in result.errors[0].message
+        """A malformed multi-qubit gate is rejected before type checking."""
+        with pytest.raises(ValueError, match=r"CX expects 2 qubit\(s\), got 1"):
+            GateOp(gate=GateKind.CX, targets=(SlotRef(allocator="q", index=0),))
 
 
 class TestTypeCheckerParameterErrors:

@@ -218,7 +218,12 @@ impl QisEngineBuilder {
                 // Store the LLVM IR source for later loading
                 match &qis_prog.content {
                     pecos_programs::QisContent::Ir(ir_string) => {
+                        // QisEngine executes dynamically. Static collection would
+                        // run custom calls without their configured runtime and
+                        // is never used by the dynamic engine built below.
                         self.program_source = Some(ir_string.clone());
+                        self.interface = None;
+                        return Ok(self);
                     }
                     pecos_programs::QisContent::Bitcode(_bitcode) => {
                         // For bitcode, we'll need to convert or handle differently

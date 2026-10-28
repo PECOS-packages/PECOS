@@ -38,7 +38,7 @@ use pecos_random::{PecosRng, Rng, RngExt, SeedableRng};
 use smallvec::SmallVec;
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
-use std::arch::x86_64::{__m256i, _mm256_loadu_si256, _mm256_storeu_si256, _mm256_xor_si256};
+use std::arch::x86_64::{__m256i, _mm256_xor_si256};
 
 // ========== Helper functions ==========
 
@@ -97,14 +97,22 @@ fn xor_cols(data: &mut [u64], words_per_col: usize, col_a: usize, col_b: usize) 
                 #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
                 if words_per_col >= 8 {
                     let chunks = words_per_col / 4;
-                    let ptr_a = data.as_ptr().add(base_a) as *const __m256i;
-                    let ptr_b = data.as_mut_ptr().add(base_b) as *mut __m256i;
+                    let [source, target] = data
+                        .get_disjoint_mut([
+                            base_a..base_a + words_per_col,
+                            base_b..base_b + words_per_col,
+                        ])
+                        .expect("XOR requires valid, disjoint col ranges");
+                    // Disjoint slices preserve both pointers. Use unaligned accesses because
+                    // u64 storage need not satisfy __m256i alignment.
+                    let ptr_a = source.as_ptr();
+                    let ptr_b = target.as_mut_ptr();
 
                     for i in 0..chunks {
-                        let a = _mm256_loadu_si256(ptr_a.add(i));
-                        let b = _mm256_loadu_si256(ptr_b.add(i));
+                        let a = ptr_a.add(i * 4).cast::<__m256i>().read_unaligned();
+                        let b = ptr_b.add(i * 4).cast::<__m256i>().read_unaligned();
                         let result = _mm256_xor_si256(a, b);
-                        _mm256_storeu_si256(ptr_b.add(i), result);
+                        ptr_b.add(i * 4).cast::<__m256i>().write_unaligned(result);
                     }
 
                     // Handle remainder
@@ -148,14 +156,27 @@ fn xor_rows(data: &mut [u64], words_per_row: usize, row_a: usize, row_b: usize) 
                 #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
                 if words_per_row >= 8 {
                     let chunks = words_per_row / 4;
-                    let ptr_a = data.as_ptr().add(base_a) as *const __m256i;
-                    let ptr_b = data.as_mut_ptr().add(base_b) as *mut __m256i;
+                    // Preserve XOR-with-self semantics without overlapping borrows.
+                    if row_a == row_b {
+                        data[base_b..base_b + words_per_row].fill(0);
+                        return;
+                    }
+                    let [source, target] = data
+                        .get_disjoint_mut([
+                            base_a..base_a + words_per_row,
+                            base_b..base_b + words_per_row,
+                        ])
+                        .expect("XOR requires valid, disjoint row ranges");
+                    // Disjoint slices preserve both pointers. Use unaligned accesses because
+                    // u64 storage need not satisfy __m256i alignment.
+                    let ptr_a = source.as_ptr();
+                    let ptr_b = target.as_mut_ptr();
 
                     for i in 0..chunks {
-                        let a = _mm256_loadu_si256(ptr_a.add(i));
-                        let b = _mm256_loadu_si256(ptr_b.add(i));
+                        let a = ptr_a.add(i * 4).cast::<__m256i>().read_unaligned();
+                        let b = ptr_b.add(i * 4).cast::<__m256i>().read_unaligned();
                         let result = _mm256_xor_si256(a, b);
-                        _mm256_storeu_si256(ptr_b.add(i), result);
+                        ptr_b.add(i * 4).cast::<__m256i>().write_unaligned(result);
                     }
 
                     // Handle remainder
@@ -748,6 +769,7 @@ impl<R: SeedableRng + Rng + Debug + Clone> CliffordGateable for DenseStabColOnly
     }
 
     fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "CX");
         for &(control, target) in pairs {
             self.apply_cx(control.index(), target.index());
         }
@@ -1282,6 +1304,7 @@ impl<R: SeedableRng + Rng + Debug + Clone> CliffordGateable for DenseStabRowOnly
     }
 
     fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "CX");
         for &(control, target) in pairs {
             self.apply_cx(control.index(), target.index());
         }
@@ -1744,6 +1767,7 @@ impl CliffordGateable for SparseColOnly {
     }
 
     fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "CX");
         for &(control, target) in pairs {
             self.apply_cx(control.index(), target.index());
         }
@@ -2197,6 +2221,7 @@ impl CliffordGateable for SparseRowOnly {
     }
 
     fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "CX");
         for &(control, target) in pairs {
             self.apply_cx(control.index(), target.index());
         }
@@ -2510,6 +2535,31 @@ impl StabilizerSimulator for SparseRowOnly {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_disjoint_xor_ranges() {
+        // CI runs the scalar arms. The AVX2 arm runs only with
+        // -C target-feature=+avx2 (or target-cpu=native on an AVX2 host), not in CI.
+        // >= 8 words covers vector chunks and non-vector remainders.
+        for width in [1, 2, 3, 4, 8, 9, 11, 12] {
+            for (source, target) in [(0, 2), (2, 0), (1, 1)] {
+                let original: Vec<u64> = (0..3 * width).map(|i| (i as u64 + 1) * 17).collect();
+                let mut expected = original.clone();
+                for word in 0..width {
+                    expected[target * width + word] ^= original[source * width + word];
+                }
+                // Gate preflight rejects equal columns; row XOR is a separate helper.
+                if source != target {
+                    let mut columns = original.clone();
+                    xor_cols(&mut columns, width, source, target);
+                    assert_eq!(columns, expected);
+                }
+                let mut rows = original;
+                xor_rows(&mut rows, width, source, target);
+                assert_eq!(rows, expected);
+            }
+        }
+    }
 
     #[test]
     fn test_col_only_bell_state() {

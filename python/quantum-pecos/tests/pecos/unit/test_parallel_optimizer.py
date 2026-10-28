@@ -30,6 +30,17 @@ def test_symbolic_result_orders_concrete_writes(index: int, *, symbolic_first: b
     assert optimized.ops[0].ops == operations
 
 
+@pytest.mark.parametrize("index", [0, 1])
+@pytest.mark.parametrize("symbolic_first", [False, True])
+def test_symbolic_qubit_orders_concrete_gates(index: int, *, symbolic_first: bool) -> None:
+    """An unresolved qubit overlaps every concrete qubit of its register, without raising."""
+    q = QReg("q", 2)
+    symbolic, concrete = qb.X(q[LoopVar("i")]), qb.H(q[index])
+    operations = [symbolic, concrete] if symbolic_first else [concrete, symbolic]
+    optimized = ParallelOptimizer().transform(Main(q, Parallel(*operations)))
+    assert optimized.ops[0].ops == operations
+
+
 @pytest.mark.parametrize("kind", ["overwrite", "read", "barrier"])
 def test_classical_operations_are_parallel_barriers(kind: str) -> None:
     """Operations before and after a classical action stay on their respective sides."""

@@ -12,9 +12,8 @@
 
 use crate::prelude::*;
 use crate::simulator_utils::{
-    SymbolEntry, extract_forced_outcome, supports_exact, validate_supported_symbol,
+    SymbolEntry, extract_forced_outcome, supports_exact, validate_gate_locations,
 };
-use pecos_core::BitSet;
 use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PySet, PyTuple};
@@ -75,6 +74,131 @@ crate::simulator_utils::random_z_surface_test!(
 crate::simulator_utils::invalid_forced_z_surface_test!(SparseSim {
     inner: SparseStab::with_seed(2, 0)
 });
+
+// This legacy class is not exported by the Python module, so exercise its
+// Python boundary directly instead of adding a public API solely for testing.
+#[test]
+fn repeated_pair_is_python_value_error() {
+    pyo3::Python::initialize();
+    pyo3::Python::attach(|py| {
+        for entry in crate::simulator_utils::SYMBOL_ENTRIES {
+            if entry.qubit_count() != 2 || !supports(entry) {
+                continue;
+            }
+            let mut sim = SparseSim::new(2);
+            let location = PyTuple::new(py, [1_usize, 1_usize]).expect("qubit pair");
+            let error = sim
+                .run_2q_gate(entry.spelling, &location, None)
+                .expect_err("repeated pair must raise ValueError");
+            assert!(error.is_instance_of::<pyo3::exceptions::PyValueError>(py));
+            let message = error.to_string();
+            assert!(message.contains(entry.spelling), "{message}");
+            assert!(message.contains("repeated qubit 1"), "{message}");
+        }
+    });
+}
+
+#[test]
+fn invalid_pair_batches_are_python_errors_without_mutation() {
+    pyo3::Python::initialize();
+    pyo3::Python::attach(|py| {
+        for (invalid, message) in [
+            (
+                (2_usize, 2_usize),
+                "CX requires distinct qubits; repeated qubit 2",
+            ),
+            ((2, 3), "CX: qubit 3 is outside the 3-qubit register"),
+            ((3, 2), "CX: qubit 3 is outside the 3-qubit register"),
+        ] {
+            let mut sim = SparseSim::new(3);
+            sim.inner.h(&[QubitId(0)]);
+            let before = sim.inner.full_tableau();
+            let locations = PySet::new(py, [(0_usize, 1_usize), invalid]).expect("gate locations");
+            let error = sim
+                .run_gate("CX", locations.as_any(), None, py)
+                .expect_err("invalid batch must raise ValueError before mutation");
+            assert!(error.is_instance_of::<pyo3::exceptions::PyValueError>(py));
+            assert!(error.to_string().contains(message), "{error}");
+            assert_eq!(sim.inner.full_tableau(), before);
+
+            let pair = PyTuple::new(py, [invalid.0, invalid.1]).expect("qubit pair");
+            let error = sim
+                .run_2q_gate("CX", &pair, None)
+                .expect_err("invalid direct pair");
+            assert!(error.is_instance_of::<pyo3::exceptions::PyValueError>(py));
+            assert!(error.to_string().contains(message), "{error}");
+            assert_eq!(sim.inner.full_tableau(), before);
+        }
+    });
+}
+
+#[test]
+fn pair_operands_are_extracted_once() {
+    Python::initialize();
+    Python::attach(|py| {
+        let namespace = PyDict::new(py);
+        py.run(pyo3::ffi::c_str!("class Index:\n    def __init__(self, value):\n        self.value = value\n        self.calls = 0\n    def __index__(self):\n        self.calls += 1\n        return self.value if self.calls == 1 else 2\na, b = Index(0), Index(1)\nlocations = {(a, b)}"), Some(&namespace), None).expect("index objects");
+        let locations = namespace
+            .get_item("locations")
+            .expect("namespace")
+            .expect("locations");
+        let mut sim = SparseSim::new(3);
+        sim.inner.h(&[QubitId(0)]);
+        let mut expected = sim.inner.clone();
+        expected.cx(&[(QubitId(0), QubitId(1))]);
+        sim.run_gate("CX", &locations, None, py)
+            .expect("validated CX");
+        let calls: (usize, usize) = py
+            .eval(
+                pyo3::ffi::c_str!("(a.calls, b.calls)"),
+                Some(&namespace),
+                None,
+            )
+            .expect("call counts")
+            .extract()
+            .expect("integer counts");
+        assert_eq!(calls, (1, 1));
+        assert_eq!(sim.inner.full_tableau(), expected.full_tableau());
+    });
+}
+
+#[test]
+fn malformed_pair_batches_are_atomic() {
+    Python::initialize();
+    Python::attach(|py| {
+        let malformed = py
+            .eval(
+                pyo3::ffi::c_str!("[(0,), (0, 1, 2), (-1, 0), (0, 1.5), 'bad', 0]"),
+                None,
+                None,
+            )
+            .expect("malformed locations");
+        for location in malformed.try_iter().expect("locations") {
+            let location = location.expect("location");
+            let mut sim = SparseSim::new(3);
+            sim.inner.h(&[QubitId(0)]);
+            let before = sim.inner.full_tableau();
+            let valid = PyTuple::new(py, [0, 1]).expect("valid pair");
+            let locations = PySet::new(py, [valid.as_any(), &location]).expect("batch");
+            let error = sim
+                .run_gate("CX", locations.as_any(), None, py)
+                .expect_err("malformed batch must fail");
+            assert!(error.is_instance_of::<pyo3::exceptions::PyValueError>(py));
+            let message = error.to_string();
+            assert!(message.contains("CX: expected a 2-tuple"), "{message}");
+            assert!(
+                message.contains(&location.repr().expect("repr").to_string()),
+                "{message}"
+            );
+            assert_eq!(sim.inner.full_tableau(), before);
+            assert!(
+                sim.run_2q_gate("CX", &location, None)
+                    .expect_err("malformed direct pair")
+                    .is_instance_of::<pyo3::exceptions::PyValueError>(py)
+            );
+        }
+    });
+}
 
 fn supports(entry: &SymbolEntry) -> bool {
     supports_exact! { entry;
@@ -157,6 +281,7 @@ impl SparseSim {
         location: usize,
         params: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Option<u8>> {
+        crate::simulator_utils::validate_qubit(symbol, location, self.inner.qubit_capacity())?;
         let q = &[QubitId(location)];
         match symbol {
             "X" => {
@@ -322,68 +447,17 @@ impl SparseSim {
     fn run_2q_gate(
         &mut self,
         symbol: &str,
-        location: &Bound<'_, PyTuple>,
+        location: &Bound<'_, PyAny>,
         _params: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Option<u8>> {
-        if location.len() != 2 {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "Two-qubit gate requires exactly 2 qubit locations",
-            ));
-        }
-
-        let q1: usize = location.get_item(0)?.extract()?;
-        let q2: usize = location.get_item(1)?.extract()?;
-        let pair = &[(QubitId(q1), QubitId(q2))];
-
-        match symbol {
-            "CX" => {
-                self.inner.cx(pair);
-                Ok(None)
-            }
-            "CY" => {
-                self.inner.cy(pair);
-                Ok(None)
-            }
-            "CZ" => {
-                self.inner.cz(pair);
-                Ok(None)
-            }
-            "SXX" => {
-                self.inner.sxx(pair);
-                Ok(None)
-            }
-            "SXXdg" => {
-                self.inner.sxxdg(pair);
-                Ok(None)
-            }
-            "SYY" => {
-                self.inner.syy(pair);
-                Ok(None)
-            }
-            "SYYdg" => {
-                self.inner.syydg(pair);
-                Ok(None)
-            }
-            "SZZ" => {
-                self.inner.szz(pair);
-                Ok(None)
-            }
-            "SZZdg" => {
-                self.inner.szzdg(pair);
-                Ok(None)
-            }
-            "SWAP" => {
-                self.inner.swap(pair);
-                Ok(None)
-            }
-            "G2" => {
-                self.inner.g(pair);
-                Ok(None)
-            }
-            _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "Unsupported two-qubit gate",
-            )),
-        }
+        let pair = crate::simulator_utils::extract_pair(symbol, location)?;
+        crate::simulator_utils::validate_pair(
+            symbol,
+            pair.0.0,
+            pair.1.0,
+            self.inner.qubit_capacity(),
+        )?;
+        self.dispatch_2q_gate(symbol, pair, None)
     }
 
     /// Internal gate dispatcher (tuple-based) - for internal use
@@ -480,7 +554,12 @@ impl SparseSim {
     ) -> PyResult<Py<PyDict>> {
         let output = PyDict::new(py);
         let locations_set: Bound<PySet> = locations.clone().cast_into()?;
-        validate_supported_symbol(symbol, &locations_set, supports)?;
+        let crate::simulator_utils::ValidatedLocations { qubits, pairs } = validate_gate_locations(
+            symbol,
+            &locations_set,
+            supports,
+            self.inner.qubit_capacity(),
+        )?;
 
         // Check if simulate_gate is False
         if let Some(p) = params
@@ -490,19 +569,18 @@ impl SparseSim {
             return Ok(output.into());
         }
 
-        for location in locations_set.iter() {
-            // Convert location to tuple
-            let loc_tuple: Bound<'_, PyTuple> = if location.is_instance_of::<PyTuple>() {
-                location.clone().cast_into()?
-            } else {
-                // Single qubit - wrap in tuple
-                PyTuple::new(py, std::slice::from_ref(&location))?
-            };
+        if let Some(pairs) = pairs {
+            for pair in pairs {
+                if let Some(value) = self.dispatch_2q_gate(symbol, pair, params)? {
+                    output.set_item((pair.0.0, pair.1.0), value)?;
+                }
+            }
+            return Ok(output.into());
+        }
 
-            // Call the underlying run_gate_internal
-            let result = self.run_gate_internal(symbol, &loc_tuple, params)?;
+        for (&qubit, location) in qubits.iter().zip(locations_set.iter()) {
+            let result = self.run_1q_gate(symbol, qubit, params)?;
 
-            // Only add to output if result is Some (non-zero measurement)
             if let Some(value) = result {
                 output.set_item(location, value)?;
             }
@@ -564,20 +642,7 @@ impl SparseSim {
 
     /// Returns the raw gens data (`col_x`, `col_z`, `row_x`, `row_z`) for stabs or destabs.
     fn _gens_data(&self, is_stab: bool) -> crate::simulator_utils::GensData {
-        let gens = if is_stab {
-            self.inner.stabs()
-        } else {
-            self.inner.destabs()
-        };
-        let to_vecs = |sets: &[BitSet]| -> Vec<Vec<usize>> {
-            sets.iter().map(|s| s.iter().collect()).collect()
-        };
-        (
-            to_vecs(&gens.col_x),
-            to_vecs(&gens.col_z),
-            to_vecs(&gens.row_x),
-            to_vecs(&gens.row_z),
-        )
+        self.inner.gens_data(is_stab)
     }
 
     #[getter]
@@ -604,5 +669,66 @@ impl SparseSim {
         let py = slf.py();
         let sim_obj: Py<PyAny> = slf.into_bound_py_any(py)?.unbind();
         Ok(crate::simulator_utils::TableauWrapper::new(sim_obj, false))
+    }
+}
+
+impl SparseSim {
+    // Operands have already been extracted and validated for the entire batch.
+    fn dispatch_2q_gate(
+        &mut self,
+        symbol: &str,
+        operands: (QubitId, QubitId),
+        _params: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Option<u8>> {
+        let pair = &[operands];
+        match symbol {
+            "CX" => {
+                self.inner.cx(pair);
+                Ok(None)
+            }
+            "CY" => {
+                self.inner.cy(pair);
+                Ok(None)
+            }
+            "CZ" => {
+                self.inner.cz(pair);
+                Ok(None)
+            }
+            "SXX" => {
+                self.inner.sxx(pair);
+                Ok(None)
+            }
+            "SXXdg" => {
+                self.inner.sxxdg(pair);
+                Ok(None)
+            }
+            "SYY" => {
+                self.inner.syy(pair);
+                Ok(None)
+            }
+            "SYYdg" => {
+                self.inner.syydg(pair);
+                Ok(None)
+            }
+            "SZZ" => {
+                self.inner.szz(pair);
+                Ok(None)
+            }
+            "SZZdg" => {
+                self.inner.szzdg(pair);
+                Ok(None)
+            }
+            "SWAP" => {
+                self.inner.swap(pair);
+                Ok(None)
+            }
+            "G2" => {
+                self.inner.g(pair);
+                Ok(None)
+            }
+            _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Unsupported two-qubit gate",
+            )),
+        }
     }
 }

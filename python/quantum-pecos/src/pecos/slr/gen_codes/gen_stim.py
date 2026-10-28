@@ -16,6 +16,7 @@ from __future__ import annotations
 import warnings
 from typing import TYPE_CHECKING
 
+from pecos.slr._qubit_args import gate_target_groups, qubit_key
 from pecos.slr.gen_codes._permutation import reject_permute_in_region
 from pecos.slr.gen_codes.generator import Generator
 
@@ -262,21 +263,8 @@ class StimGenerator(Generator):
 
     def _handle_two_qubit_gate(self, gate_name, op):
         """Handle two-qubit gates."""
-        qubits = self._get_qubit_indices(op)
-        if len(qubits) >= 2:
-            # For gates like CX, CY, CZ, the first qubit is control, second is target
-            self.circuit.append_operation(gate_name, [qubits[0], qubits[1]])
-        elif hasattr(op, "control") and hasattr(op, "target"):
-            control_qubits = self._get_qubit_indices_from_target(op.control)
-            target_qubits = self._get_qubit_indices_from_target(op.target)
-            if control_qubits and target_qubits:
-                for c, t in zip(control_qubits, target_qubits):
-                    self.circuit.append_operation(gate_name, [c, t])
-        elif hasattr(op, "targets"):
-            qubits = self._get_qubit_indices(op)
-            # Process pairs
-            for i in range(0, len(qubits) - 1, 2):
-                self.circuit.append_operation(gate_name, [qubits[i], qubits[i + 1]])
+        # The shared argument resolver has already validated and ordered pairs.
+        self.circuit.append_operation(gate_name, self._get_qubit_indices(op))
 
     def _handle_permutation(self, op):
         """Handle Permute operation by updating qubit mappings.
@@ -317,29 +305,11 @@ class StimGenerator(Generator):
     def _get_qubit_indices(self, op):
         """Get qubit indices from an operation."""
         if hasattr(op, "qargs"):
-            # QGate operations use qargs
-            indices = []
-            for arg in op.qargs:
-                # Check if arg is a tuple of qubits (for multi-qubit gates)
-                if isinstance(arg, tuple):
-                    # Unwrap tuple and process each qubit
-                    for sub_arg in arg:
-                        if hasattr(sub_arg, "reg") and hasattr(sub_arg, "index"):
-                            key = (sub_arg.reg.sym, sub_arg.index)
-                            if key in self.qubit_map:
-                                indices.append(self.qubit_map[key])
-                elif hasattr(arg, "reg") and hasattr(arg, "index"):
-                    # Individual Qubit object
-                    key = (arg.reg.sym, arg.index)
-                    if key in self.qubit_map:
-                        indices.append(self.qubit_map[key])
-                elif hasattr(arg, "sym") and hasattr(arg, "size"):
-                    # Full QReg object
-                    for i in range(arg.size):
-                        key = (arg.sym, i)
-                        if key in self.qubit_map:
-                            indices.append(self.qubit_map[key])
-            return indices
+            return [
+                self.qubit_map[qubit_key(qubit)]
+                for group in gate_target_groups(op.qargs, op.qsize, op.sym)
+                for qubit in group
+            ]
         if hasattr(op, "target"):
             return self._get_qubit_indices_from_target(op.target)
         if hasattr(op, "targets"):

@@ -252,6 +252,11 @@ impl StabilizerSimulator {
     }
 
     fn rzz(&mut self, qubit1: u64, qubit2: u64, theta: f64) -> Result<()> {
+        if qubit1 == qubit2 {
+            return Err(anyhow!(
+                "RZZ requires distinct qubits; repeated qubit {qubit1}"
+            ));
+        }
         Angle64::try_from_radians(theta)?;
         if qubit1 >= self.n_qubits || qubit2 >= self.n_qubits {
             return Err(anyhow!(
@@ -516,6 +521,51 @@ mod tests {
     use super::StabilizerSimulatorFactory;
     use selene_core::simulator::conformance_testing::run_basic_tests;
     use std::sync::Arc;
+
+    #[test]
+    fn two_qubit_operations_reject_repeated_operands() {
+        use selene_core::operation::{BatchOperation, Operation};
+        use selene_core::simulator::{SimulatorInterface, interface::SimulatorInterfaceFactory};
+        for theta in [
+            0.0,
+            std::f64::consts::FRAC_PI_2,
+            std::f64::consts::PI,
+            3.0 * std::f64::consts::FRAC_PI_2,
+        ] {
+            for (gate, operation) in [
+                (
+                    "RZZ",
+                    Operation::RZZGate {
+                        qubit_id_1: 1,
+                        qubit_id_2: 1,
+                        theta,
+                    },
+                ),
+                (
+                    "RXYXY2Q",
+                    Operation::RPPGate {
+                        qubit_id_1: 1,
+                        qubit_id_2: 1,
+                        theta,
+                        phi: 0.0,
+                    },
+                ),
+            ] {
+                let mut sim = Arc::new(StabilizerSimulatorFactory)
+                    .init(2, &[String::new(), "--angle-threshold=0.001".to_string()])
+                    .expect("create plugin");
+                sim.shot_start(0, 17).expect("start shot");
+                let error = sim
+                    .handle_operations(BatchOperation::error_model(vec![operation]))
+                    .err()
+                    .expect("repeated operands must return an error, never unwind through FFI");
+                let message = error.to_string();
+                assert!(message.contains(gate), "{message}");
+                assert!(message.contains("distinct"), "{message}");
+                assert!(message.contains('1'), "{message}");
+            }
+        }
+    }
 
     #[test]
     fn nonfinite_runtime_angles_are_errors() {

@@ -652,6 +652,9 @@ def _analyze_szz_forward_flow(ops: list[CircuitStep]) -> SzzForwardFlowSummary:
         pending_by_qubit[q] = _SZZ_FLOW_IDENTITY
 
     for host_index, op in enumerate(ops):
+        if op.op_type == OpType.RELABEL:
+            msg = f"_analyze_szz_forward_flow does not support RELABEL step {op!r}; use pecos.qec.helix.lower_steps"
+            raise ValueError(msg)
         if op.op_type in {OpType.COMMENT, OpType.TICK, OpType.TRACKED_PAULI}:
             continue
         if op.op_type in {OpType.ALLOC, OpType.PREP}:
@@ -782,6 +785,9 @@ def _lower_szz_forward_flow_ops(ops: list[CircuitStep]) -> list[CircuitStep]:
             lowered.append(CircuitStep(OpType.TICK))
 
     for op in ops:
+        if op.op_type == OpType.RELABEL:
+            msg = f"_lower_szz_forward_flow_ops does not support RELABEL step {op!r}; use pecos.qec.helix.lower_steps"
+            raise ValueError(msg)
         if op.op_type in {OpType.COMMENT, OpType.TICK, OpType.TRACKED_PAULI}:
             lowered.append(op)
             continue
@@ -1724,6 +1730,11 @@ class StimRenderer(CircuitRenderer):
         basis: str,
     ) -> str:
         """Render to Stim circuit string."""
+        for op in ops:
+            if op.op_type == OpType.RELABEL:
+                msg = f"StimRenderer does not support RELABEL step {op!r}; use pecos.qec.helix.lower_steps"
+                raise ValueError(msg)
+
         if any(op.op_type in {OpType.T, OpType.TDG} for op in ops):
             msg = "Stim cannot represent non-Clifford T/TDG injection; use Guppy or TickCircuit"
             raise ValueError(msg)
@@ -1963,6 +1974,11 @@ class GuppyRenderer(CircuitRenderer):
         from pecos.guppy_gen.gadget_render import render_surface_gadget_module
         from pecos.guppy_gen.surface import generate_guppy_source
 
+        for op in _ops:
+            if op.op_type == OpType.RELABEL:
+                msg = f"GuppyRenderer does not support RELABEL step {op!r}; use pecos.qec.helix.lower_steps"
+                raise ValueError(msg)
+
         if any(op.op_type in {OpType.T, OpType.TDG} for op in _ops):
             msg = "GuppyRenderer generates memory modules; use render_gadget_function for a magic injection seed"
             raise ValueError(msg)
@@ -1991,6 +2007,11 @@ class DagCircuitRenderer(CircuitRenderer):
     ) -> DagCircuit:
         """Render to PECOS DagCircuit."""
         from pecos_rslib import DagCircuit
+
+        for op in ops:
+            if op.op_type == OpType.RELABEL:
+                msg = f"DagCircuitRenderer does not support RELABEL step {op!r}; use pecos.qec.helix.lower_steps"
+                raise ValueError(msg)
 
         circuit = DagCircuit()
         allocated: set[int] = set()
@@ -2145,6 +2166,11 @@ class TickCircuitRenderer(CircuitRenderer):
         - Tick-level: 'phase', 'syndrome_round', 'cx_round'
         - Gate-level: 'label', 'role'
         """
+        for op in ops:
+            if op.op_type == OpType.RELABEL:
+                msg = f"TickCircuitRenderer does not support RELABEL step {op!r}; use pecos.qec.helix.lower_steps"
+                raise ValueError(msg)
+
         if self.add_detectors and any(op.op_type in {OpType.T, OpType.TDG} for op in ops):
             msg = "TickCircuitRenderer: memory detector annotations are invalid for magic-state injection"
             raise ValueError(msg)

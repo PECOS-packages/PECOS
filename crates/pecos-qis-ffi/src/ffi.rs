@@ -128,12 +128,22 @@ unsafe fn read_direct_string_arg<'a>(
     }
 }
 
+/// Inspect cancellation without transferring while a caller still owns request data.
+pub(super) fn cancellation_requested() -> bool {
+    crate::get_execution_context().is_some_and(|ctx| {
+        // SAFETY: The registered context is live throughout program execution.
+        unsafe { &*ctx }
+            .cancel_requested
+            .load(std::sync::atomic::Ordering::Acquire)
+    })
+}
+
 /// Check only at destructor-free FFI boundaries, outside collector/callback borrows.
 ///
 /// # Safety
 /// All frames between this checkpoint and the execution guard must be free of
 /// live Rust destructors. Without a guard the caller must return a default.
-unsafe fn cancellation_checkpoint() -> bool {
+pub(super) unsafe fn cancellation_checkpoint() -> bool {
     let cancelled = crate::get_execution_context().is_some_and(|ctx| {
         // SAFETY: The registered context is live throughout program execution.
         let ctx = unsafe { &*ctx };

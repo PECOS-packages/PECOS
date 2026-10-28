@@ -2987,6 +2987,83 @@ ret i64 %status
         );
     }
 
+    #[test]
+    fn native_request_cancellation_is_typed_and_fresh_context_reuses_interface() {
+        let _env_lock = ENV_MUTEX.lock().expect("environment lock");
+        // Use the Guppy scalar adapter so the program ABI is identical on all targets.
+        // No other FFI call may intercept cancellation before the native request.
+        let source = br"
+            declare i64 @___qalloc()
+            define i64 @qmain(i64 %shot) {
+                %qubit = call i64 @___qalloc()
+                ret i64 0
+            }
+        ";
+        for before_submission in [true, false] {
+            let mut interface = QisHeliosInterface::new();
+            interface
+                .load_program(source, ProgramFormat::LlvmIrText)
+                .unwrap();
+            interface.enable_dynamic_mode().unwrap();
+            interface.set_native_selene_handles(true).unwrap();
+            let handle = interface.get_sync_handle().unwrap();
+            if before_submission {
+                handle.abort_execution().unwrap();
+            }
+            let worker = std::thread::spawn(move || {
+                let output = interface.execute_with_measurements(BTreeMap::new());
+                (interface, output)
+            });
+            let requested = if before_submission {
+                None
+            } else {
+                let requested = handle.wait_for_need_result(2_000);
+                handle.abort_execution().unwrap();
+                requested
+            };
+            let (mut interface, output) = worker.join().unwrap();
+            if !before_submission {
+                assert_eq!(
+                    requested,
+                    Some(pecos_qis_ffi_types::RUNTIME_REQUEST_RESULT_ID as u64)
+                );
+            }
+            assert!(
+                matches!(
+                    output,
+                    Err(InterfaceError::ProgramError(
+                        pecos_qis_ffi_types::ProgramError::Cancelled
+                    ))
+                ),
+                "{output:?}"
+            );
+            interface.disable_dynamic_mode().unwrap();
+
+            // The same interface must execute successfully in a fresh context.
+            interface.enable_dynamic_mode().unwrap();
+            interface.set_native_selene_handles(true).unwrap();
+            let handle = interface.get_sync_handle().unwrap();
+            let worker = std::thread::spawn(move || {
+                let output = interface.execute_with_measurements(BTreeMap::new());
+                (interface, output)
+            });
+            let requested = handle.wait_for_need_result(2_000);
+            if let Some(id) = requested {
+                handle.set_measurement_outcome(id, 987).unwrap();
+                handle.signal_result_ready().unwrap();
+            } else {
+                handle.abort_execution().unwrap();
+            }
+            let (mut interface, output) = worker.join().unwrap();
+            assert_eq!(
+                requested,
+                Some(pecos_qis_ffi_types::RUNTIME_REQUEST_RESULT_ID as u64)
+            );
+            output.unwrap();
+            interface.disable_dynamic_mode().unwrap();
+        }
+    }
+
     fn is_qir_text(ir: &str) -> bool {
         match validate_qis_dialect(ir.as_bytes(), ProgramFormat::LlvmIrText) {
             Err(InterfaceError::InvalidFormat(message))

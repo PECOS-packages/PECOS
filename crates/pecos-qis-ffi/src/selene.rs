@@ -685,6 +685,13 @@ pub(crate) unsafe fn native_request(request: SeleneRequest, entry: &str) -> Sele
 }
 
 unsafe fn native_measure(qubit: u64, leaked: bool) -> SeleneU64Result {
+    // Check before allocating source provenance; this frame owns only ABI scalars.
+    if unsafe { ffi::cancellation_checkpoint() } {
+        return SeleneU64Result {
+            error_code: 1,
+            value: 0,
+        };
+    }
     let result_id = match crate::allocate_measurement_source(None) {
         Ok(source) => source,
         Err(reason) => {
@@ -761,6 +768,11 @@ fn record_native_read(future: u64) -> Result<(), String> {
 }
 
 fn queue_runtime_request(request: Result<RuntimeRequest, String>) -> Result<Option<usize>, String> {
+    // Drop payloads/errors normally before the caller reaches a transfer boundary.
+    // A cancelled context must not publish another request or clear its response.
+    if ffi::cancellation_requested() {
+        return Ok(None);
+    }
     let request = request?;
     let dynamic = crate::is_dynamic_mode_active();
     if !dynamic && matches!(request, RuntimeRequest::Custom { .. }) {
@@ -794,6 +806,15 @@ unsafe fn finish_runtime_request(
     queued: Result<Option<usize>, String>,
     entry: &str,
 ) -> SeleneU64Result {
+    if ffi::cancellation_requested() {
+        // The error arm can own a String. Release it before the checkpoint jumps.
+        drop(queued);
+        unsafe { ffi::cancellation_checkpoint() };
+        return SeleneU64Result {
+            error_code: 1,
+            value: 0,
+        };
+    }
     let id = match queued {
         Ok(Some(id)) => id,
         Ok(None) => {
@@ -810,7 +831,16 @@ unsafe fn finish_runtime_request(
             };
         }
     };
-    if let Some(value) = crate::read_dynamic_result(id as u64, false) {
+    let outcome = crate::read_dynamic_result(id as u64, false);
+    // Cancellation takes precedence over both a completed wait and a cached
+    // response. The read has released its locks and this frame owns only scalars.
+    if unsafe { ffi::cancellation_checkpoint() } {
+        return SeleneU64Result {
+            error_code: 1,
+            value: 0,
+        };
+    }
+    if let Some(value) = outcome {
         return SeleneU64Result {
             error_code: 0,
             value,

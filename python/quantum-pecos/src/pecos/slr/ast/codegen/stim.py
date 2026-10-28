@@ -25,12 +25,13 @@ Example:
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from pecos.slr.ast.codegen._block_flatten import flatten_block_calls
 from pecos.slr.ast.codegen._loop_bounds import static_for_range
-from pecos.slr.ast.codegen._permutation import iter_permutes, reject_permute_in_region
+from pecos.slr.ast.codegen._permutation import iter_permutes, parse_permute_ref, reject_permute_in_region
 from pecos.slr.ast.codegen._prep_tail import prep_tail
 from pecos.slr.ast.nodes import (
     AllocatorDecl,
@@ -441,7 +442,8 @@ class AstToStim:
         if isinstance(node.target, BitRef):
             self.context.bit_records[node.target.register, node.target.index] = None
         else:
-            self._invalidate_register(node.target)
+            indexed = re.fullmatch(r"(\w+)\[.*\]", node.target)
+            self._invalidate_register(indexed[1] if indexed is not None else node.target)
 
     def _invalidate_register(self, name: str) -> None:
         """Mark every bit of register `name` as no longer holding a tracked measurement."""
@@ -676,13 +678,17 @@ class AstToStim:
         so a bare CReg permute is not realizable -> fail loud (never
         a silent no-op). Mirrors the QIR codegen's helper.
         """
-        name = ref.split("[", 1)[0]
+        parsed = parse_permute_ref(ref, "Stim")
+        name = parsed[0] if parsed is not None else ref
         sizes = {**self.context.creg_sizes, **self.context.qreg_sizes}
         if name not in sizes:
-            msg = f"Stim codegen: unknown Permute reference {ref!r}."
+            msg = (
+                f"Stim codegen: unknown Permute reference {ref!r}; block-local registers are not declared "
+                f"by the AST converter (#1511). Declare register {name!r} at Main scope."
+            )
             raise NotImplementedError(msg)
-        if ref.endswith("]") and "[" in ref:
-            index = int(ref[:-1].split("[", 1)[1])
+        if parsed is not None:
+            _, index = parsed
             if not 0 <= index < sizes[name]:
                 msg = f"Stim codegen: Permute reference {ref!r} is not a declared slot."
                 raise NotImplementedError(msg)

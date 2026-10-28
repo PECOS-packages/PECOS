@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING, Any
 
 from pecos.slr.ast.codegen._block_flatten import flatten_block_calls
 from pecos.slr.ast.codegen._loop_bounds import static_for_range
-from pecos.slr.ast.codegen._permutation import reject_permute_in_region
+from pecos.slr.ast.codegen._permutation import parse_permute_ref, reject_permute_in_region
 from pecos.slr.ast.codegen._prep_tail import prep_tail
 from pecos.slr.ast.nodes import (
     AllocatorDecl,
@@ -923,6 +923,7 @@ class AstToQir:
         """Process a barrier operation."""
         # Collect all qubits involved
         qubits = []
+        seen: set[int] = set()
         allocators = node.allocators or tuple(
             name for name in self.context.qreg_sizes if self.context.allocator_parents.get(name) is None
         )
@@ -930,9 +931,11 @@ class AstToQir:
             if alloc not in self.context.qreg_sizes:
                 msg = f"QIR codegen: Barrier refers to unknown allocator {alloc!r}."
                 raise NotImplementedError(msg)
-            qubits.extend(
-                self._get_qubit_ptr(SlotRef(allocator=alloc, index=i)) for i in range(self.context.qreg_sizes[alloc])
-            )
+            for i in range(self.context.qreg_sizes[alloc]):
+                index = self.context.get_qubit_index(alloc, i)
+                if index not in seen:
+                    qubits.append(self._get_qubit_ptr(SlotRef(allocator=alloc, index=i)))
+                    seen.add(index)
 
         if not qubits:
             return
@@ -1107,13 +1110,14 @@ class AstToQir:
         of the register (QReg capacity or CReg size). Mirrors the
         Guppy codegen's `_expand_permute_ref`.
         """
-        name = ref.split("[", 1)[0]
+        parsed = parse_permute_ref(ref, "QIR")
+        name = parsed[0] if parsed is not None else ref
         sizes = {**self.context.creg_map, **self.context.qreg_sizes}
         if name not in sizes:
             msg = f"QIR codegen: unknown Permute ref {ref!r}"
             raise NotImplementedError(msg)
-        if ref.endswith("]") and "[" in ref:
-            index = int(ref[:-1].split("[", 1)[1])
+        if parsed is not None:
+            _, index = parsed
             if not 0 <= index < sizes[name]:
                 msg = f"QIR codegen: Permute reference {ref!r} is not a declared slot."
                 raise NotImplementedError(msg)

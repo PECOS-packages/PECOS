@@ -77,6 +77,7 @@ def flatten_block_calls(program: Program) -> Program:
         body=new_body,
         returns=program.returns,
         allocator=program.allocator,
+        is_fragment=program.is_fragment,
         block_decls=(),
     )
 

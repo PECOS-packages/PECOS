@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING
 
 from pecos.slr.ast.codegen._block_flatten import flatten_block_calls
 from pecos.slr.ast.codegen._loop_bounds import static_for_range
-from pecos.slr.ast.codegen._permutation import reject_permute_in_region
+from pecos.slr.ast.codegen._permutation import parse_permute_ref, reject_permute_in_region
 from pecos.slr.ast.codegen._prep_tail import prep_tail
 from pecos.slr.ast.nodes import (
     AllocatorDecl,
@@ -573,7 +573,8 @@ class AstToQuantumCircuit:
         of the qubit register. Classical Permute requires runtime
         assignments, which this backend does not lower.
         """
-        name = ref.split("[", 1)[0]
+        parsed = parse_permute_ref(ref, "QuantumCircuit")
+        name = parsed[0] if parsed is not None else ref
         if name in self.circuit.metadata.get("cvar_spec", {}):
             msg = (
                 f"QuantumCircuit codegen: classical Permute of {ref!r} is not supported; "
@@ -586,9 +587,8 @@ class AstToQuantumCircuit:
                 "declare a qubit allocator or use the QASM, QIR or Guppy targets for classical permutations."
             )
             raise NotImplementedError(msg)
-        if ref.endswith("]") and "[" in ref:
-            name, idx = ref[:-1].split("[", 1)
-            return [(name, int(idx))]
+        if parsed is not None:
+            return [parsed]
         return [(ref, i) for i in range(self.context.qreg_sizes[ref])]
 
     def _process_permute(self, node: PermuteOp) -> None:

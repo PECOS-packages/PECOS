@@ -20,9 +20,17 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   but rejects mixed quantum/classical permutations that previously lost the
   classical part. QASM also rejects `For` bodies with unbound loop-variable
   references and element permutations mixing quantum and classical refs. Declared
-  registers may share the loop variable's name. Stim rejects mixed quantum/classical
+  registers may share a string `For` variable's name. **Breaking:** explicit
+  `LoopVar` names that collide with visible registers or allocators now raise
+  `ValueError` during AST conversion; rename one to avoid ambiguous expressions.
+  Stim rejects mixed quantum/classical
   permutations while retaining classical-bit permutation provenance invalidation;
   QIR rejects cross-kind permutation pairs with an actionable error.
+  Stim invalidates the whole register's measurement provenance after a symbolic
+  bit assignment, so later conditions cannot read stale measurement records.
+  QASM, Stim, QIR and QuantumCircuit report actionable errors for symbolic
+  `Permute` indices. Stim's undeclared `Permute` diagnostic explains the
+  block-local register limitation (#1511) and directs callers to Main scope.
   Deprecated `QIRGenerator` now
   rejects `For` and `While` instead of executing their bodies once and directs
   callers to `SlrConverter(...).qir()`. Barrier conversion widens individual
@@ -31,7 +39,9 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   operands raise `ValueError`. Barriers do not count as scratch-slot uses or
   definitions in Guppy. QASM barriers use declared root registers and follow the
   current permutation; global barriers in fragments with no declared registers
-  now raise instead of disappearing.
+  now raise instead of disappearing. Empty global barriers in complete Main
+  programs remain valid. QASM and QIR deduplicate overlapping parent/child
+  barrier operands at the physical-qubit level in first-appearance order.
   Both QASM generators use a legal, collision-free classical swap temporary,
   declared once (#1238).
 

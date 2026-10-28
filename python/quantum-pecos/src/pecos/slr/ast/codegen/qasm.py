@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING
 
 from pecos.slr.ast.codegen._block_flatten import flatten_block_calls
 from pecos.slr.ast.codegen._loop_bounds import static_for_range
-from pecos.slr.ast.codegen._permutation import reject_permute_in_region
+from pecos.slr.ast.codegen._permutation import parse_permute_ref, reject_permute_in_region
 from pecos.slr.ast.codegen._prep_tail import prep_tail
 from pecos.slr.ast.nodes import (
     AllocatorDecl,
@@ -158,6 +158,8 @@ NEGATED_COMPARISON: dict[BinaryOp, BinaryOp] = {
 class QasmContext:
     """Context for QASM code generation."""
 
+    is_fragment: bool = False
+
     allocators: dict[str, int] = field(default_factory=dict)  # name -> size
     allocator_parents: dict[str, str | None] = field(
         default_factory=dict,
@@ -260,6 +262,7 @@ class AstToQasm(BaseVisitor[list[str]]):
     def visit_program(self, node: Program) -> list[str]:
         """Generate code for a complete program."""
         lines: list[str] = []
+        self.context.is_fragment = node.is_fragment
 
         # Header
         if self.include_header:
@@ -501,22 +504,38 @@ class AstToQasm(BaseVisitor[list[str]]):
             name for name in self.context.allocators if self.context.allocator_parents.get(name) is None
         )
         if not node.allocators and not allocators:
-            msg = "QASM codegen: global Barrier with no declared registers is not supported."
-            raise NotImplementedError(msg)
+            if self.context.is_fragment:
+                msg = "QASM codegen: global Barrier with no declared registers is not supported."
+                raise NotImplementedError(msg)
+            return []
         refs = []
+        seen: set[str] = set()
         for name in allocators:
+            if name not in self.context.allocators:
+                # Externally declared whole registers in Block fragments.
+                if name not in seen:
+                    refs.append(name)
+                    seen.add(name)
+                continue
+            physical = list(
+                dict.fromkeys(
+                    self._render_slot_ref(SlotRef(allocator=name, index=i))
+                    for i in range(self.context.allocators[name])
+                ),
+            )
+            uncovered = [ref for ref in physical if ref not in seen]
+            if not uncovered:
+                continue
             # Unchanged root operands can remain whole-register references,
-            # including externally declared names in standalone Block fragments.
+            # provided no earlier operand already fenced part of the register.
             permuted = any(
                 source[0] == name and source != target for source, target in self.context.permutation_map.items()
             )
-            if self.context.allocator_parents.get(name) is None and not permuted:
+            if self.context.allocator_parents.get(name) is None and not permuted and len(uncovered) == len(physical):
                 refs.append(name)
             else:
-                refs.extend(
-                    self._render_slot_ref(SlotRef(allocator=name, index=i))
-                    for i in range(self.context.allocators[name])
-                )
+                refs.extend(uncovered)
+            seen.update(physical)
         return [f"barrier {', '.join(refs)};"] if refs else []
 
     def visit_comment(self, node: CommentOp) -> list[str]:
@@ -565,10 +584,7 @@ class AstToQasm(BaseVisitor[list[str]]):
 
             Returns None for whole register references (no index).
             """
-            match = re.fullmatch(r"(\w+)\[(\d+)\]", ref)
-            if match:
-                return (match.group(1), int(match.group(2)))
-            return None  # Whole register reference
+            return parse_permute_ref(ref, "QASM")
 
         if (
             len(node.sources) != len(node.targets)

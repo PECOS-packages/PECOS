@@ -76,6 +76,7 @@ from pecos.slr.ast.nodes import (
     VarExpr,
     WhileStmt,
 )
+from pecos.slr.main import Main
 from pecos.slr.vars import SymbolicBit
 
 if TYPE_CHECKING:
@@ -86,7 +87,6 @@ if TYPE_CHECKING:
         TypeExpr,
     )
     from pecos.slr.block import Block
-    from pecos.slr.main import Main
 
 
 # SLR prep-gate symbol -> canonical AST prep basis. The basis
@@ -208,6 +208,8 @@ class SlrToAst:
         self._block_decls = []
         self._decl_counter = 0
 
+        self._validate_loop_variable_names(block, {})
+
         # Get the block name
         name = getattr(block, "block_name", block.__class__.__name__)
 
@@ -238,7 +240,36 @@ class SlrToAst:
             returns=returns,
             allocator=allocator,
             block_decls=tuple(self._block_decls),
+            is_fragment=not isinstance(block, Main),
         )
+
+    def _validate_loop_variable_names(self, block: Block, outer_names: dict[str, str]) -> None:
+        """Reject ambiguous LoopVars before expressions lose their SLR identity."""
+        names = dict(outer_names)
+        for var in (*block.vars, *block.ops):
+            decl = self._convert_var_to_declaration(var)
+            if decl is not None:
+                names[decl.name] = type(var).__name__
+        if _has_block_inputs(block):
+            for name in type(block).block_inputs:
+                var = getattr(block, name, None)
+                decl = self._convert_var_to_declaration(var)
+                if decl is not None:
+                    names[name] = type(var).__name__
+                    names[decl.name] = type(var).__name__
+        if type(block).__name__ == "For" and not block.var_is_string and block.var.name in names:
+            name = block.var.name
+            msg = (
+                f"For loop variable {name!r} conflicts with visible {names[name]} {name!r}. "
+                "Rename the loop variable or the register/allocator."
+            )
+            raise ValueError(msg)
+        for op in block.ops:
+            if hasattr(op, "ops"):
+                self._validate_loop_variable_names(op, names)
+        else_block = getattr(block, "else_block", None)
+        if else_block is not None:
+            self._validate_loop_variable_names(else_block, names)
 
     def _convert_declarations(self, block: Block) -> list:
         """Convert block variables to AST declarations.

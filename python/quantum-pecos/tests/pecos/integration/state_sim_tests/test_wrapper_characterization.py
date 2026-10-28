@@ -99,7 +99,7 @@ def test_result_int_keys_and_zero_omission(state):
         state.prob = 0
         assert state.run_circuit(_items("Measure", {0, 1})) == {}
     elif type(state).__name__ == "CudaStateVec":
-        # KNOWN-WRONG (#1480): CudaStateVec retains zeros that other wrappers omit.
+        # KNOWN-WRONG (#1515): CudaStateVec retains zeros that other wrappers omit.
         assert state.run_gate("Measure", [0, 1]) == {0: 0, 1: 1}
     else:
         # Outcome zero has no dictionary entry; the original integer is the key.
@@ -205,7 +205,7 @@ def test_simulate_gate_false(state, locations):
 
 @pytest.mark.parametrize("state", WRAPPERS, indirect=True)
 def test_bare_ints(state):
-    # KNOWN-WRONG (#1480): Bare 0 is silently skipped while bare 1 raises in non-CoinToss wrappers.
+    # KNOWN-WRONG (#1515): Bare 0 is silently skipped while bare 1 raises in non-CoinToss wrappers.
     assert state.run_gate("X", 0) == {}
     if isinstance(state, CoinToss):
         assert state.run_gate("X", 1) == {}
@@ -283,7 +283,7 @@ def test_statevec_default_angles(symbol):
     state.run_gate("H", {0})
     state.run_gate("X", {1})
     assert state.run_gate(symbol, {0} if symbol in {"RX", "RY", "RZ"} else {(0, 1)}) == {}
-    # KNOWN-WRONG (#1480): Missing rotation angles silently become identity operations.
+    # KNOWN-WRONG (#1515): Missing rotation angles silently become identity operations.
     assert list(state.vector) == pytest.approx([0, 0.7071067811865476, 0, 0.7071067811865476])
 
 
@@ -431,7 +431,7 @@ def test_original_result_keys_from_overridden_binding(state, symbol, location, o
     assert result == one
     assert next(iter(result)) is location
     state.bindings[symbol] = lambda _state, _location, **_params: 0
-    # KNOWN-WRONG (#1480): CudaStateVec keeps zero results from overridden bindings too.
+    # KNOWN-WRONG (#1515): CudaStateVec keeps zero results from overridden bindings too.
     assert state.run_gate(symbol, [location]) == (zero if type(state).__name__ == "CudaStateVec" else {})
 
 
@@ -445,7 +445,7 @@ def test_list_result_key_is_unhashable(state):
         return 1
 
     state.bindings["CX"] = result_one
-    # KNOWN-WRONG (#1480): A binding runs before result insertion rejects an unhashable key.
+    # KNOWN-WRONG (#1515): A binding runs before result insertion rejects an unhashable key.
     with pytest.raises(TypeError, match="unhashable type: 'list'"):
         state.run_gate("CX", [[0, 1]])
     assert calls == ([(0, 1)] if isinstance(state, StateVec) else [[0, 1]])
@@ -508,7 +508,7 @@ def test_circuit_location_containers(state, container):
     _prepare_one(state)
     circuit = _items("Measure", container([1]))
     if isinstance(state, StateVec) and container in {list, tuple, iter}:
-        # KNOWN-WRONG (#1480): StateVec.run_circuit raises TypeError for list/tuple/generator batches.
+        # KNOWN-WRONG (#1515): StateVec.run_circuit raises TypeError for list/tuple/generator batches.
         with pytest.raises(TypeError, match="unsupported operand type"):
             state.run_circuit(circuit)
     elif isinstance(state, CoinToss):
@@ -521,7 +521,7 @@ def test_circuit_location_containers(state, container):
 
 @pytest.mark.parametrize("state", PAULI, indirect=True)
 def test_pauli_measurement_list_key(state):
-    # KNOWN-WRONG (#1480): PauliProp Measure [[1]] raises only when the measured outcome is one.
+    # KNOWN-WRONG (#1515): PauliProp Measure [[1]] raises only when the measured outcome is one.
     assert state.run_gate("Measure", [[1]]) == {}
     state.faults = {"X": {1}, "Y": set(), "Z": set()}
     with pytest.raises(TypeError, match="unhashable type: 'list'"):
@@ -538,7 +538,7 @@ def test_cointoss_circuit_bare_int_and_disabled_measurement():
 @pytest.mark.parametrize("state", [*WRAPPERS, "DefaultSimulator"], indirect=True)
 def test_unknown_nonempty_symbol(state):
     if isinstance(state, CoinToss) or type(state).__name__ == "CudaStateVec":
-        # KNOWN-WRONG (#1480): CudaStateVec silently ignores unknown symbols (CoinToss gates are no-ops).
+        # KNOWN-WRONG (#1515): CudaStateVec silently ignores unknown symbols (CoinToss gates are no-ops).
         assert state.run_gate("unknown-wrapper-symbol", {0}) == {}
     else:
         # DefaultSimulator and StateVec use a generic Exception for unsupported symbols.
@@ -558,7 +558,7 @@ def test_pauli_identity_frame_circuit_short_circuit(state):
 
 
 def test_error_set_string_rejection():
-    # KNOWN-WRONG (#1480): ErrorSet rejects its advertised string input after the NumPy migration.
+    # KNOWN-WRONG (#1500): ErrorSet rejects its advertised string input after the NumPy migration.
     with pytest.raises(TypeError, match="Arrays cannot contain string objects"):
         Generator.ErrorSet(["X"])
 
@@ -773,7 +773,7 @@ def test_measurement_basis_aliases(state, symbol):
         with pytest.raises(Exception, match="is not supported in this simulator"):
             state.run_gate(symbol, {0})
     elif name == "CudaStateVec" and symbol.startswith("Measure"):
-        # KNOWN-WRONG (#1480): CudaStateVec silently ignores unsupported measurement aliases.
+        # KNOWN-WRONG (#1515): CudaStateVec silently ignores unsupported measurement aliases.
         assert state.run_gate(symbol, {0}) == {}
     else:
         assert state.run_gate(symbol, {0}) == {0: 1}
@@ -795,14 +795,14 @@ def test_additional_gate_aliases(state, symbol):
         name in {"CuStateVec", "MPS", "CudaStateVec"} and symbol == "SqrtXX"
     ):
         if name == "CudaStateVec":
-            # KNOWN-WRONG (#1480): CudaStateVec ignores unbound gate aliases instead of rejecting them.
+            # KNOWN-WRONG (#1515): CudaStateVec ignores unbound gate aliases instead of rejecting them.
             assert state.run_gate(symbol, locations, **params) == {}
         else:
             with pytest.raises(Exception, match="is not supported in this simulator"):
                 state.run_gate(symbol, locations, **params)
         return
     if name == "CudaStateVec" and symbol == "R2XXYYZZ":
-        # KNOWN-WRONG (#1480): CudaStateVec silently ignores the unbound R2XXYYZZ alias.
+        # KNOWN-WRONG (#1515): CudaStateVec silently ignores the unbound R2XXYYZZ alias.
         assert state.run_gate(symbol, locations, **params) == {}
         return
     assert state.run_gate(symbol, locations, **params) == {}
@@ -866,7 +866,7 @@ def test_binding_mutation_survives_result_key_failure():
         return 1
 
     state.bindings["CX"] = mutate_then_return_one
-    # KNOWN-WRONG (#1480): Result insertion raises only after the overridden binding changes the state.
+    # KNOWN-WRONG (#1515): Result insertion raises only after the overridden binding changes the state.
     with pytest.raises(TypeError, match=r"^unhashable type: 'list'$"):
         state.run_gate("CX", [[0, 1]])
     assert state.run_gate("Measure", {0}) == {0: 1}

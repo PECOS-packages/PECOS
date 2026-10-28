@@ -108,6 +108,20 @@ reset. Adapters are fresh across shots and worker clones. Clean native runtime
 instances remain reusable across shots, whether or not an adapter is configured.
 Callbacks must not call back into built simulations or share mutable shot state.
 
+Program-to-runtime custom calls use `QisEngine`'s existing control loop. A call
+returns only after the quantum engine has executed emitted work and measurement
+feedback has returned to the runtime. Normalizers describe operations; they do
+not execute a second simulator inside the callback. Ordinary normalized gates
+pass through the configured PECOS noise and quantum engines.
+
+Effects requiring an execution-time noise/quantum exchange use the scheduled-event
+route and its supported typed effects, such as measurement-crosstalk exposures.
+Its noise engine can request internal measurements, consume their results and
+continue processing without exposing them as program outputs. Unsupported effects
+must raise; neither an adapter nor capture mode supplies a missing physical model.
+The scheduled route currently rejects operation-trace capture, so it cannot be
+used to certify a DEM through the ordinary trace-replay API.
+
 Both ordinary simulation and tracing use this normalization **before** idle
 insertion. The runtime's integer nanosecond timestamps remain authoritative, relative to
 the current shot's origin when a native instance is reused.

@@ -19,7 +19,9 @@ use pecos_qis::{
     OperationTraceChunk, OperationTraceStore, QisEngineBuilder, SeleneRuntime,
     helios_interface_builder, qis_engine, selene_simple_runtime,
 };
-use pecos_qis_ffi_types::{NamedResult, NamedResultTrace, Operation, QuantumOp};
+use pecos_qis_ffi_types::{
+    NamedResult, NamedResultTrace, Operation, QuantumOp, RuntimeRequest, SeleneRequest,
+};
 use pecos_quantum::{Attribute, TickCircuit, pass};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -155,8 +157,9 @@ fn validate_shot(shot: &[OperationTraceChunk]) -> Result<(), DemBuildError> {
         if chunk
             .operations
             .iter()
-            .any(|op| matches!(op, Operation::Quantum(_)))
+            .any(|op| matches!(op, Operation::Quantum(_) | Operation::RuntimeRequest { .. }))
             && chunk.lowered_quantum_ops.is_empty()
+            && !chunk.runtime_lowering_deferred
         {
             return Err(preparation(format!(
                 "runtime trace chunk {index} carries lowerable quantum operations but no lowered_quantum_ops"
@@ -196,9 +199,11 @@ fn source_ids(shot: &[OperationTraceChunk]) -> Result<Vec<usize>, DemBuildError>
         .iter()
         .flat_map(|chunk| &chunk.operations)
         .filter_map(|operation| match operation {
-            Operation::Quantum(QuantumOp::Measure(_, id) | QuantumOp::MeasureLeaked(_, id)) => {
-                Some(*id)
-            }
+            Operation::Quantum(QuantumOp::Measure(_, id) | QuantumOp::MeasureLeaked(_, id))
+            | Operation::RuntimeRequest {
+                request: RuntimeRequest::Native(SeleneRequest::Measure { result_id: id, .. }),
+                ..
+            } => Some(*id),
             _ => None,
         })
         .collect();
@@ -864,6 +869,7 @@ mod tests {
             operations: vec![],
             lowered_quantum_ops: vec![],
             lowered_quantum_ops_complete: true,
+            runtime_lowering_deferred: false,
             runtime_events_complete: true,
             named_result_traces: vec![],
             named_results: BTreeMap::new(),
@@ -886,6 +892,35 @@ mod tests {
         let mut last = chunk(1, "trace_complete");
         last.measurement_results.insert(7, 1);
         vec![first, last]
+    }
+
+    #[test]
+    fn native_measurements_preserve_dense_source_ids_and_require_lowered_output() {
+        let mut shot = trace();
+        shot[0].operations = vec![Operation::RuntimeRequest {
+            request: RuntimeRequest::Native(SeleneRequest::Measure {
+                qubit: 0,
+                result_id: 7,
+                leaked: false,
+            }),
+            result_id: Some(pecos_qis_ffi_types::RUNTIME_REQUEST_RESULT_ID),
+        }];
+        assert_eq!(source_ids(&shot).unwrap(), [7]);
+        validate_shot(&shot).unwrap();
+        shot[0].lowered_quantum_ops.clear();
+        assert!(validate_shot(&shot).is_err());
+        shot[0].runtime_lowering_deferred = true;
+        validate_shot(&shot).unwrap();
+    }
+
+    fn deferred_trace() -> TraceShot {
+        let mut shot = trace();
+        let mut lowered = chunk(1, "result_read");
+        lowered.lowered_quantum_ops = std::mem::take(&mut shot[0].lowered_quantum_ops);
+        shot[0].runtime_lowering_deferred = true;
+        shot[1].chunk_index = 2;
+        shot.insert(1, lowered);
+        shot
     }
 
     fn inference_trace(direct: bool, bits: [bool; 2]) -> TraceShot {
@@ -1271,6 +1306,59 @@ mod tests {
         assert_eq!(ids, vec![MeasId::from_raw(7)]);
         assert_eq!(circuit.num_measurements(), 8);
         assert_eq!(physical_row(&trace(), &[7]).unwrap(), [1]);
+    }
+
+    #[test]
+    fn replay_accepts_deferred_lowering_with_stable_measurement_identity() {
+        let shot = deferred_trace();
+        let circuit = replay(&shot, 1, &[7]).unwrap();
+        let gates: Vec<_> = circuit.iter_gate_batches().collect();
+        assert_eq!(gates.len(), 1);
+        assert_eq!(gates[0].as_gate().gate_type, GateType::MZ);
+        assert_eq!(
+            gates[0].as_gate().meas_ids.as_slice(),
+            [MeasId::from_raw(7)]
+        );
+        assert_eq!(physical_row(&shot, &[7]).unwrap(), [1]);
+    }
+
+    #[test]
+    fn deferred_lowering_requires_complete_framed_and_handled_trace() {
+        let mut shot = deferred_trace();
+        shot[0].runtime_lowering_deferred = false;
+        assert!(
+            replay(&shot, 1, &[7])
+                .unwrap_err()
+                .to_string()
+                .contains("no lowered_quantum_ops")
+        );
+        let mut shot = deferred_trace();
+        shot.pop();
+        assert!(
+            replay(&shot, 1, &[7])
+                .unwrap_err()
+                .to_string()
+                .contains("exactly one trace_complete")
+        );
+        for index in 0..3 {
+            let mut shot = deferred_trace();
+            shot[index].lowered_quantum_ops_complete = false;
+            assert!(replay(&shot, 1, &[7]).is_err());
+            let mut shot = deferred_trace();
+            shot[index].runtime_events_complete = false;
+            assert!(
+                replay(&shot, 1, &[7])
+                    .unwrap_err()
+                    .to_string()
+                    .contains("unhandled runtime custom events")
+            );
+            let mut shot = deferred_trace();
+            shot[index].chunk_index += 1;
+            assert!(replay(&shot, 1, &[7]).is_err());
+        }
+        let mut shot = deferred_trace();
+        shot[1].lowered_quantum_ops.clear();
+        assert!(replay(&shot, 1, &[7]).is_err());
     }
 
     #[test]

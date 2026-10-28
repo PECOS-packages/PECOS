@@ -229,6 +229,20 @@ impl ScheduledExecutor {
             batches: Vec::new(),
             measurements: BTreeMap::new(),
         };
+        // Measurement feedback can unblock source calls that were accepted but
+        // not yet submitted. Resume those calls before the explicit native drain.
+        loop {
+            let batches = self
+                .runtime
+                .lower_scheduled_operations(&[])
+                .map_err(|error| runtime_error(&error))?;
+            if batches.is_empty() {
+                break;
+            }
+            let next = self.execute(context, batches)?;
+            output.batches.extend(next.batches);
+            output.measurements.extend(next.measurements);
+        }
         loop {
             let batches = self
                 .runtime

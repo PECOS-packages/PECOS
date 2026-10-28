@@ -78,7 +78,8 @@ pub struct ScheduledMeasurement {
     pub operation_index: usize,
     /// Future allocated by the native runtime.
     pub runtime_result: u64,
-    /// Result expected by the source program; may repeat when a slot is re-measured.
+    /// Source measurement identity. Native-FFI programs use unique occurrence IDs;
+    /// direct runtime callers may reuse their own result slots.
     pub program_result: usize,
     /// Source measurement requires a leakage-aware result, even if the ABI
     /// emitted an ordinary measurement operation.

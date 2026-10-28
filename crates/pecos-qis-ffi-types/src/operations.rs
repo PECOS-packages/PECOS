@@ -19,6 +19,80 @@ pub struct NamedResultTrace {
     pub result_ids: Vec<usize>,
 }
 
+/// Program requests handled by the runtime, in source order.
+/// Timing requests use Selene's integer nanosecond units. Custom data is opaque.
+/// Legacy future references are QIR result slots; `Native` requests retain the
+/// Selene ABI's unsigned handles unchanged.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum RuntimeRequest {
+    /// Selene ABI request: operands are native handles, never QIR slots.
+    Native(SeleneRequest),
+    LocalBarrier {
+        qubits: Vec<usize>,
+        sleep_ns: u64,
+    },
+    GlobalBarrier {
+        sleep_ns: u64,
+    },
+    Custom {
+        tag: u64,
+        data: Vec<u8>,
+    },
+    SimulateDelay {
+        nanoseconds: u64,
+    },
+    IncrementFutureRefcount {
+        result_id: usize,
+    },
+    DecrementFutureRefcount {
+        result_id: usize,
+    },
+}
+
+/// Requests at the Selene ABI boundary. Measurement provenance is a separate,
+/// dense source slot; only the native future is returned to the program.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum SeleneRequest {
+    Qalloc,
+    Qfree(u64),
+    Rxy {
+        qubit: u64,
+        theta: f64,
+        phi: f64,
+    },
+    Rz {
+        qubit: u64,
+        theta: f64,
+    },
+    Rzz {
+        qubits: [u64; 2],
+        theta: f64,
+    },
+    Rpp {
+        qubits: [u64; 2],
+        theta: f64,
+        phi: f64,
+    },
+    Reset(u64),
+    Measure {
+        qubit: u64,
+        result_id: usize,
+        leaked: bool,
+    },
+    ReadFuture {
+        future: u64,
+        boolean: bool,
+    },
+    Refcount {
+        future: u64,
+        increment: bool,
+    },
+    LocalBarrier {
+        qubits: Vec<u64>,
+        sleep_ns: u64,
+    },
+}
+
 /// High-level quantum operations that include both QIS and control flow
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Operation {
@@ -54,6 +128,13 @@ pub enum Operation {
     RecordOutput {
         result_id: usize,
         register_name: String,
+    },
+
+    /// Synchronous runtime request. The response slot belongs to the host
+    /// protocol, not to a physical measurement or a native future.
+    RuntimeRequest {
+        request: RuntimeRequest,
+        result_id: Option<usize>,
     },
 
     /// Classical control flow marker

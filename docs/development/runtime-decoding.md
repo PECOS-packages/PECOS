@@ -106,7 +106,13 @@ detected from these bytes alone. The future provenance contract must make that
 binding explicit rather than describe dimensional checks as semantic validation.
 The live integration tests use independent reset/measurement regions with a known
 one-bit response. They establish host feedback behavior, not adaptive fault
-distance or a production streaming decoder.
+distance or a production streaming decoder. Nonzero composed-slice tests also
+check the independently derived parity `L0 = D0 XOR D1`, including two-fault
+cancellation and explicit output projection, in live loops across reused shots.
+A separate test uses built-in state-transition channels with internal measurement
+continuations, verifies program-only decoder input and feedback, then checks
+recovery from decoder failure and reuse across workers. That test establishes
+execution ordering; it does not derive a Pauli DEM for those noise channels.
 
 ## Follow-up: providers driven by emitted physical batches
 

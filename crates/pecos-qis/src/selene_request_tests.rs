@@ -1143,15 +1143,10 @@ fn decoder_request_never_forces_an_unread_native_future_or_inserts_a_barrier() {
                 .unwrap();
             let mut quantum = StateVecEngine::new(2);
             let mut stage = engine.start(()).unwrap();
-            loop {
-                match stage {
-                    EngineStage::NeedsProcessing(commands) => {
-                        stage = engine
-                            .continue_processing(quantum.process(commands).unwrap())
-                            .unwrap();
-                    }
-                    EngineStage::Complete(_) => break,
-                }
+            while let EngineStage::NeedsProcessing(commands) = stage {
+                stage = engine
+                    .continue_processing(quantum.process(commands).unwrap())
+                    .unwrap();
             }
         },
     );

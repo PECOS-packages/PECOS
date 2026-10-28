@@ -1115,11 +1115,11 @@ class QasmEngineBuilder:
     ...
 
 class QisEngineBuilder:
+    """Builder for QIS engines."""
+
     def runtime_decoder(self, factory: object) -> QisEngineBuilder:
         """Configure a zero-argument factory returning a fresh shot-local decoder session."""
         ...
-
-    """Builder for QIS engines."""
 
     def scheduled_batches(self, enabled: bool = True) -> QisEngineBuilder: ...
     def scheduled_event_batches(self, enabled: bool = True) -> QisEngineBuilder: ...

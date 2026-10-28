@@ -108,7 +108,7 @@ class CoinToss:
             return binding is _measure_gate
         return symbol.lower().startswith("measure")
 
-    def validate_gate_batch(self, symbol: str, locations: int | Iterable[int]) -> None:
+    def validate_gate_batch(self, symbol: str, locations: int | Iterable[int], **_params: object) -> None:
         """Check a whole measurement batch before dispatch, including when disabled."""
         if self.is_measurement(symbol):
             if isinstance(locations, int):

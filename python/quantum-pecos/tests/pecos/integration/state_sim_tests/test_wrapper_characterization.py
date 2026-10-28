@@ -25,13 +25,18 @@ import pytest
 from pecos import simulators
 from pecos.circuits import QuantumCircuit
 from pecos.engines.hybrid_engine import HybridEngine as PhirEngine
+from pecos.noise.class_errors_circuit import ErrorCircuits
+from pecos.noise.noise_impl.noise_meas_bitflip import noise_meas_bitflip
 from pecos.noise.parent_class_error_gen import Generator
 from pecos.reps.pyphir.op_types import QOp
 from pecos.simulators import CoinToss, DefaultSimulator, PauliProp, StateVec
 from pecos.simulators.quantum_simulator import QuantumSimulator
+from pecos_rslib import AngleSource, GateRegistry
 
+# GPU expectations (CuStateVec/MPS/CudaStateVec) are unverified until run on a CUDA host.
+# CoinToss run_gate assertions are input-independent no-op pins of current dispatch.
 QUANTUM = ("StateVec", "SparseStabPy", "CuStateVec", "MPS", "CudaStateVec")
-PAULI = ("PauliProp", "PauliFaultProp")
+PAULI = ("PauliProp",)
 WRAPPERS = (*QUANTUM, *PAULI, "CoinToss")
 CONTAINERS = (list, tuple, set, frozenset, iter)
 
@@ -43,7 +48,11 @@ def _require_backend(name):
         "CudaStateVec": ("pecos_rslib_cuda",),
     }
     for dependency in dependencies.get(name, ()):
-        if find_spec(dependency) is None:
+        try:
+            spec = find_spec(dependency)
+        except ModuleNotFoundError:
+            spec = None
+        if spec is None:
             pytest.skip(f"{name}: {dependency} is not installed")
     if name == "CudaStateVec":
         from pecos_rslib_cuda import is_cuquantum_available
@@ -91,7 +100,7 @@ def test_result_int_keys_and_zero_omission(state):
         assert state.run_gate("Measure", {0, 1}) == {}
         assert state.run_circuit(_items("Measure", {0, 1})) == {}
     elif type(state).__name__ == "CudaStateVec":
-        # CudaStateVec is the exception: it retains zero measurement results.
+        # KNOWN-WRONG (#1480): CudaStateVec retains zeros that other wrappers omit.
         assert state.run_gate("Measure", [0, 1]) == {0: 0, 1: 1}
     else:
         # Outcome zero has no dictionary entry; the original integer is the key.
@@ -158,9 +167,10 @@ def test_overlapping_pairs(state, pairs):
         # CoinToss ignores CX but now runs the following measurements.
         assert state.run_gate("Measure", [0, 1, 2]) == {0: 1, 1: 1, 2: 1}
         return
-    # The set iterates (0,1) first on dev; reversing a list changes the propagated bit.
-    expected = {0: 1, 1: 1} if pairs == [(1, 2), (0, 1)] else {0: 1, 1: 1, 2: 1}
-    if type(state).__name__ == "CudaStateVec" and pairs == [(1, 2), (0, 1)]:
+    # Each literal was recorded on dev; select by the actual container iteration order.
+    reverse = list(pairs) == [(1, 2), (0, 1)]
+    expected = {0: 1, 1: 1} if reverse else {0: 1, 1: 1, 2: 1}
+    if type(state).__name__ == "CudaStateVec" and reverse:
         expected = {0: 1, 1: 1, 2: 0}
     assert state.run_gate("Measure", [0, 1, 2]) == expected
 
@@ -181,6 +191,8 @@ def test_empty_locations(state, symbol):
 @pytest.mark.parametrize("state", WRAPPERS, indirect=True)
 @pytest.mark.parametrize("locations", [[1], [1, 99]])
 def test_simulate_gate_false(state, locations):
+    if isinstance(state, PauliProp):
+        state.faults = {"X": set(), "Y": set(), "Z": {1}}
     # Fixed wrappers validate before skipping; growable PauliProp has no upper bound.
     if locations == [1, 99] and not isinstance(state, (PauliProp, CoinToss)):
         with pytest.raises(ValueError, match="X"):
@@ -188,7 +200,8 @@ def test_simulate_gate_false(state, locations):
     else:
         assert state.run_gate("X", locations, simulate_gate=False) == {}
     if isinstance(state, PauliProp):
-        assert state.faults == {"X": set(), "Y": set(), "Z": set()}
+        assert state.faults == {"X": set(), "Y": set(), "Z": {1}}
+        assert state.sign == 0
     elif isinstance(state, CoinToss):
         assert state.run_gate("Measure", {1}) == {1: 1}
     elif type(state).__name__ == "CudaStateVec":
@@ -199,7 +212,7 @@ def test_simulate_gate_false(state, locations):
 
 @pytest.mark.parametrize("state", WRAPPERS, indirect=True)
 def test_bare_ints(state):
-    # Bare zero is falsey and silently skipped by every wrapper.
+    # KNOWN-WRONG (#1480): Bare 0 is silently skipped while bare 1 raises in non-CoinToss wrappers.
     assert state.run_gate("X", 0) == {}
     if isinstance(state, CoinToss):
         assert state.run_gate("X", 1) == {}
@@ -234,8 +247,11 @@ def test_identity_pair_future(state):
 
 @pytest.mark.parametrize("state", PAULI, indirect=True)
 def test_pauli_identity_pair_already_rejected(state):
-    # PauliProp already delegates one location to the native arity checker.
-    with pytest.raises(ValueError, match="I"):
+    # Whole-batch validation now supplies the arity error and II hint.
+    with pytest.raises(
+        ValueError,
+        match=r"^I: expected 1 qubit\(s\) per location, got \(0, 1\); use II for the two-qubit identity$",
+    ):
         state.run_gate("I", {(0, 1)})
 
 
@@ -245,7 +261,7 @@ def test_public_hybrid_engine(state):
     output = {"m": pecos.BitInt(2, 0)}
     circuit = QuantumCircuit()
     circuit.append("Measure", {1}, var=("m", 1))
-    # Public HybridEngine calls bindings directly, including CoinToss measurements.
+    # KNOWN-WRONG (#1480): CoinToss measures through HybridEngine but drops its own run_gate measurements.
     assert pecos.HybridEngine.__module__ == "pecos.engines.hybrid_engine_old"
     pecos.HybridEngine().run_circuit(state, output, {}, circuit, None)
     assert int(output["m"]) == 2
@@ -272,7 +288,6 @@ def test_growable_pauli(state):
     assert state.faults == {"X": set(), "Y": set(), "Z": {0, 3}}
     assert state.run_circuit(QuantumCircuit([{"CX": {(0, 3)}}])) == {}
     assert state.faults == {"X": set(), "Y": set(), "Z": {3}}
-    assert simulators.PauliFaultProp is PauliProp
 
 
 @pytest.mark.parametrize("symbol", ["RX", "RY", "RZ", "RXX", "RYY", "RZZ", "RXXRYYRZZ"])
@@ -281,7 +296,7 @@ def test_statevec_default_angles(symbol):
     state.run_gate("H", {0})
     state.run_gate("X", {1})
     assert state.run_gate(symbol, {0} if symbol in {"RX", "RY", "RZ"} else {(0, 1)}) == {}
-    # Missing angles are zero rotations, preserving even the amplitudes' phases.
+    # KNOWN-WRONG (#1480): Missing rotation angles silently become identity operations.
     assert list(state.vector) == pytest.approx([0, 0.7071067811865476, 0, 0.7071067811865476])
 
 
@@ -312,23 +327,29 @@ def test_u1q_alias(state):
 
 
 @pytest.mark.parametrize("state", ["SparseStabPy", *PAULI], indirect=True)
-@pytest.mark.parametrize("symbol", ["ZZ", "ZZMax", "ZZPhase", "MSYY", "MSZZ"])
-def test_two_qubit_aliases(state, symbol):
+@pytest.mark.parametrize(
+    ("symbol", "angle"),
+    [("ZZ", pi / 2), ("ZZMax", pi / 2), ("ZZPhase", pi / 2), ("ZZPhase", -pi / 2), ("MSYY", pi / 2), ("MSZZ", pi / 2)],
+)
+def test_two_qubit_aliases(state, symbol, angle):
     if isinstance(state, PauliProp):
         state.faults = {"X": {0}, "Y": set(), "Z": set()}
     else:
         state.run_gate("H", {0})
     # These spellings bind quarter-turn ZZ/YY rotations, including ZZPhase's angle.
-    assert state.run_gate(symbol, {(0, 1)}, angles=(pi / 2,)) == {}
+    assert state.run_gate(symbol, {(0, 1)}, angles=(angle,)) == {}
     if isinstance(state, PauliProp):
         expected = {"X": set(), "Y": {0}, "Z": {1}}
         if symbol == "MSYY":
             expected = {"X": set(), "Y": {1}, "Z": {0}}
         assert state.faults == expected
-        assert state.sign == (1 if symbol == "MSYY" else 0)
+        assert state.sign == (1 if symbol == "MSYY" or angle < 0 else 0)
     elif symbol == "MSYY":
         # Stabilizer strings pin the entangled YY effect without a random measurement.
         assert state.stabs.row_string() == ["-iZWII", " iWXII", "  IIZI", "  IIIZ"]
+    elif angle < 0:
+        assert state.stabs.row_string() == ["-iWZII", "  IZII", "  IIZI", "  IIIZ"]
+        assert state.run_gate("Measure +Y", {0}) == {0: 1}
     else:
         assert state.stabs.row_string() == [" iWZII", "  IZII", "  IIZI", "  IIIZ"]
         assert state.run_gate("Measure +Y", {0}) == {}
@@ -377,7 +398,7 @@ def test_phir_zero_rzz(backend, interpreter, monkeypatch):
     original_run = QuantumSimulator.run
 
     def record_run(self, qops):
-        dispatched.extend((op.sim_name, op.args) for op in qops if op.name == "RZZ")
+        dispatched.extend((op.sim_name, op.args) for op in qops if op.name in {"RZZ", "CX"})
         return original_run(self, qops)
 
     monkeypatch.setattr(QuantumSimulator, "run", record_run)
@@ -391,19 +412,28 @@ def test_phir_zero_rzz(backend, interpreter, monkeypatch):
             {"qop": "RZZ", "angles": [[0.0], "rad"], "args": [[["q", 0], ["q", 1]]]},
             {"qop": "H", "args": [["q", 0], ["q", 1]]},
             {"qop": "X", "args": [["q", 0], ["q", 1]]},
+            {"qop": "CX", "args": [[["q", 0], ["q", 1]]]},
             {"qop": "Measure", "args": [["q", 0], ["q", 1]], "returns": [["m", 0], ["m", 1]]},
         ],
     }
     engine = PhirEngine(qsim="stabilizer" if backend == "SparseStabPy" else backend, cinterp=interpreter)
     # RZZ(0) resolves to II with its inner pair list intact under both PHIR interpreters.
-    assert engine.run(program=program, shots=2, seed=42)["m"] == ["11", "11"]
-    assert dispatched == [("II", [[0, 1]]), ("II", [[0, 1]])]
+    assert engine.run(program=program, shots=2, seed=42)["m"] == ["01", "01"]
+    assert dispatched == [("II", [[0, 1]]), ("CX", [[0, 1]]), ("II", [[0, 1]]), ("CX", [[0, 1]])]
+
+
+class _Location(int):
+    """An in-range qubit index whose object identity cannot come from the small-int cache."""
 
 
 @pytest.mark.parametrize("state", [*QUANTUM, *PAULI, "DefaultSimulator"], indirect=True)
 @pytest.mark.parametrize(
     ("symbol", "location", "one", "zero"),
-    [("Measure", 1, {1: 1}, {1: 0}), ("Measure", (1,), {(1,): 1}, {(1,): 0}), ("CX", (0, 1), {(0, 1): 1}, {(0, 1): 0})],
+    [
+        ("Measure", _Location(1), {1: 1}, {1: 0}),
+        ("Measure", (1,), {(1,): 1}, {(1,): 0}),
+        ("CX", (0, 1), {(0, 1): 1}, {(0, 1): 0}),
+    ],
 )
 def test_original_result_keys_from_overridden_binding(state, symbol, location, one, zero):
     state.bindings = dict(state.bindings)
@@ -418,7 +448,7 @@ def test_original_result_keys_from_overridden_binding(state, symbol, location, o
     assert result == one
     assert next(iter(result)) is location
     state.bindings[symbol] = lambda _state, _location, **_params: 0
-    # CudaStateVec retains zero results, unlike the truthiness-filtering wrappers.
+    # KNOWN-WRONG (#1480): CudaStateVec keeps zero results from overridden bindings too.
     assert state.run_gate(symbol, [location]) == (zero if type(state).__name__ == "CudaStateVec" else {})
 
 
@@ -432,7 +462,7 @@ def test_list_result_key_is_unhashable(state):
         return 1
 
     state.bindings["CX"] = result_one
-    # A list location executes before result insertion raises; StateVec only converts dispatch.
+    # KNOWN-WRONG (#1480): A binding runs before result insertion rejects an unhashable key.
     with pytest.raises(TypeError, match="unhashable type: 'list'"):
         state.run_gate("CX", [[0, 1]])
     assert calls == ([(0, 1)] if isinstance(state, StateVec) else [[0, 1]])
@@ -475,8 +505,10 @@ def test_default_simulator_dispatch_edges():
     assert calls == [2, 1, 2]
     state.bindings["CX"] = lambda _state, location, **_params: calls.append(location)
     # The base loop accepts overlapping pairs and dispatches in container iteration order.
-    assert state.run_gate("CX", {(0, 1), (1, 2)}) == {}
-    assert calls == [2, 1, 2, (0, 1), (1, 2)]
+    pairs = {(0, 1), (1, 2)}
+    assert state.run_gate("CX", pairs) == {}
+    assert calls[:3] == [2, 1, 2]
+    assert calls[3:] == list(pairs)
 
 
 def test_default_simulator_identity_pair_future():
@@ -493,7 +525,7 @@ def test_circuit_location_containers(state, container):
     _prepare_one(state)
     circuit = _items("Measure", container([1]))
     if isinstance(state, StateVec) and container in {list, tuple, iter}:
-        # StateVec.run_circuit subtracts removed_locations even when none were supplied.
+        # KNOWN-WRONG (#1480): StateVec.run_circuit raises TypeError for list/tuple/generator batches.
         with pytest.raises(TypeError, match="unsupported operand type"):
             state.run_circuit(circuit)
     else:
@@ -503,7 +535,7 @@ def test_circuit_location_containers(state, container):
 
 @pytest.mark.parametrize("state", PAULI, indirect=True)
 def test_pauli_measurement_list_key(state):
-    # Zero avoids insertion, but a one result tries to hash the original inner list.
+    # KNOWN-WRONG (#1480): PauliProp Measure [[1]] raises only when the measured outcome is one.
     assert state.run_gate("Measure", [[1]]) == {}
     state.faults = {"X": {1}, "Y": set(), "Z": set()}
     with pytest.raises(TypeError, match="unhashable type: 'list'"):
@@ -521,7 +553,7 @@ def test_cointoss_circuit_bare_int_and_disabled_measurement():
 @pytest.mark.parametrize("state", [*WRAPPERS, "DefaultSimulator"], indirect=True)
 def test_unknown_nonempty_symbol(state):
     if isinstance(state, CoinToss) or type(state).__name__ == "CudaStateVec":
-        # These wrappers silently ignore unknown symbols even on nonempty batches.
+        # KNOWN-WRONG (#1480): CudaStateVec silently ignores unknown symbols (CoinToss gates are no-ops).
         assert state.run_gate("unknown-wrapper-symbol", {0}) == {}
     else:
         # DefaultSimulator and StateVec use a generic Exception for unsupported symbols.
@@ -533,7 +565,7 @@ def test_unknown_nonempty_symbol(state):
 def test_pauli_identity_frame_circuit_short_circuit(state):
     circuit = QuantumCircuit()
     circuit.append("unknown-wrapper-symbol", {0})
-    # An identity frame returns None before checking even a nonempty unknown gate.
+    # KNOWN-WRONG (#1480): PauliProp.run_circuit returns None and skips validation on an identity frame.
     assert state.run_circuit(circuit) is None
     state.faults = {"X": {3}, "Y": set(), "Z": set()}
     with pytest.raises(Exception, match="Gate unknown-wrapper-symbol is not supported"):
@@ -541,7 +573,7 @@ def test_pauli_identity_frame_circuit_short_circuit(state):
 
 
 def test_error_set_string_rejection():
-    # The legacy constructor advertises strings, but pecos.array now rejects them.
+    # KNOWN-WRONG (#1480): ErrorSet rejects its advertised string input after the NumPy migration.
     with pytest.raises(TypeError, match="Arrays cannot contain string objects"):
         Generator.ErrorSet(["X"])
 
@@ -617,3 +649,325 @@ def test_hybrid_engine_bare_int_still_raises():
     # On dev the public HybridEngine iterated the batch and raised TypeError.
     with pytest.raises(TypeError):
         pecos.HybridEngine.run_gate(simulators.SparseStabPy(2), {}, "X", 0)
+
+
+def test_pauli_alias_identity():
+    assert simulators.PauliFaultProp is PauliProp
+
+
+def test_registry_binding_shadows_registered_gate():
+    state = simulators.SparseStabPy(2)
+    registry = GateRegistry()
+    registry.define("CUSTOM", 1).step("X", [0]).register_into(registry)
+    state.bindings = dict(state.bindings)
+    state.bindings["CUSTOM"] = state.bindings["H"]
+    assert state.run_circuit(_items("CUSTOM", {0}), gate_registry=registry) == {}
+    assert state.stabs.row_string() == ["  XI", "  IZ"]
+
+
+def test_registry_location_order_angles_and_metadata():
+    state = simulators.SparseStabPy(2)
+    assert type(state).run_circuit is DefaultSimulator.run_circuit
+    registry = GateRegistry()
+    registry.define("CUSTOM", 1).angle_arity(1).step_with_metadata(
+        "RX",
+        [0],
+        [AngleSource.input(0)],
+        {"step": "first"},
+    ).step_with_metadata("RZ", [0], [AngleSource.fixed(0.5)], {"step": "second"}).register_into(registry)
+    calls = []
+    state.bindings = dict(state.bindings)
+    state.bindings["RX"] = lambda _s, q, **p: calls.append(("RX", q, p))
+    state.bindings["RZ"] = lambda _s, q, **p: calls.append(("RZ", q, p))
+    assert (
+        state.run_circuit(
+            _items("CUSTOM", [1, 0], angles=(0.25,), step="outer", tag="kept"),
+            gate_registry=registry,
+        )
+        == {}
+    )
+    assert calls == [
+        ("RX", 1, {"angles": (0.25,), "angle": 0.25, "step": "first", "tag": "kept"}),
+        ("RZ", 1, {"angles": (0.5,), "angle": 0.5, "step": "second", "tag": "kept"}),
+        ("RX", 0, {"angles": (0.25,), "angle": 0.25, "step": "first", "tag": "kept"}),
+        ("RZ", 0, {"angles": (0.5,), "angle": 0.5, "step": "second", "tag": "kept"}),
+    ]
+
+
+def test_registry_measurement_steps_return_outputs():
+    state = simulators.SparseStabPy(2)
+    registry = GateRegistry()
+    registry.define("CUSTOM", 1).step("X", [0]).step("Measure", [0]).register_into(registry)
+    # Registry canonicalizes Measure to MZ; SparseStabPy requires an explicit MZ binding.
+    state.bindings = dict(state.bindings)
+    state.bindings["MZ"] = state.bindings["Measure"]
+    assert state.run_circuit(_items("CUSTOM", [1, 0]), gate_registry=registry) == {1: 1, 0: 1}
+
+
+def test_registry_late_failure_preserves_state():
+    state = simulators.SparseStabPy(2)
+    registry = GateRegistry()
+    registry.define("CUSTOM", 1).step("X", [0]).step("T", [0]).register_into(registry)
+    # Deliberate #1492 flip: reject the unbound step before applying X.
+    with pytest.raises(ValueError, match=r"^Gate CUSTOM step T is not supported in this simulator\.$"):
+        state.run_circuit(_items("CUSTOM", {0}), gate_registry=registry)
+    assert state.run_gate("Measure", {0}) == {}
+
+
+def test_statevec_registry_keyword_rejected():
+    with pytest.raises(TypeError, match="unexpected keyword argument 'gate_registry'"):
+        StateVec(2).run_circuit(_items("X", {0}), gate_registry=GateRegistry())
+
+
+@pytest.mark.parametrize("state", WRAPPERS, indirect=True)
+def test_legacy_tick_removed_locations(state):
+    if isinstance(state, PauliProp):
+        state.faults = {"X": set(), "Y": set(), "Z": {0, 1}}
+    circuit = QuantumCircuit([{"H": {0, 1}}])
+    [(tick, time, metadata)] = list(circuit.iter_ticks())
+    assert time == 0
+    assert metadata == {}
+    if isinstance(state, CoinToss):
+        with pytest.raises(TypeError, match="unexpected keyword argument 'removed_locations'"):
+            state.run_circuit(tick, removed_locations={1})
+    else:
+        # Exactly the TickView call shape used by circuit_runners/standard.py.
+        assert state.run_circuit(tick, removed_locations={1}) == {}
+        if isinstance(state, PauliProp):
+            assert state.faults == {"X": {0}, "Y": set(), "Z": {1}}
+            assert state.sign == 0
+        else:
+            assert state.run_gate("H", {0}) == {}
+            state.run_gate("X", {0, 1})
+            assert state.run_gate("Measure", {0, 1}) == {0: 1, 1: 1}
+
+
+def test_pauli_fault_circuit_from_noise_producer():
+    state = PauliProp(num_qubits=2, track_sign=True)
+    after = QuantumCircuit([{"X": {0}}, {"Z": {1}}])
+    errors = ErrorCircuits()
+    errors.add_circuits(0, after_faults=after)
+    assert after.metadata == {"circuit_type": "faults"}
+    # The noise producer selects add_faults -> native add_paulis, even on an identity frame.
+    assert state.run_circuit(errors[0]["after"]) is None
+    assert state.faults == {"X": {0}, "Y": set(), "Z": {1}}
+    assert state.sign == 0
+    assert state.run_circuit(errors[0]["after"]) is None
+    assert state.faults == {"X": set(), "Y": set(), "Z": set()}
+
+
+@pytest.mark.parametrize("backend", QUANTUM)
+def test_noise_measurement_bitflips_through_quantum_simulator(backend):
+    _require_backend(backend)
+    sim = QuantumSimulator(backend="stabilizer" if backend == "SparseStabPy" else backend, seed=42)
+    sim.init(2)
+    noisy = noise_meas_bitflip(QOp("Measure", [0, 1], returns=[["m", 0], ["m", 1]]), p=1)
+    assert len(noisy) == 1
+    assert noisy[0].metadata == {"bitflips": [0, 1]}
+    assert sim.run([QOp("X", [1]), *noisy]) == [{("m", 0): 1, ("m", 1): 0}]
+
+
+@pytest.mark.parametrize("state", ["SparseStabPy", *PAULI], indirect=True)
+def test_force_output_location_free(state):
+    if isinstance(state, PauliProp):
+        with pytest.raises(Exception, match="Gate force output is not supported in this simulator"):
+            state.run_gate("force output", [300], forced_output=1)
+        return
+    assert state.run_gate("force output", [300], forced_output=1) == {300: 1}
+    assert state.run_gate("force output", [300], forced_output=0) == {}
+    assert state.run_gate("force output", [300]) == {300: -1}
+
+
+@pytest.mark.parametrize("state", WRAPPERS, indirect=True)
+def test_public_hybrid_engine_call_shapes(state):
+    from pecos.exceptions import NotSupportedGateError
+
+    output = {"m": pecos.BitInt(2, 0)}
+    with pytest.raises(NotSupportedGateError, match='The gate "unknown-wrapper-symbol" is not available'):
+        pecos.HybridEngine.run_gate(state, output, "unknown-wrapper-symbol", {0})
+    assert (
+        pecos.HybridEngine.run_gate(
+            state,
+            output,
+            "unknown-wrapper-symbol",
+            {0},
+            simulate_gate=False,
+        )
+        is None
+    )
+    if isinstance(state, PauliProp):
+        state.faults = {"X": set(), "Y": set(), "Z": {1}}
+    pecos.HybridEngine.run_gate(state, output, "X", {1}, simulate_gate=False)
+    if isinstance(state, PauliProp):
+        assert state.faults == {"X": set(), "Y": set(), "Z": {1}}
+        assert state.sign == 0
+    elif isinstance(state, CoinToss):
+        # Deliberate #1493 flip: run_gate now returns the coin result.
+        assert state.run_gate("Measure", {1}) == {1: 1}
+    else:
+        assert state.run_gate("Measure", {1}) == ({1: 0} if type(state).__name__ == "CudaStateVec" else {})
+    _prepare_one(state)
+    pecos.HybridEngine.run_gate(state, output, "Measure", [1, 0], var_output={1: ("m", 0), 0: ("m", 1)})
+    assert int(output["m"]) == (3 if isinstance(state, CoinToss) else 1)
+
+
+@pytest.mark.parametrize("state", [*WRAPPERS, "DefaultSimulator"], indirect=True)
+def test_disabled_unknown_symbol(state):
+    assert state.run_gate("unknown-wrapper-symbol", [0, 99], simulate_gate=False) == {}
+
+
+def test_error_set_on_pauli_fault_path():
+    state = PauliProp(num_qubits=2)
+    after = QuantumCircuit()
+    Generator.ErrorSet([pecos.Pauli.X]).error_func(after, QuantumCircuit(), set(), 1, {})
+    assert list(after.items()) == [("X", {1}, {})]
+    errors = ErrorCircuits()
+    errors.add_circuits(0, after_faults=after)
+    assert state.run_circuit(errors[0]["after"]) is None
+    assert state.faults == {"X": {1}, "Y": set(), "Z": set()}
+    assert state.run_gate("Measure", {0, 1}) == {1: 1}
+
+
+@pytest.mark.parametrize("state", ["StateVec", "SparseStabPy", *PAULI], indirect=True)
+def test_error_set_two_qubit_tensor_product(state):
+    after = QuantumCircuit()
+    Generator.ErrorSetTwoQuditTensorProduct([(pecos.Pauli.X, pecos.Pauli.Z)]).error_func(
+        after,
+        QuantumCircuit(),
+        set(),
+        (0, 1),
+        {},
+    )
+    assert list(after.items()) == [("X", {0}, {}), ("Z", {1}, {})]
+    if isinstance(state, PauliProp):
+        errors = ErrorCircuits()
+        errors.add_circuits(0, after_faults=after)
+        assert state.run_circuit(errors[0]["after"]) is None
+        assert state.faults == {"X": {0}, "Y": set(), "Z": {1}}
+    else:
+        state.run_gate("H", {1})
+        assert state.run_circuit(after) == {}
+        state.run_gate("H", {1})
+        assert state.run_gate("Measure", {0, 1}) == {0: 1, 1: 1}
+
+
+@pytest.mark.parametrize("state", [*QUANTUM, *PAULI], indirect=True)
+@pytest.mark.parametrize("symbol", ["Measure +X", "Measure +Y", "measure X", "measure Y"])
+def test_measurement_basis_aliases(state, symbol):
+    if isinstance(state, PauliProp):
+        state.faults = {"X": set(), "Y": set(), "Z": {0}}
+    else:
+        state.run_gate("H", {0})
+        state.run_gate("Z" if symbol.endswith("X") else "SZdg", {0})
+    name = type(state).__name__
+    if name in {"CuStateVec", "MPS"} or (name == "StateVec" and symbol.startswith("measure")):
+        with pytest.raises(Exception, match="is not supported in this simulator"):
+            state.run_gate(symbol, {0})
+    elif name == "CudaStateVec" and symbol.startswith("Measure"):
+        # KNOWN-WRONG (#1480): CudaStateVec silently ignores unsupported measurement aliases.
+        assert state.run_gate(symbol, {0}) == {}
+    else:
+        assert state.run_gate(symbol, {0}) == {0: 1}
+
+
+@pytest.mark.parametrize("state", [*QUANTUM, *PAULI], indirect=True)
+@pytest.mark.parametrize("symbol", ["Init", "init |1>", "CNOT", "SqrtXX", "R1XY", "R2XXYYZZ"])
+def test_additional_gate_aliases(state, symbol):
+    name = type(state).__name__
+    if isinstance(state, PauliProp):
+        state.faults = {"X": set(), "Y": set(), "Z": {0}}
+    elif symbol in {"Init", "CNOT"}:
+        state.run_gate("X", {0})
+    locations = {(0, 1)} if symbol in {"CNOT", "SqrtXX", "R2XXYYZZ"} else {0}
+    params = {"angles": (pi, 0.0)} if symbol == "R1XY" else {}
+    if symbol == "R2XXYYZZ":
+        params = {"angles": (pi, 0.0, 0.0)}
+    if (name == "SparseStabPy" and symbol == "R2XXYYZZ") or (
+        name in {"CuStateVec", "MPS", "CudaStateVec"} and symbol == "SqrtXX"
+    ):
+        if name == "CudaStateVec":
+            # KNOWN-WRONG (#1480): CudaStateVec ignores unbound gate aliases instead of rejecting them.
+            assert state.run_gate(symbol, locations, **params) == {}
+        else:
+            with pytest.raises(Exception, match="is not supported in this simulator"):
+                state.run_gate(symbol, locations, **params)
+        return
+    if name == "CudaStateVec" and symbol == "R2XXYYZZ":
+        # KNOWN-WRONG (#1480): CudaStateVec silently ignores the unbound R2XXYYZZ alias.
+        assert state.run_gate(symbol, locations, **params) == {}
+        return
+    assert state.run_gate(symbol, locations, **params) == {}
+    if symbol == "SqrtXX":
+        assert state.run_gate(symbol, locations) == {}
+    if isinstance(state, PauliProp):
+        assert state.faults == (
+            {"X": set(), "Y": set(), "Z": set()}
+            if symbol in {"Init", "init |1>"}
+            else {"X": set(), "Y": set(), "Z": {0}}
+        )
+        assert state.sign == (1 if symbol in {"SqrtXX", "R1XY", "R2XXYYZZ"} else 0)
+    else:
+        expected = {
+            "Init": {},
+            "init |1>": {0: 1},
+            "CNOT": {0: 1, 1: 1},
+            "SqrtXX": {0: 1, 1: 1},
+            "R1XY": {0: 1},
+            "R2XXYYZZ": {0: 1, 1: 1},
+        }[symbol]
+        if name == "CudaStateVec":
+            expected = {"Init": {0: 0, 1: 0}, "init |1>": {0: 1, 1: 0}, "CNOT": {0: 1, 1: 1}, "R1XY": {0: 1, 1: 0}}[
+                symbol
+            ]
+        assert state.run_gate("Measure", [0, 1]) == expected
+
+
+@pytest.mark.parametrize("state", ["StateVec", "SparseStabPy"], indirect=True)
+def test_negative_z_measurement_rejected(state):
+    with pytest.raises(Exception, match=r"^Gate Measure -Z is not supported in this simulator\.$"):
+        state.run_gate("Measure -Z", {0})
+
+
+@pytest.mark.parametrize("symbol", ["U1q", "RXY1Q"])
+def test_statevec_xy_rotation_missing_angles(symbol):
+    state = StateVec(2)
+    with pytest.raises(KeyError, match=r"^'angles'$"):
+        state.run_gate(symbol, {0})
+    assert list(state.vector) == [1, 0, 0, 0]
+
+
+def test_pecos_integer_scalar():
+    # PECOS exposes integer array elements as Python ints, not a separate scalar class.
+    location = pecos.array([300])[0]
+    assert type(location) is int
+    assert location == 300
+    state = PauliProp(num_qubits=2)
+    state.faults = {"X": {300}, "Y": set(), "Z": set()}
+    result = state.run_gate("Measure", [location])
+    assert result == {300: 1}
+    assert next(iter(result)) is location
+
+
+def test_binding_mutation_survives_result_key_failure():
+    state = simulators.SparseStabPy(2)
+    state.bindings = dict(state.bindings)
+
+    def mutate_then_return_one(sim, _location, **_params):
+        sim.run_gate("X", {0})
+        return 1
+
+    state.bindings["CX"] = mutate_then_return_one
+    # KNOWN-WRONG (#1480): Result insertion raises only after the overridden binding changes the state.
+    with pytest.raises(TypeError, match=r"^unhashable type: 'list'$"):
+        state.run_gate("CX", [[0, 1]])
+    assert state.run_gate("Measure", {0}) == {0: 1}
+
+
+def test_registry_measurement_canonical_symbol_unbound():
+    state = simulators.SparseStabPy(2)
+    registry = GateRegistry()
+    registry.define("CUSTOM", 1).step("X", [0]).step("Measure", [0]).register_into(registry)
+    # Deliberate #1492 flip: canonical MZ is checked before applying X.
+    with pytest.raises(ValueError, match=r"^Gate CUSTOM step MZ is not supported in this simulator\.$"):
+        state.run_circuit(_items("CUSTOM", {0}), gate_registry=registry)
+    assert state.run_gate("Measure", {0}) == {}

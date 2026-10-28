@@ -537,3 +537,26 @@ def test_unhashable_scalar_rejected_before_dispatch(name, unhashable_index_scala
     with pytest.raises(ValueError, match="H: expected a hashable qubit index"):
         state.run_gate("H", [0, unhashable_index_scalar(1)])
     assert _snapshot(state) == before
+
+
+@pytest.mark.parametrize("name", ["StateVec", "SparseStabPy", "PauliProp"])
+@pytest.mark.parametrize("route", ["gate", "hybrid"])
+@pytest.mark.parametrize("position", [0, 1])
+def test_unhashable_qubit_in_pair_rejected_before_dispatch(name, route, position, unhashable_index_scalar):
+    state = _make(name)
+    _prepare(state, "CX")
+    before = _snapshot(state)
+    pair = [2, 3]
+    pair[position] = unhashable_index_scalar(pair[position])
+    with pytest.raises(ValueError, match="CX: expected a hashable qubit index"):
+        _dispatch(state, route, "CX", [(0, 1), tuple(pair)], {})
+    assert _snapshot(state) == before
+    # The valid prefix would change the target if validation allowed dispatch.
+    state.run_gate("CX", [(0, 1)])
+    assert _snapshot(state) != before
+    assert state.run_gate("Measure", [0, 1]) == {0: 1, 1: 1}
+
+
+def test_hybrid_zero_dimensional_zero_raises(index_scalar):
+    with pytest.raises(TypeError, match=r"len\(\) of unsized object"):
+        pecos.HybridEngine.run_gate(simulators.SparseStabPy(2), {}, "X", index_scalar(0))

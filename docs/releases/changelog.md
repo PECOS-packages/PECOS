@@ -9,8 +9,16 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 - **Breaking:** Python simulator wrappers and the public `pecos.HybridEngine`
   validate whole known-gate batches per `run_gate` call and per circuit item
   before changing state, including when `simulate_gate=False`. Registered-gate
-  batches are fully decomposed and every step's binding and qubits validated
-  before any step runs; failures name the registered gate and failing step.
+  batches are fully decomposed before any step runs. The pre-pass checks each
+  step's binding, qubits, and parameters where the state validates them, plus
+  every outer location's arity from the registry definition, distinct operands,
+  and bounds against the state's capacity (including unused operands).
+  Step failures name the registered gate and failing step; outer-location failures
+  name the registered gate. SparseStabPy uses the same pure Clifford rotation
+  lowering check for parameter validation and dispatch, including through plain
+  `run_gate` and HybridEngine; other states retain their parameter policies.
+  An unbound registered step now raises even with `simulate_gate=False`, where
+  it was previously silently skipped.
   Malformed locations,
   repeated operands within a location, and out-of-range qubits raise gate-named
   `ValueError`s; some errors previously raised `TypeError`.
@@ -20,10 +28,13 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   singleton tuples/lists, and DefaultSimulator accepts singleton sized, indexable
   sequences. `I` is a single-qubit gate and follows the same per-state rule as
   `X`; a pair location for `I` is rejected (use `II`), except by CoinToss, whose
-  gates stay no-ops. Integer-like scalars are classified before sequences, and an
-  unhashable one (such as a zero-dimensional array) is rejected up front.
-  Multi-qubit locations must be ordered: set/frozenset pairs are rejected, including in SparseStabPy and CudaStateVec where they previously
-  ran. Batches may still repeat or overlap qubits and execute sequentially.
+  gates stay no-ops. Integer-like scalars are classified before sequences, and
+  unhashable qubit indices are rejected up front, including inside locations.
+  Zero-dimensional arrays are now rejected even where Rust-backed bindings
+  accepted them for non-measuring gates. Multi-qubit locations must be ordered:
+  set/frozenset pairs are rejected, including in SparseStabPy and CudaStateVec
+  where they previously ran. Batches may still repeat or overlap qubits and
+  execute sequentially.
   Native SparseStab, Stabilizer, StateVec, StabVec, CoinToss and PauliProp expose
   a read-only `gate_capacity` property; PauliProp returns `None` and remains
   growable. CoinToss's `run_circuit` pre-checks

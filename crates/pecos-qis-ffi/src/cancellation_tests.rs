@@ -179,6 +179,9 @@ unsafe extern "C-unwind" fn inspect_transfer() {
     let ctx = unsafe { &*ctx };
     assert!(ctx.sync_state.try_lock().is_ok());
     assert!(ctx.program_error.try_lock().is_ok());
+    assert!(ctx.runtime_response.try_lock().is_ok());
+    assert!(ctx.measurement_identities.try_lock().is_ok());
+    assert!(ctx.native_future_sources.try_lock().is_ok());
     with_interface(|_| ());
     EXECUTOR.with(|executor| assert!(executor.try_borrow_mut().is_ok()));
     TRANSFERS.set(TRANSFERS.get() + 1);
@@ -320,4 +323,109 @@ fn abort_is_explicit_idempotent_and_reports_poison() {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     assert_eq!(state.cancellation, CancellationState::Requested);
+}
+
+#[test]
+fn cancelled_native_requests_do_not_publish_work_or_provenance() {
+    if !crate::test_env::run_test_in_child(
+        "cancellation_tests::cancelled_native_requests_do_not_publish_work_or_provenance",
+    ) {
+        return;
+    }
+    let calls: [fn() -> u32; 8] = [
+        || unsafe { selene::selene_qalloc(std::ptr::null_mut()).error_code },
+        || unsafe { selene::selene_rxy(std::ptr::null_mut(), 0, 1.0, 0.0).error_code },
+        || unsafe { selene::selene_qubit_lazy_measure(std::ptr::null_mut(), 0).error_code },
+        || unsafe { selene::selene_future_read_u64(std::ptr::null_mut(), 7).error_code },
+        || unsafe { selene::selene_simulate_delay(std::ptr::null_mut(), 19).error_code },
+        || unsafe {
+            selene::selene_local_barrier(std::ptr::null_mut(), [0, 1].as_ptr(), 2, 19).error_code
+        },
+        || unsafe {
+            selene::selene_custom_runtime_call(std::ptr::null_mut(), 3, b"payload".as_ptr(), 7)
+                .error_code
+        },
+        // Invalid input also owns an error before reaching the transfer boundary.
+        || unsafe {
+            selene::selene_custom_runtime_call(std::ptr::null_mut(), 3, std::ptr::null(), 1)
+                .error_code
+        },
+    ];
+    for call in calls {
+        let ctx = Context::new();
+        unsafe { assert_eq!(pecos_set_native_selene_handles(ctx.0, true), 0) };
+        *ctx.get().runtime_response.lock().unwrap() = Some(987);
+        ctx.cancel();
+        TRANSFERS.set(0);
+        unsafe { pecos_set_program_panic_handler(Some(inspect_transfer)) };
+        assert_eq!(call(), 1);
+        assert_eq!(TRANSFERS.get(), 1);
+        assert_eq!(
+            *ctx.get().program_error.lock().unwrap(),
+            Some(ProgramError::Cancelled)
+        );
+        assert_eq!(*ctx.get().runtime_response.lock().unwrap(), Some(987));
+        assert!(ctx.get().pending_result_reads.lock().unwrap().is_empty());
+        assert!(ctx.get().native_future_sources.lock().unwrap().is_empty());
+        assert_eq!(
+            ctx.get().measurement_identities.lock().unwrap().next_source,
+            0
+        );
+        with_interface(|iface| assert_eq!(iface.operations, []));
+        assert_eq!(pecos_wait_for_need_result(0), u64::MAX);
+    }
+}
+
+#[test]
+fn cancellation_of_waiting_native_request_precedes_ready_response() {
+    if !crate::test_env::run_test_in_child(
+        "cancellation_tests::cancellation_of_waiting_native_request_precedes_ready_response",
+    ) {
+        return;
+    }
+    for ready in [false, true] {
+        let ctx = Context::new();
+        unsafe { assert_eq!(pecos_set_native_selene_handles(ctx.0, true), 0) };
+        std::thread::scope(|scope| {
+            let address = ctx.0 as usize;
+            let (done, completed) = std::sync::mpsc::channel();
+            let worker = scope.spawn(move || {
+                // Parent owns the context until join; the returning handler checks locks.
+                unsafe {
+                    pecos_register_execution_context(address as *mut ExecutionContext);
+                    pecos_set_program_panic_handler(Some(inspect_transfer));
+                }
+                let response = unsafe { selene::selene_qalloc(std::ptr::null_mut()) };
+                let observations = (response.error_code, response.value, TRANSFERS.get());
+                unsafe {
+                    pecos_set_program_panic_handler(None);
+                    pecos_register_execution_context(std::ptr::null_mut());
+                }
+                done.send(observations).unwrap();
+            });
+            assert_eq!(
+                pecos_wait_for_need_result(2_000),
+                pecos_qis_ffi_types::RUNTIME_REQUEST_RESULT_ID as u64
+            );
+            if ready {
+                // Publish cancellation and readiness atomically with respect to the wait.
+                let mut state = ctx.get().sync_state.lock().unwrap();
+                *ctx.get().runtime_response.lock().unwrap() = Some(987);
+                state.result_ready = true;
+                state.cancellation = CancellationState::Requested;
+                ctx.get().cancel_requested.store(true, Ordering::Release);
+                drop(state);
+                ctx.get().sync_condvar.notify_all();
+            } else {
+                ctx.cancel();
+            }
+            let observations = receive_cancelled_reader(&ctx, &completed);
+            worker.join().unwrap();
+            assert_eq!(observations.unwrap(), (1, 0, 1));
+            assert_eq!(
+                *ctx.get().program_error.lock().unwrap(),
+                Some(ProgramError::Cancelled)
+            );
+        });
+    }
 }

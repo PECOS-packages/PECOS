@@ -16,6 +16,7 @@
 //! decompositions into base gates. Registered gates are decomposed at simulation
 //! time, not at circuit construction time.
 
+use crate::errors::PecosError;
 use crate::gate_type::GateType;
 use crate::value::Value;
 use crate::{Angle64, QubitId};
@@ -116,16 +117,50 @@ impl GateRegistry {
 
     /// Expand a custom gate into concrete (`GateType`, qubits, angles, metadata) tuples.
     /// Returns None if not registered or decomposition is empty.
-    #[must_use]
+    ///
+    /// # Errors
+    /// Returns an input error if operand counts or decomposition references are invalid.
     pub fn decompose(
         &self,
         name: &str,
         qubits: &[QubitId],
         input_angles: &[Angle64],
-    ) -> Option<Vec<ConcreteStep>> {
-        let def = self.gates.get(name)?;
+    ) -> Result<Option<Vec<ConcreteStep>>, PecosError> {
+        let Some(def) = self.gates.get(name) else {
+            return Ok(None);
+        };
+        if qubits.len() != def.quantum_arity || input_angles.len() != def.angle_arity {
+            return Err(PecosError::Input(format!(
+                "Gate {name} expects {} qubits and {} angles; got {} qubits and {} angles",
+                def.quantum_arity,
+                def.angle_arity,
+                qubits.len(),
+                input_angles.len()
+            )));
+        }
+        // Definitions can be registered directly, without going through the builder.
+        for step in &def.decomposition {
+            validate_step_qubits(name, def.quantum_arity, &step.qubit_indices)?;
+            validate_step_arity(
+                name,
+                step.gate_type,
+                step.qubit_indices.len(),
+                step.angles.len(),
+            )?;
+            for source in &step.angles {
+                if let AngleSource::Input(index) | AngleSource::NegInput(index) = source
+                    && usize::from(*index) >= def.angle_arity
+                {
+                    return Err(PecosError::Input(format!(
+                        "Gate {name} step references angle index {index}; expected an index below {} (got {} input angles)",
+                        def.angle_arity,
+                        input_angles.len()
+                    )));
+                }
+            }
+        }
         if def.decomposition.is_empty() {
-            return None;
+            return Ok(None);
         }
         let mut result = Vec::with_capacity(def.decomposition.len());
         for step in &def.decomposition {
@@ -150,8 +185,51 @@ impl GateRegistry {
                 step.metadata.clone(),
             ));
         }
-        Some(result)
+        Ok(Some(result))
     }
+}
+
+fn validate_step_arity(
+    name: &str,
+    gate: GateType,
+    qubit_count: usize,
+    angle_count: usize,
+) -> Result<(), PecosError> {
+    // These command/payload types report a compatibility arity of 1, not a
+    // required operand count. Their actual width belongs to the concrete step.
+    let variable_width = matches!(
+        gate,
+        GateType::Custom
+            | GateType::Channel
+            | GateType::MeasCrosstalkGlobalPayload
+            | GateType::MeasCrosstalkLocalPayload
+            | GateType::TrackedPauliMeta
+    );
+    if !variable_width && qubit_count != gate.quantum_arity() {
+        return Err(PecosError::Input(format!(
+            "Gate {name} step {gate} expects {} qubits; got {qubit_count}",
+            gate.quantum_arity()
+        )));
+    }
+    // Custom gates have a registry-defined angle arity, as in `Gate::new`.
+    if gate != GateType::Custom && angle_count != gate.angle_arity() {
+        return Err(PecosError::Input(format!(
+            "Gate {name} step {gate} expects {} angle sources; got {angle_count}",
+            gate.angle_arity()
+        )));
+    }
+    Ok(())
+}
+
+fn validate_step_qubits(name: &str, arity: usize, indices: &[u8]) -> Result<(), PecosError> {
+    for &index in indices {
+        if usize::from(index) >= arity {
+            return Err(PecosError::Input(format!(
+                "Gate {name} step references qubit index {index}; expected an index below declared arity {arity}"
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Builder for constructing gate definitions with a fluent API.
@@ -179,48 +257,64 @@ impl GateDefinitionBuilder {
         self
     }
 
-    #[must_use]
-    pub fn step(mut self, gate_type: GateType, qubit_indices: &[u8]) -> Self {
-        self.decomposition.push(DecompStep {
-            gate_type,
-            qubit_indices: qubit_indices.to_vec(),
-            angles: Vec::new(),
-            metadata: HashMap::new(),
-        });
-        self
+    /// Add a non-parameterized step.
+    ///
+    /// # Errors
+    /// Rejects out-of-range qubit positions and incorrect step operand/angle counts.
+    pub fn step(mut self, gate_type: GateType, qubit_indices: &[u8]) -> Result<Self, PecosError> {
+        self.add_step(gate_type, qubit_indices, &[], HashMap::new())?;
+        Ok(self)
     }
 
-    #[must_use]
+    /// Add a parameterized step.
+    ///
+    /// # Errors
+    /// Rejects out-of-range qubit positions and incorrect step operand/angle counts.
     pub fn step_with_angles(
         mut self,
         gate_type: GateType,
         qubit_indices: &[u8],
         angles: &[AngleSource],
-    ) -> Self {
-        self.decomposition.push(DecompStep {
-            gate_type,
-            qubit_indices: qubit_indices.to_vec(),
-            angles: angles.to_vec(),
-            metadata: HashMap::new(),
-        });
-        self
+    ) -> Result<Self, PecosError> {
+        self.add_step(gate_type, qubit_indices, angles, HashMap::new())?;
+        Ok(self)
     }
 
-    #[must_use]
+    /// Add a step with metadata.
+    ///
+    /// # Errors
+    /// Rejects out-of-range qubit positions and incorrect step operand/angle counts.
     pub fn step_with_metadata(
         mut self,
         gate_type: GateType,
         qubit_indices: &[u8],
         angles: &[AngleSource],
         metadata: HashMap<String, Value>,
-    ) -> Self {
+    ) -> Result<Self, PecosError> {
+        self.add_step(gate_type, qubit_indices, angles, metadata)?;
+        Ok(self)
+    }
+
+    /// Append a step, preserving the builder on failure.
+    ///
+    /// # Errors
+    /// Rejects out-of-range qubit positions and incorrect step operand/angle counts before appending.
+    pub fn add_step(
+        &mut self,
+        gate_type: GateType,
+        qubit_indices: &[u8],
+        angles: &[AngleSource],
+        metadata: HashMap<String, Value>,
+    ) -> Result<(), PecosError> {
+        validate_step_qubits(&self.name, self.quantum_arity, qubit_indices)?;
+        validate_step_arity(&self.name, gate_type, qubit_indices.len(), angles.len())?;
         self.decomposition.push(DecompStep {
             gate_type,
             qubit_indices: qubit_indices.to_vec(),
             angles: angles.to_vec(),
             metadata,
         });
-        self
+        Ok(())
     }
 
     #[must_use]
@@ -242,8 +336,11 @@ mod tests {
     fn test_builder_round_trip() {
         let def = GateDefinitionBuilder::new("MY_SWAP", 2)
             .step(GateType::CX, &[0, 1])
+            .expect("valid step")
             .step(GateType::CX, &[1, 0])
+            .expect("valid step")
             .step(GateType::CX, &[0, 1])
+            .expect("valid step")
             .build();
 
         assert_eq!(def.name, "MY_SWAP");
@@ -260,13 +357,19 @@ mod tests {
         let mut registry = GateRegistry::new();
         let def = GateDefinitionBuilder::new("MY_SWAP", 2)
             .step(GateType::CX, &[0, 1])
+            .expect("valid step")
             .step(GateType::CX, &[1, 0])
+            .expect("valid step")
             .step(GateType::CX, &[0, 1])
+            .expect("valid step")
             .build();
         registry.register(def);
 
         let qubits = [QubitId::from(5usize), QubitId::from(10usize)];
-        let result = registry.decompose("MY_SWAP", &qubits, &[]).unwrap();
+        let result = registry
+            .decompose("MY_SWAP", &qubits, &[])
+            .expect("valid decomposition")
+            .expect("registered decomposition");
         assert_eq!(result.len(), 3);
         assert_eq!(
             result[0].1,
@@ -290,10 +393,15 @@ mod tests {
         let def = GateDefinitionBuilder::new("CRZ_LIKE", 2)
             .angle_arity(1)
             .step_with_angles(GateType::RZ, &[1], &[AngleSource::Input(0)])
+            .expect("valid step")
             .step(GateType::CX, &[0, 1])
+            .expect("valid step")
             .step_with_angles(GateType::RZ, &[1], &[AngleSource::NegInput(0)])
+            .expect("valid step")
             .step(GateType::CX, &[0, 1])
+            .expect("valid step")
             .step_with_angles(GateType::RZ, &[0], &[AngleSource::Fixed(fixed_angle)])
+            .expect("valid step")
             .build();
         registry.register(def);
 
@@ -301,7 +409,8 @@ mod tests {
         let input_angle = Angle64::from_turn_ratio(1, 8);
         let result = registry
             .decompose("CRZ_LIKE", &qubits, &[input_angle])
-            .unwrap();
+            .expect("valid decomposition")
+            .expect("registered decomposition");
 
         assert_eq!(result.len(), 5);
         assert_eq!(result[0].2, vec![input_angle]);
@@ -321,12 +430,14 @@ mod tests {
 
         let def = GateDefinitionBuilder::new("ANNOTATED", 1)
             .step_with_metadata(GateType::H, &[0], &[], meta)
+            .expect("valid step")
             .build();
         registry.register(def);
 
         let result = registry
             .decompose("ANNOTATED", &[QubitId::from(0usize)], &[])
-            .unwrap();
+            .expect("valid decomposition")
+            .expect("registered decomposition");
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].3.get("duration"), Some(&Value::Float(100.0)));
         assert_eq!(
@@ -344,14 +455,14 @@ mod tests {
         registry.register(def);
 
         let result = registry.decompose("EMPTY", &[QubitId::from(0usize)], &[]);
-        assert!(result.is_none());
+        assert!(result.expect("valid input").is_none());
     }
 
     #[test]
     fn test_unregistered_gate_returns_none() {
         let registry = GateRegistry::new();
         let result = registry.decompose("NONEXISTENT", &[QubitId::from(0usize)], &[]);
-        assert!(result.is_none());
+        assert!(result.expect("valid input").is_none());
     }
 
     #[test]
@@ -359,10 +470,12 @@ mod tests {
         let mut registry = GateRegistry::new();
         let def1 = GateDefinitionBuilder::new("MY_SWAP", 2)
             .step(GateType::CX, &[0, 1])
+            .expect("valid step")
             .build();
         let def2 = GateDefinitionBuilder::new("MY_RZ", 1)
             .angle_arity(1)
             .step_with_angles(GateType::RZ, &[0], &[AngleSource::Input(0)])
+            .expect("valid step")
             .build();
         registry.register(def1);
         registry.register(def2);
@@ -394,6 +507,7 @@ mod tests {
 
         let def = GateDefinitionBuilder::new("SWAP", 2)
             .step(GateType::CX, &[0, 1])
+            .expect("valid step")
             .build();
         registry.register(def);
 
@@ -402,5 +516,207 @@ mod tests {
         assert!(registry.contains("SWAP"));
         assert!(registry.get("SWAP").is_some());
         assert_eq!(registry.get("SWAP").unwrap().quantum_arity, 2);
+    }
+    #[test]
+    fn decompose_rejects_wrong_input_counts() {
+        let mut registry = GateRegistry::new();
+        registry.register(
+            GateDefinitionBuilder::new("ROT", 1)
+                .angle_arity(1)
+                .step_with_angles(GateType::RZ, &[0], &[AngleSource::Input(0)])
+                .expect("valid step")
+                .build(),
+        );
+        for (qubits, angles) in [
+            (vec![QubitId(0)], vec![]),
+            (vec![], vec![Angle64::ZERO]),
+            (vec![QubitId(0), QubitId(1)], vec![Angle64::ZERO]),
+            (vec![QubitId(0)], vec![Angle64::ZERO, Angle64::ZERO]),
+        ] {
+            let error = registry
+                .decompose("ROT", &qubits, &angles)
+                .expect_err("invalid input")
+                .to_string();
+            assert!(error.contains("Gate ROT expects 1 qubits and 1 angles"));
+            assert!(error.contains(&format!(
+                "got {} qubits and {} angles",
+                qubits.len(),
+                angles.len()
+            )));
+        }
+    }
+
+    #[test]
+    fn decompose_rejects_invalid_definition_references() {
+        for (indices, angles, expected) in [
+            (vec![1], vec![], "qubit index 1"),
+            (vec![0], vec![AngleSource::Input(1)], "angle index 1"),
+            (vec![0], vec![AngleSource::NegInput(1)], "angle index 1"),
+        ] {
+            let mut registry = GateRegistry::new();
+            registry.register(GateDefinition {
+                name: "BAD".into(),
+                quantum_arity: 1,
+                angle_arity: 1,
+                decomposition: vec![DecompStep {
+                    gate_type: GateType::RZ,
+                    qubit_indices: indices,
+                    angles,
+                    metadata: HashMap::new(),
+                }],
+            });
+            let error = registry
+                .decompose("BAD", &[QubitId(0)], &[Angle64::ZERO])
+                .expect_err("invalid definition")
+                .to_string();
+            assert!(error.contains("Gate BAD"));
+            assert!(error.contains(expected));
+            assert!(error.contains("below"));
+        }
+    }
+
+    #[test]
+    fn builder_rejects_invalid_step_positions() {
+        let results = [
+            GateDefinitionBuilder::new("BAD", 1).step(GateType::X, &[1]),
+            GateDefinitionBuilder::new("BAD", 1).step_with_angles(GateType::RX, &[1], &[]),
+            GateDefinitionBuilder::new("BAD", 1).step_with_metadata(
+                GateType::X,
+                &[1],
+                &[],
+                HashMap::new(),
+            ),
+        ];
+        for result in results {
+            let error = result
+                .err()
+                .expect("invalid position must fail")
+                .to_string();
+            assert!(error.contains("Gate BAD step references qubit index 1"));
+            assert!(error.contains("declared arity 1"));
+        }
+        let mut builder = GateDefinitionBuilder::new("RECOVER", 1);
+        assert!(
+            builder
+                .add_step(GateType::X, &[1], &[], HashMap::new())
+                .is_err()
+        );
+        builder
+            .add_step(GateType::X, &[0], &[], HashMap::new())
+            .expect("valid position");
+        assert_eq!(builder.build().decomposition.len(), 1);
+    }
+    #[test]
+    fn builder_rejects_step_arity_mismatches() {
+        for (gate, indices, angles, expected) in [
+            (
+                GateType::RZ,
+                vec![0],
+                vec![],
+                "step RZ expects 1 angle sources; got 0",
+            ),
+            (
+                GateType::CX,
+                vec![0],
+                vec![],
+                "step CX expects 2 qubits; got 1",
+            ),
+            (
+                GateType::H,
+                vec![0, 1],
+                vec![],
+                "step H expects 1 qubits; got 2",
+            ),
+            (
+                GateType::RZ,
+                vec![0],
+                vec![AngleSource::Fixed(Angle64::ZERO); 2],
+                "step RZ expects 1 angle sources; got 2",
+            ),
+        ] {
+            // All fluent entry points delegate to the same append validation.
+            for method in 0..3 {
+                let builder = GateDefinitionBuilder::new("HR", 2)
+                    .step(GateType::H, &[0])
+                    .expect("valid prefix");
+                let result = match method {
+                    0 if angles.is_empty() => builder.step(gate, &indices),
+                    0 | 1 => builder.step_with_angles(gate, &indices, &angles),
+                    _ => builder.step_with_metadata(gate, &indices, &angles, HashMap::new()),
+                };
+                let error = result.err().expect("malformed step must fail").to_string();
+                assert!(error.contains("Gate HR"));
+                assert!(error.contains(expected), "{error}");
+            }
+        }
+    }
+
+    #[test]
+    fn direct_registration_rejects_step_arity_mismatches() {
+        for (gate, expected) in [
+            (GateType::RZ, "step RZ expects 1 angle sources; got 0"),
+            (GateType::CX, "step CX expects 2 qubits; got 1"),
+        ] {
+            let mut definition = GateDefinitionBuilder::new("HR", 1)
+                .step(GateType::H, &[0])
+                .expect("valid prefix")
+                .build();
+            definition.decomposition.push(DecompStep {
+                gate_type: gate,
+                qubit_indices: vec![0],
+                angles: vec![],
+                metadata: HashMap::new(),
+            });
+            let mut registry = GateRegistry::new();
+            registry.register(definition);
+            let error = registry
+                .decompose("HR", &[QubitId(0)], &[])
+                .expect_err("direct definitions must also validate steps")
+                .to_string();
+            assert!(error.contains("Gate HR"));
+            assert!(error.contains(expected), "{error}");
+        }
+    }
+
+    #[test]
+    fn variable_width_steps_preserve_concrete_width() {
+        for gate in [
+            GateType::Custom,
+            GateType::Channel,
+            GateType::MeasCrosstalkGlobalPayload,
+            GateType::MeasCrosstalkLocalPayload,
+            GateType::TrackedPauliMeta,
+        ] {
+            for indices in [vec![], vec![0, 1]] {
+                let mut builder = GateDefinitionBuilder::new("VARIABLE", 2);
+                builder
+                    .add_step(gate, &indices, &[], HashMap::new())
+                    .expect("variable width");
+                let with_angle = builder.add_step(
+                    gate,
+                    &indices,
+                    &[AngleSource::Fixed(Angle64::ZERO)],
+                    HashMap::new(),
+                );
+                if gate == GateType::Custom {
+                    // Custom steps carry a registry-defined number of angles.
+                    with_angle.expect("custom steps accept angle sources");
+                } else {
+                    let error = with_angle
+                        .expect_err("payload steps take no angle sources")
+                        .to_string();
+                    assert!(error.contains("expects 0 angle sources; got 1"));
+                }
+                let mut registry = GateRegistry::new();
+                registry.register(builder.build());
+                let steps = registry
+                    .decompose("VARIABLE", &[QubitId(0), QubitId(1)], &[])
+                    .expect("valid input")
+                    .expect("registered decomposition");
+                let expected_steps = if gate == GateType::Custom { 2 } else { 1 };
+                assert_eq!(steps.len(), expected_steps);
+                assert!(steps.iter().all(|step| step.1.len() == indices.len()));
+            }
+        }
     }
 }

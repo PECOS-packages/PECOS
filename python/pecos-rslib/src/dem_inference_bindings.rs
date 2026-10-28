@@ -3,7 +3,9 @@
 
 //! Shared Rust DEM inference settings and algorithms.
 use crate::dag_circuit_bindings::PyTickCircuit;
-use crate::engine_builders::{PyQis, configured_selene_runtime, configured_selene_runtime_plugin};
+use crate::engine_builders::{
+    PyQis, configured_selene_runtime, configured_selene_runtime_plugin, runtime_clock_model,
+};
 use pecos_qec::dem_inference::{DemInferenceData, DemInferenceSettings};
 use pecos_qec::{DemOutputSelector, DemProgramRequest, SeleneDemProgram};
 use pyo3::exceptions::PyValueError;
@@ -147,22 +149,26 @@ impl PySeleneRuntimeSpec {
         Self::default()
     }
 
-    #[pyo3(signature = (runtime_name = None, *, custom_event_policy = "reject_unhandled", native_gates = None))]
+    #[pyo3(signature = (runtime_name = None, *, custom_event_policy = "reject_unhandled", native_gates = None, batch_adapter_factory = None, clock_model = "continuous"))]
     fn selene_runtime(
         &mut self,
         runtime_name: Option<&str>,
         custom_event_policy: &str,
         native_gates: Option<Vec<String>>,
+        batch_adapter_factory: Option<Py<PyAny>>,
+        clock_model: &str,
+        py: Python<'_>,
     ) -> PyResult<Self> {
-        self.runtime = Some(configured_selene_runtime(
-            runtime_name,
-            custom_event_policy,
-            native_gates,
-        )?);
+        let clock_model = runtime_clock_model(clock_model)?;
+        let mut runtime =
+            configured_selene_runtime(runtime_name, custom_event_policy, native_gates)?
+                .with_clock_model(clock_model);
+        crate::runtime_batch_adapter::configure(&mut runtime, batch_adapter_factory, py)?;
+        self.runtime = Some(runtime);
         Ok(self.clone())
     }
 
-    #[pyo3(signature = (library_file, init_args = None, library_search_dirs = None, *, custom_event_policy = "reject_unhandled", native_gates = None))]
+    #[pyo3(signature = (library_file, init_args = None, library_search_dirs = None, *, custom_event_policy = "reject_unhandled", native_gates = None, batch_adapter_factory = None, clock_model = "continuous"))]
     fn selene_runtime_plugin(
         &mut self,
         library_file: &str,
@@ -170,14 +176,21 @@ impl PySeleneRuntimeSpec {
         library_search_dirs: Option<Vec<String>>,
         custom_event_policy: &str,
         native_gates: Option<Vec<String>>,
+        batch_adapter_factory: Option<Py<PyAny>>,
+        clock_model: &str,
+        py: Python<'_>,
     ) -> PyResult<Self> {
-        self.runtime = Some(configured_selene_runtime_plugin(
+        let clock_model = runtime_clock_model(clock_model)?;
+        let mut runtime = configured_selene_runtime_plugin(
             library_file,
             init_args,
             library_search_dirs,
             custom_event_policy,
             native_gates,
-        )?);
+        )?
+        .with_clock_model(clock_model);
+        crate::runtime_batch_adapter::configure(&mut runtime, batch_adapter_factory, py)?;
+        self.runtime = Some(runtime);
         Ok(self.clone())
     }
 }

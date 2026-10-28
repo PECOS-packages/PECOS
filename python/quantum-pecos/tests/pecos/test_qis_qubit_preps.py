@@ -28,8 +28,9 @@ def test_legacy_measurements_keep_static_handles_live(quantum_engine) -> None:
 
 
 @pytest.mark.parametrize("quantum_engine", [sparse_stab, state_vector])
-def test_allocation_after_release_preps_reused_slot(quantum_engine) -> None:
-    """Red/green: the second allocation must not inherit the released slot's |1>."""
+@pytest.mark.parametrize("reset_reused", [False, True])
+def test_allocation_after_release_preserves_runtime_prep_policy(quantum_engine, reset_reused) -> None:
+    """Simple reuses the physical state; only an explicit reset prepares it."""
     program = Qis.from_string(
         """
         define i64 @qmain(i64 %unused) #0 {
@@ -38,25 +39,27 @@ def test_allocation_after_release_preps_reused_slot(quantum_engine) -> None:
             %r0 = call i32 @__quantum__qis__m__body(i64 %q, i64 0)
             call void @__quantum__rt__qubit_release(i64 %q)
             %q2 = call i64 @__quantum__rt__qubit_allocate()
+            REUSED_PREPARATION
             %r1 = call i32 @__quantum__qis__m__body(i64 %q2, i64 1)
             ret i64 0
         }
         declare i64 @__quantum__rt__qubit_allocate()
         declare void @__quantum__rt__qubit_release(i64)
+        declare void @__quantum__qis__reset__body(i64)
         declare void @__quantum__qis__x__body(i64)
         declare i32 @__quantum__qis__m__body(i64, i64)
         attributes #0 = { "EntryPoint" }
-        """,
+        """.replace("REUSED_PREPARATION", "call void @__quantum__qis__reset__body(i64 %q2)" if reset_reused else ""),
     )
     results = sim(program).qubits(1).quantum(quantum_engine()).seed(1016).run(20).to_dict()
     assert results["measurement_0"] == [1] * 20
-    assert results["measurement_1"] == [0] * 20
+    assert results["measurement_1"] == [0 if reset_reused else 1] * 20
 
 
 @pytest.mark.parametrize("allocated", [False, True], ids=["static", "allocated"])
-@pytest.mark.parametrize("explicit_reset", [False, True], ids=["inserted-prep", "explicit-reset"])
+@pytest.mark.parametrize("explicit_reset", [False, True], ids=["no-prep", "explicit-reset"])
 def test_scheduled_late_first_use_prep_timing(allocated: bool, explicit_reset: bool) -> None:
-    """A late lifetime prep takes the same runtime time as a program reset."""
+    """Only requested preparation occupies time in the runtime schedule."""
     import pecos
     import pecos_rslib as pr
 
@@ -86,12 +89,14 @@ def test_scheduled_late_first_use_prep_timing(allocated: bool, explicit_reset: b
             {prep_q1}
             call void @__quantum__qis__x__body(i64 {q1})
             %r = call i32 @__quantum__qis__m__body(i64 {q1}, i64 0)
+            %value = call i1 @___read_future_bool(i64 0)
             ret i64 0
         }}
         declare i64 @__quantum__rt__qubit_allocate()
         declare void @__quantum__qis__reset__body(i64)
         declare void @__quantum__qis__x__body(i64)
         declare i32 @__quantum__qis__m__body(i64, i64)
+        declare i1 @___read_future_bool(i64)
         attributes #0 = {{ "EntryPoint" }}
     """
     batches = []
@@ -127,42 +132,42 @@ def test_scheduled_late_first_use_prep_timing(allocated: bool, explicit_reset: b
         .run(1)
         .to_dict()
     )
-    # SoftRZRuntime's clock starts at the init time PECOS passes, which is zero.
-    # With max_batch_size=1, push gives every PZ/RXY/MZ its own batch and
-    # advances start by its configured duration.
-    # Allocation emits no batch: even an early allocation must defer its prep.
-    # X lowers to one RXY1Q(pi, 0). Qubit 0 costs R+X; qubit 1 then costs R+X+M:
-    # starts = 0, R, R+X, 2R+X, 2R+2X; final end = 2R+2X+M.
+    # The runtime emits no implicit reset. Read the future explicitly so the
+    # lazy runtime must release its measurement before completion.
     late_start = reset_nanos + rxy_nanos
     expected_batches = [
         (0, reset_nanos, [(GateType.Prep, [0])]),
         (reset_nanos, rxy_nanos, [(GateType.RXY1Q, [0])]),
-        (late_start, reset_nanos, [(GateType.Prep, [1])]),
-        (late_start + reset_nanos, rxy_nanos, [(GateType.RXY1Q, [1])]),
-        (late_start + reset_nanos + rxy_nanos, measure_nanos, [(GateType.Measure, [1])]),
     ]
-    # Missing q1 prep removes its PZ and moves its X/MZ earlier by R;
-    # doubling it adds a PZ and moves X/MZ later by R. The explicit-reset
-    # control must have this identical schedule, with exactly one PZ on q1.
-    # Check schedule and readout together: noiseless |0> --X--> |1> alone
-    # cannot distinguish either prep-count bug on a fresh simulator slot.
+    if explicit_reset:
+        expected_batches.append((late_start, reset_nanos, [(GateType.Prep, [1])]))
+        late_start += reset_nanos
+    expected_batches.extend(
+        [
+            (late_start, rxy_nanos, [(GateType.RXY1Q, [1])]),
+            (late_start + rxy_nanos, measure_nanos, [(GateType.Measure, [1])]),
+        ],
+    )
     assert (batches, result["measurement_0"]) == (expected_batches, [1])
 
 
-def test_inserted_prep_receives_prep_noise() -> None:
-    """Red/green: allocation without a program prep still receives normal prep noise."""
+@pytest.mark.parametrize("explicit_reset", [False, True])
+def test_only_emitted_prep_receives_prep_noise(explicit_reset) -> None:
+    """Allocation alone introduces neither preparation nor preparation noise."""
     program = Qis.from_string(
         """
         define i64 @qmain(i64 %unused) #0 {
             %q = call i64 @__quantum__rt__qubit_allocate()
+            PREPARATION
             %r0 = call i32 @__quantum__qis__m__body(i64 %q, i64 0)
             ret i64 0
         }
         declare i64 @__quantum__rt__qubit_allocate()
+        declare void @__quantum__qis__reset__body(i64)
         declare i32 @__quantum__qis__m__body(i64, i64)
         attributes #0 = { "EntryPoint" }
-        """,
+        """.replace("PREPARATION", "call void @__quantum__qis__reset__body(i64 %q)" if explicit_reset else ""),
     )
     noise = depolarizing_noise().with_p_prep(1.0).with_p_meas(0.0).with_p1(0.0).with_p2(0.0)
     results = sim(program).qubits(1).quantum(sparse_stab()).noise(noise).seed(1016).run(20).to_dict()
-    assert results["measurement_0"] == [1] * 20
+    assert results["measurement_0"] == [int(explicit_reset)] * 20

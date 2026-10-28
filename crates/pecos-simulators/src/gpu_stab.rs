@@ -707,6 +707,7 @@ impl CliffordGateable for GpuStab {
     }
 
     fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "CX");
         for (a, b) in pairs {
             self.check_qubit(a.index());
             self.check_qubit(b.index());
@@ -718,6 +719,7 @@ impl CliffordGateable for GpuStab {
     }
 
     fn cz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "CZ");
         for (a, b) in pairs {
             self.check_qubit(a.index());
             self.check_qubit(b.index());

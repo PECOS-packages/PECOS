@@ -257,11 +257,11 @@ pub fn discover_logical_operators(
         let x_positions: Vec<usize> = stab.x_positions();
         let z_positions: Vec<usize> = stab.z_positions();
 
-        // Convert used_indices to BitSet for protected parameter
-        let protected: pecos_core::BitSet =
+        // Convert used_indices to the default generator set for protected parameter
+        let protected: pecos_simulators::SparseStabSet =
             used_indices
                 .iter()
-                .fold(pecos_core::BitSet::new(), |mut s, &idx| {
+                .fold(pecos_simulators::SparseStabSet::new(), |mut s, &idx| {
                     s.insert(idx);
                     s
                 });
@@ -296,10 +296,10 @@ pub fn discover_logical_operators(
         let x_positions = vec![ancilla_qubit];
         let z_positions: Vec<usize> = vec![];
 
-        let protected: pecos_core::BitSet =
+        let protected: pecos_simulators::SparseStabSet =
             used_indices
                 .iter()
-                .fold(pecos_core::BitSet::new(), |mut s, &idx| {
+                .fold(pecos_simulators::SparseStabSet::new(), |mut s, &idx| {
                     s.insert(idx);
                     s
                 });

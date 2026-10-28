@@ -22,6 +22,9 @@ if TYPE_CHECKING:
     import stim
 
 
+_MEASUREMENT_BASES = {"M": "Z", "MX": "X", "MY": "Y", "MR": "Z", "MRX": "X", "MRY": "Y"}
+
+
 def stim_to_slr(circuit: stim.Circuit) -> Main:
     """Convert a Stim circuit to SLR format.
 
@@ -62,17 +65,8 @@ def stim_to_slr(circuit: stim.Circuit) -> Main:
 
     # Process each instruction in the circuit
     for instruction in circuit:
-        ops_batch = _convert_instruction(instruction, q, c, measurement_count)
-        if ops_batch:
-            for op in ops_batch:
-                ops.append(op)
-                # Track measurement count
-                if hasattr(op, "__class__") and op.__class__.__name__ == "Measure":
-                    # Count measurements in this operation
-                    if hasattr(op, "target") and hasattr(op.target, "__len__"):
-                        measurement_count += len(op.target)
-                    else:
-                        measurement_count += 1
+        ops.extend(_convert_instruction(instruction, q, c, measurement_count))
+        measurement_count += instruction.num_measurements
 
     return Main(*ops)
 
@@ -95,47 +89,61 @@ def _convert_instruction(instruction, q, c, measurement_offset):
 
     # Handle different instruction types
     if isinstance(instruction, stim.CircuitRepeatBlock):
-        # Convert repeat block
+        body = instruction.body_copy()
         block_ops = []
         inner_measurement_offset = measurement_offset
-        for inner_inst in instruction.body_copy():
-            inner_ops = _convert_instruction(inner_inst, q, c, inner_measurement_offset)
-            if inner_ops:
-                block_ops.extend(inner_ops)
-                # Update measurement offset for inner block
-                for op in inner_ops:
-                    if hasattr(op, "__class__") and op.__class__.__name__ == "Measure":
-                        if hasattr(op, "target") and hasattr(op.target, "__len__"):
-                            inner_measurement_offset += len(op.target)
-                        else:
-                            inner_measurement_offset += 1
+        iterations = instruction.repeat_count if body.num_measurements else 1
+        for _ in range(iterations):
+            for inner_inst in body:
+                block_ops.extend(_convert_instruction(inner_inst, q, c, inner_measurement_offset))
+                inner_measurement_offset += inner_inst.num_measurements
 
-        if block_ops:
-            # Create repeat block
+        if body.num_measurements:
+            ops.extend(block_ops)
+        elif block_ops:
             repeat = Repeat(instruction.repeat_count)
             repeat.block(*block_ops)
             ops.append(repeat)
     else:
         # Regular instruction
         gate_name = instruction.name.upper()
+        if instruction.num_measurements and gate_name not in _MEASUREMENT_BASES:
+            msg = f"Unsupported measurement-producing Stim gate {gate_name}: {instruction}"
+            raise NotImplementedError(msg)
         targets = instruction.targets_copy()
+        gate_data = stim.gate_data(gate_name)
+        # Annotations such as DETECTOR reference records legitimately; on a
+        # unitary gate a record or sweep target is a classical control.
+        if gate_data.is_unitary and any(t.is_measurement_record_target or t.is_sweep_bit_target for t in targets):
+            msg = f"Unsupported classical-feedback or sweep-bit targets for Stim gate {gate_name}: {instruction}"
+            raise NotImplementedError(msg)
         args = instruction.gate_args_copy()
+        is_pure_noise = gate_data.is_noisy_gate and not gate_data.produces_measurements
+        is_annotation = not (
+            gate_data.is_unitary or gate_data.is_noisy_gate or gate_data.produces_measurements or gate_data.is_reset
+        )
+        if is_pure_noise or (gate_data.is_noisy_gate and args):
+            ops.append(Comment(f"Noise: {instruction}"))
 
-        # Map Stim gates to SLR/PECOS operations
-        converted = _map_gate(gate_name, targets, args, q, c, measurement_offset)
-        if converted:
-            ops.extend(converted)
+        if not is_pure_noise:
+            converted = _map_gate(gate_name, targets, q, c, measurement_offset)
+            if converted is not None:
+                ops.extend(converted)
+            elif is_annotation:
+                ops.append(Comment(str(instruction)))
+            else:
+                msg = f"Unsupported Stim gate {gate_name}: {instruction}"
+                raise NotImplementedError(msg)
 
     return ops
 
 
-def _map_gate(gate_name, targets, args, q, c, measurement_offset):
+def _map_gate(gate_name, targets, q, c, measurement_offset):
     """Map a Stim gate to SLR operations.
 
     Args:
         gate_name: Name of the Stim gate
         targets: List of target qubits/bits
-        args: Gate arguments (e.g., rotation angles, error probabilities)
         q: Quantum register
         c: Classical register
         measurement_offset: Current offset in measurement record
@@ -145,18 +153,12 @@ def _map_gate(gate_name, targets, args, q, c, measurement_offset):
     """
     ops = []
 
-    # Extract qubit indices from targets
-    qubit_targets = []
-    for t in targets:
-        if hasattr(t, "value"):
-            # Regular qubit target
-            if not t.is_measurement_record_target and not t.is_sweep_bit_target:
-                qubit_targets.append(t.value)
-        elif isinstance(t, int) and t >= 0:
-            qubit_targets.append(t)
+    qubit_targets = [target.value for target in targets]
 
     # Map common gates
-    if gate_name == "H":
+    if gate_name in ["I", "II"]:
+        pass  # Identity: nothing to emit
+    elif gate_name == "H":
         ops.extend(qubit.H(q[idx]) for idx in qubit_targets)
     elif gate_name == "X":
         ops.extend(qubit.X(q[idx]) for idx in qubit_targets)
@@ -166,12 +168,8 @@ def _map_gate(gate_name, targets, args, q, c, measurement_offset):
         ops.extend(qubit.Z(q[idx]) for idx in qubit_targets)
     elif gate_name == "S":
         ops.extend(qubit.SZ(q[idx]) for idx in qubit_targets)
-    elif gate_name == "S_DAG" or gate_name == "SDG":
+    elif gate_name == "S_DAG":
         ops.extend(qubit.SZdg(q[idx]) for idx in qubit_targets)
-    elif gate_name == "T":
-        ops.extend(qubit.T(q[idx]) for idx in qubit_targets)
-    elif gate_name == "T_DAG" or gate_name == "TDG":
-        ops.extend(qubit.Tdg(q[idx]) for idx in qubit_targets)
     elif gate_name in ["CX", "CNOT"]:
         # Process pairs of qubits
         ops.extend(
@@ -198,56 +196,43 @@ def _map_gate(gate_name, targets, args, q, c, measurement_offset):
                 ops.append(qubit.CX(q[qubit_targets[i]], q[qubit_targets[i + 1]]))
                 ops.append(qubit.CX(q[qubit_targets[i + 1]], q[qubit_targets[i]]))
                 ops.append(qubit.CX(q[qubit_targets[i]], q[qubit_targets[i + 1]]))
-    elif gate_name in ["M", "MZ"]:
-        # Measurement
-        if c is not None:
-            for i, idx in enumerate(qubit_targets):
-                if measurement_offset + i < len(c):
-                    ops.append(qubit.Measure(q[idx]) > c[measurement_offset + i])
-    elif gate_name in ["MX", "MY"]:
-        # Basis measurements: rotate into Z, measure, rotate back so the qubit
-        # is left in the measured X or Y eigenstate.
-        if c is not None:
-            for i, idx in enumerate(qubit_targets):
-                if measurement_offset + i < len(c):
-                    if gate_name == "MX":
-                        ops.append(qubit.H(q[idx]))
-                    else:  # MY
-                        ops.append(qubit.SZdg(q[idx]))
-                        ops.append(qubit.H(q[idx]))
-                    ops.append(qubit.Measure(q[idx]) > c[measurement_offset + i])
-                    ops.append(qubit.H(q[idx]))
-                    if gate_name == "MY":
-                        ops.append(qubit.SZ(q[idx]))
-    elif gate_name in ["R", "RZ"]:
-        # Reset
-        ops.extend(qubit.PZ(q[idx]) for idx in qubit_targets)
-    elif gate_name in ["RX", "RY"]:
-        # Reset in X or Y basis
-        for idx in qubit_targets:
-            ops.append(qubit.PZ(q[idx]))
-            if gate_name == "RX":
+    elif gate_name in _MEASUREMENT_BASES:
+        basis = _MEASUREMENT_BASES[gate_name]
+        resets = gate_name.startswith("MR")
+        flip = qubit.Z if basis == "X" else qubit.X
+        for i, target in enumerate(targets):
+            idx = target.value
+            if target.is_inverted_result_target:
+                ops.append(flip(q[idx]))
+            if basis == "Y":
+                ops.append(qubit.SZdg(q[idx]))
+            if basis in ["X", "Y"]:
                 ops.append(qubit.H(q[idx]))
-            else:  # RY
+            ops.append(qubit.Measure(q[idx]) > c[measurement_offset + i])
+            if basis in ["X", "Y"]:
                 ops.append(qubit.H(q[idx]))
+            if basis == "Y":
                 ops.append(qubit.SZ(q[idx]))
-    elif gate_name == "TICK":
-        # Timing boundary - add as comment
-        ops.append(Comment("TICK"))
-    elif "ERROR" in gate_name or gate_name.startswith("E(") or gate_name == "E":
-        # Noise operations - add as comment
-        error_prob = args[0] if args else 0
-        ops.append(
-            Comment(f"Noise: {gate_name}({error_prob}) on qubits {qubit_targets}"),
-        )
-    elif gate_name in ["DETECTOR", "OBSERVABLE_INCLUDE"]:
-        # Annotations - add as comment
-        ops.append(Comment(f"{gate_name} {targets}"))
-    elif gate_name == "QUBIT_COORDS":
-        # Coordinate annotation
-        ops.append(Comment(f"QUBIT_COORDS {targets} {args}"))
+            if resets:
+                # The reset replaces the trailing inversion Pauli.
+                ops.extend(_reset_in_basis(q[idx], basis))
+            elif target.is_inverted_result_target:
+                ops.append(flip(q[idx]))
+    elif gate_name in ["R", "RX", "RY"]:
+        basis = {"R": "Z", "RX": "X", "RY": "Y"}[gate_name]
+        for idx in qubit_targets:
+            ops.extend(_reset_in_basis(q[idx], basis))
     else:
-        # Unknown gate - add as comment
-        ops.append(Comment(f"Unsupported Stim gate: {gate_name} {targets} {args}"))
+        return None
 
+    return ops
+
+
+def _reset_in_basis(target, basis):
+    """Reset a qubit to the +1 eigenstate of the given basis."""
+    ops = [qubit.PZ(target)]
+    if basis in ["X", "Y"]:
+        ops.append(qubit.H(target))
+    if basis == "Y":
+        ops.append(qubit.SZ(target))
     return ops

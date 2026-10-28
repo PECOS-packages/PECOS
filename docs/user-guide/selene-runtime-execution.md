@@ -1,5 +1,9 @@
 # Selene runtime execution
 
+PECOS checks the QIS FFI library's data ABI before transferring operations or
+results. An older or incompatible library fails at load time; rebuild or reinstall
+the matching host and FFI artifacts together.
+
 These rules apply to the flat, metadata and scheduled lowering routes of
 `SeleneRuntime`. Python QIS `sim()` requires `.qubits(N)`; the inference rules below
 concern Rust and direct-runtime callers. For timing and noise on the scheduled
@@ -170,8 +174,12 @@ exit; their behavior is unchanged.
 
 ## Native gate lowering
 
-All Selene runtimes receive gates through their native entry points. Flat,
-metadata and scheduled lowering share the same decomposition table for H, Pauli,
+Native Selene and Helios ABI calls are forwarded unchanged, including their
+qubit handles and runtime errors. The runtime decides whether each call is supported.
+The `native_gates` setting does not rewrite these calls.
+
+For high-level QIR operations, flat, metadata and scheduled lowering share the
+same decomposition table for H, Pauli,
 phase, controlled and rotation gates. PECOS simulates only the operations emitted
 by the plugin: RXY1Q, RZ, RZZ, RXYXY2Q, reset and measurement, together with the
 existing idle/timing operations. Each runtime declares its accepted ABI gate
@@ -182,7 +190,7 @@ Reset, measure, and measure_leaked are mandatory lifetime operations.
 When rpp is available, RXYXY2Q is submitted natively. Otherwise PECOS lowers it
 using four RXY pulses and one RZZ: on each qubit apply RXY(-pi/2, phi+pi/2),
 then RZZ(theta) on the pair, then RXY(pi/2, phi+pi/2) on each qubit. Noise applies
-separately to these emitted native gates. Every input is checked against the
+separately to these emitted native gates. Every high-level QIR input is checked against the
 declared set before any of its operations are submitted. If no registered
 lowering fits, the error identifies the source operation, qubits, runtime,
 declared set, missing entry points, and how to declare a custom set.
@@ -222,43 +230,115 @@ sequences) have no emitted gate. Optional labels are dropped; labels with
 `source_lowering_required=true` fail the shot. These labels never move to a later
 pulse, which may have its own label.
 
-Metadata matching retains only outstanding labels and temporary empty guards on
-their qubits. Emission retires earlier unmatched records touching the emitted
-operation's qubits, including absorbed virtual Z anchors; required labels still
-fail when retired without an emission. Unlabelled flat input creates no matching
-records. When tracking begins on a qubit without an outstanding label, PECOS uses
-a local barrier and drains its earlier untracked work before registering the new
-label. This boundary prevents an older identical pulse from taking the new label,
-including across flat-to-metadata transitions; it can release queued work earlier
-than an otherwise identical unlabelled program.
+Metadata matching retains source records, including unlabelled guards that stop
+older identical operations from consuming later labels. Emission retires earlier
+unmatched records touching the emitted operation's qubits, including absorbed
+virtual Z anchors; required labels still fail when retired without an emission.
+Recording labels and releasing a qubit add no scheduling barriers. Records remain
+queued across physical-slot reuse until emission or native shot completion.
 
-Flat and metadata routes release queued work on an Idle's qubit before emitting
-the Idle. Scheduled extraction accepts decomposable gates but continues to reject
-source Idle and trace metadata. Leakage-aware measurements release queued work on
-the measured qubit so their results are available even when a plugin's result
-forcing only recognizes ordinary measurements.
+All routes forward explicit local/global barriers with their original scope and
+integer nanosecond delay. Source `Idle(seconds, qubit)` becomes a local barrier
+with that delay; negative, non-finite, overflowing or fractional-nanosecond values
+fail before submission. Only runtime timestamps determine emitted Idle operations
+and idle noise. If a runtime ignores barrier delays, PECOS preserves that behavior.
+The pinned public Simple and SoftRZ runtimes currently ignore those delay arguments.
+`selene_simulate_delay(nanoseconds)` instead forwards elapsed classical time to the
+runtime's dedicated `simulate_delay` callback. It is not replaced by a barrier.
+Missing callback support or a native error fails the execution.
 
-At program completion, flat and metadata routes lower a final global barrier
-through the normal metadata-aware path. Any queued native gates become one final
-batch, retaining their source labels; an empty drain adds no batch. Certification
-then checks for unexpected late operations and still fails if any remain. Scheduled
-execution retains its own terminal batch drain.
+Future reference-count increments and decrements, including Guppy's
+`___inc_future_refcount` and `___dec_future_refcount`, reach the native future
+returned by the runtime. PECOS processes work released by the callback
+and returns measurement feedback before resuming the program. The runtime owns the
+counts and lifetime; PECOS neither forces a measurement nor substitutes cleanup.
+The runtime validates native futures; native callback errors fail the execution. Synchronous
+request responses use separate storage: barriers, delays and reference-count calls
+do not consume measurement IDs or change Guppy DEM/decoder measurement bindings.
 
-After that pre-end drain, the host calls the runtime end hook exactly once and
-executes its final operations before certifying completion. Native extraction
-polls after `shot_end` without submitting another barrier. Scheduled output keeps
-its original complete batches, timestamps, duration, order and runtime shot ID;
-it is processed by the same noise model and simulator as the program's output.
-No new schedule is constructed for the tail.
+Custom runtime calls forward their tag and opaque bytes through the same generic
+plugin interface. Dynamic execution processes all emitted work, including measurement
+feedback, before returning the runtime's full unsigned 64-bit response. Missing
+custom-call support and native errors fail the execution. Collection-only execution
+cannot obtain a custom response and rejects the call. These program-to-runtime calls
+are distinct from runtime-to-simulator custom events, whose physical meaning still
+requires an explicit handler.
 
-`QisRuntime::finish_operations` and `finish_scheduled_operations` expose this
-final delivery to host implementations. A runtime whose ordinary drain cannot be
-used after end must override these methods. Direct `SeleneRuntime::shot_end`
-callers receive an error if native end emits work they would otherwise discard.
-Post-end measurements requiring feedback are currently unsupported and fail the
-shot explicitly. End-hook, extraction, admission and custom-event failures remain
-sticky until reset; no completed trace is emitted on failure. Native final
-extraction uses the existing per-batch and aggregate transport retention bounds.
+The Selene and Helios/Guppy ABIs preserve native qubit and future handles during
+native runtime execution. Allocation and lazy-measurement requests return the
+runtime's full unsigned 64-bit handle after processing emitted work. This does
+not force an unresolved measurement. Gates, reads, reference counts and scoped
+barriers accept those same handles, including handles returned by custom calls.
+Allocation exhaustion preserves Selene's `u64::MAX` sentinel. Native callback
+errors stop the shot; PECOS does not repair or reinterpret a runtime's decision.
+
+QIR result slots and native future handles are separate namespaces. QIR callers
+use QIR result reads; Selene callers use native future reads. Dense source
+measurement IDs remain internal provenance for named outputs, traces and DEMs. Each
+measurement occurrence receives a fresh source ID, including writes that reuse a
+QIR slot. QIR reads resolve that slot's latest occurrence; native reads resolve
+the unchanged native future. Result allocation alone consumes no source ID.
+For raw outputs, QIR slots retain `measurement_<slot>` names and last-write
+semantics. Native-only programs retain `measurement_<source>` names. Mixed
+programs use `native_measurement_<source>` for native outcomes so they cannot
+overwrite QIR outputs. Named outputs and audited traces always retain occurrence
+provenance independently of these display names.
+Standard physical measurements emitted inside custom calls execute through the
+same quantum-engine feedback loop. Their outcomes use an internal FIFO transport
+lane and are returned to the native future without becoming source result slots.
+Operation tracing rejects these measurements because their source relationship
+is unknown; ordinary simulation remains supported.
+
+An opaque custom call can retire or recycle existing futures. PECOS therefore
+invalidates cached native-future provenance after that call. Logical QIR reads
+of an earlier measurement fail if their native association is no longer known;
+a new explicit measurement establishes a new association. Native reads still
+return the runtime's values, but a named output based on a subsequent read cannot
+certify an operation trace until a new explicit measurement establishes its
+source relationship. Values read before the custom call retain their provenance.
+Any read without established provenance prevents audited tracing for the entire
+shot, including unused reads, repeated reads and integer outputs. This audit is
+conservative: even a harmless custom call invalidates cached future associations
+because PECOS cannot infer its lifetime contract. Pending measurements that cross
+the opaque call also lose their source association; their feedback still runs.
+Opaque payloads and responses are never rewritten to guess their schema.
+
+Time-cursor writes and reads retain per-execution state as in Selene; they do not
+change the runtime clock. State dumping is unsupported and reports an error.
+Scheduled extraction accepts decomposable gates and source Idle, but rejects source
+trace metadata. Source Idle annotations are also rejected in flat/metadata lowering:
+a delay request has no unique physical emission to which a label can safely attach.
+
+Measurement requests remain lazy: the runtime
+determines when they execute, and PECOS forces a specific result only when the
+program reads it. Both ordinary and leakage-aware reads use the native
+`force_result` contract. An unsatisfiable read fails promptly; PECOS does not
+insert a compatibility barrier that could change the runtime's timing. The pinned
+public SoftRZ runtime cannot force pending leakage-aware results; PECOS exposes
+that failure just as Selene does. Leakage-aware results already released by the
+runtime remain readable.
+PECOS polls after each native submission. Each emitted measurement batch receives
+feedback before the next extraction or source submission, including between
+native calls within a decomposed gate. Native future getters determine program
+read values; the host does not substitute cached simulator outcomes. See [lazy measurements](runtime-qis-tracing.md#lazy-measurements).
+
+At program completion, all Selene routes poll ready work, call the runtime end
+hook exactly once, and execute its final operations before certifying completion.
+The host adds no global barrier to flush work the runtime has chosen to defer.
+Unobserved measurements may remain unemitted if the runtime discards them at end.
+Required trace labels still fail if their physical operation was not emitted.
+
+Post-end measurements receive feedback, and PECOS processes any work that feedback
+releases before completion. Scheduled output keeps its batches, timestamps,
+duration, order and runtime shot ID. The same noise model and simulator process
+this output; the host does not construct a new schedule for it.
+
+`QisRuntime::finish_operations` and `finish_scheduled_operations` expose final
+delivery to host implementations. Direct `SeleneRuntime::shot_end` callers receive
+an error if native end emits work they would otherwise discard. End-hook,
+extraction, admission and custom-event failures remain sticky until reset; no
+completed trace is emitted on failure. Native final extraction uses the existing
+per-batch and aggregate transport retention bounds.
 
 ## Allocation lifetimes and capacity
 
@@ -308,72 +388,27 @@ Conservative initial sizing still uses legacy indices and retains that estimate
 across reset, so sparse IDs can enlarge the next shot's inferred capacity. An
 explicit capacity avoids this overestimate.
 
-## Prep at lifetime start
+## Preparation and source metadata
 
-`QisEngine` starts every used qubit lifetime with exactly one prep (`Reset`, lowered
-as `PZ`). The prep establishes |0> and receives the noise model's normal prep noise,
-including when a released simulator slot is reused. Allocation defers the prep
-until the first quantum operation on that handle. If that operation is a program
-reset, it counts as the lifetime's prep; otherwise the engine inserts a prep before
-it. A legacy static handle without an allocation receives the same treatment at
-its first use in the shot. An allocated handle released without use needs no prep.
+The Selene hosting path submits the program's allocation and reset calls as
+written. It does not insert a reset before first use or physical-slot reuse.
+The runtime decides which physical operations those calls produce. Program
+resets receive the simulator's normal preparation noise and the duration assigned
+by the runtime. Guppy qubit construction and converted QIR supply explicit resets.
+Hand-written QIS that requires initialization should supply one too.
 
-For static integer handles that are never explicitly allocated, prep occurs at
-first use, even if the program touches that qubit much later than other qubits.
-Its prep noise, crosstalk and idle timing therefore start at that first use.
-This differs from Quantinuum's `qir_qis` converter: version 0.1.8 calls
-`qir_qis.init_qubit(i)` for every one of `required_num_qubits` at program entry.
-Each call emits `___qalloc` and `___reset` before the first gate. Converted QIR
-already has explicit allocations and resets and is unaffected by the static-handle
-first-use rule; that distinction concerns hand-written integer-handle QIS.
+PECOS's direct QIS lowering path retains its first-use preparation rule: a used
+lifetime receives one reset before its first quantum operation unless that
+operation is already a reset. This is separate from Selene runtime hosting.
 
-The QASM engine adds no implicit lifetime prep. Its explicit `reset` parses as
-`PZ` ([parser](../../crates/pecos-qasm/src/parser/operations.rs)) and is emitted as
-such ([engine](../../crates/pecos-qasm/src/engine.rs)). With prep noise, the same
-circuit can therefore produce different results through QASM and static-handle QIS.
-
-Inserted preps are submitted to the runtime as resets and take the reset duration
-it assigns. PECOS's convenience constructors in
-[`selene_runtimes.rs`](../../crates/pecos-qis/src/selene_runtimes.rs) default gate
-and reset durations to zero. Runtimes configured through `with_plugin_config`
-can assign nonzero durations, including soft-RZ, so inserted preps can shift later
-operations' start times.
-
-This rule applies to direct, runtime-provided and scheduled lowering. Prep state
-persists across feedback continuations. Release ends the lifetime; re-allocation starts a
-new one. Later program resets remain preps with normal prep noise. `SeleneRuntime`
-lowers the resets supplied by `QisEngine` and does not add preps itself.
-
-Source operation traces retain the program's operations. Inserted preps appear
-only in lowered output, and source trace metadata stays with its program operation.
-On the direct route, qubit-scoped trace metadata attaches to the next operation
-on that qubit, matching Selene, rather than to the next lowered gate. Dangling
-metadata with no following compatible operation remains local to its source chunk:
-the direct route drops it and Selene rejects it. Once metadata attaches to a
-submitted operation, Selene retains the record across feedback continuations until
-that operation emits. Inserted preps carry no source labels; untracked preps need
-no matching records.
-
-Native emission order on each qubit determines retirement: when a later native
-operation emits, earlier unmatched records touching its qubits retire; records
-on disjoint qubits remain live. This includes absorbed RZ records. Labels are
-retired without transferring them; `source_lowering_required=true` instead fails
-the shot if no physical emission exists. Release drains the ending lifetime
-before freeing the native slot and retires its remaining virtual RZ records.
-Records are cleared at shot start and reset.
-
-The flat/metadata terminal policy rejects gates emitted after the final lowered
-batch ([`QisEngine::verify_runtime_drained`](../../crates/pecos-qis/src/ccengine.rs)).
-A labelled gate emitted by terminal drain therefore fails loudly, even without
-`source_lowering_required`; terminal verification cannot carry that label to a
-simulated gate. After the forced drain, outstanding virtual RZ records are retired
-unless they require an emission; any other outstanding source operation fails.
-
-Compatibility: noisy results change for QIR and legacy-handle programs, which now
-receive a prep at lifetime start. Results also change for programs on the direct
-lowering path that previously received a second prep on allocation in addition to
-their first program reset, such as Guppy programs. These now receive just one prep
-at lifetime start.
+Source traces retain the program's operations; lowered traces record native
+emissions. Scoped metadata attaches to the next compatible source operation and
+survives feedback continuations. Native emission order on each qubit determines
+retirement: earlier unmatched records touching its qubits retire, while records
+on disjoint qubits remain live. Labels never transfer from an absorbed operation
+to a later pulse. `source_lowering_required=true` fails if its physical emission
+is missing. Optional labels on discarded work expire at native completion.
+Records clear at shot start and reset, without forcing runtime work.
 
 ## Rejection and recovery
 
@@ -408,4 +443,14 @@ templates without a native instance remain cloneable for fresh shots. The main
 
 Shot lifecycle cleanup remains the plugin's responsibility. The public runtimes
 clear allocations at `shot_end`, including measured handles not explicitly released
-by the program. This does not provide automatic mid-shot growth or native snapshots.
+by the program. Successful end allows instance reuse without requiring a forced
+drain. A continuous runtime clock is preserved, including time advanced by queued
+work the runtime later discards; the next trace uses the configured clock model.
+This does not provide automatic mid-shot growth or native snapshots.
+
+Source annotations can span native-call chunks. PECOS retains them until the
+compatible source gate arrives and rejects unmatched annotations at shot
+completion. Native extraction budgets persist across measurement feedback
+rounds within one source request, so runtime-owned feedback cannot reset the
+processing bound. Dynamic builders compile the source without running an unused
+static collection pass before the selected runtime executes it.

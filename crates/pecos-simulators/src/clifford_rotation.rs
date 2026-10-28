@@ -23,6 +23,24 @@ use crate::CliffordGateable;
 use pecos_core::gate_type::GateType;
 use pecos_core::{Angle64, QubitId};
 
+// Check the entire batch before angle admission or any decomposition prefix.
+fn validate_pairs<T: CliffordGateable + ?Sized>(
+    sim: &T,
+    pairs: &[(QubitId, QubitId)],
+    gate: &str,
+) -> Result<(), String> {
+    for &(a, b) in pairs {
+        if a == b {
+            return Err(format!(
+                "{gate} requires distinct qubits; repeated qubit {} appears twice in a pair",
+                a.index()
+            ));
+        }
+        sim.validate_qubits(&[a, b]);
+    }
+    Ok(())
+}
+
 /// Pure admission for the rotation subset emitted by scheduled engines.
 /// Uses the same fixed-point simplification and snapping policy as `CliffordRotation`.
 /// Does not mutate a simulator or consume randomness. Unsupported kinds/arity reject.
@@ -89,6 +107,11 @@ pub trait CliffordRotation: CliffordGateable {
     ///
     /// # Errors
     /// Returns `Err` with a message if the angle is not a recognized Clifford angle.
+    /// Returns `Err` before applying any gate if a pair repeats a qubit.
+    ///
+    /// # Panics
+    /// Panics before applying any gate if the backend's bounds hook
+    /// (`validate_qubits`) rejects an operand.
     fn try_rzz(
         &mut self,
         angle: Angle64,
@@ -99,6 +122,11 @@ pub trait CliffordRotation: CliffordGateable {
     ///
     /// # Errors
     /// Returns `Err` with a message if the angle is not a recognized Clifford angle.
+    /// Returns `Err` before applying any gate if a pair repeats a qubit.
+    ///
+    /// # Panics
+    /// Panics before applying any gate if the backend's bounds hook
+    /// (`validate_qubits`) rejects an operand.
     fn try_rxx(
         &mut self,
         angle: Angle64,
@@ -109,6 +137,11 @@ pub trait CliffordRotation: CliffordGateable {
     ///
     /// # Errors
     /// Returns `Err` with a message if the angle is not a recognized Clifford angle.
+    /// Returns `Err` before applying any gate if a pair repeats a qubit.
+    ///
+    /// # Panics
+    /// Panics before applying any gate if the backend's bounds hook
+    /// (`validate_qubits`) rejects an operand.
     fn try_ryy(
         &mut self,
         angle: Angle64,
@@ -119,12 +152,18 @@ pub trait CliffordRotation: CliffordGateable {
     ///
     /// # Errors
     /// Returns an error before changing the state if an angle is unsupported.
+    /// Returns `Err` before applying any gate if a pair repeats a qubit.
+    ///
+    /// # Panics
+    /// Panics before applying any gate if the backend's bounds hook
+    /// (`validate_qubits`) rejects an operand.
     fn try_rxyxy2q(
         &mut self,
         theta: Angle64,
         phi: Angle64,
         pairs: &[(QubitId, QubitId)],
     ) -> Result<&mut Self, String> {
+        validate_pairs(self, pairs, "RXYXY2Q")?;
         // Snap before the zero check so a theta within the Clifford tolerance
         // of zero is the identity for any phi, as `try_rxx` would treat it.
         if pecos_core::try_simplify_rotation_snapped(GateType::RXX, theta) == Some(GateType::I) {
@@ -173,6 +212,11 @@ pub trait CliffordRotation: CliffordGateable {
     ///
     /// # Errors
     /// Returns `Err` with a message if any component angle is not a Clifford angle.
+    /// Returns `Err` before applying any gate if a pair repeats a qubit.
+    ///
+    /// # Panics
+    /// Panics before applying any gate if the backend's bounds hook
+    /// (`validate_qubits`) rejects an operand.
     fn try_rxxryyrzz(
         &mut self,
         alpha: Angle64,
@@ -186,6 +230,11 @@ pub trait CliffordRotation: CliffordGateable {
     ///
     /// # Errors
     /// Returns `Err` with a message if any component is not a Clifford angle.
+    /// Returns `Err` before applying any gate if a pair repeats a qubit.
+    ///
+    /// # Panics
+    /// Panics before applying any gate if the backend's bounds hook
+    /// (`validate_qubits`) rejects an operand.
     fn try_u2q(
         &mut self,
         before: [[Angle64; 3]; 2],
@@ -213,6 +262,7 @@ impl<T: CliffordGateable> CliffordRotation for T {
         angle: Angle64,
         pairs: &[(QubitId, QubitId)],
     ) -> Result<&mut Self, String> {
+        validate_pairs(self, pairs, "RZZ")?;
         apply_two_qubit_rotation(self, GateType::RZZ, angle, pairs)
     }
 
@@ -221,6 +271,7 @@ impl<T: CliffordGateable> CliffordRotation for T {
         angle: Angle64,
         pairs: &[(QubitId, QubitId)],
     ) -> Result<&mut Self, String> {
+        validate_pairs(self, pairs, "RXX")?;
         apply_two_qubit_rotation(self, GateType::RXX, angle, pairs)
     }
 
@@ -229,6 +280,7 @@ impl<T: CliffordGateable> CliffordRotation for T {
         angle: Angle64,
         pairs: &[(QubitId, QubitId)],
     ) -> Result<&mut Self, String> {
+        validate_pairs(self, pairs, "RYY")?;
         apply_two_qubit_rotation(self, GateType::RYY, angle, pairs)
     }
 
@@ -271,6 +323,7 @@ impl<T: CliffordGateable> CliffordRotation for T {
         gamma: Angle64,
         pairs: &[(QubitId, QubitId)],
     ) -> Result<&mut Self, String> {
+        validate_pairs(self, pairs, "RXXRYYRZZ")?;
         let error = || {
             format!(
                 "RXXRYYRZZ(alpha={alpha}, beta={beta}, gamma={gamma}) is not a Clifford rotation"
@@ -289,6 +342,7 @@ impl<T: CliffordGateable> CliffordRotation for T {
         after: [[Angle64; 3]; 2],
         pairs: &[(QubitId, QubitId)],
     ) -> Result<&mut Self, String> {
+        validate_pairs(self, pairs, "U2Q")?;
         // U2q = (U3(before[0]) x U3(before[1])) * RXXRYYRZZ(interaction) * (U3(after[0]) x U3(after[1]))
         // Applied right-to-left: after first, then interaction, then before.
         let err = || "U2q is not a Clifford rotation".to_string();
@@ -381,6 +435,8 @@ fn dispatch_two_qubit_decomposition<T: CliffordGateable>(
             dispatch_two_qubit_clifford(sim, clifford, pairs)
         }
         TwoQubitCliffordDecomposition::TensorPauli(pauli) => {
+            // The public try_* entries reject repeated pairs for the full batch first,
+            // including half turns that never dispatch a two-qubit gate.
             for &(q0, q1) in pairs {
                 dispatch_single_qubit_clifford(sim, pauli, &[q0])?;
                 dispatch_single_qubit_clifford(sim, pauli, &[q1])?;

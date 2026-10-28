@@ -212,8 +212,8 @@ def test_invalid_adapter_output_rejects(runtime, corruption):
 
 
 @pytest.mark.parametrize("runtime_name", ["selene_simple_runtime", "selene_soft_rz_runtime"])
-def test_standard_runtimes_need_no_event_adapter(runtime_name, scheduled_support):
-    trace = pecos.capture_qis_operation_trace(pecos.Qis(scheduled_support.ramsey), 1, runtime=runtime_name)
+def test_standard_runtimes_need_no_event_adapter(runtime_name):
+    trace = pecos.capture_qis_operation_trace(ramsey_program, 1, runtime=runtime_name)
     circuit = pecos.qis_operation_trace_to_tick_circuit(trace)
     assert circuit.num_measurements() == 1
 

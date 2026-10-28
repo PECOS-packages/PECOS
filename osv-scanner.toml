@@ -144,3 +144,23 @@ id = "RUSTSEC-2026-0369"
 # pecos-rslib enables it for the Python RelayBpDecoder).
 # Upstream owners: https://github.com/trmue/relay and https://github.com/jturner314/ndarray-npy.
 reason = "Transitive via relay-bp/ndarray-npy, which read .npz entries by name and never call ZipArchive::extract or ZipStreamReader::extract, the affected APIs."
+
+[[IgnoredVulns]]
+id = "GHSA-m665-v7pm-7grj"
+# zip@2.4.2 -- ZipArchive and ZipStreamReader disagree when the local and central
+# headers of an entry differ. Fixed only in zip 9.0.5.
+# Chain: relay-bp 0.2.2 -> ndarray-npy 0.9.1 -> zip ^2 (same chain as
+# RUSTSEC-2026-0367..0369). The ignore is not version-scoped, but the workspace
+# requires zip >= 9.0.5, so it cannot hide the first-party pecos-build path.
+# Upstream owners: https://github.com/trmue/relay and https://github.com/jturner314/ndarray-npy.
+reason = "Transitive via relay-bp/ndarray-npy, which reads .npz entries only through ZipArchive and never uses ZipStreamReader, so no second parser sees the archive."
+
+[[IgnoredVulns]]
+id = "GHSA-qwgh-2vcv-g2f7"
+# block-buffer@0.10.4 -- a panic inside the compression callback can leave the
+# buffer cursor corrupted. Fixed only in 0.12.1; there is no 0.10.x fix.
+# Chain: block-buffer 0.10 -> digest 0.10 -> sha2 0.10 -> wasmtime-environ 48 and
+# cranelift-codegen (incremental-cache, enabled unconditionally by
+# wasmtime-internal-cranelift). wasmtime 50 and main (51.0.0-dev) still require sha2 0.10.
+# Upstream owner: https://github.com/bytecodealliance/wasmtime. Re-check on wasmtime bumps.
+reason = "Transitive via wasmtime/cranelift -> sha2 0.10; sha2's only callback is its compression function (wrapping arithmetic, cannot panic), and sha2 does not use ReadBuffer."

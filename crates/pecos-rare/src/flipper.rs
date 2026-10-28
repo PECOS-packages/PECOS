@@ -10,7 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-use pecos_engines::faults::{FaultCatalog, FaultHistory, FaultOutcome};
+use pecos_engines::faults::{FaultCatalog, FaultHistory, FaultOutcome, FaultSite};
 use pecos_random::PecosRng;
 
 /// Returns a random integer between 0 and the provided upper bound
@@ -269,67 +269,73 @@ impl WeightedSingleFaultFlipper {
         self.rng = Some(PecosRng::seed_from_u64(seed));
     }
 
-    fn random_site_uid(&mut self) -> usize {
+    /// private helper function for random flips once a site is chosen
+    fn random_flip_and_ratio_for_site(
+        &mut self,
+        site: &FaultSite,
+        history: &FaultHistory,
+    ) -> (FaultHistory, f64) {
+        let outcomes = site.outcomes();
+        assert!(!outcomes.is_empty(), "Fault site has no outcomes");
+
         let rng = self
             .rng
             .as_mut()
             .expect("Set the fault flipper seed before requesting a flip");
-        let nsite = self.fault_catalog.len() as u64;
-        assert!(nsite > 0, "Cannot flip a fault in an empty catalog");
-        let random_idx = random_int(rng, nsite) as usize;
-        self.fault_catalog
-            .sites()
-            .nth(random_idx)
-            .expect("Valid site index")
-            .uid()
+
+        let random_value = rng.next_f64();
+        let total_probability: f64 =
+            outcomes.iter().map(FaultOutcome::probability).sum();
+
+        let threshold = random_value * total_probability;
+
+        let mut cumulative_probability = 0.0;
+        let chosen_outcome = outcomes
+            .iter()
+            .find(|outcome| {
+                cumulative_probability += outcome.probability();
+                threshold < cumulative_probability
+            })
+            .or_else(|| outcomes.last())
+            .expect("Fault site has no outcomes");
+
+        let proposed_history =
+            history.with_outcome(site, chosen_outcome.label());
+
+        (proposed_history, 1.0)
     }
 
+    /// Produces a random index of a site in the catalog
+    fn random_site_index(&mut self) -> usize {
+        let num_sites = self.fault_catalog.len();
+        assert!(num_sites > 0, "Cannot flip a fault in an empty catalog");
+
+        let rng = self
+            .rng
+            .as_mut()
+            .expect("Set the fault flipper seed before requesting a flip");
+
+        random_int(rng, num_sites as u64) as usize
+    }
+
+    /// Fast path when the caller has a catalog position.
+    pub fn random_flip_and_ratio_at_index(
+        &mut self,
+        site_index: usize,
+        history: &FaultHistory,
+    ) -> (FaultHistory, f64) {
+        let site = self.fault_catalog.site_at(site_index);
+        self.random_flip_and_ratio_for_site(&site, history)
+    }
+
+    /// Slower sampling path for uid-based fault choices (prefer `_at_index` method).
     pub fn random_flip_and_ratio_at_site(
         &mut self,
         site_uid: usize,
         history: &FaultHistory,
     ) -> (FaultHistory, f64) {
-
-        // Get the site and a label for the current outcome
         let site = self.fault_catalog.get_site(site_uid);
-        let current_label = history
-            .iter()
-            .find(|fault| fault.site_uid() == site_uid)
-            .map_or("NoFault", |fault| fault.outcome_label());
-
-        // Grab all the outcomes
-        let outcomes = site
-            .outcomes()
-            .into_iter()
-            .collect::<Vec<_>>();
-        assert!(!outcomes.is_empty(), "Fault site has no alternative outcome");
-
-        // Select a random value and scale it down according to the probability
-        // of all possible new outcomes
-        let rand_val = self.rng.as_mut()
-            .expect("Set the fault flipper seed before requesting a flip")
-            .next_f64();
-        let total_prob: f64 = outcomes.iter().map(FaultOutcome::probability).sum();
-        let scaled_val = rand_val * total_prob;
-
-        // Get the random outcome based on the scaled random value
-        let mut cumulative = 0.0;
-        let chosen_outcome = outcomes
-            .iter()
-            .find(|outcome| {
-                cumulative += outcome.probability();
-                scaled_val < cumulative
-            })
-            .or_else(|| outcomes.last())
-            .expect("There are no alternative outcomes for this fault site");
-
-        // Get the new history with the randomly selected outcome
-        let new_history = history.with_outcome(&site, chosen_outcome.label());
-
-        // Acceptance ratio is always 1 now with resampling.
-        let ratio = 1.0;
-
-        (new_history, ratio)
+        self.random_flip_and_ratio_for_site(&site, history)
     }
 
     pub fn random_flip_at_site(&mut self, site_uid: usize, history: &FaultHistory) -> FaultHistory {
@@ -337,14 +343,20 @@ impl WeightedSingleFaultFlipper {
         result
     }
 
-    pub fn random_flip_and_ratio(&mut self, history: &FaultHistory) -> (FaultHistory, f64) {
-        let site_uid = self.random_site_uid();
-        self.random_flip_and_ratio_at_site(site_uid, history)
+    pub fn random_flip_and_ratio(
+        &mut self,
+        history: &FaultHistory,
+    ) -> (FaultHistory, f64) {
+        let site_index = self.random_site_index();
+        self.random_flip_and_ratio_at_index(site_index, history)
     }
 
-    pub fn random_flip(&mut self, history: &FaultHistory) -> FaultHistory {
-        let site_uid = self.random_site_uid();
-        self.random_flip_at_site(site_uid, history)
+    pub fn random_flip(
+        &mut self,
+        history: &FaultHistory,
+    ) -> FaultHistory {
+        let (proposed_history, _) = self.random_flip_and_ratio(history);
+        proposed_history
     }
 }
 
@@ -393,11 +405,6 @@ impl WeightedSubregionFaultFlipper {
         // Loop through all sites and randomly select sites to flip
         for site_index in 0..self.fault_catalog.len(){
             let mut ratio_contribution = 1.0;
-            let site_uid = self.fault_catalog
-                .sites()
-                .nth(site_index)
-                .expect("Valid site index")
-                .uid();
             let random_value = self.rng
                 .as_mut()
                 .expect("Set the fault flipper seed before requesting a flip")
@@ -405,7 +412,9 @@ impl WeightedSubregionFaultFlipper {
 
             // Randomly choose whether to flip the site
             if random_value < self.region_probability {
-                (new_history,ratio_contribution) = self.site_flipper.random_flip_and_ratio_at_site(site_uid, &new_history);
+                (new_history,ratio_contribution) = self
+                    .site_flipper
+                    .random_flip_and_ratio_at_index(site_index, &new_history);
             }
             ratio *= ratio_contribution;
         }

@@ -13,7 +13,7 @@
 use crate::GateType;
 use crate::noise::depolarizing::{
     DepolarizingFaultCatalog, DepolarizingFaultOutcome, DepolarizingFaultSite,
-    DepolarizingSampledFault,
+    DepolarizingSampledFault
 };
 use std::collections::HashSet;
 
@@ -205,6 +205,21 @@ impl FaultCatalog {
     pub fn len(&self) -> usize {
         match self {
             Self::Depolarizing(catalog) => catalog.sites.len(),
+        }
+    }
+
+    /// Returns the site at a position in the catalog.
+    ///
+    /// `site_index` is a vector position, not a site UID.
+    ///
+    /// Panics if the index is out of bounds.
+    #[must_use]
+    pub fn site_at(&self, site_index: usize) -> FaultSite {
+        match self {
+            Self::Depolarizing(catalog) => {
+                let site = &catalog.sites[site_index];
+                FaultSite::Depolarizing(site.clone())
+            }
         }
     }
 

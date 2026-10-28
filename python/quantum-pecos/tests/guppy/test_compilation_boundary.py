@@ -82,12 +82,29 @@ def test_boundary_is_owned_by_bindings() -> None:
     assert compilation_pipeline.compile_hugr_to_qis is compile_hugr_to_qis
 
 
-def _operation_shape(operation: object) -> tuple:
+def _operation_shape(operation: object) -> tuple | None:
     """Reduce a trace operation to its kind and integer operands; angles are omitted
     so a different gate decomposition of the same rotation keeps the shape."""
     if isinstance(operation, str):
         return (operation,)
     ((kind, payload),) = operation.items()
+    if kind == "RuntimeRequest":
+        native = payload["request"]["Native"]
+        if isinstance(native, str):
+            return (native,)
+        ((request, operands),) = native.items()
+        if request in {"ReadFuture", "Refcount"}:
+            return None  # Future lifetime/read calls are checked separately below.
+        if request in {"Reset", "Qfree"}:
+            return (request, operands)
+        if request == "Measure":
+            return (request, operands["qubit"], operands["result_id"])
+        if request in {"Rxy", "Rz"}:
+            return (request.upper(), operands["qubit"])
+        if request == "Rzz":
+            return ("RZZ", *operands["qubits"])
+        message = f"Unexpected native request: {native}"
+        raise AssertionError(message)
     if kind == "Quantum":
         ((gate, operands),) = payload.items()
         operands = operands if isinstance(operands, list) else [operands]
@@ -142,45 +159,47 @@ def test_hosted_operations_keep_their_order_through_lowering() -> None:
     data = hosted_program.compile().to_bytes()
     trace = capture_qis_operation_trace(Qis(compilation_pipeline.compile_hugr_to_qis(data)), 2, seed=42)
 
-    assert [chunk["stage"] for chunk in trace] == [
-        "pending_start",
-        "pending_continue",
-        "named_results",
-        "trace_complete",
-    ]
+    assert trace[0]["stage"] == "pending_start"
+    assert [chunk["stage"] for chunk in trace[-2:]] == ["named_results", "trace_complete"]
+    assert sum(chunk["stage"] == "measurement_feedback" for chunk in trace) == 2
     # Seed 42 measures a = 1, so count = 1 and the loop applies h(b) once.
     assert trace[-1]["measurement_results"] == {"0": 1, "1": 0}
-    assert [[_operation_shape(op) for op in chunk["operations"]] for chunk in trace[:2]] == [
-        [
-            ("AllocateQubit", 0),
-            ("Reset", 0),
-            ("AllocateQubit", 1),
-            ("Reset", 1),
-            ("Barrier",),
-            ("TraceMetadata", 0, ("host_id", "pair:0")),
-            ("TraceMetadata", 0, ("local_role", "basis_prefix")),
-            ("RXY", 0),
-            ("RZ", 0),
-            ("Barrier",),
-            ("RXY", 1),
-            ("RZZ", 0, 1),
-            ("RZ", 0),
-            ("RXY", 1),
-            ("RZ", 1),
-            ("TraceMetadata", None, ("host_id", "pair:0")),
-            ("AllocateResult", 0),
-            ("Measure", 0, 0),
-            ("ReleaseQubit", 0),
-        ],
-        [
-            ("RXY", 1),
-            ("RZ", 1),
-            ("AllocateResult", 1),
-            ("Measure", 1, 1),
-            ("ReleaseQubit", 1),
-        ],
+    # Request acknowledgements can divide source chunks. Gate/metadata order
+    # is a source property and must hold across those scheduling boundaries.
+    source_operations = [op for chunk in trace for op in chunk["operations"]]
+    shapes = [_operation_shape(op) for op in source_operations]
+    native_requests = [op["RuntimeRequest"]["request"]["Native"] for op in source_operations if "RuntimeRequest" in op]
+    assert sum(isinstance(op, dict) and "ReadFuture" in op for op in native_requests) == 2
+    assert [shape for shape in shapes if shape is not None] == [
+        ("Qalloc",),
+        ("Reset", 0),
+        ("Qalloc",),
+        ("Reset", 1),
+        ("Barrier",),
+        ("TraceMetadata", 0, ("host_id", "pair:0")),
+        ("TraceMetadata", 0, ("local_role", "basis_prefix")),
+        ("RXY", 0),
+        ("RZ", 0),
+        ("Barrier",),
+        ("RXY", 1),
+        ("RZZ", 0, 1),
+        ("RZ", 0),
+        ("RXY", 1),
+        ("RZ", 1),
+        ("TraceMetadata", None, ("host_id", "pair:0")),
+        ("Measure", 0, 0),
+        ("Qfree", 0),
+        ("RXY", 1),
+        ("RZ", 1),
+        ("Measure", 1, 1),
+        ("Qfree", 1),
     ]
-    assert [named["name"] for named in trace[2]["named_result_traces"]] == ["count", "outcome"]
+    feedback_chunks = [chunk for chunk in trace if chunk["stage"] == "measurement_feedback"]
+    assert all(chunk["operations"] == [] for chunk in feedback_chunks)
+    assert all(chunk["lowered_quantum_ops_complete"] for chunk in feedback_chunks)
+    named_chunks = [chunk for chunk in trace if chunk["stage"] == "named_results"]
+    assert len(named_chunks) == 1
+    assert [named["name"] for named in named_chunks[0]["named_result_traces"]] == ["count", "outcome"]
 
 
 def test_compile_hugr_to_qis_emits_executable_calls() -> None:

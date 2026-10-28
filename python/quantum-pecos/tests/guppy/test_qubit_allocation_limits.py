@@ -83,7 +83,7 @@ class TestQubitAllocationLimits:
 
             return measure(q0).read(), measure(q1).read(), measure(q2).read(), measure(q3).read()
 
-        with pytest.raises(RuntimeError, match="requires 4 live qubits but configured capacity is 3"):
+        with pytest.raises(RuntimeError, match="No more qubits available to allocate"):
             sim(Guppy(four_qubit_ghz)).qubits(3).quantum(quantum_engine()).seed(42).run(10)
 
         results = sim(Guppy(four_qubit_ghz)).qubits(4).quantum(quantum_engine()).seed(42).run(10).to_dict()

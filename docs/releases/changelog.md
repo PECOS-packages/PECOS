@@ -20,8 +20,10 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   `X`; a pair location for `I` is rejected (use `II`), except by CoinToss, whose
   gates stay no-ops. Integer-like scalars are classified before sequences, and
   unhashable qubit indices are rejected up front, including inside locations.
-  Zero-dimensional arrays are now rejected even where Rust-backed bindings
-  accepted them for non-measuring gates. Multi-qubit locations must be ordered:
+  Zero-dimensional arrays used as qubit indices inside a batch (including
+  operands inside a location) are now rejected, even where Rust-backed bindings
+  and SparseStabPy accepted them for non-measuring gates. A bare `np.array(0)`
+  batch still skips dispatch in the wrappers. Multi-qubit locations must be ordered:
   set/frozenset pairs are rejected, including in SparseStabPy and CudaStateVec
   where they previously ran. Batches may still repeat or overlap qubits and
   execute sequentially.

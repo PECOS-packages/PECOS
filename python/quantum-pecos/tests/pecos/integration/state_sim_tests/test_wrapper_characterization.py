@@ -565,7 +565,7 @@ def test_unknown_nonempty_symbol(state):
 def test_pauli_identity_frame_circuit_short_circuit(state):
     circuit = QuantumCircuit()
     circuit.append("unknown-wrapper-symbol", {0})
-    # KNOWN-WRONG (#1480): PauliProp.run_circuit returns None and skips validation on an identity frame.
+    # KNOWN-WRONG (#1515): PauliProp.run_circuit still accepts unknown symbols on an identity frame.
     assert state.run_circuit(circuit) is None
     state.faults = {"X": {3}, "Y": set(), "Z": set()}
     with pytest.raises(Exception, match="Gate unknown-wrapper-symbol is not supported"):

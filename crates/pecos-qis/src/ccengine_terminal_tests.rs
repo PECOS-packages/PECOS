@@ -15,7 +15,7 @@ fn program(tail: &str, explicit_handles: bool, read_result: bool) -> String {
         ""
     };
     let read = if read_result {
-        "%read = call i1 @___read_future_bool(i64 0)"
+        "%raw_read = call i32 @__quantum__rt__result_get_one(i64 0)\n%read = icmp ne i32 %raw_read, 0"
     } else {
         ""
     };
@@ -36,7 +36,7 @@ fn program(tail: &str, explicit_handles: bool, read_result: bool) -> String {
         declare void @__quantum__qis__rz__body(double, i64)
         declare void @__quantum__qis__reset__body(i64)
         declare i32 @__quantum__qis__m__body(i64, i64)
-        declare i1 @___read_future_bool(i64)
+        declare i32 @__quantum__rt__result_get_one(i64)
         declare void @pecos_qis_trace_metadata_direct(ptr, i64, ptr, i64)
         attributes #0 = {{ "EntryPoint" }}
         "#
@@ -48,6 +48,7 @@ struct CompletedRun {
     terminal_batches: Vec<Vec<Gate>>,
     trace: Vec<OperationTraceChunk>,
     probabilities: Vec<f64>,
+    measurement: Option<Data>,
 }
 
 fn run(soft: bool, source: &str, tracing: bool) -> CompletedRun {
@@ -102,7 +103,7 @@ fn run(soft: bool, source: &str, tracing: bool) -> CompletedRun {
                 stage = engine.continue_processing(measurements).unwrap();
             }
             EngineStage::Complete(shot) => {
-                assert_eq!(shot.data.get("measurement_0"), Some(&Data::U32(1)));
+                let measurement = shot.data.get("measurement_0").cloned();
                 // A completed shot cannot flush or finalize its plugin twice.
                 assert!(matches!(
                     engine
@@ -121,6 +122,7 @@ fn run(soft: bool, source: &str, tracing: bool) -> CompletedRun {
                     terminal_batches,
                     trace: trace.lock().unwrap().clone(),
                     probabilities,
+                    measurement,
                 };
             }
         }
@@ -129,54 +131,47 @@ fn run(soft: bool, source: &str, tracing: bool) -> CompletedRun {
 }
 
 #[test]
-fn soft_rz_control_engine_flushes_native_tail() {
+fn soft_rz_owns_unobserved_work_at_shot_end() {
     for explicit in [false, true] {
         for read_result in [false, true] {
             for tracing in [false, true] {
                 let output = run(true, &program(PULSE_TAIL, explicit, read_result), tracing);
-                assert_eq!(output.terminal_batches.len(), 1);
-                let tail = &output.terminal_batches[0];
-                // Qubit 1's lifetime starts in the tail, so its prep is queued
-                // with the pulse. Measurement keeps qubit 0 on slot 0, static or
-                // explicit, so qubit 1 always has slot 1.
-                assert_eq!(
-                    tail.iter().map(|gate| gate.gate_type).collect::<Vec<_>>(),
-                    [GateType::PZ, GateType::RXY1Q]
-                );
+                assert_eq!(output.terminal_batches, Vec::<Vec<Gate>>::new());
+                assert_eq!(output.measurement, read_result.then_some(Data::U32(1)));
+                // SoftRZ discards its uncommitted tail at shot_end. The host
+                // must not turn it into physical pulses with an extra barrier.
                 assert!(
-                    tail.iter()
-                        .all(|gate| gate.qubits.as_slice() == [QubitId(1)])
+                    output
+                        .batches
+                        .iter()
+                        .flatten()
+                        .all(|gate| gate.qubits.as_slice() != [QubitId(1)])
                 );
-                assert!(output.probabilities[3] > 1.0 - 1e-10);
+                assert!(output.probabilities[usize::from(read_result)] > 1.0 - 1e-10);
             }
         }
     }
 }
 
 #[test]
-fn terminal_lowering_keeps_source_labels() {
+fn source_labels_do_not_force_terminal_work() {
     let tail = format!(
         "call void @pecos_qis_trace_metadata_direct(ptr @key, i64 12, ptr @label, i64 4)\n{PULSE_TAIL}"
     );
     let output = run(true, &program(&tail, true, true), true);
-    assert_eq!(output.terminal_batches.len(), 1);
-    let terminal: Vec<_> = output
-        .trace
-        .iter()
-        .filter(|chunk| chunk.stage == "terminal_flush")
-        .collect();
-    assert_eq!(terminal.len(), 1);
-    assert!(terminal[0].lowered_quantum_ops_complete);
-    assert_eq!(terminal[0].lowered_quantum_ops.len(), 1);
-    let gate = &terminal[0].lowered_quantum_ops[0];
-    assert_eq!(gate.gate_type, "RXY1Q");
-    assert_eq!(gate.qubits, [1]);
-    assert_eq!(gate.metadata["source_label"], "tail");
+    assert_eq!(output.terminal_batches, Vec::<Vec<Gate>>::new());
+    assert!(
+        output
+            .trace
+            .iter()
+            .flat_map(|chunk| &chunk.lowered_quantum_ops)
+            .all(|gate| !gate.metadata.contains_key("source_label"))
+    );
     assert_eq!(output.trace.last().unwrap().stage, "trace_complete");
 }
 
 #[test]
-fn terminal_measurement_adds_no_empty_batch() {
+fn terminal_measurement_follows_runtime_completion_policy() {
     for soft in [false, true] {
         for read_result in [false, true] {
             let output = run(soft, &program("", true, read_result), true);
@@ -188,13 +183,16 @@ fn terminal_measurement_adds_no_empty_batch() {
                     .any(|chunk| chunk.stage == "terminal_flush")
             );
             assert_eq!(
-                output
-                    .batches
-                    .iter()
-                    .filter(|gates| !gates.is_empty())
-                    .count(),
-                1
+                output.measurement,
+                (!soft || read_result).then_some(Data::U32(1))
             );
+            let physical_measurements = output
+                .batches
+                .iter()
+                .flatten()
+                .filter(|gate| gate.gate_type == GateType::MZ)
+                .count();
+            assert_eq!(physical_measurements, usize::from(!soft || read_result));
             assert_eq!(output.trace.last().unwrap().stage, "trace_complete");
         }
     }
@@ -228,16 +226,12 @@ fn simple_runtime_has_no_deferred_terminal_pulse() {
 }
 
 #[test]
-fn soft_rz_flushes_prep_before_an_absorbed_rz_tail() {
+fn soft_rz_unobserved_prep_and_absorbed_phase_remain_unemitted() {
     let tail = "call void @__quantum__qis__reset__body(i64 1)\ncall void @__quantum__qis__rz__body(double 0.3, i64 1)";
     let output = run(true, &program(tail, true, false), true);
-    assert_eq!(output.terminal_batches.len(), 1);
-    assert_eq!(output.terminal_batches[0].len(), 1);
-    assert_eq!(output.terminal_batches[0][0].gate_type, GateType::PZ);
-    assert_eq!(
-        output.terminal_batches[0][0].qubits.as_slice(),
-        &[QubitId(1)]
-    );
+    assert_eq!(output.terminal_batches, Vec::<Vec<Gate>>::new());
+    assert_eq!(output.batches, Vec::<Vec<Gate>>::new());
+    assert!(output.probabilities[0] > 1.0 - 1e-10);
 }
 
 fn reset_fixture(mode: ScheduledTransport) -> QisEngine {
@@ -756,50 +750,34 @@ fn result_get_one_feedback_uses_the_host_measurement() {
 #[test]
 fn same_result_slot_feedback_reads_the_new_measurement() {
     let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
-    for (ty, reader, first, second) in [
-        ("i1", "___read_future_bool", "%first", "%second"),
-        (
-            "i32",
-            "__quantum__rt__result_get_one",
-            "%first_bool",
-            "%second_bool",
-        ),
-    ] {
-        let conversions = if ty == "i32" {
-            "%first_bool = icmp ne i32 %first, 0\n%second_bool = icmp ne i32 %second, 0"
-        } else {
-            ""
-        };
-        let source = format!(
-            r#"
-            declare void @__quantum__qis__x__body(i64)
-            declare i32 @__quantum__qis__m__body(i64, i64)
-            declare {ty} @{reader}(i64)
-            declare void @panic(i32, ptr)
-            define void @main() #0 {{
-                call void @__quantum__qis__x__body(i64 0)
-                %m0 = call i32 @__quantum__qis__m__body(i64 0, i64 0)
-                %first = call {ty} @{reader}(i64 0)
-                call void @__quantum__qis__x__body(i64 0)
-                %m1 = call i32 @__quantum__qis__m__body(i64 0, i64 0)
-                %second = call {ty} @{reader}(i64 0)
-                {conversions}
-                %second_zero = xor i1 {second}, true
-                %correct = and i1 {first}, %second_zero
-                br i1 %correct, label %done, label %failure
-            failure:
-                call void @panic(i32 1058, ptr null)
-                ret void
-            done:
-                ret void
-            }}
-            attributes #0 = {{ "EntryPoint" }}
-        "#
-        );
-        let mut engine = dynamic_read_engine(&source);
-        let shot = drive_dynamic_read_shot(&mut engine).unwrap();
-        assert_eq!(shot.data.get("measurement_0"), Some(&Data::U32(0)));
-    }
+    let source = r#"
+        declare void @__quantum__qis__x__body(i64)
+        declare i32 @__quantum__qis__m__body(i64, i64)
+        declare i32 @__quantum__rt__result_get_one(i64)
+        declare void @panic(i32, ptr)
+        define void @main() #0 {
+            call void @__quantum__qis__x__body(i64 0)
+            %m0 = call i32 @__quantum__qis__m__body(i64 0, i64 0)
+            %first = call i32 @__quantum__rt__result_get_one(i64 0)
+            call void @__quantum__qis__x__body(i64 0)
+            %m1 = call i32 @__quantum__qis__m__body(i64 0, i64 0)
+            %second = call i32 @__quantum__rt__result_get_one(i64 0)
+            %first_bool = icmp ne i32 %first, 0
+            %second_bool = icmp ne i32 %second, 0
+            %second_zero = xor i1 %second_bool, true
+            %correct = and i1 %first_bool, %second_zero
+            br i1 %correct, label %done, label %failure
+        failure:
+            call void @panic(i32 1058, ptr null)
+            ret void
+        done:
+            ret void
+        }
+        attributes #0 = { "EntryPoint" }
+    "#;
+    let mut engine = dynamic_read_engine(source);
+    let shot = drive_dynamic_read_shot(&mut engine).unwrap();
+    assert_eq!(shot.data.get("measurement_0"), Some(&Data::U32(0)));
 }
 
 #[test]
@@ -839,9 +817,11 @@ fn never_measured_failure_surfaces_from_start_and_continue() {
             let error = drive_dynamic_read_shot(&mut engine).unwrap_err();
             assert!(started.elapsed() < Duration::from_secs(5));
             assert!(
-                error
-                    .to_string()
-                    .contains("QIS measurement result 7 unavailable: never measured"),
+                error.to_string().contains(if ty == "i1" {
+                    "native result read failed"
+                } else {
+                    "QIR result slot 7 was never measured"
+                }),
                 "{error}"
             );
             assert!(
@@ -1922,10 +1902,7 @@ fn migrated_shot_replacement_leaves_original_host_tls_empty() {
     x.join().unwrap();
 }
 
-#[test]
-fn selene_leaked_lazy_measure_reads_two_under_leakage_noise() {
-    use pecos_engines::{QuantumSystem, noise::general::GeneralNoiseModel};
-    let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+fn leaked_lazy_read_program() -> String {
     // Both SeleneFutureResult and SeleneU64Result use a hidden return pointer
     // on Windows, and two registers on the other supported 64-bit targets.
     #[cfg(not(windows))]
@@ -1938,7 +1915,7 @@ fn selene_leaked_lazy_measure_reads_two_under_leakage_noise() {
         "declare void @selene_qubit_lazy_measure_leaked(ptr sret({i32, i64}), ptr, i64)\ndeclare void @selene_future_read_u64(ptr sret({i32, i64}), ptr, i64)",
         "%out = alloca {i32, i64}\ncall void @selene_qubit_lazy_measure_leaked(ptr sret({i32, i64}) %out, ptr null, i64 0)\n%future = load {i32, i64}, ptr %out\n%id = extractvalue {i32, i64} %future, 1\ncall void @selene_future_read_u64(ptr sret({i32, i64}) %out, ptr null, i64 %id)\n%read = load {i32, i64}, ptr %out",
     );
-    let source = format!(
+    format!(
         r"
         {declarations}
         declare void @__quantum__qis__x__body(i64)
@@ -1951,7 +1928,66 @@ fn selene_leaked_lazy_measure_reads_two_under_leakage_noise() {
             ret i64 %status
         }}
     "
-    );
+    )
+}
+
+#[test]
+fn soft_rz_unsupported_leaked_read_fails_promptly_without_certifying_trace() {
+    let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+    for mode in [
+        ScheduledTransport::Off,
+        ScheduledTransport::V6,
+        ScheduledTransport::V7,
+    ] {
+        let mut engine = QisEngine::new(
+            Box::new(crate::QisHeliosInterface::new()),
+            Box::new(crate::selene_soft_rz_runtime().unwrap()),
+        );
+        engine.set_num_qubits_hint(2);
+        engine.scheduled_transport = mode;
+        let trace = OperationTraceStore::default();
+        if mode == ScheduledTransport::Off {
+            engine.set_operation_trace_collector(Arc::clone(&trace));
+        }
+        engine
+            .load_program(
+                leaked_lazy_read_program().as_bytes(),
+                ProgramFormat::LlvmIrText,
+            )
+            .unwrap();
+        let started = Instant::now();
+        let result = engine.start(()).and_then(|stage| {
+            finish_deferred_read_shot(&mut engine, &mut deferred_read_quantum(mode), stage)
+        });
+        let error = result.expect_err("unsupported forcing must fail at the read");
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(
+            error
+                .to_string()
+                .contains("native result is unavailable after force_result"),
+            "{error}"
+        );
+        let retry = engine
+            .continue_processing(ByteMessage::outcomes_builder().build())
+            .err()
+            .unwrap();
+        assert_eq!(error.to_string(), retry.to_string());
+        assert!(
+            !trace
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|chunk| chunk.stage == "trace_complete")
+        );
+        engine.reset_all().unwrap();
+    }
+}
+
+#[test]
+fn selene_leaked_lazy_measure_reads_two_under_leakage_noise() {
+    use pecos_engines::{QuantumSystem, noise::general::GeneralNoiseModel};
+    let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+    let source = leaked_lazy_read_program();
     let mut engine = dynamic_read_engine(&source);
     let noise = GeneralNoiseModel::builder()
         .with_p1(1.0)
@@ -1970,12 +2006,13 @@ fn scheduled_remeasured_slot_reads_and_records_latest_outcome() {
     let source = r"
         declare void @__quantum__qis__x__body(i64)
         declare i32 @__quantum__qis__m__body(i64, i64)
-        declare i1 @___read_future_bool(i64)
+        declare i32 @__quantum__rt__result_get_one(i64)
         define i64 @qmain(i64 %shot) {
             %first = call i32 @__quantum__qis__m__body(i64 0, i64 7)
             call void @__quantum__qis__x__body(i64 0)
             %second = call i32 @__quantum__qis__m__body(i64 0, i64 7)
-            %read = call i1 @___read_future_bool(i64 7)
+            %raw = call i32 @__quantum__rt__result_get_one(i64 7)
+            %read = icmp ne i32 %raw, 0
             %bad = xor i1 %read, true
             %status = zext i1 %bad to i64
             ret i64 %status
@@ -2025,7 +2062,7 @@ fn soft_rz_large_scheduled_gate_only_tail_completes() {
         let mut quantum = deferred_read_quantum(mode);
         let stage = engine.start(()).unwrap();
         finish_deferred_read_shot(&mut engine, &mut quantum, stage).unwrap();
-        assert_eq!(engine.scheduled_drain_round, 2);
+        assert_eq!(engine.scheduled_drain_round, 0);
         assert!(engine.get_results().is_ok());
     }
 }

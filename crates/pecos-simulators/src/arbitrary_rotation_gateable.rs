@@ -148,9 +148,11 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     /// two-qubit global phase still cancels.
     ///
     /// # Panics
+    /// Panics before applying any gates if a pair repeats a qubit.
     /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn rxyxy2q(&mut self, theta: Angle64, phi: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "RXYXY2Q");
         for &(a, b) in pairs {
             self.validate_qubits(&[a, b]);
         }
@@ -250,9 +252,11 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     /// A mutable reference to `Self` for method chaining.
     ///
     /// # Panics
+    /// The default implementation panics if both operands name the same qubit.
     /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn rxx(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "RXX");
         for &(a, b) in pairs {
             self.validate_qubits(&[a, b]);
         }
@@ -281,9 +285,11 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     /// A mutable reference to `Self` for method chaining.
     ///
     /// # Panics
+    /// The default implementation panics if both operands name the same qubit.
     /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn ryy(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "RYY");
         for &(a, b) in pairs {
             self.validate_qubits(&[a, b]);
         }
@@ -326,6 +332,8 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     /// A mutable reference to `Self` for method chaining.
     ///
     /// # Panics
+    /// Pairs must name two distinct qubits. The simulators in this crate panic before
+    /// applying any gates if a pair repeats a qubit.
     /// GPU backends panic if any operand is outside their register.
     fn rzz(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self;
 
@@ -342,6 +350,7 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     ///
     ///
     /// # Panics
+    /// Panics before applying any gates if a pair repeats a qubit.
     /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn rxxryyrzz(
@@ -351,6 +360,7 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
         lambda: Angle64,
         pairs: &[(QubitId, QubitId)],
     ) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "RXXRYYRZZ");
         for &(a, b) in pairs {
             self.validate_qubits(&[a, b]);
         }
@@ -370,6 +380,7 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     /// A mutable reference to `Self` for method chaining.
     ///
     /// # Panics
+    /// Panics before applying any gates if a pair repeats a qubit.
     /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn u2q(
@@ -379,6 +390,7 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
         after: [[Angle64; 3]; 2],
         pairs: &[(QubitId, QubitId)],
     ) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "U2Q");
         for &(a, b) in pairs {
             self.validate_qubits(&[a, b]);
         }

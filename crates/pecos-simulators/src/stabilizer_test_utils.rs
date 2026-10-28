@@ -1742,7 +1742,7 @@ mod tests {
 
     #[test]
     fn test_compare_bitset_vs_vecset() {
-        // Compare SparseStab (BitSet) vs SparseStabVecSet on random circuits
+        // Compare SparseStab (adaptive storage) vs SparseStabVecSet on random circuits
         let mut sim1 = SparseStab::new(3);
         let mut sim2 = SparseStabVecSet::new(3);
         compare_simulators_on_random_circuits(&mut sim1, &mut sim2, 3, 30, 10, 789);
@@ -1750,7 +1750,7 @@ mod tests {
 
     #[test]
     fn test_compare_bitset_vs_hybrid() {
-        // Compare SparseStab (BitSet) vs SparseStabHybrid on random circuits
+        // Compare SparseStab (adaptive storage) vs SparseStabHybrid on random circuits
         let mut sim1 = SparseStab::new(3);
         let mut sim2 = SparseStabHybrid::new(3);
         compare_simulators_on_random_circuits(&mut sim1, &mut sim2, 3, 30, 10, 101_112);
@@ -1866,7 +1866,7 @@ mod tests {
     /// Compare all local stabilizer simulators on the same random circuits.
     ///
     /// This is the Rust equivalent of the Python `test_random_circuits.py`.
-    /// Each simulator is compared against `SparseStab` (`BitSet`) as the reference
+    /// Each simulator is compared against `SparseStab` (adaptive storage) as the reference
     /// on both stabilizer tableau strings and forced measurement outcomes.
     ///
     #[test]

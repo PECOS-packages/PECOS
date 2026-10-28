@@ -15,6 +15,7 @@ import re
 import warnings
 
 import pecos as pc
+from pecos.slr._qubit_args import gate_target_groups
 from pecos.slr.gen_codes._permutation import iter_permutes, reject_permute_in_region
 from pecos.slr.gen_codes.generator import Generator
 
@@ -771,21 +772,10 @@ class QASMGenerator(Generator):
 
         str_list = []
 
-        if not isinstance(op.qargs[0], tuple) and len(op.qargs) == 2:
-            op.qargs = (op.qargs,)
-
-        for q in op.qargs:
-            if isinstance(q, tuple):
-                q1, q2 = q
-
-                # Apply permutation to the qubits
-                q1_str = self.apply_permutation(q1)
-                q2_str = self.apply_permutation(q2)
-
-                str_list.append(f"{repr_str} {q1_str}, {q2_str};")
-            else:
-                msg = f"For TQ gate, expected args to be a collection of size two tuples! Got: {op.qargs}"
-                raise TypeError(msg)
+        for q1, q2 in gate_target_groups(op.qargs, op.qsize, op.sym):
+            q1_str = self.apply_permutation(q1)
+            q2_str = self.apply_permutation(q2)
+            str_list.append(f"{repr_str} {q1_str}, {q2_str};")
 
         return "\n".join(str_list)
 

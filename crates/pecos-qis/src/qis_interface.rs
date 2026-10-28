@@ -154,6 +154,15 @@ pub trait QisInterface: Send + Sync {
         ))
     }
 
+    /// Select native Selene handles when the execution runtime speaks that protocol.
+    /// Interfaces without a Selene ABI need no configuration.
+    ///
+    /// # Errors
+    /// Returns an error if the interface cannot configure its execution context.
+    fn set_native_selene_handles(&mut self, _enabled: bool) -> Result<(), InterfaceError> {
+        Ok(())
+    }
+
     /// Disable dynamic execution mode
     ///
     /// # Errors
@@ -341,6 +350,17 @@ pub trait DynamicSyncHandle: Send + Sync {
     fn get_program_exit(
         &self,
     ) -> Result<Option<pecos_engines::shot_results::ProgramExit>, InterfaceError> {
+        Ok(None)
+    }
+
+    /// Get raw-result aliases, separate from audited source measurement IDs.
+    /// Interfaces without native source normalization return `None`.
+    ///
+    /// # Errors
+    /// Returns an error if the execution context cannot be read.
+    fn get_measurement_layout(
+        &self,
+    ) -> Result<Option<pecos_qis_ffi_types::MeasurementLayout>, InterfaceError> {
         Ok(None)
     }
 

@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 from pecos_rslib_llvm import binding, ir
 
 from pecos.slr import Angle, Block, If, Repeat
+from pecos.slr._qubit_args import gate_target_groups
 from pecos.slr.cops import (
     NEG,
     NOT,
@@ -760,6 +761,13 @@ class QIRGenerator(Generator):
 
         gate (QGate): a quantum gate to generate as QIR."""
 
+        for group in gate_target_groups(gate.qargs, gate.qsize, gate.sym):
+            application = gate.copy()
+            application.qargs = group
+            self._emit_qgate_call(application)
+
+    def _emit_qgate_call(self, gate: qgate_base.QGate) -> None:
+        """Emit one validated application, expanding any gate decomposition."""
         qgate_meta = QIRGateMetadata[gate.sym]
         # If theres a decomposition lambda, invoke that with the gate to generate
         # the decomposed gates needed in the circuit. The lambda defines any
@@ -771,35 +779,6 @@ class QIRGenerator(Generator):
             for decomposed_gate in decomposed_gates:
                 self._create_qgate_call(decomposed_gate)
             return
-
-        if isinstance(gate.qargs[0], QReg):
-            for qubit in gate.qargs[0].elems:
-                new_gate = gate.copy()
-                new_gate.qargs = [qubit]
-                self._create_qgate_call(new_gate)
-            return
-        if (
-            isinstance(gate.qargs, tuple)
-            and len(gate.qargs) != gate.qsize
-            and all(isinstance(q, Qubit) for q in gate.qargs)
-        ):
-            for qubit in gate.qargs:
-                new_gate = gate.copy()
-                new_gate.qargs = [qubit]
-                self._create_qgate_call(new_gate)
-            return
-        if isinstance(gate.qargs, tuple) and all(isinstance(e, tuple) for e in gate.qargs):
-            for pair in gate.qargs:
-                new_gate = gate.copy()
-                new_gate.qargs = pair
-                self._create_qgate_call(new_gate)
-            return
-        qargs = gate.qargs
-        if len(qargs) != gate.qsize:
-            msg = f"Gate {gate.sym} expects {gate.qsize} qubits, but {len(qargs)} were provided."
-            raise ValueError(
-                msg,
-            )
 
         if gate.sym not in self._gate_declaration_cache:
             declare_args = []
@@ -824,7 +803,7 @@ class QIRGenerator(Generator):
                 )
                 for param in gate.params
             ]
-        gate_args.extend([self._qarg_to_qubit_ptr(qarg) for qarg in qargs])
+        gate_args.extend([self._qarg_to_qubit_ptr(qarg) for qarg in gate.qargs])
 
         # Create the actual invocation on the builder using the args passed in
         gate_declaration.create_call(self._builder, gate_args, name="")

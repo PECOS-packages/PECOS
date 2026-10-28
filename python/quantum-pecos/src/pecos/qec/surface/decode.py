@@ -72,14 +72,18 @@ from pecos._traced_circuit import (
     normalize_traced_tick_circuit,
 )
 from pecos.qec._idle_noise import _translate_structured_idle_noise
+from pecos.qec.measurement_layout import abstract_result_refs
 from pecos.qec.surface._check_plan import require_current_surface_check_plan_renderer, resolve_surface_check_plan
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     import stim
     from pecos_rslib.qec import DetectorErrorModel
 
     from pecos import Array
     from pecos.decoders import DecoderSpec
+    from pecos.qec.measurement_layout import ResultRef
     from pecos.qec.surface._twirl_config import TwirlConfig
     from pecos.qec.surface.patch import Stabilizer, SurfacePatch
 
@@ -1145,54 +1149,36 @@ def _is_surface_sideband_result_tag(name: str) -> bool:
     return name.startswith(("pauli_mask:", "pauli_active:", "frame_mode:", "raw:"))
 
 
-def _surface_abstract_measurement_result_refs(abstract_tc: Any) -> list[tuple[str, str] | tuple[str, str, int]]:
+def _surface_result_classifier() -> Callable[[str, Callable[[str], object]], ResultRef]:
+    """Create a surface label classifier with fresh per-round ordinal state."""
+    syndrome_measure_index_by_round: dict[int, int] = {}
+
+    def classify(label: str, meta: Callable[[str], object]) -> ResultRef:
+        if label.startswith(("sx", "sz")):
+            round_value = meta("syndrome_round")
+            if round_value is None:
+                msg = f"surface syndrome measurement {label!r} is missing syndrome_round metadata"
+                raise ValueError(msg)
+            round_index = int(round_value)
+            measurement_index = syndrome_measure_index_by_round.get(round_index, 0)
+            syndrome_measure_index_by_round[round_index] = measurement_index + 1
+            phase = "init:meas" if round_index < 0 else "meas"
+            return ("scalar", f"{label}:{phase}:{measurement_index}")
+        if label.startswith("final[") and label.endswith("]"):
+            return ("array", "final", int(label.removeprefix("final[").removesuffix("]")))
+        msg = f"surface measurement is missing a result-tag-compatible label: {label!r}"
+        raise ValueError(msg)
+
+    return classify
+
+
+def _surface_abstract_measurement_result_refs(abstract_tc: Any) -> list[ResultRef]:
     """Return one result-tag reference per record, in shared-reader emission order.
 
     Each label (``sx..``/``sz..`` or ``final[i]``) names exactly one measurement,
     so a labelled measurement gate must measure a single qubit.
     """
-    refs: list[tuple[str, str] | tuple[str, str, int]] = []
-    measured_qubits: list[int] = []
-    syndrome_measure_index_by_round: dict[int, int] = {}
-    measurement_gate_types = {"MZ", "MX", "MPZ", "MeasureFree"}
-    for tick_index in range(abstract_tc.num_ticks()):
-        tick = abstract_tc.get_tick(tick_index)
-        if tick is None:
-            continue
-        for gate_index, gate in enumerate(tick.gate_batches()):
-            gate_type = str(getattr(gate, "gate_type", "")).rsplit(".", maxsplit=1)[-1]
-            if gate_type not in measurement_gate_types:
-                continue
-            qubits = list(gate.qubits)
-            measured_qubits.extend(qubits)
-            label = str(abstract_tc.get_gate_meta(tick_index, gate_index, "label") or "")
-            if len(qubits) != 1:
-                msg = (
-                    f"surface measurement label {label!r} names one measurement but its gate "
-                    f"measures {len(qubits)} qubits"
-                )
-                raise ValueError(msg)
-            if label.startswith(("sx", "sz")):
-                round_value = abstract_tc.get_gate_meta(tick_index, gate_index, "syndrome_round")
-                if round_value is None:
-                    msg = f"surface syndrome measurement {label!r} is missing syndrome_round metadata"
-                    raise ValueError(msg)
-                round_index = int(round_value)
-                measurement_index = syndrome_measure_index_by_round.get(round_index, 0)
-                syndrome_measure_index_by_round[round_index] = measurement_index + 1
-                phase = "init:meas" if round_index < 0 else "meas"
-                refs.append(("scalar", f"{label}:{phase}:{measurement_index}"))
-                continue
-            if label.startswith("final[") and label.endswith("]"):
-                refs.append(("array", "final", int(label.removeprefix("final[").removesuffix("]"))))
-                continue
-            msg = f"surface measurement is missing a result-tag-compatible label: {label!r}"
-            raise ValueError(msg)
-    emission_qubits = [qubit for qubit, _ in abstract_tc.measurement_emission()]
-    if len(refs) != len(emission_qubits) or measured_qubits != emission_qubits:
-        msg = "surface measurement result refs disagree with the shared reader's measurement emission"
-        raise ValueError(msg)
-    return refs
+    return abstract_result_refs(abstract_tc, _surface_result_classifier, family="surface")
 
 
 def _validate_result_tag_remap_against_traced_measurements(

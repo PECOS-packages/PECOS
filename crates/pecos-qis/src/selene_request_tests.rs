@@ -1078,3 +1078,83 @@ fn opaque_future_reuse_does_not_inherit_source_provenance() {
         );
     }
 }
+
+#[test]
+fn decoder_request_never_forces_an_unread_native_future_or_inserts_a_barrier() {
+    use crate::runtime_decoder::RuntimeDecoderSession;
+    use pecos_core::errors::PecosError;
+    use std::sync::Arc;
+    thread_local! {
+        static FORCES: Cell<usize> = const { Cell::new(0) };
+    }
+    unsafe extern "C" fn measure(_: RuntimeInstance, _: u64, out: *mut u64) -> i32 {
+        unsafe {
+            *out = 777;
+        }
+        0 // No physical batch is available until the runtime chooses to emit it.
+    }
+    unsafe extern "C" fn force(_: RuntimeInstance, _: u64) -> i32 {
+        FORCES.set(FORCES.get() + 1);
+        95 // Any decoder-induced forcing must fail the test.
+    }
+    struct Decoder;
+    impl RuntimeDecoderSession for Decoder {
+        fn decode(
+            &mut self,
+            window: u64,
+            instance: u64,
+            syndrome: &[u8],
+        ) -> std::result::Result<u64, PecosError> {
+            assert_eq!((window, instance, syndrome), (9, 0, &[0][..]));
+            assert_eq!(FORCES.get(), 0);
+            assert!(CALLS.with_borrow(Vec::is_empty));
+            Ok(1)
+        }
+    }
+    let _lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+    FORCES.set(0);
+    with_config(
+        |d| {
+            d.measure_fn = measure;
+            d.force_result_fn = force;
+        },
+        |runtime| {
+            let source = r"
+        declare i64 @___qalloc()
+        declare i64 @___lazy_measure(i64)
+        declare i64 @pecos_runtime_decode(i64, i64, ptr, i64)
+        define i64 @qmain(i64 %shot) {
+            %q = call i64 @___qalloc()
+            %future = call i64 @___lazy_measure(i64 %q)
+            %data = alloca i8
+            store i8 0, ptr %data
+            %frame = call i64 @pecos_runtime_decode(i64 9, i64 0, ptr %data, i64 1)
+            %status = sub i64 1, %frame
+            ret i64 %status
+        }";
+            let mut engine = crate::QisEngine::new(
+                Box::new(crate::QisHeliosInterface::new()),
+                Box::new(runtime),
+            );
+            engine.decoder_factory = Some(Arc::new(|| Ok(Box::new(Decoder))));
+            engine.set_num_qubits_hint(2);
+            engine
+                .load_program(source.as_bytes(), crate::ProgramFormat::LlvmIrText)
+                .unwrap();
+            let mut quantum = StateVecEngine::new(2);
+            let mut stage = engine.start(()).unwrap();
+            loop {
+                match stage {
+                    EngineStage::NeedsProcessing(commands) => {
+                        stage = engine
+                            .continue_processing(quantum.process(commands).unwrap())
+                            .unwrap();
+                    }
+                    EngineStage::Complete(_) => break,
+                }
+            }
+        },
+    );
+    assert_eq!(FORCES.get(), 0);
+    assert!(CALLS.with_borrow(Vec::is_empty));
+}

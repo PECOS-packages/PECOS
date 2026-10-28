@@ -2376,6 +2376,9 @@ impl SeleneRuntime {
 
     fn submit_runtime_request(&mut self, request: &RuntimeRequest) -> Result<u64> {
         match request {
+            RuntimeRequest::Decode { .. } => Err(RuntimeError::ExecutionError(
+                "decoder requests require a configured QisEngine host".into(),
+            )),
             RuntimeRequest::Native(request) => self.submit_selene_request(request),
             RuntimeRequest::LocalBarrier { qubits, sleep_ns } => {
                 let native = qubits

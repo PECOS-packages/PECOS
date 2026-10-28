@@ -69,6 +69,7 @@ mod py_foreign_simulator;
 mod quantum_info_bindings;
 mod qudit_bindings;
 mod runtime_batch_adapter;
+mod runtime_decoder;
 mod scheduled_adapter;
 mod shot_results_bindings;
 mod sim;

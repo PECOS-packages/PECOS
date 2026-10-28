@@ -1052,7 +1052,7 @@ fn opaque_future_reuse_does_not_inherit_source_provenance() {
                         outcome
                             .unwrap_err()
                             .to_string()
-                            .contains("no native measurement for program result 7")
+                            .contains("no native measurement for program result 0")
                     );
                 } else if trace_enabled {
                     assert!(

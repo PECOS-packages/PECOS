@@ -473,6 +473,38 @@ impl DynamicSyncHandle for HeliosSyncHandle {
         }
     }
 
+    fn get_measurement_layout(
+        &self,
+    ) -> Result<Option<pecos_qis_ffi_types::MeasurementLayout>, InterfaceError> {
+        let lib = Self::get_lib()?;
+        let get_fn: Symbol<GetNamedResultTracesJsonFn> = unsafe {
+            lib.get(b"pecos_get_measurement_layout_json_with_context\0")
+                .map_err(|e| {
+                    InterfaceError::ExecutionError(format!(
+                        "Missing measurement identity query: {e}"
+                    ))
+                })?
+        };
+        let free_fn: Symbol<FreeNamedResultsJsonFn> = unsafe {
+            lib.get(b"pecos_free_named_results_json\0").map_err(|e| {
+                InterfaceError::ExecutionError(format!("Missing JSON deallocator: {e}"))
+            })?
+        };
+        let mut ptr = std::ptr::null_mut();
+        check_context_status(
+            unsafe { get_fn(self.execution_context.0, &raw mut ptr) },
+            "read measurement identities",
+        )?;
+        if ptr.is_null() {
+            return Ok(None);
+        }
+        let result = serde_json::from_slice(unsafe { std::ffi::CStr::from_ptr(ptr) }.to_bytes());
+        unsafe { free_fn(ptr) };
+        result.map(Some).map_err(|e| {
+            InterfaceError::ExecutionError(format!("Invalid measurement identities: {e}"))
+        })
+    }
+
     fn get_named_result_traces(
         &self,
     ) -> Result<Vec<pecos_qis_ffi_types::NamedResultTrace>, InterfaceError> {

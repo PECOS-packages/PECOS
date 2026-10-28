@@ -3,6 +3,7 @@
 
 """Tests for the public QIS operation-tracing API."""
 
+import json
 import math
 
 import pecos
@@ -469,3 +470,101 @@ def test_native_request_cannot_silently_lose_lowered_gates() -> None:
     trace[0]["lowered_quantum_ops"] = []
     with pytest.raises(ValueError, match="does not contain lowered_quantum_ops"):
         pecos.qis_operation_trace_to_tick_circuit(trace)
+
+
+def _identity_program(*, native_first: bool, reuse: bool, named: bool, native: bool = True) -> str:
+    """Use explicit sparse QIR slot 7 and a native future on another qubit."""
+    qir = """
+        call void @__quantum__qis__reset__body(i64 0)
+        call void @__quantum__qis__x__body(i64 0)
+        %qm = call i32 @__quantum__qis__m__body(i64 0, i64 7)
+    """
+    native_ops = (
+        """
+        %q = call i64 @___qalloc()
+        call void @___reset(i64 %q)
+        %future = call i64 @___lazy_measure(i64 %q)
+    """
+        if native
+        else ""
+    )
+    body = native_ops + qir if native_first else qir + native_ops
+    body += """
+        %old32 = call i32 @__quantum__rt__result_get_one(i64 7)
+        %old = icmp ne i32 %old32, 0
+    """
+    values = ["%old"]
+    if reuse:
+        body += """
+            call void @__quantum__qis__x__body(i64 0)
+            %qm2 = call i32 @__quantum__qis__m__body(i64 0, i64 7)
+            %new32 = call i32 @__quantum__rt__result_get_one(i64 7)
+            %new = icmp ne i32 %new32, 0
+        """
+        values.append("%new")
+    if native:
+        body += "%native = call i1 @___read_future_bool(i64 %future)\n"
+        values.append("%native")
+    if named:
+        body += f"%array = alloca [{len(values)} x i8]\n"
+        for index, value in enumerate(values):
+            body += f"%v{index} = zext i1 {value} to i8\n"
+            body += f"%p{index} = getelementptr i8, ptr %array, i64 {index}\n"
+            body += f"store i8 %v{index}, ptr %p{index}\n"
+        body += f"call void @print_bool_arr_selene(ptr @label, i64 3, ptr %array, i64 {len(values)})\n"
+    return f"""
+        @label = private constant [3 x i8] c"out"
+        declare void @__quantum__qis__reset__body(i64)
+        declare void @__quantum__qis__x__body(i64)
+        declare i32 @__quantum__qis__m__body(i64, i64)
+        declare i32 @__quantum__rt__result_get_one(i64)
+        declare i64 @___qalloc()
+        declare void @___reset(i64)
+        declare i64 @___lazy_measure(i64)
+        declare i1 @___read_future_bool(i64)
+        declare void @print_bool_arr_selene(ptr, i64, ptr, i64)
+        define i64 @qmain(i64 %shot) {{
+            {body}
+            ret i64 0
+        }}
+    """
+
+
+def _identity_sim(program: str):
+    return (
+        pecos.sim(pecos.Qis(program))
+        .classical(pecos.selene_engine("selene_simple_runtime"))
+        .quantum(pecos_rslib.state_vector())
+        .qubits(2)
+        .workers(1)
+        .seed(42)
+    )
+
+
+@pytest.mark.parametrize("native_first", [False, True])
+@pytest.mark.parametrize("reuse", [False, True])
+@pytest.mark.parametrize("slot", [0, 7])
+def test_mixed_result_namespaces_preserve_values_and_audited_provenance(*, native_first, reuse, slot) -> None:
+    from pecos._qis_trace_replay import named_result_traces_from_operation_trace
+
+    program = _identity_program(native_first=native_first, reuse=reuse, named=True).replace("i64 7", f"i64 {slot}")
+    expected_values = [1, 0, 0] if reuse else [1, 0]
+    assert _identity_sim(program).run(3).to_dict() == {"out": [expected_values] * 3}
+    trace = _identity_sim(program).capture_operation_trace()
+    qir_source, native_source = (1, 0) if native_first else (0, 1)
+    expected_sources = [qir_source, 2, native_source] if reuse else [qir_source, native_source]
+    records = named_result_traces_from_operation_trace(trace)
+    assert records == [{"name": "out", "values": [bool(v) for v in expected_values], "result_ids": expected_sources}]
+    circuit = pecos.qis_operation_trace_to_tick_circuit(trace)
+    assert json.loads(circuit.get_meta("qis_source_measurement_ids")) == list(range(3 if reuse else 2))
+    assert trace[-1]["stage"] == "trace_complete"
+
+
+@pytest.mark.parametrize("native", [False, True])
+@pytest.mark.parametrize("reuse", [False, True])
+def test_raw_qir_slots_keep_sparse_names_and_latest_values(*, native, reuse) -> None:
+    program = _identity_program(native_first=True, reuse=reuse, named=False, native=native)
+    expected = {"measurement_7": [0 if reuse else 1] * 3}
+    if native:
+        expected["native_measurement_0"] = [0] * 3
+    assert _identity_sim(program).run(3).to_dict() == expected

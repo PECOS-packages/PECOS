@@ -424,6 +424,13 @@ fn record_result_read(result_id: usize) {
 /// Transfer only after the shared read helper has released all owned data.
 /// The caller and all skipped frames must obey the checkpoint discipline.
 unsafe fn dynamic_read(result_id: usize, boolean: bool) -> u64 {
+    let result_id = match crate::qir_measurement_source(result_id) {
+        Ok(source) => source,
+        Err(reason) => {
+            unsafe { fatal_ffi_input("QIR result read", reason) };
+            return 0;
+        }
+    };
     let Some(outcome) = crate::read_dynamic_result(result_id as u64, boolean) else {
         checkpoint!(0);
         if let Some(transfer) = PROGRAM_PANIC_TRANSFER.get() {
@@ -1336,13 +1343,19 @@ pub unsafe extern "C-unwind" fn panic(code: i32, message: *const std::ffi::c_cha
 /// The `register_name` pointer may be null or must point to a valid null-terminated C string.
 /// Invalid pointers will cause undefined behavior.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn __quantum__rt__result_record_output(
+pub unsafe extern "C-unwind" fn __quantum__rt__result_record_output(
     result_ptr: *const std::ffi::c_void,
     register_name: *const std::ffi::c_char,
 ) {
     // Extract the result ID from the pointer
     // HUGR generates: %result_ptr = inttoptr i64 %result_id to i8*
-    let result_id = result_ptr as usize;
+    let result_id = match crate::qir_measurement_source(result_ptr as usize) {
+        Ok(source) => source,
+        Err(reason) => {
+            unsafe { fatal_ffi_input("QIR result output", reason) };
+            return;
+        }
+    };
 
     // Convert the C string to a Rust String
     let register_name_str = if register_name.is_null() {
@@ -2378,6 +2391,58 @@ mod tests {
     }
 
     // --- Lazy measure and future tests ---
+
+    #[test]
+    fn native_source_ids_are_distinct_from_qir_slots_and_reset_per_shot() {
+        if !crate::test_env::run_test_in_child(
+            "ffi::tests::native_source_ids_are_distinct_from_qir_slots_and_reset_per_shot",
+        ) {
+            return;
+        }
+        setup_test();
+        let ctx = crate::pecos_create_execution_context();
+        unsafe {
+            crate::pecos_register_execution_context(ctx);
+            assert_eq!(crate::pecos_set_native_selene_handles(ctx, true), 0);
+        }
+        // Reserving user slots does not consume measurement occurrences.
+        assert_eq!(unsafe { __quantum__rt__result_allocate() }, 0);
+        crate::queue_measurement(0, 7, false);
+        assert_eq!(crate::qir_measurement_source(7).unwrap(), 0);
+        assert_eq!(crate::allocate_measurement_source(None).unwrap(), 1);
+        crate::queue_measurement(0, 7, true);
+        assert_eq!(crate::qir_measurement_source(7).unwrap(), 2);
+        assert!(crate::qir_measurement_source(1).is_err());
+        unsafe {
+            __quantum__rt__result_record_output(7 as *const std::ffi::c_void, std::ptr::null());
+        }
+        with_interface(|iface| {
+            assert!(matches!(
+                iface.operations.last(),
+                Some(Operation::RecordOutput { result_id: 2, .. })
+            ));
+        });
+        let mut json = std::ptr::null_mut();
+        unsafe {
+            assert_eq!(
+                crate::pecos_get_measurement_layout_json_with_context(ctx, &raw mut json),
+                0
+            );
+            let layout: pecos_qis_ffi_types::MeasurementLayout =
+                serde_json::from_slice(std::ffi::CStr::from_ptr(json).to_bytes()).unwrap();
+            crate::pecos_free_named_results_json(json);
+            assert_eq!(layout.qir_slots, std::collections::BTreeMap::from([(7, 2)]));
+            assert_eq!(layout.native_sources, std::collections::BTreeSet::from([1]));
+            (*ctx).measurement_identities.lock().unwrap().next_source =
+                pecos_qis_ffi_types::RUNTIME_REQUEST_RESULT_ID;
+            assert!(crate::allocate_measurement_source(None).is_err());
+            (*ctx).reset_outputs();
+            assert!(crate::qir_measurement_source(7).is_err());
+            assert_eq!(crate::allocate_measurement_source(None).unwrap(), 0);
+            crate::pecos_register_execution_context(std::ptr::null_mut());
+            crate::pecos_destroy_execution_context(ctx);
+        }
+    }
 
     #[test]
     fn test_lazy_measure() {

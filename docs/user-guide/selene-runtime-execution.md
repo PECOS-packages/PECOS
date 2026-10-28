@@ -274,7 +274,15 @@ errors stop the shot; PECOS does not repair or reinterpret a runtime's decision.
 
 QIR result slots and native future handles are separate namespaces. QIR callers
 use QIR result reads; Selene callers use native future reads. Dense source
-measurement IDs remain internal provenance for named outputs, traces and DEMs.
+measurement IDs remain internal provenance for named outputs, traces and DEMs. Each
+measurement occurrence receives a fresh source ID, including writes that reuse a
+QIR slot. QIR reads resolve that slot's latest occurrence; native reads resolve
+the unchanged native future. Result allocation alone consumes no source ID.
+For raw outputs, QIR slots retain `measurement_<slot>` names and last-write
+semantics. Native-only programs retain `measurement_<source>` names. Mixed
+programs use `native_measurement_<source>` for native outcomes so they cannot
+overwrite QIR outputs. Named outputs and audited traces always retain occurrence
+provenance independently of these display names.
 Standard physical measurements emitted inside custom calls execute through the
 same quantum-engine feedback loop. Their outcomes use an internal FIFO transport
 lane and are returned to the native future without becoming source result slots.

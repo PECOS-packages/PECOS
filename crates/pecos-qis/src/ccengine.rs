@@ -2600,10 +2600,37 @@ impl ClassicalEngine for QisEngine {
         // may produce a different number of raw measurements, but the named
         // results (from result() calls) are consistent.
         if !has_named_results {
-            for (result_id, value) in &self.measurement_results {
-                shot.data
-                    .insert(format!("measurement_{result_id}"), Data::U32(*value));
-                debug!("QisEngine: Added to shot: measurement_{result_id} = {value}");
+            let layout = self
+                .dynamic_state
+                .as_ref()
+                .and_then(|s| s.sync_handle.as_ref())
+                .map(|handle| handle.get_measurement_layout())
+                .transpose()
+                .map_err(crate::interface_impl::interface_error_to_pecos)?
+                .flatten();
+            if let Some(layout) = layout {
+                for (slot, source) in &layout.qir_slots {
+                    if let Some(value) = self.measurement_results.get(source) {
+                        shot.data
+                            .insert(format!("measurement_{slot}"), Data::U32(*value));
+                    }
+                }
+                let prefix = if layout.qir_slots.is_empty() {
+                    "measurement"
+                } else {
+                    "native_measurement"
+                };
+                for source in &layout.native_sources {
+                    if let Some(value) = self.measurement_results.get(source) {
+                        shot.data
+                            .insert(format!("{prefix}_{source}"), Data::U32(*value));
+                    }
+                }
+            } else {
+                for (result_id, value) in &self.measurement_results {
+                    shot.data
+                        .insert(format!("measurement_{result_id}"), Data::U32(*value));
+                }
             }
         }
 

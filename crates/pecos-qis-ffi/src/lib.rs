@@ -91,6 +91,7 @@ pub struct ExecutionContext {
     native_selene_handles: AtomicBool,
     /// Native future identity to dense source measurement provenance.
     native_future_sources: Mutex<BTreeMap<u64, usize>>,
+    measurement_identities: Mutex<MeasurementIdentities>,
     /// Sticky audit failure independent of optional per-output read attribution.
     native_provenance_unknown: AtomicBool,
     /// The result ID that is being waited for
@@ -136,6 +137,48 @@ pub extern "C" fn pecos_qis_ffi_abi_version() -> u64 {
     pecos_qis_ffi_types::QIS_FFI_ABI_VERSION
 }
 
+#[derive(Default)]
+struct MeasurementIdentities {
+    next_source: usize,
+    layout: pecos_qis_ffi_types::MeasurementLayout,
+}
+
+/// Allocate an occurrence ID independent of QIR slots and native handles.
+fn allocate_measurement_source(qir_slot: Option<usize>) -> Result<usize, String> {
+    let ctx = get_execution_context().ok_or("no execution context")?;
+    let mut identities = unsafe { &*ctx }
+        .measurement_identities
+        .lock()
+        .map_err(|_| "poisoned measurement identities")?;
+    let source = identities.next_source;
+    if source >= pecos_qis_ffi_types::RUNTIME_REQUEST_RESULT_ID {
+        return Err("measurement source IDs exhausted".into());
+    }
+    identities.next_source += 1;
+    if let Some(slot) = qir_slot {
+        identities.layout.qir_slots.insert(slot, source);
+    } else {
+        identities.layout.native_sources.insert(source);
+    }
+    Ok(source)
+}
+
+fn qir_measurement_source(slot: usize) -> Result<usize, String> {
+    if !uses_native_selene_handles() {
+        return Ok(slot);
+    }
+    let ctx = get_execution_context().ok_or("no execution context")?;
+    unsafe { &*ctx }
+        .measurement_identities
+        .lock()
+        .map_err(|_| "poisoned measurement identities")?
+        .layout
+        .qir_slots
+        .get(&slot)
+        .copied()
+        .ok_or_else(|| format!("QIR result slot {slot} was never measured"))
+}
+
 static LIVE_PROGRAM_ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
 static TOTAL_PROGRAM_ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
 
@@ -178,6 +221,7 @@ impl ExecutionContext {
             dynamic_mode_active: AtomicBool::new(false),
             native_selene_handles: AtomicBool::new(false),
             native_future_sources: Mutex::new(BTreeMap::new()),
+            measurement_identities: Mutex::new(MeasurementIdentities::default()),
             native_provenance_unknown: AtomicBool::new(false),
             waiting_for_result: AtomicU64::new(u64::MAX),
             sync_state: Mutex::new(DynamicSyncState::default()),
@@ -227,6 +271,9 @@ impl ExecutionContext {
         }
         if let Ok(mut sources) = self.native_future_sources.lock() {
             sources.clear();
+        }
+        if let Ok(mut identities) = self.measurement_identities.lock() {
+            *identities = MeasurementIdentities::default();
         }
         self.native_provenance_unknown
             .store(false, Ordering::SeqCst);
@@ -1021,6 +1068,41 @@ pub unsafe extern "C" fn pecos_get_named_result_traces_json_with_context(
     0
 }
 
+/// Export raw-result presentation aliases. Null output means the native
+/// source-identity protocol is disabled. Free with `pecos_free_named_results_json`.
+/// Returns 0 on success, 1 for a null context, 2 for a poisoned lock, 3 for serialization failure.
+///
+/// # Safety
+/// Context must remain live; output must be valid writable pointer storage.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pecos_get_measurement_layout_json_with_context(
+    ctx: *mut ExecutionContext,
+    output: *mut *mut std::ffi::c_char,
+) -> i32 {
+    unsafe {
+        *output = std::ptr::null_mut();
+    }
+    let Some(ctx) = (unsafe { ctx.as_ref() }) else {
+        return 1;
+    };
+    if !ctx.native_selene_handles.load(Ordering::SeqCst) {
+        return 0;
+    }
+    let Ok(identities) = ctx.measurement_identities.lock() else {
+        return 2;
+    };
+    let Ok(json) = serde_json::to_string(&identities.layout) else {
+        return 3;
+    };
+    let Ok(json) = std::ffi::CString::new(json) else {
+        return 3;
+    };
+    unsafe {
+        *output = json.into_raw();
+    }
+    0
+}
+
 /// Enable dynamic execution mode (called via FFI from executor)
 ///
 /// Requires a per-execution context to be registered via `pecos_register_execution_context`.
@@ -1221,6 +1303,17 @@ pub fn wait_for_result_ready(result_id: u64) -> ResultWaitOutcome {
 /// Queue a result-producing operation and invalidate the worker-owned slot.
 /// All measurement entry points use this boundary, including Selene wrappers.
 fn queue_measurement(qubit: usize, result_id: usize, leaked: bool) {
+    let result_id = if uses_native_selene_handles() {
+        match allocate_measurement_source(Some(result_id)) {
+            Ok(source) => source,
+            Err(reason) => {
+                unsafe { ffi::fatal_ffi_input("QIR measurement identity", reason) };
+                return;
+            }
+        }
+    } else {
+        result_id
+    };
     if is_dynamic_mode_active()
         && let Some(ctx) = get_execution_context()
     {

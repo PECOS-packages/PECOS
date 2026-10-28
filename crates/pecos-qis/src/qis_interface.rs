@@ -353,6 +353,17 @@ pub trait DynamicSyncHandle: Send + Sync {
         Ok(None)
     }
 
+    /// Get raw-result aliases, separate from audited source measurement IDs.
+    /// Interfaces without native source normalization return `None`.
+    ///
+    /// # Errors
+    /// Returns an error if the execution context cannot be read.
+    fn get_measurement_layout(
+        &self,
+    ) -> Result<Option<pecos_qis_ffi_types::MeasurementLayout>, InterfaceError> {
+        Ok(None)
+    }
+
     /// Get named result provenance from the execution context.
     ///
     /// Returns one record per bool output or scalar integer 0/1 call.

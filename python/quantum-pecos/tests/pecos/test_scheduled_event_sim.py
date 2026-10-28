@@ -208,9 +208,9 @@ runtime = (Path({str(library)!r}), {program!r})
         text=True,
         timeout=40,
     )
-    assert completed.returncode == 0, (
-        f"Isolated test exited with {completed.returncode}\nstdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
-    )
+    assert (
+        completed.returncode == 0
+    ), f"Isolated test exited with {completed.returncode}\nstdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
 
 
 @pytest.mark.parametrize("method", ["run", "run_with_workers", "reset"])
@@ -446,7 +446,7 @@ def test_trace_capture_rejects_event_factory(event_runtime):
         simulation(event_runtime, lambda _: PhaseAdapter()).capture_operation_trace()
 
 
-def test_repeated_program_result_ids_reach_python_adapter(tmp_path, scheduled_support):
+def test_reused_qir_slots_reach_python_adapter_as_distinct_occurrences(tmp_path, scheduled_support):
     library, _ = scheduled_support.build_runtime(tmp_path, 0, events=True, coalesce_queued=True)
     seen = []
 
@@ -475,11 +475,11 @@ def test_repeated_program_result_ids_reach_python_adapter(tmp_path, scheduled_su
         ret i64 0
     }
     """
-    result = simulation((library, program), lambda _: RepeatedSlotAdapter()).run(2).to_dict()
+    result = simulation((library, program), lambda _: RepeatedSlotAdapter()).workers(1).run(2).to_dict()
     assert result["latest"] == [1, 1]
     # Native polling after each call may split measurements across batches.
-    # Each shot must still preserve both occurrences of the same program slot.
-    assert [source for ids in seen for source in ids] == [7, 7, 7, 7]
+    # Reusing a QIR slot preserves distinct occurrences, restarting per shot.
+    assert [source for ids in seen for source in ids] == [0, 1, 0, 1]
 
 
 @pytest.mark.parametrize("global_exposure", [False, True])

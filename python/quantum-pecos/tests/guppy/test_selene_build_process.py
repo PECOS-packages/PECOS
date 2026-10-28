@@ -349,9 +349,9 @@ class TestSeleneBuildProcess:
         assert "measurement_0" in qis_results_2, "Qis should produce results"
 
         # With same seed, results should be identical
-        assert qis_results_1["measurement_0"] == qis_results_2["measurement_0"], (
-            "Qis should produce identical results with same seed"
-        )
+        assert (
+            qis_results_1["measurement_0"] == qis_results_2["measurement_0"]
+        ), "Qis should produce identical results with same seed"
 
         # X gate should give |1⟩
         assert all(m == 1 for m in qis_results_1["measurement_0"]), "X gate should always measure 1"

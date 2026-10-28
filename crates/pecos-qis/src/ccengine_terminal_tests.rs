@@ -820,7 +820,7 @@ fn never_measured_failure_surfaces_from_start_and_continue() {
                 error.to_string().contains(if ty == "i1" {
                     "native result read failed"
                 } else {
-                    "QIS measurement result 7 unavailable: never measured"
+                    "QIR result slot 7 was never measured"
                 }),
                 "{error}"
             );

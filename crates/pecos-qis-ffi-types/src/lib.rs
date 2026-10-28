@@ -18,7 +18,7 @@ pub use operations::{
 /// Version of the ownership-transferring Rust data interface between the host
 /// and dynamically loaded QIS FFI library. Bump when shared types or exported
 /// function contracts change incompatibly; both artifacts must be rebuilt.
-pub const QIS_FFI_ABI_VERSION: u64 = 3;
+pub const QIS_FFI_ABI_VERSION: u64 = 4;
 
 /// Reserved dynamic bridge token for the one synchronous runtime request in
 /// flight. Stored separately from measurement slots; never exposed as a future.
@@ -28,6 +28,14 @@ pub const RUNTIME_REQUEST_RESULT_ID: usize = usize::MAX - 1;
 /// Internal feedback lane for runtime-emitted measurements with no source producer.
 /// Occurrences are queued in emission order; this token is never a program result.
 pub const RUNTIME_OWNED_MEASUREMENT_ID: usize = usize::MAX;
+
+/// Presentation aliases for a shot's unique measurement occurrence IDs.
+/// QIR slots select their latest occurrence; native futures never occupy QIR slots.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct MeasurementLayout {
+    pub qir_slots: std::collections::BTreeMap<usize, usize>,
+    pub native_sources: std::collections::BTreeSet<usize>,
+}
 
 const DEFAULT_OPERATION_CAPACITY: usize = 1024;
 const DEFAULT_MEASUREMENT_CAPACITY: usize = 256;

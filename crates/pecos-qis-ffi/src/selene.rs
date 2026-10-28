@@ -685,7 +685,16 @@ pub(crate) unsafe fn native_request(request: SeleneRequest, entry: &str) -> Sele
 }
 
 unsafe fn native_measure(qubit: u64, leaked: bool) -> SeleneU64Result {
-    let result_id = crate::with_interface(pecos_qis_ffi_types::OperationCollector::allocate_result);
+    let result_id = match crate::allocate_measurement_source(None) {
+        Ok(source) => source,
+        Err(reason) => {
+            unsafe { ffi::fatal_ffi_input("selene measurement identity", reason) };
+            return SeleneU64Result {
+                error_code: 1,
+                value: 0,
+            };
+        }
+    };
     let response = unsafe {
         native_request(
             SeleneRequest::Measure {

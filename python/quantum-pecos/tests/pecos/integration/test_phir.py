@@ -300,3 +300,24 @@ def test_i64_shift_with_python_int_issue_213() -> None:
     # Verify the shift operation worked correctly: 1 << 1 = 2
     # Results are returned as binary strings
     assert int(results["a"][0], 2) == 2
+
+
+@pytest.mark.parametrize("backend", [None, "StateVec"])
+@pytest.mark.parametrize("interpreter", ["python", "rust"])
+def test_hybrid_engine_zero_rzz_is_two_qubit_identity(backend, interpreter):
+    program = {
+        "format": "PHIR/JSON",
+        "version": "0.1.0",
+        "ops": [
+            {"data": "qvar_define", "data_type": "qubits", "variable": "q", "size": 2},
+            {"data": "cvar_define", "data_type": "u32", "variable": "m", "size": 2},
+            {"qop": "H", "args": [["q", 0], ["q", 1]]},
+            {"qop": "RZZ", "angles": [[0.0], "rad"], "args": [[["q", 0], ["q", 1]]]},
+            {"qop": "H", "args": [["q", 0], ["q", 1]]},
+            {"qop": "X", "args": [["q", 0], ["q", 1]]},
+            {"qop": "Measure", "args": [["q", 0], ["q", 1]], "returns": [["m", 0], ["m", 1]]},
+        ],
+    }
+    result = HybridEngine(qsim=backend, cinterp=interpreter).run(program=program, shots=8, seed=42)
+    # At the PR base RZZ(0) was ignored, leaving H H X |0> = |1> on both qubits.
+    assert result["m"] == ["11"] * 8

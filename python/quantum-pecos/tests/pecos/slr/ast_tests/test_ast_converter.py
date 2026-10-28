@@ -12,7 +12,8 @@
 """Tests for SLR to AST converter."""
 
 import pytest
-from pecos.slr import CReg, If, Main, QReg, Repeat
+import stim
+from pecos.slr import CReg, If, Main, QReg, Repeat, SlrConverter, rad
 from pecos.slr.ast import (
     AllocatorDecl,
     BinaryOp,
@@ -24,6 +25,7 @@ from pecos.slr.ast import (
     Program,
     RegisterDecl,
     RepeatStmt,
+    SlotRef,
     SlrToAst,
     slr_to_ast,
 )
@@ -139,6 +141,152 @@ class TestSlrToAstGates:
         assert ast.body[0].gate == GateKind.H
         assert ast.body[1].gate == GateKind.X
         assert ast.body[2].gate == GateKind.CZ
+
+
+class TestMultiQubitArguments:
+    """Multi-qubit applications preserve the user's target grouping."""
+
+    @pytest.mark.parametrize("gate_name", ["CX", "CY", "CZ"])
+    @pytest.mark.parametrize("tuple_form", [False, True])
+    @pytest.mark.parametrize("output", ["ast", "qasm", "stim"])
+    def test_register_pairing(self, gate_name: str, tuple_form: bool, output: str) -> None:
+        """Whole registers apply the gate to matching indices in order."""
+        q, r = QReg("q", 3), QReg("r", 3)
+        gate = getattr(qb, gate_name)
+        op = gate((q, r)) if tuple_form else gate(q, r)
+        prog = Main(q, r, op)
+
+        if output == "ast":
+            assert slr_to_ast(prog).body == tuple(
+                GateOp(
+                    gate=GateKind[gate_name],
+                    targets=(SlotRef(allocator="q", index=i), SlotRef(allocator="r", index=i)),
+                )
+                for i in range(3)
+            )
+        elif output == "qasm":
+            lines = SlrConverter(prog).qasm(skip_headers=True).splitlines()
+            assert [line for line in lines if line.startswith(f"{gate_name.lower()} ")] == [
+                f"{gate_name.lower()} q[{i}], r[{i}];" for i in range(3)
+            ]
+        else:
+            expected = stim.Circuit("\n".join(f"{gate_name} {i} {i + 3}" for i in range(3)))
+            assert SlrConverter(prog).stim().to_tableau() == expected.to_tableau()
+
+    @pytest.mark.parametrize("tuple_form", [False, True])
+    def test_register_size_mismatch(self, tuple_form: bool) -> None:
+        """Mismatched sizes report the gate and every register's size."""
+        q, r = QReg("q", 2), QReg("r", 3)
+        op = qb.CX((q, r)) if tuple_form else qb.CX(q, r)
+        with pytest.raises(ValueError, match=r"CX.*q.*2.*r.*3"):
+            slr_to_ast(Main(q, r, op))
+
+    @pytest.mark.parametrize(
+        "shape",
+        [
+            "mixed",
+            "mixed_reverse",
+            "list",
+            "slice",
+            "lists",
+            "slices",
+            "too_many",
+            "too_few",
+            "empty",
+            "one_register",
+            "three_registers",
+            "stray_string",
+            "classical",
+        ],
+    )
+    @pytest.mark.parametrize("tuple_form", [False, True])
+    def test_invalid_shapes(self, shape: str, tuple_form: bool) -> None:
+        """Unsupported argument shapes fail without dropping or inventing pairs."""
+        q, r, s = QReg("q", 2), QReg("r", 2), QReg("s", 2)
+        c = CReg("c", 2)
+        shapes = {
+            "mixed": (q[0], r),
+            "mixed_reverse": (q, r[0]),
+            "list": ([q[0], r[0]],),
+            "slice": (q[:],),
+            "lists": ([q[0]], [r[0]]),
+            "slices": (q[:1], r[:1]),
+            "too_many": (q[0], q[1], r[0], r[1]),
+            "too_few": (q[0],),
+            "empty": (),
+            "one_register": (q,),
+            "three_registers": (q, r, s),
+            "stray_string": (q[0], r[0], "ignored"),
+            "classical": (c[0], q[0]),
+        }
+        args = (shapes[shape],) if tuple_form else shapes[shape]
+        with pytest.raises(ValueError, match=r"CX.*arguments") as exc:
+            slr_to_ast(Main(q, r, s, c, qb.CX(*args)))
+        assert repr(args) in str(exc.value)
+
+    @pytest.mark.parametrize("tuple_first", [False, True])
+    def test_mixed_tuple_and_qubit(self, tuple_first: bool) -> None:
+        """The tuple form requires every application to be a tuple."""
+        q = QReg("q", 3)
+        args = ((q[0], q[1]), q[2]) if tuple_first else (q[2], (q[0], q[1]))
+        with pytest.raises(ValueError, match=r"CX.*arguments") as exc:
+            slr_to_ast(Main(q, qb.CX(*args)))
+        assert repr(args) in str(exc.value)
+
+    @pytest.mark.parametrize("tuple_form", [False, True])
+    def test_empty_registers(self, tuple_form: bool) -> None:
+        """Equal empty registers have no indices to apply a gate to."""
+        q, r = QReg("q", 0), QReg("r", 0)
+        op = qb.CX((q, r)) if tuple_form else qb.CX(q, r)
+        assert slr_to_ast(Main(q, r, op)).body == ()
+
+    def test_register_and_explicit_tuple_applications(self) -> None:
+        """Each tuple is expanded independently while preserving application order."""
+        q, r = QReg("q", 2), QReg("r", 2)
+        ast = slr_to_ast(Main(q, r, qb.CX((q, r), (r[1], q[0]))))
+        assert [gate.targets for gate in ast.body] == [
+            (SlotRef(allocator="q", index=0), SlotRef(allocator="r", index=0)),
+            (SlotRef(allocator="q", index=1), SlotRef(allocator="r", index=1)),
+            (SlotRef(allocator="r", index=1), SlotRef(allocator="q", index=0)),
+        ]
+
+    def test_parameterized_register_pairing(self) -> None:
+        """Each expanded operation retains its angle parameter."""
+        q, r = QReg("q", 2), QReg("r", 2)
+        ast = slr_to_ast(Main(q, r, qb.RZZ(rad(0.5), q, r)))
+        expected = slr_to_ast(Main(q, r, *(qb.RZZ(rad(0.5), q[i], r[i]) for i in range(2))))
+        assert ast.body == expected.body
+
+    @pytest.mark.parametrize("gate_kind", [gate for gate in GateKind if gate.arity > 1])
+    @pytest.mark.parametrize("count", [0, 1, 3, 4])
+    def test_gate_op_rejects_wrong_arity(self, gate_kind: GateKind, count: int) -> None:
+        """Every multi-qubit node enforces arity before any backend sees it."""
+        targets = tuple(SlotRef(allocator="q", index=i) for i in range(count))
+        with pytest.raises(ValueError, match=rf"{gate_kind.name}.*2.*{count}"):
+            GateOp(gate=gate_kind, targets=targets)
+
+    @pytest.mark.parametrize("tuple_form", [False, True])
+    def test_explicit_pair_compatibility(self, tuple_form: bool) -> None:
+        """Explicit tuples and a single pair keep their existing AST representation."""
+        q, r = QReg("q", 2), QReg("r", 2)
+        op = qb.CX((q[0], r[0]), (q[1], r[1])) if tuple_form else qb.CX(q[0], r[0])
+        assert slr_to_ast(Main(q, r, op)).body == tuple(
+            GateOp(
+                gate=GateKind.CX,
+                targets=(SlotRef(allocator="q", index=i), SlotRef(allocator="r", index=i)),
+            )
+            for i in range(2 if tuple_form else 1)
+        )
+
+    def test_allocator_ref_compatibility(self) -> None:
+        """QAlloc's individual QubitRefs remain valid gate arguments."""
+        q = QAlloc(2, name="q")
+        assert slr_to_ast(Main(q, qb.CX(q[0], q[1]))).body == (
+            GateOp(
+                gate=GateKind.CX,
+                targets=(SlotRef(allocator="q", index=0), SlotRef(allocator="q", index=1)),
+            ),
+        )
 
 
 class TestSlrToAstPrepMeasure:

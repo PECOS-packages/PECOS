@@ -554,7 +554,7 @@ fn clean_shots_reuse_runtime_but_reset_quantum_state() {
     measurement(&mut second, 41);
     second.runtime_shot_id = 8;
     let f = Fixture {
-        batches: VecDeque::from([vec![first], vec![], vec![second], vec![]]),
+        batches: VecDeque::from([vec![first], vec![], vec![], vec![second], vec![], vec![]]),
         ..Default::default()
     };
     let resets = f.reset_count.clone();

@@ -210,7 +210,7 @@ struct WalkSummary {
     zero_bitstrings: usize,
 }
 
-fn row_has_y(gens: &pecos_simulators::Gens, row: usize) -> bool {
+fn row_has_y(gens: &pecos_simulators::GensBitSet, row: usize) -> bool {
     gens.row_x[row]
         .iter()
         .any(|qubit| gens.row_z[row].contains(qubit))

@@ -239,6 +239,7 @@ fn check_context_status(status: i32, operation: &str) -> Result<(), InterfaceErr
         0 => return Ok(()),
         1 => "null execution context",
         2 => "poisoned execution context lock",
+        4 => "unknown native future provenance; cannot certify an operation trace",
         _ => "invalid data or serialization failure",
     };
     Err(InterfaceError::ExecutionError(format!(
@@ -470,6 +471,38 @@ impl DynamicSyncHandle for HeliosSyncHandle {
             }
             error => Err(InterfaceError::ProgramError(error)),
         }
+    }
+
+    fn get_measurement_layout(
+        &self,
+    ) -> Result<Option<pecos_qis_ffi_types::MeasurementLayout>, InterfaceError> {
+        let lib = Self::get_lib()?;
+        let get_fn: Symbol<GetNamedResultTracesJsonFn> = unsafe {
+            lib.get(b"pecos_get_measurement_layout_json_with_context\0")
+                .map_err(|e| {
+                    InterfaceError::ExecutionError(format!(
+                        "Missing measurement identity query: {e}"
+                    ))
+                })?
+        };
+        let free_fn: Symbol<FreeNamedResultsJsonFn> = unsafe {
+            lib.get(b"pecos_free_named_results_json\0").map_err(|e| {
+                InterfaceError::ExecutionError(format!("Missing JSON deallocator: {e}"))
+            })?
+        };
+        let mut ptr = std::ptr::null_mut();
+        check_context_status(
+            unsafe { get_fn(self.execution_context.0, &raw mut ptr) },
+            "read measurement identities",
+        )?;
+        if ptr.is_null() {
+            return Ok(None);
+        }
+        let result = serde_json::from_slice(unsafe { std::ffi::CStr::from_ptr(ptr) }.to_bytes());
+        unsafe { free_fn(ptr) };
+        result.map(Some).map_err(|e| {
+            InterfaceError::ExecutionError(format!("Invalid measurement identities: {e}"))
+        })
     }
 
     fn get_named_result_traces(
@@ -980,6 +1013,20 @@ impl QisHeliosInterface {
             .cloned()
     }
 
+    fn validate_qis_ffi_abi(lib: &Library) -> Result<(), String> {
+        let version: Symbol<unsafe extern "C" fn() -> u64> = unsafe {
+            lib.get(b"pecos_qis_ffi_abi_version\0")
+        }.map_err(|_| "incompatible QIS FFI library: missing ABI version; rebuild or reinstall the matching host and FFI library".to_string())?;
+        let actual = unsafe { version() };
+        let expected = pecos_qis_ffi_types::QIS_FFI_ABI_VERSION;
+        if actual != expected {
+            return Err(format!(
+                "incompatible QIS FFI library: ABI version {actual}, expected {expected}; rebuild or reinstall the matching host and FFI library"
+            ));
+        }
+        Ok(())
+    }
+
     /// Get or initialize the process-wide QIS FFI library singleton.
     ///
     /// This ensures that all code in the process uses the same library instance,
@@ -1001,6 +1048,8 @@ impl QisHeliosInterface {
                     true,
                 ) {
                     Ok((lib_global, lib)) => {
+                        Self::validate_qis_ffi_abi(&lib)
+                            .map_err(|error| format!("{error} ({})", lib_path.display()))?;
                         debug!("QIS FFI library singleton initialized successfully");
                         Ok(SharedLibrary {
                             _global_handle: std::mem::ManuallyDrop::new(lib_global),
@@ -2306,6 +2355,23 @@ impl QisInterface for QisHeliosInterface {
         Ok(())
     }
 
+    fn set_native_selene_handles(&mut self, enabled: bool) -> Result<(), InterfaceError> {
+        let lib = Self::get_qis_ffi_lib_singleton()?;
+        let configure: Symbol<unsafe extern "C" fn(*mut ExecutionContext, bool) -> i32> = unsafe {
+            lib.get(b"pecos_set_native_selene_handles\0").map_err(|e| {
+                InterfaceError::ExecutionError(format!("Missing native handle configuration: {e}"))
+            })?
+        };
+        let context = self
+            .execution_context
+            .as_ref()
+            .ok_or_else(|| InterfaceError::ExecutionError("no dynamic context".into()))?;
+        check_context_status(
+            unsafe { configure(context.0, enabled) },
+            "configure native Selene handles",
+        )
+    }
+
     fn disable_dynamic_mode(&mut self) -> Result<(), InterfaceError> {
         self.dynamic_mode = false;
         let lib = Self::get_qis_ffi_lib_singleton()?;
@@ -2919,6 +2985,83 @@ ret i64 %status
             Vec::<String>::new(),
             "missed reader entry checkpoints"
         );
+    }
+
+    #[test]
+    fn native_request_cancellation_is_typed_and_fresh_context_reuses_interface() {
+        let _env_lock = ENV_MUTEX.lock().expect("environment lock");
+        // Use the Guppy scalar adapter so the program ABI is identical on all targets.
+        // No other FFI call may intercept cancellation before the native request.
+        let source = br"
+            declare i64 @___qalloc()
+            define i64 @qmain(i64 %shot) {
+                %qubit = call i64 @___qalloc()
+                ret i64 0
+            }
+        ";
+        for before_submission in [true, false] {
+            let mut interface = QisHeliosInterface::new();
+            interface
+                .load_program(source, ProgramFormat::LlvmIrText)
+                .unwrap();
+            interface.enable_dynamic_mode().unwrap();
+            interface.set_native_selene_handles(true).unwrap();
+            let handle = interface.get_sync_handle().unwrap();
+            if before_submission {
+                handle.abort_execution().unwrap();
+            }
+            let worker = std::thread::spawn(move || {
+                let output = interface.execute_with_measurements(BTreeMap::new());
+                (interface, output)
+            });
+            let requested = if before_submission {
+                None
+            } else {
+                let requested = handle.wait_for_need_result(2_000);
+                handle.abort_execution().unwrap();
+                requested
+            };
+            let (mut interface, output) = worker.join().unwrap();
+            if !before_submission {
+                assert_eq!(
+                    requested,
+                    Some(pecos_qis_ffi_types::RUNTIME_REQUEST_RESULT_ID as u64)
+                );
+            }
+            assert!(
+                matches!(
+                    output,
+                    Err(InterfaceError::ProgramError(
+                        pecos_qis_ffi_types::ProgramError::Cancelled
+                    ))
+                ),
+                "{output:?}"
+            );
+            interface.disable_dynamic_mode().unwrap();
+
+            // The same interface must execute successfully in a fresh context.
+            interface.enable_dynamic_mode().unwrap();
+            interface.set_native_selene_handles(true).unwrap();
+            let handle = interface.get_sync_handle().unwrap();
+            let worker = std::thread::spawn(move || {
+                let output = interface.execute_with_measurements(BTreeMap::new());
+                (interface, output)
+            });
+            let requested = handle.wait_for_need_result(2_000);
+            if let Some(id) = requested {
+                handle.set_measurement_outcome(id, 987).unwrap();
+                handle.signal_result_ready().unwrap();
+            } else {
+                handle.abort_execution().unwrap();
+            }
+            let (mut interface, output) = worker.join().unwrap();
+            assert_eq!(
+                requested,
+                Some(pecos_qis_ffi_types::RUNTIME_REQUEST_RESULT_ID as u64)
+            );
+            output.unwrap();
+            interface.disable_dynamic_mode().unwrap();
+        }
     }
 
     fn is_qir_text(ir: &str) -> bool {
@@ -3736,7 +3879,8 @@ attributes #0 = { "EntryPoint" }
         }
 
         // A stand-in runtime that needs a helper library. Loading a program never
-        // calls into the runtime, and the stand-in's bytes, and so the program's
+        // executes operations in the runtime; the ABI marker is checked at load.
+        // The stand-in's bytes, and so the program's
         // cache key, stay the same when the helper disappears.
         let dir = tempfile::tempdir().expect("temporary directory");
         let compile = |args: &[&std::ffi::OsStr]| {
@@ -3765,7 +3909,10 @@ attributes #0 = { "EntryPoint" }
         let runtime = dir.path().join("libpecos_test_runtime.so");
         std::fs::write(
             &runtime_source,
-            "int pecos_test_helper(void);\nint pecos_test_runtime(void) { return pecos_test_helper(); }\n",
+            format!(
+                "int pecos_test_helper(void);\nint pecos_test_runtime(void) {{ return pecos_test_helper(); }}\nunsigned long long pecos_qis_ffi_abi_version(void) {{ return {}; }}\n",
+                pecos_qis_ffi_types::QIS_FFI_ABI_VERSION,
+            ),
         )
         .expect("write runtime source");
         let library_dir = dir.path().as_os_str().to_owned();

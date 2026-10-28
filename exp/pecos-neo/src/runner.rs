@@ -1800,6 +1800,14 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         };
         Ok(match result {
             Ok(()) => CliffordRotationAttempt::Executed,
+            Err(message)
+                if gate_type.quantum_arity() == 2
+                    && qubits.as_chunks::<2>().0.iter().any(|[a, b]| a == b) =>
+            {
+                return Err(ExecutionError::InvalidCommand(
+                    crate::command::GateCommandError::InvalidGate { gate_type, message },
+                ));
+            }
             Err(_) => CliffordRotationAttempt::NonCliffordAngle,
         })
     }
@@ -2662,6 +2670,33 @@ mod tests {
     use pecos_core::clifford::Clifford;
     use pecos_quantum::unitary_matrix::{ToMatrix, UnitaryMatrix};
     use pecos_simulators::{SparseStab, StateVec};
+
+    #[test]
+    fn repeated_rotation_pair_is_invalid_command_not_angle() {
+        use pecos_simulators::StabilizerTableauSimulator;
+        for (gate, kind) in [
+            (gates::RZZ, GateType::RZZ),
+            (gates::RXX, GateType::RXX),
+            (gates::RYY, GateType::RYY),
+            (gates::RXYXY2Q, GateType::RXYXY2Q),
+        ] {
+            let mut sim = SparseStab::with_seed(3, 42);
+            sim.h(&[QubitId(0)]);
+            let before = sim.clone();
+            let error = CircuitRunner::<SparseStab>::try_execute_clifford_rotation(
+                &mut sim,
+                gate,
+                &[QubitId(0), QubitId(1), QubitId(2), QubitId(2)],
+                &vec![Angle64::HALF_TURN; kind.angle_arity()],
+            )
+            .expect_err("invalid pair must not be classified as a non-Clifford angle");
+            assert!(
+                matches!(&error, ExecutionError::InvalidCommand(crate::command::GateCommandError::InvalidGate { gate_type, .. }) if *gate_type == kind)
+            );
+            assert!(error.to_string().contains("repeated qubit 2"));
+            assert_eq!(sim.full_tableau(), before.full_tableau());
+        }
+    }
 
     #[test]
     fn test_queue_leakage_skip_is_pair_local() {

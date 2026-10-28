@@ -2998,6 +2998,9 @@ class _CircuitGenerator:
             group_used = set()
             layer_label = "unnamed"
             for step in steps:
+                if step.op_type == OpType.RELABEL:
+                    msg = f"_emit_steps does not support RELABEL step {step!r}; use pecos.qec.helix.lower_steps"
+                    raise ValueError(msg)
                 if step.op_type == OpType.COMMENT:
                     layer_label = step.label
                     continue

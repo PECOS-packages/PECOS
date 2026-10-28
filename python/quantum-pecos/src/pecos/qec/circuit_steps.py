@@ -49,6 +49,8 @@ class OpType(Enum):
     # carries the Pauli kind and site as ``"{X|Y|Z}@s<site_idx>"``.
     TRACKED_PAULI = auto()
 
+    RELABEL = auto()  # Exchange the physical qubits named by two slots; no gate or record
+
 
 @dataclass
 class CircuitStep:
@@ -57,3 +59,9 @@ class CircuitStep:
     op_type: OpType
     qubits: list[int] = field(default_factory=list)
     label: str = ""  # For comments, variable names, etc.
+
+    def __post_init__(self) -> None:
+        """Require a relabel to exchange exactly two distinct slots."""
+        if self.op_type == OpType.RELABEL and (len(self.qubits) != 2 or self.qubits[0] == self.qubits[1]):
+            msg = f"RELABEL requires two distinct qubits, got {self.qubits!r}"
+            raise ValueError(msg)

@@ -18,6 +18,7 @@ import warnings
 from typing import TYPE_CHECKING
 
 from pecos.circuits.quantum_circuit import QuantumCircuit
+from pecos.slr._qubit_args import gate_target_groups, qubit_key
 from pecos.slr.gen_codes._permutation import reject_permute_in_region
 from pecos.slr.gen_codes.generator import Generator
 from pecos.slr.vars import SymbolicElem
@@ -332,17 +333,9 @@ class QuantumCircuitGenerator(Generator):
 
         gate_name = gate_map.get(op_class, op_class)
 
-        # Handle two-qubit gates specially
-        if op_class in ["CX", "CNOT", "CY", "CZ"]:
-            # For PECOS gates, qargs contains both qubits
-            if len(targets) >= 2:
-                # Take first two as control and target
-                self._add_to_tick(gate_name, (targets[0], targets[1]))
-            elif hasattr(op, "control") and hasattr(op, "target"):
-                control_qubits = self._get_qubit_indices_from_target(op.control)
-                target_qubits = self._get_qubit_indices_from_target(op.target)
-                for c, t in zip(control_qubits, target_qubits):
-                    self._add_to_tick(gate_name, (c, t))
+        if op.qsize > 1:
+            for offset in range(0, len(targets), op.qsize):
+                self._add_to_tick(gate_name, tuple(targets[offset : offset + op.qsize]))
         else:
             # Single qubit gates or measurements
             for qubit in targets:
@@ -350,6 +343,14 @@ class QuantumCircuitGenerator(Generator):
 
     def _add_to_tick(self, gate_name, target):
         """Add a gate to the current tick."""
+        qubits = set(target) if isinstance(target, tuple) else {target}
+        if any(
+            qubits.intersection(location if isinstance(location, tuple) else (location,))
+            for locations in self.current_tick.values()
+            for location in locations
+        ):
+            # Sequential applications sharing a qubit cannot occupy one tick.
+            self._flush_tick()
         if gate_name not in self.current_tick:
             self.current_tick[gate_name] = set()
 
@@ -385,8 +386,11 @@ class QuantumCircuitGenerator(Generator):
     def _get_targets(self, op):
         """Get target qubit indices from an operation."""
         if hasattr(op, "qargs"):
-            # PECOS gate operations use qargs
-            return self._get_qubit_indices_from_target(op.qargs)
+            return [
+                self.qubit_map[qubit_key(qubit)]
+                for group in gate_target_groups(op.qargs, op.qsize, op.sym)
+                for qubit in group
+            ]
         if hasattr(op, "target"):
             return self._get_qubit_indices_from_target(op.target)
         if hasattr(op, "targets"):

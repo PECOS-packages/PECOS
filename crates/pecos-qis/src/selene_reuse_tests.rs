@@ -416,7 +416,7 @@ fn empty_input_preserves_shot_engagement() {
                                 Vec::<QuantumOp>::new()
                             ),
                             2 => assert_eq!(
-                                runtime.drain_runtime_operations_bounded(false).unwrap(),
+                                runtime.drain_runtime_operations().unwrap(),
                                 Vec::<QuantumOp>::new()
                             ),
                             3 => {
@@ -551,9 +551,9 @@ fn shotless_reset_retires_unsettled_instance() {
 }
 
 #[test]
-fn undrained_finish_retires_instance_before_reuse() {
+fn native_end_preserves_instance_and_runtime_clock() {
     fixture_with_runtime(
-        "undrained_finish_retires_instance_before_reuse",
+        "native_end_preserves_instance_and_runtime_clock",
         "PECOS_REUSE_UNDRAINED_FINISH",
         false,
         &timed_soft_runtime(4),
@@ -585,12 +585,13 @@ fn undrained_finish_retires_instance_before_reuse() {
                 fresh.shot_start(1, None).unwrap();
                 let mut expected = fresh.lower_operations(&ops).unwrap();
                 expected.extend(fresh.drain_pending_operations().unwrap());
-                assert_eq!(
-                    actual, expected,
-                    "the discarded batch must not shift the next shot's clock"
-                );
-                assert_eq!(INITS.lock().unwrap().len(), 2);
-                assert_eq!(EXITS.lock().unwrap().len(), 1);
+                // SoftRZ advances its clock when queuing a pulse, even if
+                // shot_end later discards it. Preserve that native clock;
+                // neither a barrier nor instance replacement may rewrite it.
+                expected.insert(0, QuantumOp::Idle(1e-8, 0));
+                assert_eq!(actual, expected);
+                assert_eq!(INITS.lock().unwrap().len(), 1);
+                assert_eq!(EXITS.lock().unwrap().len(), 0);
             }
         },
     );
@@ -717,4 +718,87 @@ fn two_drains_per_shot_preserve_timing() {
             }
         }
     }
+}
+
+struct IdentityAdapter;
+impl RuntimeBatchAdapter for IdentityAdapter {
+    fn normalize(&mut self, batch: &RuntimeBatch) -> Result<Vec<RuntimeScheduledOp>> {
+        Ok(batch.operations.clone())
+    }
+}
+
+#[test]
+fn restarting_clocks_require_an_explicit_model_independent_of_adapters() {
+    fixture(
+        "restarting_clocks_require_an_explicit_model_independent_of_adapters",
+        "PECOS_EXPLICIT_SHOT_CLOCK",
+        true,
+        |plugin, public| {
+            for model in [
+                RuntimeClockModel::Continuous,
+                RuntimeClockModel::ShotRelative,
+            ] {
+                for with_adapter in [false, true] {
+                    for explicit_reset in [false, true] {
+                        let mut runtime = runtime(plugin, public).with_clock_model(model);
+                        assert_eq!(runtime.clone().clock_model(), model);
+                        if with_adapter {
+                            runtime.set_batch_adapter_factory(|| Ok(Box::new(IdentityAdapter)));
+                        }
+                        runtime.set_num_qubits(1);
+                        for shot in 0..3 {
+                            if explicit_reset {
+                                runtime.reset().unwrap();
+                            }
+                            runtime.shot_start(shot, None).unwrap();
+                            let output = runtime.lower_operations(&[QuantumOp::RZ(0.25, 0).into()]);
+                            if model == RuntimeClockModel::Continuous && shot > 0 {
+                                assert!(
+                                    output.unwrap_err().to_string().contains("clock is behind")
+                                );
+                                break;
+                            }
+                            assert_eq!(output.unwrap(), [QuantumOp::RZ(0.25, 0)]);
+                            assert_eq!(
+                                runtime.drain_pending_operations().unwrap(),
+                                Vec::<QuantumOp>::new()
+                            );
+                            runtime.shot_end().unwrap();
+                        }
+                        assert_eq!(INITS.lock().unwrap().len(), 1);
+                        assert_eq!(EXITS.lock().unwrap().len(), 0);
+                    }
+                }
+            }
+        },
+    );
+}
+
+#[test]
+fn batch_adapters_reuse_continuous_native_clocks() {
+    fixture(
+        "batch_adapters_reuse_continuous_native_clocks",
+        "PECOS_ADAPTER_CONTINUOUS_CLOCK",
+        false,
+        |plugin, public| {
+            let expected = timed_shot(&mut timed_runtime(), LoweringRoute::Flat, 0);
+            let mut runtime = runtime(plugin, public);
+            runtime.init_args = timed_runtime().init_args.clone();
+            let created = Arc::new(AtomicUsize::new(0));
+            let count = created.clone();
+            runtime.set_batch_adapter_factory(move || {
+                count.fetch_add(1, Ordering::SeqCst);
+                Ok(Box::new(IdentityAdapter))
+            });
+            for shot in 0..3 {
+                assert_eq!(
+                    timed_shot(&mut runtime, LoweringRoute::Flat, shot),
+                    expected
+                );
+            }
+            assert_eq!(created.load(Ordering::SeqCst), 3);
+            assert_eq!(INITS.lock().unwrap().len(), 1);
+            assert_eq!(EXITS.lock().unwrap().len(), 0);
+        },
+    );
 }

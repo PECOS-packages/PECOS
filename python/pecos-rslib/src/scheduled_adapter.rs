@@ -76,9 +76,9 @@ pub fn scheduled_measurement_crosstalk(
 thread_local! {
     static IN_CALLBACK: Cell<bool> = const { Cell::new(false) };
 }
-struct CallbackScope(bool);
+pub(crate) struct CallbackScope(bool);
 impl CallbackScope {
-    fn enter() -> Self {
+    pub(crate) fn enter() -> Self {
         Self(IN_CALLBACK.replace(true))
     }
 }
@@ -139,8 +139,8 @@ impl PyScheduledEventBatch {
             })
             .collect()
     }
-    /// (original operation position, native result ID, program result ID).
-    /// Native IDs are unique; program IDs may repeat when a slot is re-measured.
+    /// (original operation position, native result ID, source measurement ID).
+    /// Source IDs distinguish measurement occurrences, including reused QIR slots.
     #[getter]
     fn measurements(&self) -> Vec<(usize, u64, u64)> {
         self.inner

@@ -963,7 +963,8 @@ class AstToQir:
                 rhs,
             )
         elif isinstance(node.target, str):
-            if re.fullmatch(r"\w+\[.*\]", node.target):
+            # A declared name is a whole register, even if it contains brackets.
+            if node.target not in self.context.creg_map and re.fullmatch(r"\w+\[.*\]", node.target):
                 msg = (
                     f"QIR codegen: assignment target {node.target!r} requires a static integer index; "
                     "loop-variable indices are not supported."

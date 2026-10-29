@@ -442,7 +442,8 @@ class AstToStim:
         if isinstance(node.target, BitRef):
             self.context.bit_records[node.target.register, node.target.index] = None
         else:
-            indexed = re.fullmatch(r"(\w+)\[.*\]", node.target)
+            # A declared name is a whole register, even if it contains brackets.
+            indexed = None if node.target in self.context.creg_sizes else re.fullmatch(r"(\w+)\[.*\]", node.target)
             self._invalidate_register(indexed[1] if indexed is not None else node.target)
 
     def _invalidate_register(self, name: str) -> None:

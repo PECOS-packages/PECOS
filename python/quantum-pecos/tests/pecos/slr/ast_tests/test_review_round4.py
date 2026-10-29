@@ -53,7 +53,8 @@ def test_loopvar_register_collision_rejected(kind, scope) -> None:
         slr_to_ast(program)
 
 
-def test_loopvar_block_input_formal_collision_rejected() -> None:
+@pytest.mark.parametrize("bound", ["register", "qubit"])
+def test_loopvar_block_input_formal_collision_rejected(bound) -> None:
     quantum, c, i = QReg("quantum", 2), CReg("c", 2), LoopVar("i")
 
     class UsesQuantum(Block):
@@ -61,10 +62,10 @@ def test_loopvar_block_input_formal_collision_rejected() -> None:
 
         def __init__(self) -> None:
             super().__init__()
-            self.i = quantum
+            self.i = quantum if bound == "register" else quantum[0]
             self.extend(For(i, 0, 2).Do(c.set(i)))
 
-    with pytest.raises(ValueError, match=r"For.*loop variable 'i'.*QReg.*'i'.*[Rr]ename"):
+    with pytest.raises(ValueError, match=r"For loop variable 'i' conflicts with block input 'i'\. Rename"):
         slr_to_ast(Main(quantum, c, UsesQuantum()))
 
 
@@ -164,3 +165,11 @@ def test_overlapping_barriers_fence_each_physical_qubit_once(parent_first, offse
     expected = [2, 3, 0, 1] if offset and not parent_first else [0, 1, 2, 3]
     assert qasm_qubits == expected
     assert qir_qubits == expected
+
+
+def test_bracketed_register_name_is_a_whole_register_target() -> None:
+    q, a = QReg("q", 2), CReg("a[0]", 2)
+    assert SlrConverter(Main(q, a, a.set(1))).qir()
+    stale = Main(q, a, qb.Measure(q[0]) > a[0], a.set(0), If(a[0] == 1).Then(qb.X(q[1])))
+    with pytest.raises(NotImplementedError, match="no longer comes from a tracked measurement"):
+        SlrConverter(stale).stim()

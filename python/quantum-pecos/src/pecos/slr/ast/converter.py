@@ -249,7 +249,7 @@ class SlrToAst:
         """Reject ambiguous register and LoopVar names before SLR identity is lost."""
         register_names: dict[str, str] = {}
         self._collect_register_names(block, register_names)
-        self._check_loop_variables(block, register_names)
+        self._check_loop_variables(block, {name: f"{kind} {name!r}" for name, kind in register_names.items()})
 
     def _collect_register_names(self, block: Block, register_names: dict[str, str]) -> None:
         """Record every register name in the program, rejecting quantum/classical clashes.
@@ -278,18 +278,17 @@ class SlrToAst:
             self._collect_register_names(child, register_names)
 
     def _check_loop_variables(self, block: Block, names: dict[str, str]) -> None:
-        """Reject a LoopVar named like any register or a visible block-input formal."""
+        """Reject a LoopVar named like any register or an enclosing block input.
+
+        `names` maps each conflicting name to its description for the error.
+        """
         if _has_block_inputs(block):
-            names = dict(names)
-            for name in type(block).block_inputs:
-                var = getattr(block, name, None)
-                if self._convert_var_to_declaration(var) is not None:
-                    names[name] = type(var).__name__
+            names = {**names, **{name: f"block input {name!r}" for name in type(block).block_inputs}}
         if type(block).__name__ == "For" and not block.var_is_string and block.var.name in names:
             name = block.var.name
             msg = (
-                f"For loop variable {name!r} conflicts with {names[name]} {name!r}. "
-                "Rename the loop variable or the register/allocator."
+                f"For loop variable {name!r} conflicts with {names[name]}. "
+                "Rename the loop variable or the register, allocator or block input."
             )
             raise ValueError(msg)
         for child in _nested_blocks(block):

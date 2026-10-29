@@ -75,7 +75,8 @@ def main() -> int:
     try:
         hugr_str = generate_repetition_code_hugr()
         output_file = output_dir / "repetition_code.hugr"
-        output_file.write_text(hugr_str)
+        # End with a newline, as the end-of-file-fixer hook requires.
+        output_file.write_text(hugr_str + "\n")
         print(f"  Created: {output_file} ({len(hugr_str)} chars)")
 
         # Verify format

@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 
 from pecos.circuits.quantum_circuit import QuantumCircuit
 from pecos.slr._qubit_args import gate_target_groups, qubit_key
-from pecos.slr.gen_codes._permutation import reject_permute_in_region
+from pecos.slr.gen_codes._permutation import reject_permute_in_region, reject_unsupported_permute
 from pecos.slr.gen_codes.generator import Generator
 from pecos.slr.vars import SymbolicElem
 
@@ -97,6 +97,8 @@ class QuantumCircuitGenerator(Generator):
         Parameters:
             block (Block): The block of operations to generate code for.
         """
+        reject_unsupported_permute(block, "QuantumCircuitGenerator", "quantum_circuit")
+
         # Reset state
         self.circuit = QuantumCircuit()
         self.qubit_map = {}
@@ -286,8 +288,8 @@ class QuantumCircuitGenerator(Generator):
         elif op_class == "Barrier":
             self._flush_tick()
         elif op_class == "Permute":
-            # Handle permutation - would need to update qubit mapping
-            self._flush_tick()
+            msg = "QuantumCircuitGenerator does not support Permute; use SlrConverter(...).quantum_circuit()."
+            raise NotImplementedError(msg)
         elif op_class == "Vars":
             # Variable declarations already handled
             pass

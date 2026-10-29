@@ -285,3 +285,11 @@ schedule checks than these general tracing APIs.
   fault model from a statically certifiable program
 - **[Noise Model Builders](noise-model-builders.md)** - Apply gate and idle
   noise in subsequent simulation workflows
+
+Embedded host decoder calls are described in
+[live supplied-window decoding](../development/runtime-decoding.md). Their request
+IDs and observed detector bytes appear in the source operation stream. These
+records do not identify every branch/loop site or certify an adaptive DEM.
+Versioned calls additionally retain their bounded context bytes in the source
+request. [Context v1](../development/runtime-decoder-contract.md) is a caller
+declaration, not automatic trace instrumentation or a runtime certificate.

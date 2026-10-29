@@ -777,32 +777,7 @@ class TestPathSignatureEdgeCases:
 
 
 class TestCrossCodegenPrintEmission:
-    """Pin the behavior of each non-Guppy codegen when Print is inserted.
-
-    Empirically probed 2026-05-14 against a Bell-state program with and without
-    a trailing `Print(c, tag="debug")`:
-
-    - **QASM**: emits `// Print result.debug c` as a comment line; output is
-      *not* byte-identical (intentional, per the doc's "comment-only across
-      non-Guppy" plan).
-    - **QIR**: the QIR backend now **fails loud** on `Print`
-      (`NotImplementedError`) instead of silently dropping it. Silently
-      losing observable output is a miscompile qir-qis cannot catch; the
-      bounded fix is to raise, not emit. (Real `Print`->record_output is
-      deferred, like real `While`.)
-    - **Stim**, **QuantumCircuit**: now also **fail loud** on
-      `Print` (`NotImplementedError`), the same silent-drop class as
-      the QIR Print, applied per the explicit-over-implicit rule.
-      Stim's is fundamental ("does not support" -- Stim has no
-      classical-output stream); QuantumCircuit's is "does not yet
-      support" (PECOS owns that format, so it may be added later).
-      Was a deliberately-pinned silent skip; flipped here exactly as
-      the QIR Print flipped `test_qir_byte_identical` -> `..._raises_loud`.
-
-    These tests pin all four behaviors. If any backend stops
-    raising / starts emitting, or QASM stops the comment, this catches
-    it.
-    """
+    """Non-Guppy backends reject Print rather than dropping observable output."""
 
     @staticmethod
     def _bell_no_print() -> Main:
@@ -827,21 +802,11 @@ class TestCrossCodegenPrintEmission:
             Return(c),
         )
 
-    def test_qasm_emits_print_as_exactly_one_comment_line(self) -> None:
-        """QASM adds exactly one `// Print result.debug c` line; otherwise identical.
-
-        "in `added_lines`" is too loose -- a future
-        regression could add extra lines silently and the test would still pass.
-        Assert the added line is exactly `[expected_comment]` (one line, no more).
-        """
-        a = SlrConverter(self._bell_no_print()).qasm()
-        b = SlrConverter(self._bell_with_print()).qasm()
-        assert a != b, "expected QASM to emit a Print comment, not silently skip"
-        expected_added = "// Print result.debug c"
-        # Set-diff the line lists to detect ALL additions, not just whether
-        # the expected line is somewhere among them.
-        added_lines = [line for line in b.splitlines() if line not in a.splitlines()]
-        assert added_lines == [expected_added], f"expected exactly [{expected_added!r}] added lines, got {added_lines}"
+    def test_qasm_raises_loud_on_print(self) -> None:
+        """A Print comment cannot implement observable output (#1189)."""
+        SlrConverter(self._bell_no_print()).qasm()
+        with pytest.raises(NotImplementedError, match=r"does not support Print"):
+            SlrConverter(self._bell_with_print()).qasm()
 
     def test_qir_raises_loud_on_print(self) -> None:
         """QIR must FAIL LOUD on Print, not silently drop it.

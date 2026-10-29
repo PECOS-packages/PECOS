@@ -74,7 +74,7 @@ def chosen_weight8_supports(basis: str) -> tuple[tuple[int, ...], ...]:
     return tuple(chosen)
 
 
-def c4_round_steps(block: int, variant: str, round_index: int) -> list[CircuitStep]:
+def c4_round_steps(block: int, variant: str) -> list[CircuitStep]:
     """Swap out two data slots and measure C4 signs, leaving corrections unapplied."""
     allocation = HelixAllocation()
     plus, zero = allocation.c4_plus(block), allocation.c4_zero(block)
@@ -91,14 +91,14 @@ def c4_round_steps(block: int, variant: str, round_index: int) -> list[CircuitSt
             CircuitStep(OpType.RELABEL, [d2, plus]),
             CircuitStep(OpType.RELABEL, [d3, zero]),
             CircuitStep(OpType.H, [plus]),
-            CircuitStep(OpType.MEASURE, [plus], f"c4x:{block}:{round_index}"),
-            CircuitStep(OpType.MEASURE, [zero], f"c4z:{block}:{round_index}"),
+            CircuitStep(OpType.MEASURE, [plus], f"c4x:{block}"),
+            CircuitStep(OpType.MEASURE, [zero], f"c4z:{block}"),
         ],
     )
     return steps
 
 
-def weight8_check_steps(basis: str, index: int, round_index: int) -> list[CircuitStep]:
+def weight8_check_steps(basis: str, index: int) -> list[CircuitStep]:
     """Measure a weight-8 check with three flags; Z is the Hadamard dual of X."""
     ancillas = HelixAllocation().check(basis, index)
     a, f1, f2, f3 = ancillas
@@ -115,15 +115,13 @@ def weight8_check_steps(basis: str, index: int, round_index: int) -> list[Circui
     for k, qubit in enumerate(ancillas):
         if (k == 0) == (basis == "X"):
             steps.append(CircuitStep(OpType.H, [qubit]))
-        label = (
-            f"{basis.lower()}8:{index}:{round_index}" if k == 0 else f"flag:{basis.lower()}{index}.{k}:{round_index}"
-        )
+        label = f"{basis.lower()}8:{index}" if k == 0 else f"flag:{basis.lower()}{index}.{k}"
         steps.append(CircuitStep(OpType.MEASURE, [qubit], label))
     return steps
 
 
-def memory_steps(basis: str, rounds: int) -> list[CircuitStep]:
-    """Prepare data, alternate C4 variants with X/Z checks, and read out all slots."""
+def memory_gadgets(basis: str, rounds: int) -> list[tuple[str, list[CircuitStep]]]:
+    """Return named gadget step lists in memory execution order."""
     validate_basis(basis)
     if rounds < 1:
         msg = f"Expected rounds >= 1, got {rounds!r}"
@@ -131,14 +129,24 @@ def memory_steps(basis: str, rounds: int) -> list[CircuitStep]:
     steps = [CircuitStep(OpType.PREP, [q]) for q in range(20)]
     if basis == "X":
         steps.extend(CircuitStep(OpType.H, [q]) for q in range(20))
+    gadgets = [(f"prepare_{basis.lower()}", steps)]
     for round_index in range(rounds):
-        for block in range(5):
-            steps.extend(c4_round_steps(block, "a" if round_index % 2 == 0 else "b", round_index))
+        variant = "a" if round_index % 2 == 0 else "b"
+        gadgets.extend((f"c4_{block}_{variant}", c4_round_steps(block, variant)) for block in range(5))
         for check_basis in ("X", "Z"):
-            for index in range(4):
-                steps.extend(weight8_check_steps(check_basis, index, round_index))
+            gadgets.extend(
+                (f"weight8_{check_basis.lower()}_{index}", weight8_check_steps(check_basis, index))
+                for index in range(4)
+            )
+    steps = []
     for slot in range(20):
         if basis == "X":
             steps.append(CircuitStep(OpType.H, [slot]))
         steps.append(CircuitStep(OpType.MEASURE, [slot], f"data:{slot}"))
-    return steps
+    gadgets.append((f"readout_{basis.lower()}", steps))
+    return gadgets
+
+
+def memory_steps(basis: str, rounds: int) -> list[CircuitStep]:
+    """Prepare data, alternate C4 variants with X/Z checks, and read out all slots."""
+    return [step for _, steps in memory_gadgets(basis, rounds) for step in steps]

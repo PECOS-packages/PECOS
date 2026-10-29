@@ -4552,7 +4552,9 @@ impl PyDemSampler {
     ///
     /// Args:
     ///     `num_shots`: Number of shots to sample.
-    ///     seed: Optional random seed for reproducibility.
+    ///     seed: Optional random seed for reproducibility. Results reproduce for a
+    ///         fixed thread count: larger DEMs split shots into chunks sized by the
+    ///         number of threads, so results can differ between thread counts.
     ///
     /// Returns:
     ///     Dictionary with statistics:

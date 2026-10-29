@@ -1,6 +1,6 @@
 OPENQASM 2.0;
 include "qelib1.inc";
-barrier ;
+barrier a_test, q_test;
 // verification step
 cx q_test[5], a_test[0];
 cx q_test[1], a_test[0];

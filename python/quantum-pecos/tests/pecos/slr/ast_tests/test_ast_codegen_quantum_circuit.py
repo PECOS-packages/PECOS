@@ -561,7 +561,7 @@ def test_unresolved_block_call_is_rejected() -> None:
 
     op = BlockCall(callee="missing", arg_bindings=())
     program = Program(name="unlowered", declarations=(AllocatorDecl(name="q", capacity=2),), body=(op,))
-    with pytest.raises(NotImplementedError, match=r"BlockCall.*missing.*declaration"):
+    with pytest.raises(ValueError, match=r"undefined block 'missing'; provide its block declaration"):
         ast_to_quantum_circuit(program)
 
 

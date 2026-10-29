@@ -4396,7 +4396,6 @@ dependencies = [
  "env_logger",
  "log",
  "num-complex 0.4.6",
- "paste",
  "pecos-core",
  "pecos-qec",
  "pecos-quantum",
@@ -4943,7 +4942,6 @@ version = "0.2.0-dev.0"
 dependencies = [
  "nalgebra",
  "num-complex 0.4.6",
- "paste",
  "pecos-core",
  "pecos-quantum",
  "pecos-random",
@@ -4958,7 +4956,6 @@ name = "pecos-stab-active"
 version = "0.2.0-dev.0"
 dependencies = [
  "num-complex 0.4.6",
- "paste",
  "pecos-core",
  "pecos-quantum",
  "pecos-random",
@@ -4973,7 +4970,6 @@ dependencies = [
  "approx 0.5.1",
  "nalgebra",
  "num-complex 0.4.6",
- "paste",
  "pecos-core",
  "pecos-quantum",
  "pecos-random",

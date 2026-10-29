@@ -687,7 +687,7 @@ mod tests {
     use crate::stabilizer_test_suite;
     use pecos_core::qid;
 
-    stabilizer_test_suite!(GraphStateSim);
+    stabilizer_test_suite!(graph_state_sim, GraphStateSim);
 
     #[test]
     fn test_initial_state_is_all_zero() {

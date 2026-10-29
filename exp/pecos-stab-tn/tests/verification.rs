@@ -4819,7 +4819,7 @@ fn test_large_scale_measurement_works() {
 // Shared measurement stress test suite
 // ============================================================================
 
-pecos_simulators::measurement_stress_test_suite!(StabMps, 4, StabMps::with_seed(4, 42));
+pecos_simulators::measurement_stress_test_suite!(stab_mps, StabMps, 4, StabMps::with_seed(4, 42));
 
 // ============================================================================
 // Performance profiling (run with --nocapture to see timing)

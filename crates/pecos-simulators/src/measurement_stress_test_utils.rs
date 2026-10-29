@@ -267,35 +267,42 @@ pub fn run_measurement_stress_tests<S: ArbitraryRotationGateable>(sim: &mut S) {
 
 /// Generate a test that runs the measurement stress suite on a simulator type.
 ///
+/// The test is `$name::measurement_stress`, in a module named `$name` that
+/// glob-imports its parent, so the simulator type and constructor resolve as
+/// they do at the call site. With a `$constructor`, `$num_qubits` is not used.
+///
 /// Usage:
 /// ```
 /// use pecos_simulators::{StabVec, measurement_stress_test_suite};
 ///
-/// measurement_stress_test_suite!(StabVec, 4);
+/// measurement_stress_test_suite!(stab_vec, StabVec, 4);
+/// # fn main() {}
 /// ```
 #[macro_export]
 macro_rules! measurement_stress_test_suite {
-    ($sim_type:ty) => {
-        $crate::measurement_stress_test_suite!($sim_type, 4);
+    ($name:ident, $sim_type:ty) => {
+        $crate::measurement_stress_test_suite!($name, $sim_type, 4);
     };
-    ($sim_type:ty, $num_qubits:expr) => {
-        paste::paste! {
+    ($name:ident, $sim_type:ty, $num_qubits:expr) => {
+        mod $name {
+            use super::*;
+
             #[test]
-            fn [<test_ $sim_type:snake _measurement_stress>]() {
+            fn measurement_stress() {
                 use $crate::measurement_stress_test_utils::run_measurement_stress_tests;
                 let mut sim = <$sim_type>::builder($num_qubits).seed(42).build();
                 run_measurement_stress_tests(&mut sim);
             }
         }
     };
-    ($sim_type:ty, $num_qubits:expr, $constructor:expr) => {
-        paste::paste! {
+    ($name:ident, $sim_type:ty, $num_qubits:expr, $constructor:expr) => {
+        mod $name {
+            use super::*;
+
             #[test]
-            fn [<test_ $sim_type:snake _measurement_stress>]() {
+            fn measurement_stress() {
                 use $crate::measurement_stress_test_utils::run_measurement_stress_tests;
-                #[allow(unused_variables)]
-                let num_qubits: usize = $num_qubits;
-                let mut sim = $constructor;
+                let mut sim: $sim_type = $constructor;
                 run_measurement_stress_tests(&mut sim);
             }
         }

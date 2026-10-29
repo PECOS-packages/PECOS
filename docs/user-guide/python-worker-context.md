@@ -9,7 +9,8 @@ shot loop:
 from pecos import Qis, selene_engine, sim
 
 # A minimal QIS program that prepares and measures one qubit.
-qis_program = Qis("""
+qis_program = Qis(
+    """
 declare void @setup(i64)
 declare i64 @___qalloc()
 declare i64 @___lazy_measure(i64)
@@ -24,13 +25,10 @@ define i64 @qmain(i64 %arg) #0 {
   ret i64 %end
 }
 attributes #0 = { "EntryPoint" }
-""")
+"""
+)
 builder = (
-    sim(qis_program)
-    .classical(selene_engine("selene_simple_runtime"))
-    .qubits(1)
-    .workers(1)
-    .python_worker_context(True)
+    sim(qis_program).classical(selene_engine("selene_simple_runtime")).qubits(1).workers(1).python_worker_context(True)
 )
 assert builder.run(4).to_dict()["measurement_0"] == [0] * 4
 # The option also propagates through build() and supported trace capture.

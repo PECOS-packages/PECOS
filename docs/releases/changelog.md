@@ -6,6 +6,11 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Breaking:** `pecos_engines::byte_message::protocol::MessageFlags` is a plain
+  `u8` newtype with `NONE` and `bits()`. The `bitflags`-generated methods and
+  operators and the `RESERVED_*` constants are removed; no flag was ever defined.
+  The wire format and `MessageHeader::get_flags()` values are unchanged.
+
 - `SamplingEngine::sample_statistics`, and Python `DemSampler.sample_statistics`
   when it counts every `L<n>` output, gave neighbouring parallel chunks
   overlapping random streams for DEMs with at least 50 mechanisms and at least

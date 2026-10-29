@@ -4305,7 +4305,6 @@ dependencies = [
 name = "pecos-engines"
 version = "0.2.0-dev.0"
 dependencies = [
- "bitflags 2.13.0",
  "bitvec",
  "bytemuck",
  "dyn-clone",

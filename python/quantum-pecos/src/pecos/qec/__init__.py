@@ -143,6 +143,7 @@ from pecos.qec.protocols import (
     OuterCodeGeometry,
     create_msd_protocol,
 )
+from pecos.qec.runtime_decoder import RuntimeDecoder, RuntimeDecodeRequest, RuntimeDecodeWindow
 from pecos.qec.surface import (
     LogicalOperator,
     PatchGeometry,
@@ -163,6 +164,9 @@ from pecos.qec.surface import (
 from pecos.qec.surface._detection_events import MissingObservableReferenceError
 
 __all__ = [
+    "RuntimeDecodeRequest",
+    "RuntimeDecodeWindow",
+    "RuntimeDecoder",
     "CircuitStep",
     "OpType",
     "MissingObservableReferenceError",

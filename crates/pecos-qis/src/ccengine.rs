@@ -420,6 +420,10 @@ struct PendingMeasurements {
 /// The engine always runs LLVM on a worker thread and coordinates via channels.
 /// This allows conditionals that depend on measurement results to work correctly.
 pub struct QisEngine {
+    pub(crate) decoder_factory: Option<crate::runtime_decoder::RuntimeDecoderFactory>,
+    decoder_session: Option<Box<dyn crate::runtime_decoder::RuntimeDecoderSession>>,
+    pending_decode: Option<(u64, u64, Vec<u8>)>,
+    next_decode_instance: u64,
     /// The QIS interface (program executor)
     interface: Option<BoxedInterface>,
 
@@ -623,6 +627,10 @@ impl QisEngine {
         debug!("Creating QisEngine with dynamic execution");
 
         Self {
+            decoder_factory: None,
+            decoder_session: None,
+            pending_decode: None,
+            next_decode_instance: 0,
             interface: Some(interface),
             runtime,
             current_operations: None,
@@ -729,6 +737,10 @@ impl QisEngine {
     #[must_use]
     pub fn with_runtime(runtime: Box<dyn QisRuntime>) -> Self {
         Self {
+            decoder_factory: None,
+            decoder_session: None,
+            pending_decode: None,
+            next_decode_instance: 0,
             interface: None,
             runtime,
             current_operations: None,
@@ -1131,6 +1143,51 @@ impl QisEngine {
         &mut self,
         ops: &[Operation],
     ) -> Result<LoweredCommandBatch, PecosError> {
+        // A decoder call is the final synchronous request in this exported
+        // prefix. Submit preceding physical work normally, retaining the request
+        // until all ready runtime batches and their feedback have been processed.
+        let ops = if let Some(index) = ops.iter().position(|op| {
+            matches!(
+                op,
+                Operation::RuntimeRequest {
+                    request: pecos_qis_ffi_types::RuntimeRequest::Decode { .. },
+                    ..
+                }
+            )
+        }) {
+            if index + 1 != ops.len() || self.pending_decode.is_some() {
+                return Err(PecosError::Input(
+                    "decoder request must end its synchronous prefix".into(),
+                ));
+            }
+            let Operation::RuntimeRequest {
+                request:
+                    pecos_qis_ffi_types::RuntimeRequest::Decode {
+                        window_id,
+                        instance_id,
+                        syndrome,
+                    },
+                result_id: Some(id),
+            } = &ops[index]
+            else {
+                return Err(PecosError::Input(
+                    "decoder request requires dynamic execution".into(),
+                ));
+            };
+            if *id != pecos_qis_ffi_types::RUNTIME_REQUEST_RESULT_ID
+                || *instance_id != self.next_decode_instance
+                || syndrome.len() > pecos_qis_ffi_types::MAX_RUNTIME_DETECTORS
+                || syndrome.iter().any(|&bit| bit > 1)
+            {
+                return Err(PecosError::Input(
+                    "invalid decoder response slot, instance sequence or syndrome".into(),
+                ));
+            }
+            self.pending_decode = Some((*window_id, *instance_id, syndrome.clone()));
+            &ops[..index]
+        } else {
+            ops
+        };
         self.register_imported_measurements(ops);
         let normalized;
         let ops = if self.runtime.uses_native_runtime_protocol() {
@@ -1331,6 +1388,10 @@ impl Clone for QisEngine {
         };
 
         Self {
+            decoder_factory: self.decoder_factory.clone(),
+            decoder_session: None,
+            pending_decode: None,
+            next_decode_instance: 0,
             interface,
             runtime: dyn_clone::clone_box(&*self.runtime),
             current_operations: self.current_operations.clone(),
@@ -1838,6 +1899,9 @@ impl QisEngine {
                 return Ok(Some(lowered.commands));
             }
         }
+        if self.pending_decode.is_some() {
+            return self.process_decoder_request(result_id);
+        }
         let result_key = usize::try_from(result_id)
             .map_err(|_| self.latch_terminal_error("result ID exceeds usize".into()))?;
         if self.runtime.uses_native_runtime_protocol() {
@@ -1876,6 +1940,49 @@ impl QisEngine {
         Err(self.latch_terminal_error(format!(
             "runtime released no measurement for worker-requested result {result_id}"
         )))
+    }
+
+    fn process_decoder_request(
+        &mut self,
+        result_id: u64,
+    ) -> Result<Option<ByteMessage>, PecosError> {
+        let attempt = (|| {
+            if result_id != pecos_qis_ffi_types::RUNTIME_REQUEST_RESULT_ID as u64 {
+                return Err(PecosError::Input(
+                    "decoder response requested on a measurement lane".into(),
+                ));
+            }
+            // Poll only work already ready. In particular do not insert a barrier
+            // or force a future whose value the program has not read.
+            let lowered = self.lower_operations_terminal(&[])?;
+            self.trace_operations_chunk("decoder_ready", &[], Some(result_id), Some(&lowered));
+            if !lowered.is_empty {
+                return Ok(Some(lowered.commands));
+            }
+            if self.decoder_session.is_none() {
+                let factory = self
+                    .decoder_factory
+                    .as_ref()
+                    .ok_or_else(|| PecosError::Input("no runtime decoder configured".into()))?;
+                self.decoder_session = Some(factory()?);
+            }
+            let (window, instance, syndrome) = self.pending_decode.take().expect("pending decode");
+            let response = self
+                .decoder_session
+                .as_mut()
+                .expect("decoder session")
+                .decode(window, instance, &syndrome)?;
+            self.next_decode_instance = self
+                .next_decode_instance
+                .checked_add(1)
+                .ok_or_else(|| PecosError::Input("decoder instance IDs exhausted".into()))?;
+            self.set_dynamic_result(result_id, response)?;
+            self.signal_dynamic_result_ready()?;
+            Ok(None)
+        })();
+        attempt.map_err(|error: PecosError| {
+            self.latch_terminal_error(format!("runtime decoding failed: {error}"))
+        })
     }
 
     fn process_native_result_request(
@@ -2369,6 +2476,9 @@ impl QisEngine {
             self.reset_failure = Some(error.to_string());
             return Err(error);
         }
+        self.decoder_session = None;
+        self.pending_decode = None;
+        self.next_decode_instance = 0;
         self.reset_failure = None;
         self.shot_lifecycle = ShotLifecycle::Idle;
         self.scheduled_drain_round = 0;
@@ -2724,6 +2834,9 @@ impl ControlEngine for QisEngine {
                 "scheduled transport does not yet support operation tracing".into(),
             ));
         }
+        self.decoder_session = None;
+        self.pending_decode = None;
+        self.next_decode_instance = 0;
         self.shot_lifecycle = ShotLifecycle::Running;
         self.scheduled_drain_round = 0;
         self.runtime_end_delivered = false;
@@ -5909,3 +6022,7 @@ mod program_shot_tests;
 #[cfg(all(test, feature = "selene-runtimes"))]
 #[path = "ccengine_exit_tests.rs"]
 mod exit_metadata_tests;
+
+#[cfg(all(test, feature = "selene-runtimes"))]
+#[path = "ccengine_decoder_tests.rs"]
+mod decoder_tests;

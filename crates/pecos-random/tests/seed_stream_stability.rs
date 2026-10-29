@@ -62,6 +62,7 @@ const GOLDEN_SCALAR_SEED_42: [u64; 8] = [
 #[test]
 fn derive_seed_values_are_stable() {
     let long = "x".repeat(100);
+    let wrapped_length = "y".repeat(255);
     for (base, purpose, expected) in [
         (42, "noise", 4_853_411_367_290_695_164),
         (42, "measurement", 3_392_018_874_687_868_882),
@@ -81,6 +82,8 @@ fn derive_seed_values_are_stable() {
             6_045_238_936_066_559_765,
         ),
         (5, long.as_str(), 10_847_697_514_060_669_651),
+        // 255 bytes plus the terminator: the length byte wraps to 0.
+        (11, wrapped_length.as_str(), 18_429_410_612_856_369_901),
         // Lengths 7 and 8: with the 0xFF terminator, one fills a block exactly.
         (9, "abcdefg", 12_570_786_958_402_476_676),
         (9, "abcdefgh", 1_102_260_455_885_514_446),

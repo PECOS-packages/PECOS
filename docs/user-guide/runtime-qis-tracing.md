@@ -290,3 +290,6 @@ Embedded host decoder calls are described in
 [live supplied-window decoding](../development/runtime-decoding.md). Their request
 IDs and observed detector bytes appear in the source operation stream. These
 records do not identify every branch/loop site or certify an adaptive DEM.
+Versioned calls additionally retain their bounded context bytes in the source
+request. [Context v1](../development/runtime-decoder-contract.md) is a caller
+declaration, not automatic trace instrumentation or a runtime certificate.

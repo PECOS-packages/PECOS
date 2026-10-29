@@ -31,6 +31,10 @@ pub enum RuntimeRequest {
         window_id: u64,
         instance_id: u64,
         syndrome: Vec<u8>,
+        /// Version-one UTF-8 JSON supplied by the program, not runtime-certified.
+        /// None identifies the original unbound intrinsic.
+        #[serde(default)]
+        context: Option<Vec<u8>>,
     },
     /// Selene ABI request: operands are native handles, never QIR slots.
     Native(SeleneRequest),

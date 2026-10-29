@@ -67,7 +67,7 @@ def test_provider_gets_only_public_identity_and_is_fresh_per_shot():
 
         def provide(request):
             assert isinstance(request, RuntimeDecodeRequest)
-            assert vars(request).keys() == {"window_id", "instance_id"}
+            assert vars(request).keys() == {"window_id", "instance_id", "context"}
             requests.append(request)
             return definition
 

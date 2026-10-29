@@ -193,3 +193,38 @@ fn missing_provider_and_duplicate_instance_fail_without_a_response() {
     );
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
+
+#[test]
+fn versioned_call_does_not_fall_back_to_a_legacy_rust_session() {
+    let _lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let f = factory(
+        1,
+        Arc::new(AtomicUsize::new(0)),
+        calls.clone(),
+        Arc::new(AtomicBool::new(false)),
+    );
+    let source = program()
+        .replace(
+            "declare i64 @pecos_runtime_decode(i64, i64, ptr, i64)",
+            "declare i64 @pecos_runtime_decode_v1(i64, i64, ptr, i64, ptr, i64)",
+        )
+        .replace(
+            "@pecos_runtime_decode(i64 7, i64 %instance, ptr %data, i64 1)",
+            "@pecos_runtime_decode_v1(i64 7, i64 %instance, ptr %data, i64 1, ptr @label, i64 5)",
+        );
+    let mut engine = engine(&source, Some(f), false, false);
+    engine.set_num_qubits_hint(1);
+    assert!(
+        drive(&mut engine)
+            .unwrap_err()
+            .to_string()
+            .contains("does not support context v1")
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert!(
+        engine
+            .continue_processing(ByteMessage::builder().build())
+            .is_err()
+    );
+}

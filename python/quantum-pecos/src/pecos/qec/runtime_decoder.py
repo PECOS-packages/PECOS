@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING
 
 from pecos_rslib.qec import DetectorErrorModel
 
+from pecos.qec.runtime_decode_context import RuntimeDecodeBinding, RuntimeDecodeContext
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
@@ -22,10 +24,11 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class RuntimeDecodeRequest:
-    """Public window definition and shot-local occurrence; no simulator state."""
+    """Public window identity, shot-local occurrence and optional caller context."""
 
     window_id: int
     instance_id: int
+    context: RuntimeDecodeContext | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -43,7 +46,8 @@ class RuntimeDecodeWindow:
 
     The supported host commit is every detector; buffer and boundary state must
     be empty. Internal overlap within a single supplied model remains available
-    through the existing windowed decoder specifications.
+    through the existing windowed decoder specifications. Optional ``binding``
+    requires the v1 intrinsic and checks declared schema/program identity.
     """
 
     window_id: int
@@ -58,6 +62,7 @@ class RuntimeDecodeWindow:
     commit: tuple[str, ...]
     buffer: tuple[str, ...] = ()
     boundary_state: tuple[str, ...] = ()
+    binding: RuntimeDecodeBinding | None = None
 
     def __post_init__(self) -> None:
         """Freeze sequences and reject unsupported or inconsistent contracts."""
@@ -103,6 +108,21 @@ class RuntimeDecodeWindow:
         ):
             msg = "output_map must explicitly route every output to frame bits 0..63"
             raise ValueError(msg)
+
+        if self.binding is not None:
+            if type(self.binding) is not RuntimeDecodeBinding:
+                msg = "binding must be a RuntimeDecodeBinding"
+                raise TypeError(msg)
+            schema = self.binding.schema
+            if (
+                len(schema.detectors) != n
+                or tuple(schema.detectors[i].detector_id for i in self.detector_order) != self.detector_ids
+            ):
+                msg = "bound schema detector identities disagree with detector_order"
+                raise ValueError(msg)
+            if any(bit >= len(schema.frame_ids) for row in self.output_map for bit in row):
+                msg = "output_map targets an undeclared schema frame bit"
+                raise ValueError(msg)
 
 
 class RuntimeDecoder:
@@ -155,19 +175,54 @@ class _Session:
         self._next_instance = 0
         self._failed = False
 
-    def decode(self, window_id: int, instance_id: int, syndrome: list[int]) -> int:
+    def decode(self, window_id: int, instance_id: int, syndrome: list[int] | bytes) -> int:
+        return self._decode(window_id, instance_id, syndrome, None)
+
+    def decode_v1(self, window_id: int, instance_id: int, syndrome: list[int] | bytes, context: bytes) -> int:
+        if self._failed:
+            msg = "decoder session failed; start a fresh shot"
+            raise RuntimeError(msg)
+        # Malformed envelopes latch failure before invoking a provider.
+        self._failed = True
+        parsed = RuntimeDecodeContext.from_json(context)
+        self._failed = False
+        return self._decode(window_id, instance_id, syndrome, parsed)
+
+    def _decode(
+        self,
+        window_id: int,
+        instance_id: int,
+        syndrome: list[int] | bytes,
+        context: RuntimeDecodeContext | None,
+    ) -> int:
         if self._failed:
             msg = "decoder session failed; start a fresh shot"
             raise RuntimeError(msg)
         self._failed = True
-        if type(instance_id) is not int or instance_id != self._next_instance:
+        if type(window_id) is not int or not 0 <= window_id < 2**64:
+            msg = "window_id must be an unsigned 64-bit integer"
+            raise ValueError(msg)
+        if type(instance_id) is not int or not 0 <= instance_id < 2**64 or instance_id != self._next_instance:
             msg = "decoder instance IDs must be contiguous from zero in each shot"
             raise ValueError(msg)
-        window = self._provider(RuntimeDecodeRequest(window_id, instance_id))
+        if context is not None and any(
+            dep.source == "decoder" and dep.occurrence >= instance_id
+            for value in context.inputs
+            for dep in value.dependencies
+        ):
+            msg = "decoder dependencies must reference a prior instance"
+            raise ValueError(msg)
+        window = self._provider(RuntimeDecodeRequest(window_id, instance_id, context))
         if not isinstance(window, RuntimeDecodeWindow) or window.window_id != window_id:
             msg = "provider returned a different window identity"
             raise ValueError(msg)
         window.validate()
+        if context is None and window.binding is not None:
+            msg = "bound window requires a versioned decode context"
+            raise ValueError(msg)
+        if context is not None and (window.binding is None or not window.binding.matches(context)):
+            msg = "runtime decode context does not match the window binding"
+            raise ValueError(msg)
         if len(syndrome) != len(window.detector_ids) or any(
             type(bit) is not int or bit not in (0, 1) for bit in syndrome
         ):

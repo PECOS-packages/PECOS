@@ -422,7 +422,7 @@ struct PendingMeasurements {
 pub struct QisEngine {
     pub(crate) decoder_factory: Option<crate::runtime_decoder::RuntimeDecoderFactory>,
     decoder_session: Option<Box<dyn crate::runtime_decoder::RuntimeDecoderSession>>,
-    pending_decode: Option<(u64, u64, Vec<u8>)>,
+    pending_decode: Option<crate::runtime_decoder::PendingDecode>,
     next_decode_instance: u64,
     /// The QIS interface (program executor)
     interface: Option<BoxedInterface>,
@@ -1166,6 +1166,7 @@ impl QisEngine {
                         window_id,
                         instance_id,
                         syndrome,
+                        context,
                     },
                 result_id: Some(id),
             } = &ops[index]
@@ -1183,7 +1184,19 @@ impl QisEngine {
                     "invalid decoder response slot, instance sequence or syndrome".into(),
                 ));
             }
-            self.pending_decode = Some((*window_id, *instance_id, syndrome.clone()));
+            if let Some(context) = context
+                && (context.is_empty()
+                    || context.len() > pecos_qis_ffi_types::MAX_RUNTIME_DECODE_CONTEXT
+                    || std::str::from_utf8(context).is_err())
+            {
+                return Err(PecosError::Input("invalid decoder context envelope".into()));
+            }
+            self.pending_decode = Some(crate::runtime_decoder::PendingDecode {
+                window: *window_id,
+                instance: *instance_id,
+                syndrome: syndrome.clone(),
+                context: context.clone(),
+            });
             &ops[..index]
         } else {
             ops
@@ -1966,12 +1979,18 @@ impl QisEngine {
                     .ok_or_else(|| PecosError::Input("no runtime decoder configured".into()))?;
                 self.decoder_session = Some(factory()?);
             }
-            let (window, instance, syndrome) = self.pending_decode.take().expect("pending decode");
-            let response = self
-                .decoder_session
-                .as_mut()
-                .expect("decoder session")
-                .decode(window, instance, &syndrome)?;
+            let request = self.pending_decode.take().expect("pending decode");
+            let session = self.decoder_session.as_mut().expect("decoder session");
+            let response = if let Some(context) = request.context {
+                session.decode_v1(
+                    request.window,
+                    request.instance,
+                    &request.syndrome,
+                    &context,
+                )?
+            } else {
+                session.decode(request.window, request.instance, &request.syndrome)?
+            };
             self.next_decode_instance = self
                 .next_decode_instance
                 .checked_add(1)

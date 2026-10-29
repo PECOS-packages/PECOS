@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 /// Builder for creating `QisEngine` instances
 pub struct QisEngineBuilder {
     runtime: Option<Box<dyn crate::runtime::QisRuntime>>,
+    decoder_factory: Option<crate::runtime_decoder::RuntimeDecoderFactory>,
     scheduled_transport: ScheduledTransport,
     interface: Option<OperationCollector>,
     interface_builder: Option<Box<dyn crate::program::QisInterfaceBuilder>>,
@@ -21,6 +22,7 @@ pub struct QisEngineBuilder {
 impl Clone for QisEngineBuilder {
     fn clone(&self) -> Self {
         Self {
+            decoder_factory: self.decoder_factory.clone(),
             scheduled_transport: self.scheduled_transport,
             runtime: self.runtime.as_ref().map(|r| dyn_clone::clone_box(&**r)),
             interface: self.interface.clone(),
@@ -42,6 +44,7 @@ impl QisEngineBuilder {
     pub fn new() -> Self {
         Self {
             runtime: None,
+            decoder_factory: None,
             scheduled_transport: ScheduledTransport::Off,
             interface: None,
             interface_builder: None,
@@ -49,6 +52,17 @@ impl QisEngineBuilder {
             operation_trace_dir: None,
             operation_trace_collector: None,
         }
+    }
+
+    /// Configure fresh host decoder sessions for each shot. The factory receives
+    /// no simulator, noise state, seed, or logical truth.
+    #[must_use]
+    pub fn runtime_decoder(
+        mut self,
+        factory: crate::runtime_decoder::RuntimeDecoderFactory,
+    ) -> Self {
+        self.decoder_factory = Some(factory);
+        self
     }
 
     /// Dump Helios-collected operation chunks to the given directory as JSON.
@@ -342,6 +356,7 @@ impl ClassicalControlEngineBuilder for QisEngineBuilder {
 
             let mut engine = QisEngine::new(dynamic_interface, runtime);
             engine.scheduled_transport = self.scheduled_transport;
+            engine.decoder_factory = self.decoder_factory;
             if let Some(trace_dir) = self.operation_trace_dir {
                 engine.set_operation_trace_dir(trace_dir);
             }

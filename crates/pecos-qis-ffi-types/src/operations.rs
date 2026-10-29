@@ -25,6 +25,13 @@ pub struct NamedResultTrace {
 /// Selene ABI's unsigned handles unchanged.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum RuntimeRequest {
+    /// Host-side decoding of observed detector bits. Never submitted to the runtime.
+    /// The instance is a shot-local, contiguous call index, starting at zero.
+    Decode {
+        window_id: u64,
+        instance_id: u64,
+        syndrome: Vec<u8>,
+    },
     /// Selene ABI request: operands are native handles, never QIR slots.
     Native(SeleneRequest),
     LocalBarrier {

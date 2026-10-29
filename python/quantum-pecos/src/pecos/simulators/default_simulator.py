@@ -18,7 +18,7 @@ system resources.
 
 from __future__ import annotations
 
-from math import tau
+from math import isfinite, tau
 from typing import TYPE_CHECKING, Any
 
 from pecos.simulators.batch_validation import is_empty_batch, replayable_locations, validate_batch
@@ -162,12 +162,22 @@ class DefaultSimulator:
             self.gate_capacity,
             arity=gate_registry.quantum_arity(symbol),
         )
+        # Read angles as run_gate does: `angles`, or `angle` for a one-angle gate.
+        input_angles = params.get("angles", ())
+        if "angle" in params and "angles" not in params:
+            input_angles = (params["angle"],)
+        # Simulator bindings use radians; the registry API uses turns.
+        turns = []
+        for angle in input_angles:
+            radians = float(angle)
+            if not isfinite(radians):
+                msg = f"Gate {symbol}: angle must be finite, got {radians} rad"
+                raise ValueError(msg)
+            turns.append(radians / tau)
         steps = []
         for location in locations:
             qubits = list(location) if isinstance(location, tuple) else [location]
-            # Simulator bindings use radians; the registry API uses turns.
-            angles = [angle / tau for angle in params.get("angles", ())]
-            steps.extend(gate_registry.decompose(symbol, qubits, angles) or ())
+            steps.extend(gate_registry.decompose(symbol, qubits, turns) or ())
 
         validated_steps = []
         for step_symbol, step_qubits, step_turns, step_meta in steps:

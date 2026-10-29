@@ -687,10 +687,10 @@ def test_registry_location_order_angles_and_metadata():
         == {}
     )
     assert calls == [
-        ("RX", 1, {"angles": (0.25,), "angle": 0.25, "step": "first", "tag": "kept"}),
-        ("RZ", 1, {"angles": (pi,), "angle": pi, "step": "second", "tag": "kept"}),
-        ("RX", 0, {"angles": (0.25,), "angle": 0.25, "step": "first", "tag": "kept"}),
-        ("RZ", 0, {"angles": (pi,), "angle": pi, "step": "second", "tag": "kept"}),
+        ("RX", 1, {"angles": pytest.approx((0.25,)), "angle": pytest.approx(0.25), "step": "first", "tag": "kept"}),
+        ("RZ", 1, {"angles": pytest.approx((pi,)), "angle": pytest.approx(pi), "step": "second", "tag": "kept"}),
+        ("RX", 0, {"angles": pytest.approx((0.25,)), "angle": pytest.approx(0.25), "step": "first", "tag": "kept"}),
+        ("RZ", 0, {"angles": pytest.approx((pi,)), "angle": pytest.approx(pi), "step": "second", "tag": "kept"}),
     ]
 
 

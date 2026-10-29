@@ -259,9 +259,11 @@ When decomposing parameterized gates, `AngleSource` specifies where each angle c
 `GateRegistry.decompose` takes input angles in turns and returns step angles in
 turns; `AngleSource.fixed(0.25)` is a quarter turn. Angles are normalized modulo
 one turn by `Angle64`, including negated inputs. Simulator circuit parameters
-and step bindings use radians: `DefaultSimulator` converts radians to turns
-before decomposition and converts the returned step angles back to radians.
-Step metadata that overrides `angle` or `angles` uses simulator radians.
+and step bindings use radians: `DefaultSimulator` reads a registered gate's
+`angles` (or `angle`, for a one-angle gate), converts them from radians to turns
+before decomposition, and converts the returned step angles back to radians.
+Step metadata can override a step's `angles`, in simulator radians. A one-angle
+step's `angle` always follows its `angles`, so override `angles`, not `angle`.
 
 ```python
 from pecos.quantum import GateRegistry

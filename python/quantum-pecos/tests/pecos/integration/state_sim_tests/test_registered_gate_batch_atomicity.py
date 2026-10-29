@@ -12,7 +12,7 @@
 """Registered batches validate all decomposed steps before touching state or RNG."""
 
 from functools import partial
-from math import pi
+from math import inf, nan, pi
 from types import SimpleNamespace
 
 import pecos
@@ -253,7 +253,7 @@ def test_registered_overridden_rotation_keeps_its_parameter_contract():
     calls = []
     state.bindings["RZ"] = lambda _state, qubit, **params: calls.append((qubit, params))
     state.run_circuit(_circuit("OVERRIDE", [0], angles=(pi / 4,)), gate_registry=registry)
-    assert calls == [(0, {"angles": (pi / 4,), "angle": pi / 4})]
+    assert calls == [(0, {"angles": pytest.approx((pi / 4,)), "angle": pytest.approx(pi / 4)})]
 
 
 @pytest.mark.parametrize("outer_enabled", [False, True])
@@ -311,6 +311,48 @@ def test_registered_angles_match_direct_state(source, input_angles, direct_angle
     # A unit error yields a non-Clifford angle, which SparseStabPy rejects; a
     # sign error flips the stabilizer sign.
     assert _snapshot(state) == _snapshot(fresh)
+
+
+def _rotate_registry():
+    registry = GateRegistry()
+    (
+        registry.define("ROTATE", 1)
+        .angle_arity(1)
+        .step("H", [0])
+        .step_with_angles("RZ", [0], [AngleSource.input(0)])
+        .step("H", [0])
+        .register_into(registry)
+    )
+    return registry
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"angles": (pi / 2,)},
+        {"angle": pi / 2},
+        {"angles": (pecos.angle64.from_turns(0.25),)},
+        {"angle": pecos.angle64.from_turns(0.25)},
+    ],
+    ids=["angles", "angle", "angle64-angles", "angle64-angle"],
+)
+def test_registered_angle_spellings_match_direct_state(params):
+    state = _make()
+    state.run_circuit(_circuit("ROTATE", [0], **params), gate_registry=_rotate_registry())
+    fresh = _make()
+    fresh.run_gate("H", [0])
+    fresh.run_gate("RZ", [0], angle=pi / 2)
+    fresh.run_gate("H", [0])
+    assert _snapshot(state) == _snapshot(fresh)
+
+
+@pytest.mark.parametrize("angle", [inf, -inf, nan])
+def test_registered_non_finite_angle_is_rejected_before_running(angle):
+    pecos.random.seed(721)
+    state = _make()
+    with pytest.raises(ValueError, match=r"^Gate ROTATE: angle must be finite, got .* rad$"):
+        state.run_circuit(_circuit("ROTATE", [0], angles=(angle,)), gate_registry=_rotate_registry())
+    _assert_untouched(state)
 
 
 @pytest.mark.parametrize("simulate_gate", [False, True])

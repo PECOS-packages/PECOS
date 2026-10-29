@@ -564,10 +564,10 @@ def test_zero_arity_custom_binding_skips_location_validation(route):
 
 
 @pytest.mark.parametrize("symbol", ["Measure", "measure Z", "Measure +Z", "MZ"])
-def test_z_binding_error_uses_its_spelling(symbol):
+def test_z_measurement_error_uses_the_called_spelling(symbol):
     state = CoinToss(4)
     with pytest.raises(ValueError, match="requires 'forced_outcome'") as error:
-        state.bindings[symbol](state, 0, forced_outcome=2)
+        state.run_gate(symbol, [0], forced_outcome=2)
     assert str(error.value).startswith(f"{symbol} requires 'forced_outcome'")
 
 

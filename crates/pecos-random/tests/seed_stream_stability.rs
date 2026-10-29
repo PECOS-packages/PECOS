@@ -73,6 +73,8 @@ fn derive_seed_values_are_stable() {
         (42, "quantum_engine", 10_075_785_296_346_441_876),
         (7, "worker_0", 13_979_981_128_284_556_205),
         (123, "quantum", 6_503_438_428_033_344_226),
+        // Length 2: with the rows above, every byte length mod 8 is covered.
+        (3, "xy", 12_234_639_505_916_456_087),
         (
             1,
             "h\u{e9}llo \u{2713} \u{91cf}\u{5b50}",

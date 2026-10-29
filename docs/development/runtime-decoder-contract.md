@@ -26,8 +26,12 @@ the host/FFI data ABI version.
 The original `pecos_runtime_decode` import remains supported for unbound windows.
 Both imports share the same shot-local contiguous instance counter and failure
 latch. Rust `RuntimeDecoderSession::decode_v1` defaults to an error. Custom Python
-sessions must implement `decode_v1(window_id, instance_id, syndrome, context)`;
-the last two arguments arrive as bytes. There is no fallback to `decode`.
+sessions must retain a callable `decode(window_id, instance_id, syndrome)`
+method because the factory validates that existing protocol on creation. To
+handle versioned calls, also implement
+`decode_v1(window_id, instance_id, syndrome, context)`; its last two arguments
+arrive as bytes. A session intended only for v1 can implement `decode` by raising
+an unsupported-call error. There is no fallback from `decode_v1` to `decode`.
 Custom session implementations are trusted to check their contract.
 
 Versioned requests follow the same synchronous host path as legacy requests.

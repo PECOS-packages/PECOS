@@ -56,7 +56,7 @@ def context(instance=0, *, corrected=True):
     )
 
 
-def program(payloads):
+def program(payloads, *, source=PROGRAM):
     """Explicit synthetic frontend instrumentation; no trace-to-model inference."""
     constants = []
     for i, data in enumerate(payloads):
@@ -64,7 +64,7 @@ def program(payloads):
         constants.append(f'@context{i} = private constant [{len(data)} x i8] c"{escaped}"')
     constants.append("@contexts = private constant [3 x ptr] [ptr @context0, ptr @context1, ptr @context2]")
     constants.append("@lengths = private constant [3 x i64] [" + ", ".join(f"i64 {len(p)}" for p in payloads) + "]")
-    source = PROGRAM.replace(
+    source = source.replace(
         "declare i64 @pecos_runtime_decode(i64, i64, ptr, i64)",
         "declare i64 @pecos_runtime_decode_v1(i64, i64, ptr, i64, ptr, i64)",
     ).replace(

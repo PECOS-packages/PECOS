@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import pickle
 from types import SimpleNamespace
 
 import pecos as pc
@@ -500,3 +501,80 @@ def test_prefix_measurement_without_binding_is_checked_before_measuring():
     assert state.run_circuit(_items("Measure", {0, 1, 2, 3})) == fresh.run_circuit(
         _items("Measure", {0, 1, 2, 3}),
     )
+
+
+@pytest.mark.parametrize("route", ["gate", "circuit", "hybrid"])
+@pytest.mark.parametrize("simulate_gate", [False, True])
+def test_optional_forced_outcome_is_validated_before_dispatch(route, simulate_gate, monkeypatch):
+    state = CoinToss(4)
+    calls = []
+    monkeypatch.setattr(state, "mz", calls.append)
+    with pytest.raises(ValueError, match=r"MZ requires.*forced_outcome"):
+        _dispatch(state, route, "MZ", [0], forced_outcome=2, simulate_gate=simulate_gate)
+    assert calls == []
+
+
+@pytest.mark.parametrize("route", ["gate", "circuit", "hybrid"])
+@pytest.mark.parametrize("symbol", ["MX", "Measure -Z"])
+@pytest.mark.parametrize("outcome", [0, 1, 2, None])
+def test_non_z_measurements_ignore_forced_outcome(route, symbol, outcome):
+    state = CoinToss(4, seed=42)
+    fresh = CoinToss(4, seed=42)
+    assert _dispatch(state, route, symbol, [2, 0, 2], forced_outcome=outcome) == _dispatch(
+        fresh,
+        route,
+        symbol,
+        [2, 0, 2],
+    )
+    assert [state.mz(0) for _ in range(32)] == [fresh.mz(0) for _ in range(32)]
+
+
+class UniterableLocations:
+    def __iter__(self):
+        pytest.fail("Built-in no-ops must not iterate their locations")
+
+
+@pytest.mark.parametrize("route", ["gate", "circuit"])
+@pytest.mark.parametrize("locations", [None, object(), UniterableLocations()])
+@pytest.mark.parametrize("symbol", ["X", "CX", "measure custom"])
+def test_builtin_noop_does_not_iterate_locations(route, locations, symbol):
+    state = CoinToss(4, seed=42)
+    state.bindings[symbol] = state.bindings["X"]
+    assert _dispatch(state, route, symbol, locations) == {}
+    fresh = CoinToss(4, seed=42)
+    assert [state.mz(0) for _ in range(32)] == [fresh.mz(0) for _ in range(32)]
+
+
+@pytest.mark.parametrize("route", ["gate", "circuit", "hybrid"])
+def test_zero_arity_custom_binding_skips_location_validation(route):
+    state = CoinToss(4)
+    calls = []
+
+    def force_output(_state, location, **_params):
+        calls.append(location)
+        return 7
+
+    state.bindings["force output"] = force_output
+    assert GATE_ARITIES["force output"] == 0
+    if route == "hybrid":
+        pc.HybridEngine.run_gate(state, {}, "force output", [99])
+    else:
+        assert _dispatch(state, route, "force output", [99]) == {99: 7}
+    assert calls == [99]
+
+
+@pytest.mark.parametrize("symbol", ["Measure", "measure Z", "Measure +Z", "MZ"])
+def test_z_binding_error_uses_its_spelling(symbol):
+    state = CoinToss(4)
+    with pytest.raises(ValueError, match="requires 'forced_outcome'") as error:
+        state.bindings[symbol](state, 0, forced_outcome=2)
+    assert str(error.value).startswith(f"{symbol} requires 'forced_outcome'")
+
+
+@pytest.mark.parametrize("symbol", ["Measure", "measure Z", "Measure +Z", "MZ"])
+def test_z_bindings_remain_validated_after_pickling(symbol):
+    state = pickle.loads(pickle.dumps(CoinToss(4, prob=1)))
+    assert state.run_gate(symbol, [0], forced_outcome=0) == {}
+    assert state.run_gate(symbol, [0]) == {0: 1}
+    with pytest.raises(ValueError, match="requires 'forced_outcome'"):
+        state.run_gate(symbol, [0], forced_outcome=2, simulate_gate=False)

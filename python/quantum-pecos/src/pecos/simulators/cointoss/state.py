@@ -18,6 +18,7 @@ making it useful for debugging classical logic paths and testing error correctio
 
 from __future__ import annotations
 
+from functools import partial
 from operator import index
 from typing import TYPE_CHECKING
 
@@ -106,7 +107,7 @@ class CoinToss:
         """
         binding = self.bindings.get(symbol)
         if binding is not None:
-            return binding in (_measure_gate, _measure_z_gate, _measure_forced_gate)
+            return binding in (_measure_gate, _measure_forced_gate) or _is_z_measurement(binding)
         return symbol.lower().startswith("measure")
 
     def validate_gate_batch(self, symbol: str, locations: int | Iterable[int], **params: object) -> None:
@@ -123,9 +124,9 @@ class CoinToss:
             arity = 1
         if arity is None and symbol.lower().startswith("measure"):
             arity = 1
-        if arity is not None:
+        if arity not in (None, 0):
             validate_batch(symbol, _locations_batch(locations), self.gate_capacity, allow_singletons=False, arity=arity)
-        if binding in (_measure_z_gate, _measure_forced_gate):
+        if binding is _measure_forced_gate or _is_z_measurement(binding):
             _forced_outcome(symbol, params, required=binding is _measure_forced_gate)
 
     def run_gate(
@@ -147,6 +148,8 @@ class CoinToss:
             dict[int, int]: Nonzero binding results, keyed by the original location.
         """
         binding = self.bindings.get(symbol)
+        if binding is _noop_gate:
+            return {}
         if binding is None:
             if not self.is_measurement(symbol):
                 return {}
@@ -169,7 +172,7 @@ class CoinToss:
                 validated before drawing coins, even with ``simulate_gate=False``.
 
         Returns:
-            dict[int, int]: Dictionary mapping qubit indices to measurement results (1 for |1>).
+            dict[int, int]: Nonzero binding results keyed by the original locations.
         """
         measurement_results = {}
 
@@ -209,10 +212,15 @@ def _forced_outcome(symbol: str, params: dict, *, required: bool = False) -> int
     return None if outcome == -1 else outcome
 
 
-def _measure_z_gate(state: CoinToss, qubit: int, **params: SimulatorGateParams) -> int:
-    """Measure Z, honouring an optional native forced outcome."""
-    outcome = _forced_outcome("MZ", params)
+def _measure_z_gate(symbol: str, /, state: CoinToss, qubit: int, **params: SimulatorGateParams) -> int:
+    """Measure Z with spelling-specific forced-outcome diagnostics."""
+    outcome = _forced_outcome(symbol, params)
     return state.mz(qubit) if outcome is None else outcome
+
+
+def _is_z_measurement(binding: object) -> bool:
+    """Recognize Z bindings by their function, including after unpickling."""
+    return isinstance(binding, partial) and binding.func is _measure_z_gate
 
 
 def _measure_forced_gate(state: CoinToss, qubit: int, **params: SimulatorGateParams) -> int:
@@ -230,6 +238,11 @@ def _noop_gate(*args: object, **kwargs: object) -> None:
 def _measure_gate(state: CoinToss, qubit: int, **_params: SimulatorGateParams) -> int:
     """Return |1> with probability state.prob or |0> otherwise."""
     return state.mz(qubit)
+
+
+_Z_MEASUREMENT_BINDINGS = {
+    symbol: partial(_measure_z_gate, symbol) for symbol in ("Measure", "measure Z", "Measure +Z", "MZ")
+}
 
 
 gate_dict = {
@@ -327,9 +340,9 @@ gate_dict = {
     "unleak |0>": _noop_gate,
     "unleak |1>": _noop_gate,
     # Measurements - these actually return random results
-    "Measure": _measure_z_gate,
-    "measure Z": _measure_z_gate,
-    "Measure +Z": _measure_z_gate,
+    "Measure": _Z_MEASUREMENT_BINDINGS["Measure"],
+    "measure Z": _Z_MEASUREMENT_BINDINGS["measure Z"],
+    "Measure +Z": _Z_MEASUREMENT_BINDINGS["Measure +Z"],
     "Measure -Z": _measure_gate,
     "Measure +X": _measure_gate,
     "Measure -X": _measure_gate,
@@ -340,5 +353,5 @@ gate_dict = {
     "measure Y": _measure_gate,
     "MX": _measure_gate,
     "MY": _measure_gate,
-    "MZ": _measure_z_gate,
+    "MZ": _Z_MEASUREMENT_BINDINGS["MZ"],
 }

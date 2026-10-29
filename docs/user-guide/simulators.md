@@ -448,8 +448,7 @@ Tracks how Pauli errors propagate through Clifford circuits—essential for QEC 
 
 Returns random measurement results, ignoring all gates. Useful for testing.
 
-The Python `CoinToss` wrapper calls each symbol's binding, including custom
-measurement bindings. Built-in measurement bindings include `MX`, `MY`, `MZ`,
+The Python `CoinToss` wrapper executes measurement and custom bindings. Built-in measurement bindings include `MX`, `MY`, `MZ`,
 `measure X`, `measure Y`, and `MZForced`. Unbound case-insensitive `measure`
 prefixes also measure. Rebinding a prefixed spelling to a no-op makes it
 non-measuring. HybridEngine validates unbound prefixed batches before rejecting
@@ -458,15 +457,16 @@ them as unsupported when enabled.
 Both `run_gate` and `run_circuit` accept an integer (including integer-like
 objects) or an iterable of scalar qubit indices for measurements and return only
 nonzero results. Iterable order and duplicates determine coin order. Built-in
-measurement bindings and custom bindings with known arities or measurement
-prefixes validate the whole batch before dispatch. Custom bindings with unknown
-arities cannot be pre-checked. With `simulate_gate=False`, validation still runs
-but no binding executes or coin is drawn. Built-in non-measuring gates remain
-permissive no-ops.
+measurement bindings and custom bindings with known positive arities or
+measurement prefixes validate the whole batch before dispatch. Custom bindings
+with unknown or zero arities skip location validation. With `simulate_gate=False`,
+validation still runs but no binding executes or coin is drawn. Built-in non-measuring gates remain
+permissive no-ops and do not iterate their locations.
 
 Native Z measurement spellings accept `forced_outcome`: -1 draws a random coin,
 while 0 or 1 returns that outcome without drawing a coin. `MZForced` requires
-this parameter.
+this parameter. Invalid values are rejected even with `simulate_gate=False`.
+`MX` and `Measure -Z` ignore `forced_outcome` and still draw a coin when enabled.
 
 ```python
 from pecos.simulators import CoinToss

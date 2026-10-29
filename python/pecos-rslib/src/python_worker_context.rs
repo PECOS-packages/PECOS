@@ -8,6 +8,10 @@ struct PythonWorkerContext;
 
 impl WorkerScope for PythonWorkerContext {
     fn execute(&self, work: Box<dyn FnOnce() + Send + '_>) -> Result<(), PecosError> {
+        // Python thread-state teardown can run finalizers after the last adapter
+        // callback. Keep reentry rejection alive through attachment AND teardown:
+        // a finalizer must not wait on the built simulation's caller-held mutex.
+        let _callbacks = crate::scheduled_adapter::CallbackScope::enter();
         // Both guards stay on this worker. Detaching retains its thread state,
         // so nested callback attachments reuse it while Rust runs without the GIL.
         Python::try_attach(|py| py.detach(work))

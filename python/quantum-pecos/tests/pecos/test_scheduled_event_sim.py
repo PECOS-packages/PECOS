@@ -696,3 +696,30 @@ def test_python_worker_context_rejects_unsupported_routes():
 
     with pytest.raises(ValueError, match="only for QIS"):
         pecos.sim(pecos.Qasm("OPENQASM 2.0; qreg q[1];")).python_worker_context()
+
+
+@pytest.mark.parametrize("method", ["run", "run_with_workers", "reset"])
+def test_python_worker_context_finalizer_reentry_rejects(event_runtime, method):
+    run_isolated(
+        event_runtime,
+        f"""
+from threading import local
+state = local()
+holder = {{}}
+rejected = []
+class Marker:
+    def __del__(self):
+        args = {{'run': (1,), 'run_with_workers': (1, 1), 'reset': ()}}[{method!r}]
+        try:
+            getattr(holder['built'], {method!r})(*args)
+        except RuntimeError as error:
+            rejected.append(str(error))
+def factory(_):
+    state.marker = Marker()
+    return PhaseAdapter()
+holder['built'] = simulation(runtime, factory).python_worker_context().workers(1).build()
+assert holder['built'].run(1).to_dict()['measurement_0'] == [1]
+assert len(rejected) == 1 and 'callback' in rejected[0]
+holder.clear()
+""",
+    )

@@ -36,6 +36,9 @@ Per-shot seeding, resets, controller execution, noise/quantum continuations, and
 destruction of the worker engine happen inside the scope. Explicit `reset()` on a
 built simulation acts on its template on the caller, outside any worker scope.
 The GIL is released during Rust work and waits, and reacquired for Python calls.
+Built QIS simulation `run`, `run_with_workers`, and `reset` calls are rejected
+from worker callbacks and thread-local finalizers, preventing a wait on the calling
+simulation's held mutex. External caller threads can still wait normally.
 All logical worker jobs finish or fail before an error is returned; their context
 guards unwind on failures and panics. There is no new cancellation interface.
 

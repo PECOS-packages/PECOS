@@ -78,6 +78,7 @@ pub mod prelude;
 
 pub mod qis_interface;
 pub mod runtime;
+pub mod runtime_decoder;
 pub mod scheduled;
 mod scheduled_transport;
 

@@ -18,7 +18,10 @@ pub use operations::{
 /// Version of the ownership-transferring Rust data interface between the host
 /// and dynamically loaded QIS FFI library. Bump when shared types or exported
 /// function contracts change incompatibly; both artifacts must be rebuilt.
-pub const QIS_FFI_ABI_VERSION: u64 = 4;
+pub const QIS_FFI_ABI_VERSION: u64 = 5;
+
+/// Maximum copied detector bytes in one embedded decoder request.
+pub const MAX_RUNTIME_DETECTORS: usize = 1 << 20;
 
 /// Reserved dynamic bridge token for the one synchronous runtime request in
 /// flight. Stored separately from measurement slots; never exposed as a future.

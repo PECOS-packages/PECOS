@@ -6,6 +6,19 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Breaking:** `pecos_engines::byte_message::protocol::MessageFlags` is a plain
+  `u8` newtype with `NONE` and `bits()`. The `bitflags`-generated methods and
+  operators and the `RESERVED_*` constants are removed; no flag was ever defined.
+  The wire format and `MessageHeader::get_flags()` values are unchanged.
+
+- `SamplingEngine::sample_statistics`, and Python `DemSampler.sample_statistics`
+  when it counts every `L<n>` output, gave neighbouring parallel chunks
+  overlapping random streams for DEMs with at least 50 mechanisms and at least
+  1000 shots (#1487). That inflated the run-to-run variance of every count about
+  2.6x, so error bars computed from the shot count were too small. Chunks now
+  draw independent shots. Seeded results on this path change, and they reproduce
+  only for a fixed Rayon thread count.
+
 - `SparseStab`, and therefore `StabilizerEngine` and `Stabilizer`, now use an
   adaptive sparse set. Initial memory is O(n) instead of O(n^2), and tableau
   memory scales with its nonzeros; measured peak memory at 130k qubits fell
@@ -42,6 +55,12 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   measurement path. `SparseStabGeneric::mz_with_work` measures one qubit and
   also returns `MeasurementWork`, the refactor and decouple work that
   measurement executed, for benchmarking.
+
+- Python: `pecos.guppy_gen.helix` renders certified C4-Helix memory programs
+  with scalar, round-free result tags and `mem_swap` swap-out gadgets.
+  `pecos.qec.helix.memory_definitions` supplies typed detectors and observables
+  for `build_dem_from_guppy`. Helix lowering supports step-order certification
+  alongside ASAP detector discovery through the shared measurement reader.
 
 - **Breaking:** two-qubit gates in `pecos-simulators` now reject repeated-qubit
   pairs in debug and release builds. Such inputs could previously cause undefined
@@ -99,7 +118,8 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 - Python: `pecos.qec.helix` adds C4-Helix [[20,2,6]] memory gadgets,
   slot-aware ASAP lowering, and memory circuits with discovered detectors and
   two logical observables. `OpType.RELABEL` exchanges two slot bindings without
-  applying a gate; surface and Guppy renderers reject it explicitly.
+  applying a gate; surface renderers (Stim, DAG, TickCircuit, and surface Guppy)
+  reject it explicitly. `pecos.guppy_gen.helix` renders it as `mem_swap`.
 
 - **Breaking:** SLR block conversion rejects input names that capture unbound
   outer references in the block body. The error identifies the block, input

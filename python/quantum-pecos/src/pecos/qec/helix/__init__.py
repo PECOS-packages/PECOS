@@ -13,8 +13,8 @@ from pecos.qec.helix.gadgets import (
     weight8_check_steps,
 )
 from pecos.qec.helix.logical import LogicalGate, c4_helix_gates, logical_action, symplectic_action
-from pecos.qec.helix.lowering import LoweredHelixCircuit, lower_steps
-from pecos.qec.helix.memory import memory_circuit, memory_conjugates
+from pecos.qec.helix.lowering import LoweredHelixCircuit, helix_result_classifier, helix_result_refs, lower_steps
+from pecos.qec.helix.memory import memory_circuit, memory_conjugates, memory_definitions
 
 __all__ = [
     "HelixAllocation",
@@ -27,11 +27,14 @@ __all__ = [
     "c4_round_steps",
     "chosen_weight8_supports",
     "helix_code",
+    "helix_result_classifier",
+    "helix_result_refs",
     "logical_action",
     "logical_pauli_fixup",
     "lower_steps",
     "memory_circuit",
     "memory_conjugates",
+    "memory_definitions",
     "memory_steps",
     "min_cost_words",
     "parse_signed_logical_pauli",

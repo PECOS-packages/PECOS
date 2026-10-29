@@ -17,7 +17,7 @@ from types import SimpleNamespace
 
 import pecos
 import pytest
-from pecos.simulators import DefaultSimulator, SparseStabPy, StateVec
+from pecos.simulators import SparseStabPy
 from pecos_rslib import AngleSource, GateRegistry
 
 
@@ -25,8 +25,8 @@ def _circuit(symbol, locations, **params):
     return SimpleNamespace(items=lambda: iter([(symbol, locations, params)]))
 
 
-def _make(simulator_type=SparseStabPy):
-    state = simulator_type(4, seed=42) if simulator_type is StateVec else simulator_type(4)
+def _make():
+    state = SparseStabPy(4)
     # The registry emits MZ; the Python wrappers spell this binding Measure.
     # Install the alias explicitly, as callers could already do on dev.
     state.bindings = {**state.bindings, "MZ": state.bindings["Measure"]}
@@ -34,9 +34,7 @@ def _make(simulator_type=SparseStabPy):
 
 
 def _snapshot(state):
-    if isinstance(state, SparseStabPy):
-        return state.stabs.row_string(), state.destabs.row_string()
-    return list(state.vector)
+    return state.stabs.row_string(), state.destabs.row_string()
 
 
 def _rng_probe(state):
@@ -132,30 +130,25 @@ def test_valid_batch_preserves_angles_and_metadata():
     )
     locations = [2, 0, 2, 1]
     pecos.random.seed(721)
-    state = _make(StateVec)
-    # StateVec overrides run_circuit without registry support; exercise the
-    # base registry path with its real bindings and native state/RNG.
-    result = DefaultSimulator._run_decomposed_gate(  # noqa: SLF001 - test the base path with a native RNG
-        state,
-        registry,
-        "ROTATIONS",
-        locations,
-        angles=(0.125,),
-        angle=99,
+    state = _make()
+    # The step angles replace the outer angle; a leaked 99 rad is not Clifford.
+    result = state.run_circuit(
+        _circuit("ROTATIONS", locations, angles=(pi / 2,), angle=99),
+        gate_registry=registry,
     )
     snapshot = _snapshot(state)
     observed_rng = _rng_probe(state)
 
     pecos.random.seed(721)
-    fresh = _make(StateVec)
+    fresh = _make()
     expected = {}
     for qubit in locations:
         fresh.run_gate("H", {qubit})
-        fresh.run_gate("RX", {qubit}, angles=(0.125,), angle=0.125)
-        fresh.run_gate("RZ", {qubit}, angles=(pi / 2,), angle=pi / 2)
+        fresh.run_gate("RX", {qubit}, angle=pi / 2)
+        fresh.run_gate("RZ", {qubit}, angle=pi / 2)
         expected.update(fresh.run_gate("MZ", {qubit}))
     assert result == expected
-    assert snapshot == pytest.approx(_snapshot(fresh))
+    assert snapshot == _snapshot(fresh)
     assert observed_rng == _rng_probe(fresh)
 
 
@@ -309,24 +302,15 @@ def test_registered_angles_match_direct_state(source, input_angles, direct_angle
         .step("H", [0])
         .register_into(registry)
     )
-    state = _make(StateVec)
-    DefaultSimulator._run_decomposed_gate(  # noqa: SLF001 - exercise real StateVec bindings
-        state,
-        registry,
-        "ROTATE",
-        [0],
-        angles=input_angles,
-    )
-    fresh = _make(StateVec)
+    state = _make()
+    state.run_circuit(_circuit("ROTATE", [0], angles=input_angles), gate_registry=registry)
+    fresh = _make()
     fresh.run_gate("H", [0])
     fresh.run_gate("RZ", [0], angle=direct_angle)
     fresh.run_gate("H", [0])
-    # Angle64 wraps turns, so negative rotations may differ by global phase.
-    # Compare the full density matrix, including off-diagonal coherences.
-    actual, expected = _snapshot(state), _snapshot(fresh)
-    assert [a * b.conjugate() for a in actual for b in actual] == pytest.approx(
-        [a * b.conjugate() for a in expected for b in expected],
-    )
+    # A unit error yields a non-Clifford angle, which SparseStabPy rejects; a
+    # sign error flips the stabilizer sign.
+    assert _snapshot(state) == _snapshot(fresh)
 
 
 @pytest.mark.parametrize("simulate_gate", [False, True])

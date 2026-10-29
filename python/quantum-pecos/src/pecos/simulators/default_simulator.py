@@ -63,6 +63,9 @@ class DefaultSimulator:
             allow_sequences=self._allow_sequence_locations,
         )
 
+    def validate_gate_params(self, symbol: str, **params: object) -> None:
+        """Check an active registered step's parameters; states without a contract accept all."""
+
     def run_gate(
         self,
         symbol: str,
@@ -188,9 +191,8 @@ class DefaultSimulator:
                 step_params["simulate_gate"] = False
             try:
                 self.validate_gate_batch(step_symbol, step_loc, **step_params)
-                param_validator = getattr(self, "validate_gate_params", None)
-                if step_params.get("simulate_gate", True) and param_validator is not None:
-                    param_validator(step_symbol, **step_params)
+                if step_params.get("simulate_gate", True):
+                    self.validate_gate_params(step_symbol, **step_params)
             except ValueError as error:
                 msg = f"Gate {symbol} step {step_symbol}: {error}"
                 raise ValueError(msg) from error

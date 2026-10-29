@@ -11,11 +11,32 @@
 
 """Tests for AST to Stim code generator."""
 
+import re
+
 import pytest
 import stim
-from pecos.slr import Barrier, CReg, If, Main, Permute, QReg, Repeat
-from pecos.slr.ast import slr_to_ast
-from pecos.slr.ast.codegen import AstToStim, ast_to_stim, ast_to_stim_str
+from pecos.circuits import QuantumCircuit
+from pecos.slr import Barrier, CReg, For, If, Main, Parallel, Permute, QReg, Repeat, SlrConverter
+from pecos.slr.ast import (
+    AllocatorDecl,
+    BitRef,
+    BitTypeExpr,
+    BlockCall,
+    BlockDecl,
+    BlockInput,
+    GateKind,
+    GateOp,
+    MeasureOp,
+    Program,
+    QubitTypeExpr,
+    RegisterDecl,
+    ResourceEffect,
+    SingleBitArg,
+    SingleQubitArg,
+    SlotRef,
+    slr_to_ast,
+)
+from pecos.slr.ast.codegen import AstToStim, ast_to_qasm, ast_to_stim, ast_to_stim_str, ast_to_stim_with_records
 from pecos.slr.gen_codes import StimGenerator
 from pecos.slr.qeclib import qubit as qb
 
@@ -701,3 +722,241 @@ class TestAstToStimFullPipeline:
         assert "CX" in code
         assert "0 1" in code or "0, 1" in code
         assert "1 2" in code or "1, 2" in code
+
+
+def _qasm_record_bits(qasm):
+    """Read destinations from QASM measurement lines, including unstored records."""
+    records = []
+    for line in qasm.splitlines():
+        if line.strip().startswith("measure "):
+            match = re.search(r"-> (\w+)\[(\d+)\];", line)
+            records.append((match[1], int(match[2])) if match else None)
+    return tuple(records)
+
+
+def _assert_record_values(circuit, records, expected):
+    """Scatter deterministic samples into classical registers, last write wins."""
+    assert isinstance(records, tuple)
+    assert len(records) == circuit.num_measurements
+    for row in circuit.compile_sampler().sample(shots=4):
+        values = {name: [0] * len(bits) for name, bits in expected.items()}
+        for bit, value in zip(records, row, strict=True):
+            if bit is not None:
+                name, index = bit
+                values[name][index] = int(value)
+        assert values == expected
+
+
+@pytest.fixture(
+    params=[
+        "out_of_order",
+        "multi_target",
+        "two_registers",
+        "overwritten",
+        "bare_and_short_results",
+        "long_results",
+        "partial_register",
+        "repeat",
+        "nested_repeat",
+        "permuting_repeat",
+        "static_for",
+        "parallel",
+        "qubit_permute",
+        "classical_permute",
+        "later_assignment",
+        "conditional",
+        "quantum_circuit",
+        "empty_repeat",
+        "no_measurements",
+    ],
+)
+def record_program(request):
+    """Programs with independently known classical values and baseline Stim text."""
+    q, c, d = QReg("q", 2), CReg("c", 2), CReg("d", 1)
+    measurements = (qb.Measure(q[1]) > c[1], qb.Measure(q[0]) > c[0])
+    cases = {
+        "no_measurements": ((), {"c": [0, 0]}, "X 0"),
+        "out_of_order": (measurements, {"c": [1, 0]}, "X 0\nM 1 0"),
+        "multi_target": ((qb.Measure(q[1], q[0]) > (c[1], c[0]),), {"c": [1, 0]}, "X 0\nM 1 0"),
+        "two_registers": (
+            (qb.Measure(q[1]) > d[0], qb.Measure(q[0]) > c[0]),
+            {"c": [1, 0], "d": [0]},
+            "X 0\nM 1 0",
+        ),
+        "overwritten": (
+            (qb.Measure(q[1]) > c[0], *measurements),
+            {"c": [1, 0]},
+            "X 0\nM 1 1 0",
+        ),
+        "bare_and_short_results": (
+            (qb.Measure(q[1]), qb.Measure(q[0], q[1]) > c[0]),
+            {"c": [1, 0]},
+            "X 0\nM 1 0 1",
+        ),
+        "long_results": ((qb.Measure(q[0]) > (c[0], c[1]),), {"c": [1, 0]}, "X 0\nM 0"),
+        "partial_register": (
+            (qb.Measure(q[0]) > c[1],),
+            {"c": [0, 1]},
+            "X 0\nM 0",
+        ),
+        "repeat": (
+            (qb.Measure(q[0]), Repeat(3).block(*measurements), qb.Measure(q[1]) > d[0]),
+            {"c": [1, 0], "d": [0]},
+            "X 0\nM 0\nREPEAT 3 {\n    M 1 0\n}\nM 1",
+        ),
+        "nested_repeat": (
+            (Repeat(2).block(qb.Measure(q[0]), Repeat(3).block(*measurements), qb.Measure(q[1])),),
+            {"c": [1, 0]},
+            "X 0\nREPEAT 2 {\n    M 0\n    REPEAT 3 {\n        M 1 0\n    }\n    M 1\n}",
+        ),
+        "permuting_repeat": (
+            (Repeat(3).block(Permute([q[0], q[1]], [q[1], q[0]]), *measurements),),
+            {"c": [0, 1]},
+            "X 0\nM 0 1 1 0 0 1",
+        ),
+        "static_for": (
+            (For("i", 0, 3).Do(*measurements),),
+            {"c": [1, 0]},
+            "X 0\nM 1 0 1 0 1 0",
+        ),
+        "parallel": ((Parallel(*measurements),), {"c": [1, 0]}, "X 0\nM 1 0"),
+        "qubit_permute": (
+            (Permute([q[0], q[1]], [q[1], q[0]]), *measurements),
+            {"c": [0, 1]},
+            "X 0\nM 0 1",
+        ),
+        "classical_permute": (
+            (*measurements, Permute([c[0], c[1]], [c[1], c[0]]), *measurements),
+            {"c": [1, 0]},
+            "X 0\nM 1 0 1 0",
+        ),
+        "later_assignment": (
+            (*measurements, c.set(0), *measurements),
+            {"c": [1, 0]},
+            "X 0\nM 1 0 1 0",
+        ),
+        "conditional": (
+            (qb.Measure(q[0]) > c[0], If(c[0] == 0).Then(qb.X(q[1])), qb.Measure(q[1]) > c[1]),
+            {"c": [1, 0]},
+            "X 0\nM 0\nX 1\nCX rec[-1] 1\nM 1",
+        ),
+        "empty_repeat": (
+            (Repeat(0).block(*measurements), *measurements),
+            {"c": [1, 0]},
+            "X 0\nM 1 0",
+        ),
+    }
+    if request.param == "quantum_circuit":
+        qc = QuantumCircuit()
+        qc.append("H", {0})
+        qc.append("Z", {0})
+        qc.append({"MX": {0}, "M": {1}})
+        program = SlrConverter.from_quantum_circuit(qc)
+        return program, SlrConverter(program).qasm(), {"c": [1, 0]}, "H 0\nTICK\nZ 0\nTICK\nH 0\nM 1 0\nH 0"
+
+    body, expected, baseline = cases[request.param]
+    program = Main(q, c, d, qb.X(q[0]), *body)
+    # QASM has no static For lowering. Its explicitly unrolled equivalent is
+    # the destination oracle; the Stim backend must execute the For itself.
+    oracle = Main(q, c, d, qb.X(q[0]), *(measurements * 3)) if request.param == "static_for" else program
+    return program, SlrConverter(oracle).qasm(), expected, baseline
+
+
+def test_record_circuit_compatibility(record_program) -> None:
+    """Existing APIs retain the exact pre-mapping circuit text for every case."""
+    program, _qasm, _expected, baseline = record_program
+    assert str(SlrConverter(program).stim()) == baseline
+    assert ast_to_stim_str(slr_to_ast(program)) == baseline
+
+
+def test_stim_with_records(record_program) -> None:
+    """Both mapping APIs match QASM destinations and deterministic classical values."""
+    program, qasm, expected, _baseline = record_program
+    converter = SlrConverter(program)
+    circuit, records = converter.stim_with_records()
+    assert circuit == converter.stim()
+    assert records == _qasm_record_bits(qasm)
+    _assert_record_values(circuit, records, expected)
+    ast_circuit, ast_records = ast_to_stim_with_records(slr_to_ast(program))
+    assert ast_circuit == ast_to_stim(slr_to_ast(program))
+    assert ast_records == _qasm_record_bits(qasm)
+    _assert_record_values(ast_circuit, ast_records, expected)
+
+
+@pytest.fixture
+def aliased_record_program():
+    """Nested BlockCalls resolve bit aliases before either backend sees them."""
+    inputs = (
+        BlockInput(name="a", effect=ResourceEffect.CONSUMED, type_expr=QubitTypeExpr()),
+        BlockInput(name="out", effect=ResourceEffect.LIVE_PRESERVED, type_expr=BitTypeExpr()),
+    )
+    inner = BlockDecl(
+        name="inner",
+        inputs=inputs,
+        body=(MeasureOp(targets=(SlotRef(allocator="a", index=0),), results=(BitRef(register="out", index=0),)),),
+    )
+    outer = BlockDecl(
+        name="outer",
+        inputs=inputs,
+        body=(
+            BlockCall(
+                callee="inner",
+                arg_bindings=(
+                    SingleQubitArg(slot=SlotRef(allocator="a", index=0)),
+                    SingleBitArg(bit=BitRef(register="out", index=0)),
+                ),
+            ),
+        ),
+    )
+    return Program(
+        name="aliased",
+        declarations=(
+            AllocatorDecl(name="q", capacity=2),
+            AllocatorDecl(name="child", capacity=2, parent="q"),
+            AllocatorDecl(name="nested", capacity=2, parent="child"),
+            RegisterDecl(name="c", size=2),
+        ),
+        block_decls=(inner, outer),
+        body=(
+            GateOp(gate=GateKind.X, targets=(SlotRef(allocator="q", index=0),)),
+            BlockCall(
+                callee="outer",
+                arg_bindings=(
+                    SingleQubitArg(slot=SlotRef(allocator="nested", index=0)),
+                    SingleBitArg(bit=BitRef(register="c", index=1)),
+                ),
+            ),
+            BlockCall(
+                callee="outer",
+                arg_bindings=(
+                    SingleQubitArg(slot=SlotRef(allocator="nested", index=1)),
+                    SingleBitArg(bit=BitRef(register="c", index=0)),
+                ),
+            ),
+        ),
+    )
+
+
+def test_aliased_record_circuit_compatibility(aliased_record_program) -> None:
+    """Block flattening and nested allocators retain their original circuit."""
+    assert ast_to_stim_str(aliased_record_program) == "X 0\nM 0 1"
+
+
+def test_aliased_records(aliased_record_program) -> None:
+    """Record destinations use the outer bits bound through both nested calls."""
+    circuit, records = ast_to_stim_with_records(aliased_record_program)
+    assert circuit == ast_to_stim(aliased_record_program)
+    assert records == _qasm_record_bits(ast_to_qasm(aliased_record_program))
+    _assert_record_values(circuit, records, {"c": [0, 1]})
+
+
+def test_record_history_resets_between_programs(record_program) -> None:
+    """Reusing the generator clears the history along with its record frame."""
+    program, qasm, expected, _baseline = record_program
+    previous = QReg("previous", 1)
+    generator = AstToStim(collect_records=True)
+    generator.generate(slr_to_ast(Main(previous, qb.X(previous[0]), qb.Measure(previous[0]))))
+    circuit = generator.generate(slr_to_ast(program))
+    records = tuple(generator.context.record_bits)
+    assert records == _qasm_record_bits(qasm)
+    _assert_record_values(circuit, records, expected)

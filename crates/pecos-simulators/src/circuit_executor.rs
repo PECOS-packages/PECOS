@@ -226,8 +226,7 @@ fn execute_gate_command<S: CliffordGateable>(
             sim.pz(qubits);
         }
         GateType::MX => {
-            sim.h(qubits);
-            measurements.extend(sim.mz(qubits));
+            measurements.extend(sim.mx(qubits));
         }
         GateType::MZ | GateType::MeasureFree => {
             measurements.extend(sim.mz(qubits));

@@ -4,11 +4,16 @@ use crate::runtime_frame::{error, processing_error};
 use crate::{ByteMessage, ControlEngine, EngineStage, Gate, GateType};
 use pecos_core::{Angle64, RngManageable, errors::PecosError};
 use pecos_random::PecosRng;
-use std::{any::Any, collections::BTreeMap};
+use std::{
+    any::Any,
+    collections::{BTreeMap, BTreeSet},
+};
 
-/// Maximum complete transport size. Extraction itself remains uncapped.
+/// Maximum complete transport size and scheduled collection byte budget.
 pub const MAX_SCHEDULE_BYTES: usize = 64 * 1024 * 1024;
-/// Original native timing and gates. Opaque events cannot be represented.
+/// Native timing and ordered operations. The v6 encoder admits ordinary gates
+/// only. Internally normalized v7 batches may also carry checked exposure metadata;
+/// opaque runtime events cannot be represented here.
 #[derive(Clone, Debug)]
 pub struct TimedBatch {
     /// Runtime-local identity, separate from host run/worker/shot context.
@@ -28,7 +33,7 @@ pub struct ScheduledIdleZ(ScheduledNoise);
 impl ScheduledIdleZ {
     /// Rates are inverse seconds (linear) or radians/second (sine and coherent).
     /// # Errors
-    /// Rejects capacity outside 1..=16 or nonfinite/negative rates.
+    /// Rejects zero capacity or nonfinite/negative rates.
     pub fn new(qubits: usize, linear: f64, sine: f64, coherent: f64) -> Result<Self, PecosError> {
         Ok(Self(
             ScheduledNoise::new(qubits)?
@@ -54,12 +59,13 @@ pub type ScheduledIdleNoise = ScheduledNoise;
 /// Checked scheduled noise configuration. `new` leaves all channels disabled;
 /// idle setters configure local memory noise, and [`ScheduledLocalNoise`] adds
 /// gate, preparation and readout faults by lossless conversion.
-/// Uses the existing general-noise sampling and leakage semantics. Capacity is
-/// fixed at 1..=16 and the scheduled host requires a state-vector engine.
+/// Uses the existing general-noise sampling and leakage semantics. Capacity must
+/// be at least 1; the profile sets no upper bound.
 #[derive(Clone, Debug)]
 pub struct ScheduledNoise {
     qubits: usize,
     local: Option<LocalFaults>,
+    crosstalk: Option<MeasurementCrosstalk>,
     linear: f64,
     sine: f64,
     coherent: f64,
@@ -67,15 +73,17 @@ pub struct ScheduledNoise {
     sine_model: BTreeMap<String, f64>,
     coherent_model: BTreeMap<String, f64>,
 }
-/// Checked local Pauli gate faults, preparation faults and asymmetric readout.
-/// Idle channels use the supplied profile. Single-qubit faults are uniform over
-/// X/Y/Z; two-qubit faults default to uniform nonidentity Pauli pairs and accept
-/// a checked distribution. Gate fault probability is independent of angle.
+/// Checked local gate faults, preparation faults and asymmetric readout.
+/// Idle channels use the supplied profile. The single-qubit Pauli branch is uniform
+/// over X/Y/Z; two-qubit Pauli faults default to uniform nonidentity pairs and accept
+/// a checked distribution. Two-qubit rotation faults can use checked angle scaling.
 /// Emitted RZ gates receive single-qubit faults too; virtual frame updates must
 /// be resolved by the runtime/adapter rather than represented as physical RZ.
-/// Preparation faults can leak or flip the qubit. Gate emission/leakage, seepage
-/// and crosstalk are disabled.
-/// Capacity remains 1..=16 with a state-vector engine. Measurements capture
+/// Preparation faults can leak or flip the qubit, and preparation crosstalk can
+/// collapse other prepared qubits in Z. Gate faults optionally select
+/// emission models and seepage using the general model. Explicit measurement
+/// crosstalk can be enabled on the underlying `ScheduledNoise` profile.
+/// Stabilizers require disabled coherent idle and admitted Clifford rotations. Measurements capture
 /// leakage before subsequent operations, allowing same-batch reset and reuse.
 #[derive(Clone, Debug)]
 pub struct ScheduledLocalNoise {
@@ -88,14 +96,25 @@ struct LocalFaults {
     p2: f64,
     prep: f64,
     prep_leak_ratio: f64,
+    prep_crosstalk: f64,
     p2_pauli_model: Option<BTreeMap<String, f64>>,
+    p2_angle_params: Option<(f64, f64, f64, f64)>,
+    p2_angle_power: Option<f64>,
+    p1_emission_ratio: f64,
+    p1_emission_model: Option<BTreeMap<String, f64>>,
+    p1_seepage_prob: f64,
+    p2_emission_ratio: f64,
+    p2_emission_model: Option<BTreeMap<String, f64>>,
+    p2_seepage_prob: f64,
     meas0: f64,
     meas1: f64,
 }
 impl ScheduledLocalNoise {
     /// Set local fault probabilities while preserving the supplied idle channels.
     /// Replaces all existing local fault probabilities if the profile already has them,
-    /// including resetting preparation leakage to zero and two-qubit faults to uniform.
+    /// including resetting preparation leakage and crosstalk to zero, two-qubit faults
+    /// to uniform, two-qubit angle scaling to its constant-rate defaults, and all gate emission
+    /// and seepage settings to their disabled/default values.
     /// # Errors
     /// Every probability must be finite and in [0, 1].
     pub fn new(
@@ -121,11 +140,134 @@ impl ScheduledLocalNoise {
                 p2,
                 prep,
                 prep_leak_ratio: 0.0,
+                prep_crosstalk: 0.0,
                 p2_pauli_model: None,
+                p2_angle_params: None,
+                p2_angle_power: None,
+                p1_emission_ratio: 0.0,
+                p1_emission_model: None,
+                p1_seepage_prob: 0.0,
+                p2_emission_ratio: 0.0,
+                p2_emission_model: None,
+                p2_seepage_prob: 0.0,
                 meas0,
                 meas1,
             },
         })
+    }
+    /// Set the probability that each other prepared qubit is collapsed in Z on PZ.
+    /// Uses the general model's preparation crosstalk, independently of `prep`.
+    /// Internal measurement results are discarded. This does not give spectators
+    /// physical occupancy or split their pending idle intervals: accrued idle noise
+    /// runs at the spectator's next physical operation, after the collapse. Non-Z
+    /// idle channels can change outcome distributions under this ordering.
+    /// # Errors
+    /// Rejects nonfinite probabilities or values outside [0, 1], even when prep is zero.
+    pub fn with_prep_crosstalk(mut self, probability: f64) -> Result<Self, PecosError> {
+        if !probability.is_finite() || !(0.0..=1.0).contains(&probability) {
+            return Err(error(
+                "scheduled preparation crosstalk probability must be finite and in [0, 1]",
+            ));
+        }
+        self.local.prep_crosstalk = probability;
+        Ok(self)
+    }
+    /// Set the fraction of single-qubit faults that select spontaneous emission.
+    /// Emission replaces the ideal gate. For an already leaked operand, it attempts
+    /// seepage instead of sampling a fresh emission fault. The default is zero.
+    /// # Errors
+    /// Rejects nonfinite ratios or values outside [0, 1], even when p1 is zero.
+    pub fn with_p1_emission_ratio(mut self, ratio: f64) -> Result<Self, PecosError> {
+        self.local.p1_emission_ratio = ratio;
+        self.local.validate()?;
+        Ok(self)
+    }
+    /// Set the conditional single-qubit emission distribution.
+    /// Keys are X/Y/Z/L, where L leaks the operand.
+    /// Omission uses the general model's uniform nonidentity Pauli distribution.
+    /// This replaces only the distribution, preserving other local and idle faults.
+    /// # Errors
+    /// Uses the general model's checked key/weight validation, including when disabled.
+    pub fn with_p1_emission_model(
+        mut self,
+        model: BTreeMap<String, f64>,
+    ) -> Result<Self, PecosError> {
+        self.local.p1_emission_model = Some(model);
+        self.local.validate()?;
+        Ok(self)
+    }
+    /// Set the conditional seepage probability for an already leaked operand.
+    /// It is attempted only when a single-qubit fault selects emission, and returns
+    /// the operand to a random computational basis state. The default is zero.
+    /// # Errors
+    /// Rejects nonfinite probabilities or values outside [0, 1], even when disabled.
+    pub fn with_p1_seepage_prob(mut self, probability: f64) -> Result<Self, PecosError> {
+        self.local.p1_seepage_prob = probability;
+        self.local.validate()?;
+        Ok(self)
+    }
+    /// Set the fraction of two-qubit faults that select spontaneous emission.
+    /// Emission replaces the ideal gate. For an already leaked operand, it attempts
+    /// seepage instead of sampling a fresh emission fault. The default is zero.
+    /// # Errors
+    /// Rejects nonfinite ratios or values outside [0, 1], even when p2 is zero.
+    pub fn with_p2_emission_ratio(mut self, ratio: f64) -> Result<Self, PecosError> {
+        self.local.p2_emission_ratio = ratio;
+        self.local.validate()?;
+        Ok(self)
+    }
+    /// Set the conditional two-qubit emission distribution.
+    /// Keys are ordered I/X/Y/Z/L pairs except II; L leaks that operand.
+    /// Omission uses the general model's uniform nonidentity Pauli distribution.
+    /// This replaces only the distribution, preserving other local and idle faults.
+    /// # Errors
+    /// Uses the general model's checked key/weight validation, including when disabled.
+    pub fn with_p2_emission_model(
+        mut self,
+        model: BTreeMap<String, f64>,
+    ) -> Result<Self, PecosError> {
+        self.local.p2_emission_model = Some(model);
+        self.local.validate()?;
+        Ok(self)
+    }
+    /// Set the conditional seepage probability for an already leaked operand.
+    /// It is attempted only when a two-qubit fault selects emission, and returns
+    /// the operand to a random computational basis state. The default is zero.
+    /// # Errors
+    /// Rejects nonfinite probabilities or values outside [0, 1], even when disabled.
+    pub fn with_p2_seepage_prob(mut self, probability: f64) -> Result<Self, PecosError> {
+        self.local.p2_seepage_prob = probability;
+        self.local.validate()?;
+        Ok(self)
+    }
+    /// Set signed principal-angle coefficients using the existing general model.
+    /// For `x = |theta|/pi`, the multiplier is `a*x^power+b` for negative angles,
+    /// `c*x^power+d` for positive angles, and `(b+d)/2` at zero. Angles are reduced
+    /// to `(-pi, pi]`, with both half-turn endpoints on the positive branch.
+    /// This changes only the event probability, preserving the Pauli distribution
+    /// and all other faults. It does not rewrite gates or runtime timing.
+    /// # Errors
+    /// Rejects nonfinite coefficients or effective probabilities outside [0, 1]
+    /// anywhere in the principal-angle range, including when p2 is zero.
+    pub fn with_p2_angle_params(
+        mut self,
+        a: f64,
+        b: f64,
+        c: f64,
+        d: f64,
+    ) -> Result<Self, PecosError> {
+        self.local.p2_angle_params = Some((a, b, c, d));
+        self.local.validate()?;
+        Ok(self)
+    }
+    /// Set a finite positive angle exponent, preserving all other settings.
+    /// The default exponent is one; with constant coefficients it has no effect.
+    /// # Errors
+    /// Rejects nonfinite/nonpositive powers and invalid combined probabilities.
+    pub fn with_p2_angle_power(mut self, power: f64) -> Result<Self, PecosError> {
+        self.local.p2_angle_power = Some(power);
+        self.local.validate()?;
+        Ok(self)
     }
     /// Set the conditional distribution of a two-qubit Pauli fault.
     /// Keys are ordered pairs of I/X/Y/Z excluding II. The first character acts
@@ -176,6 +318,43 @@ impl ScheduledLocalNoise {
         Ok(self)
     }
 }
+impl LocalFaults {
+    fn configure(&self, mut builder: GeneralNoiseModelBuilder) -> GeneralNoiseModelBuilder {
+        builder = builder
+            .with_p1(self.p1)
+            .with_p2(self.p2)
+            .with_p_prep(self.prep)
+            .with_prep_leak_ratio(self.prep_leak_ratio)
+            .with_p_prep_crosstalk(self.prep_crosstalk)
+            .with_p_meas_0(self.meas0)
+            .with_p_meas_1(self.meas1)
+            .with_p1_emission_ratio(self.p1_emission_ratio)
+            .with_p1_seepage_prob(self.p1_seepage_prob)
+            .with_p2_emission_ratio(self.p2_emission_ratio)
+            .with_p2_seepage_prob(self.p2_seepage_prob);
+        if let Some(model) = &self.p2_pauli_model {
+            builder = builder.with_p2_pauli_model(model);
+        }
+        if let Some(model) = &self.p1_emission_model {
+            builder = builder.with_p1_emission_model(model);
+        }
+        if let Some(model) = &self.p2_emission_model {
+            builder = builder.with_p2_emission_model(model);
+        }
+        if let Some((a, b, c, d)) = self.p2_angle_params {
+            builder = builder.with_p2_angle_params(a, b, c, d);
+        }
+        if let Some(power) = self.p2_angle_power {
+            builder = builder.with_p2_angle_power(power);
+        }
+        builder
+    }
+    fn validate(&self) -> Result<(), PecosError> {
+        self.configure(GeneralNoiseModelBuilder::new())
+            .validate_configuration()
+            .map_err(PecosError::Input)
+    }
+}
 /// Lossless conversion for scheduled transport composition; all configured faults remain enabled.
 impl From<ScheduledLocalNoise> for ScheduledNoise {
     fn from(profile: ScheduledLocalNoise) -> Self {
@@ -190,17 +369,33 @@ impl IntoNoiseModel for ScheduledLocalNoise {
     }
 }
 
+#[derive(Clone, Debug)]
+struct MeasurementCrosstalk {
+    local: f64,
+    global: f64,
+    model: BTreeMap<String, f64>,
+}
+impl MeasurementCrosstalk {
+    fn configure(&self, builder: GeneralNoiseModelBuilder) -> GeneralNoiseModelBuilder {
+        builder
+            .with_p_meas_crosstalk_local(self.local)
+            .with_p_meas_crosstalk_global(self.global)
+            .with_p_meas_crosstalk_model(&self.model)
+    }
+}
+
 impl ScheduledNoise {
     /// Construct a profile with all idle families disabled.
     /// # Errors
-    /// Rejects capacity outside 1..=16.
+    /// Rejects zero capacity.
     pub fn new(qubits: usize) -> Result<Self, PecosError> {
-        if !(1..=16).contains(&qubits) {
-            return Err(error("scheduled capacity must be 1..=16"));
+        if qubits == 0 {
+            return Err(error("scheduled capacity must be at least 1"));
         }
         Ok(Self {
             qubits,
             local: None,
+            crosstalk: None,
             linear: 0.0,
             sine: 0.0,
             coherent: 0.0,
@@ -209,6 +404,41 @@ impl ScheduledNoise {
             coherent_model: BTreeMap::from([("RZ".to_owned(), 1.0)]),
         })
     }
+    /// Opt into explicit measurement-crosstalk exposures from a v7 adapter.
+    /// No exposures are inserted automatically. Local victims retain their order;
+    /// global exposures select prepared qubits outside the adapter's exclusions.
+    /// Uses `GeneralNoiseModel`'s 0/1/L transition distribution and leakage semantics.
+    /// Existing local/idle settings, including preparation crosstalk, are retained.
+    /// Hooks remain disabled; ordinary v6 input cannot encode exposures.
+    /// Exposures do not close idle gaps: accrued idle noise runs at the next
+    /// physical operation, after the exposure. Non-Z idle channels can change
+    /// outcome distributions under this ordering even with symmetric transitions.
+    /// Z/RZ channels preserve distributions but need not preserve seeded paths:
+    /// leakage from an exposure can suppress subsequent idle-noise RNG draws.
+    /// # Errors
+    /// Rejects invalid probabilities and transition maps, including at zero rates.
+    pub fn with_measurement_crosstalk(
+        mut self,
+        local: f64,
+        global: f64,
+        model: BTreeMap<String, f64>,
+    ) -> Result<Self, PecosError> {
+        let config = MeasurementCrosstalk {
+            local,
+            global,
+            model,
+        };
+        config
+            .configure(GeneralNoiseModelBuilder::new())
+            .validate_configuration()
+            .map_err(PecosError::Input)?;
+        self.crosstalk = Some(config);
+        Ok(self)
+    }
+    pub(crate) fn spectator_capacity(&self) -> Option<usize> {
+        self.crosstalk.as_ref().map(|_| self.qubits)
+    }
+
     fn validate_model(model: &BTreeMap<String, f64>, axes: &[&str]) -> Result<(), PecosError> {
         for (axis, value) in model {
             if !axes.contains(&axis.as_str()) {
@@ -305,20 +535,14 @@ impl ScheduledNoise {
             .with_p_idle_sin_squared(self.sine, &self.sine_model)
             .with_p_idle_coherent(self.coherent, &self.coherent_model);
         if let Some(local) = &self.local {
-            builder = builder
-                .with_p1(local.p1)
-                .with_p2(local.p2)
-                .with_p_prep(local.prep)
-                .with_prep_leak_ratio(local.prep_leak_ratio)
-                .with_p_meas_0(local.meas0)
-                .with_p_meas_1(local.meas1);
-            if let Some(model) = &local.p2_pauli_model {
-                builder = builder.with_p2_pauli_model(model);
-            }
+            builder = local.configure(builder);
+        }
+        if let Some(crosstalk) = &self.crosstalk {
+            builder = crosstalk.configure(builder);
         }
         let inner = builder.build();
         ScheduledIdleModel {
-            timeline: ScheduleTimeline::new(self.qubits),
+            timeline: ScheduleTimeline::new(),
             config: self,
             inner,
         }
@@ -535,7 +759,9 @@ pub(crate) struct ScheduledIdleModel {
 pub(crate) struct ScheduleTimeline {
     native_shot: Option<u64>,
     next_batch: u64,
-    ends: Vec<u64>,
+    /// Busy end time of each qubit used so far; absent qubits are idle from zero.
+    /// Sized by use, not capacity, so building a profile allocates nothing per qubit.
+    ends: BTreeMap<usize, u64>,
 }
 pub(crate) struct PreparedSchedule {
     pub(crate) messages: Vec<ByteMessage>,
@@ -544,6 +770,20 @@ pub(crate) struct PreparedSchedule {
 impl ScheduledIdleModel {
     pub(crate) fn qubits(&self) -> usize {
         self.config.qubits
+    }
+    pub(crate) fn validate_backend(
+        &self,
+        backend: crate::quantum::ScheduledBackend,
+    ) -> Result<(), PecosError> {
+        if backend.capacity < self.qubits() {
+            return Err(error("simulator capacity below scheduled profile"));
+        }
+        if backend.clifford && self.config.coherent != 0.0 {
+            return Err(error(
+                "scheduled stabilizer requires coherent idle rate zero; choose an explicit stochastic profile",
+            ));
+        }
+        Ok(())
     }
     pub(crate) fn prepare(&self, input: &ByteMessage) -> Result<PreparedSchedule, PecosError> {
         self.prepare_batches(decode(input)?)
@@ -568,11 +808,11 @@ impl ScheduleTimeline {
     pub(crate) fn has_native_shot(&self) -> bool {
         self.native_shot.is_some()
     }
-    pub(crate) fn new(qubits: usize) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             native_shot: None,
             next_batch: 0,
-            ends: vec![0; qubits],
+            ends: BTreeMap::new(),
         }
     }
     pub(crate) fn prepare(
@@ -603,19 +843,34 @@ impl ScheduleTimeline {
                 .start_nanos
                 .checked_add(batch.duration_nanos)
                 .ok_or_else(|| error("schedule time overflow"))?;
-            if batch.gates.len() > crate::scheduled_events::MAX_BATCH_OPERATIONS {
-                return Err(error("scheduled batch operation limit"));
-            }
-            let mut touched = vec![false; config.qubits];
+            let mut touched = BTreeSet::new();
             let mut builder = ByteMessage::quantum_operations_builder();
             for gate in batch.gates {
+                if gate.gate_type.is_crosstalk_payload() {
+                    // An exposure is ordered noise metadata, not a physical use.
+                    // It neither closes an idle gap nor advances a busy endpoint.
+                    // Only `push_crosstalk` creates one, after validating it
+                    // against this profile.
+                    builder.add_gate_command(&gate);
+                    continue;
+                }
                 for q in &gate.qubits {
                     let q = q.0;
-                    if q >= touched.len() || batch.start_nanos < prepared.timeline.ends[q] {
-                        return Err(error("scheduled capacity or timing overlap"));
+                    if q >= config.qubits {
+                        return Err(error(&format!(
+                            "scheduled qubit {q} is outside profile capacity {}; use qubits 0..{} or enlarge the profile",
+                            config.qubits, config.qubits
+                        )));
                     }
-                    if !touched[q] {
-                        let gap = batch.start_nanos - prepared.timeline.ends[q];
+                    let busy_until = prepared.timeline.ends.get(&q).copied().unwrap_or(0);
+                    if batch.start_nanos < busy_until {
+                        return Err(error(&format!(
+                            "scheduled batch {} starts at {} ns while qubit {q} is busy until {busy_until} ns; start the batch at or after {busy_until} ns",
+                            batch.batch_index, batch.start_nanos
+                        )));
+                    }
+                    if touched.insert(q) {
+                        let gap = batch.start_nanos - busy_until;
                         let seconds = std::time::Duration::from_nanos(gap).as_secs_f64();
                         config.validate_idle(seconds)?;
                         // All admitted idle channels are local. PZ erases
@@ -624,15 +879,12 @@ impl ScheduleTimeline {
                         if gap != 0 && gate.gate_type != GateType::PZ {
                             builder.idle(seconds, &[q]);
                         }
-                        touched[q] = true;
                     }
                 }
                 builder.add_gate_command(&gate);
             }
-            for (q, touched) in touched.into_iter().enumerate() {
-                if touched {
-                    prepared.timeline.ends[q] = end;
-                }
+            for q in touched {
+                prepared.timeline.ends.insert(q, end);
             }
             let msg = builder.build();
             if !msg.is_empty()? {
@@ -663,7 +915,7 @@ impl ControlEngine for ScheduledIdleModel {
     }
     fn reset(&mut self) -> Result<(), PecosError> {
         self.inner.reset()?;
-        self.timeline = ScheduleTimeline::new(self.config.qubits);
+        self.timeline = ScheduleTimeline::new();
         Ok(())
     }
 }
@@ -733,7 +985,7 @@ mod timing_tests {
     }
     #[test]
     fn preparation_omission_is_per_qubit_and_preserves_busy_duration() {
-        let prepared = ScheduleTimeline::new(2)
+        let prepared = ScheduleTimeline::new()
             .prepare(
                 &config(),
                 vec![
@@ -749,13 +1001,42 @@ mod timing_tests {
         );
     }
     #[test]
+    fn capacity_and_overlap_errors_name_the_qubit_and_times() {
+        let outside = ScheduleTimeline::new()
+            .prepare(&config(), vec![batch(0, 0, 1, vec![Gate::mz(&[2])])])
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(
+            outside.contains("qubit 2 is outside profile capacity 2"),
+            "{outside}"
+        );
+        let overlap = ScheduleTimeline::new()
+            .prepare(
+                &config(),
+                vec![
+                    batch(0, 0, 5, vec![Gate::mz(&[0])]),
+                    batch(1, 4, 1, vec![Gate::mz(&[0])]),
+                ],
+            )
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(
+            overlap.contains(
+                "batch 1 starts at 4000000000 ns while qubit 0 is busy until 5000000000 ns"
+            ),
+            "{overlap}"
+        );
+    }
+    #[test]
     fn only_first_operation_on_each_qubit_controls_preparation_omission() {
         for prep_first in [false, true] {
             let mut gates = vec![Gate::pz(&[0]), Gate::rz(Angle64::ZERO, &[0])];
             if !prep_first {
                 gates.reverse();
             }
-            let prepared = ScheduleTimeline::new(2)
+            let prepared = ScheduleTimeline::new()
                 .prepare(&config(), vec![batch(0, 2, 1, gates)])
                 .unwrap();
             assert_eq!(

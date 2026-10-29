@@ -1125,6 +1125,8 @@ class QisEngineBuilder:
         *,
         custom_event_policy: str = "reject_unhandled",
         native_gates: list[str] | None = None,
+        batch_adapter_factory: Callable[[], object] | None = None,
+        clock_model: str = "continuous",
     ) -> QisEngineBuilder: ...
     def selene_runtime_plugin(
         self,
@@ -1134,6 +1136,8 @@ class QisEngineBuilder:
         *,
         custom_event_policy: str = "reject_unhandled",
         native_gates: list[str] | None = None,
+        batch_adapter_factory: Callable[[], object] | None = None,
+        clock_model: str = "continuous",
     ) -> QisEngineBuilder: ...
 
 class PhirJsonEngineBuilder:
@@ -4366,11 +4370,33 @@ class ScheduledEventBatch:
         """(operation position, native ID, program ID); program IDs may repeat."""
         ...
 
+class ScheduledCrosstalk:
+    """Ordered spectator exposure returned alongside gates by a batch adapter.
+
+    Creates no physical busy time and no program-visible measurement. IDs must be
+    distinct; the profile capacity is checked at admission.
+    """
+
+    @staticmethod
+    def local(victims: Sequence[int]) -> ScheduledCrosstalk:
+        """Explicit potential victims in sampling order; unprepared/leaked are skipped."""
+        ...
+
+    @staticmethod
+    def global_excluding(exclusions: Sequence[int]) -> ScheduledCrosstalk:
+        """Prepared logical qubits except these IDs, in the general model's order."""
+        ...
+
 class _ScheduledBatchAdapter(Protocol):
     """Structural callback protocol; not a runtime extension class."""
 
     def validate(self, batch: ScheduledEventBatch) -> None: ...
-    def translate(self, batch: ScheduledEventBatch) -> list[Gate]: ...
+    def translate(
+        self,
+        batch: ScheduledEventBatch,
+    ) -> list[Gate] | list[ScheduledCrosstalk] | list[Gate | ScheduledCrosstalk]:
+        """Return a list; homogeneous and mixed lists are all accepted."""
+        ...
 
 class ScheduledEventIdleZ:
     """Checked v7 profile returned by scheduled_event_idle_z()."""
@@ -4399,6 +4425,25 @@ def scheduled_idle_noise(
     coherent: float = 0.0,
     coherent_model: dict[str, float] | None = None,
 ) -> ScheduledIdleNoise: ...
+def scheduled_measurement_crosstalk(
+    profile: ScheduledIdleZ | ScheduledIdleNoise | ScheduledLocalNoise,
+    model: dict[str, float],
+    *,
+    local_probability: float = 0.0,
+    global_probability: float = 0.0,
+) -> ScheduledIdleNoise:
+    """Opt into explicit measurement exposures, retaining idle/local settings.
+
+    model maps 0/1 transitions (for example "0->1" or "1->L") to weights, using
+    GeneralNoiseModel validation. No exposures are inserted automatically; wrap
+    the result with scheduled_event_idle_noise(profile, adapter_factory).
+
+    Accrued idle noise runs at the next physical operation, after the exposure.
+    Non-Z idle channels can change output distributions under this ordering even
+    with symmetric transitions. Z/RZ channels need not preserve seeded paths:
+    exposure leakage can suppress later idle-noise RNG draws.
+    """
+    ...
 
 class ScheduledEventIdleNoise:
     """Checked v7 local idle-noise profile with a per-shot batch adapter."""
@@ -4409,7 +4454,7 @@ def scheduled_event_idle_noise(
 ) -> ScheduledEventIdleNoise: ...
 
 class ScheduledLocalNoise:
-    """Checked Pauli gate, preparation X/leakage and asymmetric readout faults."""
+    """Checked gate Pauli/emission/seepage, preparation and readout faults."""
 
 def scheduled_local_noise(
     idle: ScheduledIdleNoise,
@@ -4420,12 +4465,30 @@ def scheduled_local_noise(
     meas0: float = 0.0,
     meas1: float = 0.0,
     prep_leak_ratio: float = 0.0,
+    prep_crosstalk: float = 0.0,
     p2_pauli_model: dict[str, float] | None = None,
+    p2_angle_params: tuple[float, float, float, float] | None = None,
+    p2_angle_power: float | None = None,
+    p1_emission_ratio: float = 0.0,
+    p1_emission_model: dict[str, float] | None = None,
+    p1_seepage_prob: float = 0.0,
+    p2_emission_ratio: float = 0.0,
+    p2_emission_model: dict[str, float] | None = None,
+    p2_seepage_prob: float = 0.0,
 ) -> ScheduledLocalNoise:
     """Configure preparation leakage and optional ordered two-qubit Pauli weights.
 
+    prep_crosstalk collapses each other prepared qubit in Z on preparation,
+    independently of prep. Internal results are discarded, and spectators retain
+    their original whole idle intervals. Defaults to zero.
     prep_leak_ratio is conditional on a preparation fault. p2_pauli_model maps
     nonidentity I/X/Y/Z pairs to finite nonnegative weights summing to one.
+    Optional angle coefficients (a, b, c, d) and a positive exponent scale p2
+    using signed principal angles; combined event probabilities must stay in [0, 1].
+    Emission ratios select gate-replacing faults. Models map X/Y/Z/L (one qubit)
+    or ordered I/X/Y/Z/L pairs except II (two qubits) to normalized weights.
+    Seepage is conditional on emission for an already leaked operand.
+    All ratios/probabilities and distributions are checked even when disabled.
     """
     ...
 

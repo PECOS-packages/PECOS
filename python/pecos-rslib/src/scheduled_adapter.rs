@@ -2,7 +2,7 @@
 use crate::dag_circuit_bindings::PyGate;
 use pecos_core::errors::PecosError;
 use pecos_engines::scheduled_events::{
-    MAX_BATCH_OPERATIONS, ScheduledBatchAdapter, ScheduledEventBatch, ScheduledEventNoise,
+    ScheduledBatchAdapter, ScheduledCrosstalk, ScheduledEventBatch, ScheduledEventNoise,
     ScheduledEventOp, ScheduledGateBuffer,
 };
 use pecos_engines::scheduled_frame::{ScheduledIdleZ, ScheduledNoise};
@@ -11,12 +11,74 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyList};
 use std::cell::Cell;
 
+/// An ordered spectator exposure returned alongside gates by a batch adapter.
+/// It creates no physical busy time and has no program-visible measurement.
+#[pyclass(name = "ScheduledCrosstalk", frozen, from_py_object)]
+#[derive(Clone)]
+pub struct PyScheduledCrosstalk {
+    inner: ScheduledCrosstalk,
+}
+fn check_spectator_ids(ids: &[usize]) -> PyResult<()> {
+    let mut seen = std::collections::BTreeSet::new();
+    if let Some(duplicate) = ids.iter().find(|q| !seen.insert(**q)) {
+        return Err(PyValueError::new_err(format!(
+            "spectator ID {duplicate} appears more than once; list each spectator once (the profile capacity is checked at admission)"
+        )));
+    }
+    Ok(())
+}
+#[pymethods]
+impl PyScheduledCrosstalk {
+    /// Explicit potential victims in sampling order; unprepared/leaked are skipped.
+    #[staticmethod]
+    fn local(victims: Vec<usize>) -> PyResult<Self> {
+        check_spectator_ids(&victims)?;
+        Ok(Self {
+            inner: ScheduledCrosstalk::Local(victims),
+        })
+    }
+    /// Prepared logical qubits except these IDs, in the general model's order.
+    #[staticmethod]
+    fn global_excluding(exclusions: Vec<usize>) -> PyResult<Self> {
+        check_spectator_ids(&exclusions)?;
+        Ok(Self {
+            inner: ScheduledCrosstalk::GlobalExcluding(exclusions),
+        })
+    }
+}
+/// Opt into explicit measurement exposures while retaining all local/idle settings.
+/// No automatic exposure insertion. Wrap the returned profile with
+/// scheduled_event_idle_noise(profile, adapter_factory) for live v7 execution.
+/// Accrued idle noise runs at the next physical operation, after the exposure.
+/// Non-Z idle channels can change output distributions under this ordering even
+/// with symmetric transitions. Z/RZ channels need not preserve seeded paths:
+/// exposure leakage can suppress later idle-noise RNG draws.
+#[pyfunction]
+#[pyo3(signature = (profile, model, *, local_probability = 0.0, global_probability = 0.0))]
+pub fn scheduled_measurement_crosstalk(
+    profile: Py<PyAny>,
+    model: std::collections::BTreeMap<String, f64>,
+    local_probability: f64,
+    global_probability: f64,
+    py: Python<'_>,
+) -> PyResult<crate::engine_builders::PyScheduledIdleNoise> {
+    let profile =
+        crate::engine_builders::extract_scheduled_idle(&profile, py).ok_or_else(|| {
+            PyTypeError::new_err("expected a checked scheduled idle or local noise profile")
+        })?;
+    Ok(crate::engine_builders::PyScheduledIdleNoise {
+        inner: profile
+            .with_measurement_crosstalk(local_probability, global_probability, model)
+            .map_err(|e| PyValueError::new_err(e.to_string()))?,
+    })
+}
+
 thread_local! {
     static IN_CALLBACK: Cell<bool> = const { Cell::new(false) };
 }
-struct CallbackScope(bool);
+pub(crate) struct CallbackScope(bool);
 impl CallbackScope {
-    fn enter() -> Self {
+    pub(crate) fn enter() -> Self {
         Self(IN_CALLBACK.replace(true))
     }
 }
@@ -77,8 +139,8 @@ impl PyScheduledEventBatch {
             })
             .collect()
     }
-    /// (original operation position, native result ID, program result ID).
-    /// Native IDs are unique; program IDs may repeat when a slot is re-measured.
+    /// (original operation position, native result ID, source measurement ID).
+    /// Source IDs distinguish measurement occurrences, including reused QIR slots.
     #[getter]
     fn measurements(&self) -> Vec<(usize, u64, u64)> {
         self.inner
@@ -135,12 +197,25 @@ impl ScheduledBatchAdapter for PythonAdapter {
                 .bind(py)
                 .cast::<PyList>()
                 .map_err(|e| callback_error("output", e.into()))?;
-            if gates.len() > MAX_BATCH_OPERATIONS {
-                return Err(PecosError::Input(
-                    "scheduled adapter expansion limit".into(),
-                ));
+            if gates
+                .len()
+                .checked_mul(40)
+                .is_none_or(|bytes| bytes > output.remaining_bytes())
+            {
+                return Err(PecosError::Input(format!(
+                    "scheduled adapter expansion limit: {} records need at least {} bytes, with {} remaining; reduce adapter output",
+                    gates.len(),
+                    gates.len().saturating_mul(40),
+                    output.remaining_bytes()
+                )));
             }
             for gate in gates.iter() {
+                if let Ok(effect) = gate.extract::<PyScheduledCrosstalk>() {
+                    output.push_crosstalk(effect.inner).map_err(|e| {
+                        PecosError::Input(format!("scheduled adapter spectator: {e}"))
+                    })?;
+                    continue;
+                }
                 let gate = gate
                     .extract::<PyGate>()
                     .map_err(|e| callback_error("output gate", e.into()))?;
@@ -252,6 +327,8 @@ pub(crate) fn extract_event_noise(
     }
 }
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<PyScheduledCrosstalk>()?;
+    m.add_function(wrap_pyfunction!(scheduled_measurement_crosstalk, m)?)?;
     m.add_class::<PyScheduledEventBatch>()?;
     m.add_class::<PyScheduledEventIdleZ>()?;
     m.add_class::<PyScheduledEventIdleNoise>()?;

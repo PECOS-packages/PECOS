@@ -23,6 +23,46 @@ use crate::CliffordGateable;
 use pecos_core::gate_type::GateType;
 use pecos_core::{Angle64, QubitId};
 
+// Check the entire batch before angle admission or any decomposition prefix.
+fn validate_pairs<T: CliffordGateable + ?Sized>(
+    sim: &T,
+    pairs: &[(QubitId, QubitId)],
+    gate: &str,
+) -> Result<(), String> {
+    for &(a, b) in pairs {
+        if a == b {
+            return Err(format!(
+                "{gate} requires distinct qubits; repeated qubit {} appears twice in a pair",
+                a.index()
+            ));
+        }
+        sim.validate_qubits(&[a, b]);
+    }
+    Ok(())
+}
+
+/// Pure admission for the rotation subset emitted by scheduled engines.
+/// Uses the same fixed-point simplification and snapping policy as `CliffordRotation`.
+/// Does not mutate a simulator or consume randomness. Unsupported kinds/arity reject.
+#[must_use]
+pub fn supports_clifford_rotation(kind: GateType, angles: &[Angle64]) -> bool {
+    match (kind, angles) {
+        (GateType::RZ | GateType::RX | GateType::RY, &[angle]) => {
+            pecos_core::try_simplify_rotation_snapped(kind, angle).is_some()
+        }
+        (GateType::RZZ | GateType::RXX | GateType::RYY, &[angle]) => {
+            simplify_two_qubit_clifford(kind, angle).is_some()
+        }
+        (GateType::RXY1Q, &[theta, phi]) => pecos_core::try_simplify_rxy1q(theta, phi).is_some(),
+        (GateType::RXYXY2Q, &[theta, phi]) => {
+            pecos_core::try_simplify_rotation_snapped(GateType::RXX, theta) == Some(GateType::I)
+                || (simplify_two_qubit_clifford(GateType::RXX, theta).is_some()
+                    && pecos_core::try_simplify_rotation_snapped(GateType::RZ, phi).is_some())
+        }
+        _ => false,
+    }
+}
+
 /// Rotation gates that only succeed at Clifford angles.
 ///
 /// This trait sits between [`CliffordGateable`] (no angles at all) and
@@ -67,6 +107,11 @@ pub trait CliffordRotation: CliffordGateable {
     ///
     /// # Errors
     /// Returns `Err` with a message if the angle is not a recognized Clifford angle.
+    /// Returns `Err` before applying any gate if a pair repeats a qubit.
+    ///
+    /// # Panics
+    /// Panics before applying any gate if the backend's bounds hook
+    /// (`validate_qubits`) rejects an operand.
     fn try_rzz(
         &mut self,
         angle: Angle64,
@@ -77,6 +122,11 @@ pub trait CliffordRotation: CliffordGateable {
     ///
     /// # Errors
     /// Returns `Err` with a message if the angle is not a recognized Clifford angle.
+    /// Returns `Err` before applying any gate if a pair repeats a qubit.
+    ///
+    /// # Panics
+    /// Panics before applying any gate if the backend's bounds hook
+    /// (`validate_qubits`) rejects an operand.
     fn try_rxx(
         &mut self,
         angle: Angle64,
@@ -87,6 +137,11 @@ pub trait CliffordRotation: CliffordGateable {
     ///
     /// # Errors
     /// Returns `Err` with a message if the angle is not a recognized Clifford angle.
+    /// Returns `Err` before applying any gate if a pair repeats a qubit.
+    ///
+    /// # Panics
+    /// Panics before applying any gate if the backend's bounds hook
+    /// (`validate_qubits`) rejects an operand.
     fn try_ryy(
         &mut self,
         angle: Angle64,
@@ -97,20 +152,24 @@ pub trait CliffordRotation: CliffordGateable {
     ///
     /// # Errors
     /// Returns an error before changing the state if an angle is unsupported.
+    /// Returns `Err` before applying any gate if a pair repeats a qubit.
+    ///
+    /// # Panics
+    /// Panics before applying any gate if the backend's bounds hook
+    /// (`validate_qubits`) rejects an operand.
     fn try_rxyxy2q(
         &mut self,
         theta: Angle64,
         phi: Angle64,
         pairs: &[(QubitId, QubitId)],
     ) -> Result<&mut Self, String> {
+        validate_pairs(self, pairs, "RXYXY2Q")?;
         // Snap before the zero check so a theta within the Clifford tolerance
         // of zero is the identity for any phi, as `try_rxx` would treat it.
         if pecos_core::try_simplify_rotation_snapped(GateType::RXX, theta) == Some(GateType::I) {
             return Ok(self);
         }
-        if simplify_two_qubit_clifford(GateType::RXX, theta).is_none()
-            || pecos_core::try_simplify_rotation_snapped(GateType::RZ, phi).is_none()
-        {
+        if !supports_clifford_rotation(GateType::RXYXY2Q, &[theta, phi]) {
             return Err(format!(
                 "RXYXY2Q(theta={theta}, phi={phi}) is not a supported Clifford rotation"
             ));
@@ -153,6 +212,11 @@ pub trait CliffordRotation: CliffordGateable {
     ///
     /// # Errors
     /// Returns `Err` with a message if any component angle is not a Clifford angle.
+    /// Returns `Err` before applying any gate if a pair repeats a qubit.
+    ///
+    /// # Panics
+    /// Panics before applying any gate if the backend's bounds hook
+    /// (`validate_qubits`) rejects an operand.
     fn try_rxxryyrzz(
         &mut self,
         alpha: Angle64,
@@ -166,6 +230,11 @@ pub trait CliffordRotation: CliffordGateable {
     ///
     /// # Errors
     /// Returns `Err` with a message if any component is not a Clifford angle.
+    /// Returns `Err` before applying any gate if a pair repeats a qubit.
+    ///
+    /// # Panics
+    /// Panics before applying any gate if the backend's bounds hook
+    /// (`validate_qubits`) rejects an operand.
     fn try_u2q(
         &mut self,
         before: [[Angle64; 3]; 2],
@@ -193,6 +262,7 @@ impl<T: CliffordGateable> CliffordRotation for T {
         angle: Angle64,
         pairs: &[(QubitId, QubitId)],
     ) -> Result<&mut Self, String> {
+        validate_pairs(self, pairs, "RZZ")?;
         apply_two_qubit_rotation(self, GateType::RZZ, angle, pairs)
     }
 
@@ -201,6 +271,7 @@ impl<T: CliffordGateable> CliffordRotation for T {
         angle: Angle64,
         pairs: &[(QubitId, QubitId)],
     ) -> Result<&mut Self, String> {
+        validate_pairs(self, pairs, "RXX")?;
         apply_two_qubit_rotation(self, GateType::RXX, angle, pairs)
     }
 
@@ -209,6 +280,7 @@ impl<T: CliffordGateable> CliffordRotation for T {
         angle: Angle64,
         pairs: &[(QubitId, QubitId)],
     ) -> Result<&mut Self, String> {
+        validate_pairs(self, pairs, "RYY")?;
         apply_two_qubit_rotation(self, GateType::RYY, angle, pairs)
     }
 
@@ -251,6 +323,7 @@ impl<T: CliffordGateable> CliffordRotation for T {
         gamma: Angle64,
         pairs: &[(QubitId, QubitId)],
     ) -> Result<&mut Self, String> {
+        validate_pairs(self, pairs, "RXXRYYRZZ")?;
         let error = || {
             format!(
                 "RXXRYYRZZ(alpha={alpha}, beta={beta}, gamma={gamma}) is not a Clifford rotation"
@@ -269,6 +342,7 @@ impl<T: CliffordGateable> CliffordRotation for T {
         after: [[Angle64; 3]; 2],
         pairs: &[(QubitId, QubitId)],
     ) -> Result<&mut Self, String> {
+        validate_pairs(self, pairs, "U2Q")?;
         // U2q = (U3(before[0]) x U3(before[1])) * RXXRYYRZZ(interaction) * (U3(after[0]) x U3(after[1]))
         // Applied right-to-left: after first, then interaction, then before.
         let err = || "U2q is not a Clifford rotation".to_string();
@@ -361,6 +435,8 @@ fn dispatch_two_qubit_decomposition<T: CliffordGateable>(
             dispatch_two_qubit_clifford(sim, clifford, pairs)
         }
         TwoQubitCliffordDecomposition::TensorPauli(pauli) => {
+            // The public try_* entries reject repeated pairs for the full batch first,
+            // including half turns that never dispatch a two-qubit gate.
             for &(q0, q1) in pairs {
                 dispatch_single_qubit_clifford(sim, pauli, &[q0])?;
                 dispatch_single_qubit_clifford(sim, pauli, &[q1])?;
@@ -498,6 +574,65 @@ mod tests {
     use super::*;
     use crate::sparse_stab::SparseStab;
     use pecos_core::{QubitId, controlled_rotations::lower_crz, qid};
+
+    #[test]
+    fn pure_admission_matches_rotation_dispatch() {
+        let angles = [
+            Angle64::ZERO,
+            Angle64::QUARTER_TURN,
+            Angle64::HALF_TURN,
+            -Angle64::QUARTER_TURN,
+            Angle64::QUARTER_TURN / 2u64,
+            pecos_core::radians!(0.123),
+            pecos_core::radians!(1e-12),
+            pecos_core::radians!(1e-6),
+        ];
+        for angle in angles {
+            for kind in [
+                GateType::RX,
+                GateType::RY,
+                GateType::RZ,
+                GateType::RXX,
+                GateType::RYY,
+                GateType::RZZ,
+            ] {
+                let mut sim = SparseStab::new(2);
+                let result = match kind {
+                    GateType::RX => sim.try_rx(angle, &qid(0)),
+                    GateType::RY => sim.try_ry(angle, &qid(0)),
+                    GateType::RZ => sim.try_rz(angle, &qid(0)),
+                    GateType::RXX => sim.try_rxx(angle, &[(0.into(), 1.into())]),
+                    GateType::RYY => sim.try_ryy(angle, &[(0.into(), 1.into())]),
+                    GateType::RZZ => sim.try_rzz(angle, &[(0.into(), 1.into())]),
+                    _ => unreachable!(),
+                };
+                assert_eq!(
+                    supports_clifford_rotation(kind, &[angle]),
+                    result.is_ok(),
+                    "{kind:?} {angle}"
+                );
+                assert!(!supports_clifford_rotation(kind, &[]));
+                assert!(!supports_clifford_rotation(kind, &[angle, angle]));
+            }
+            for phi in angles {
+                for kind in [GateType::RXY1Q, GateType::RXYXY2Q] {
+                    let mut sim = SparseStab::new(2);
+                    let result = if kind == GateType::RXY1Q {
+                        sim.try_rxy1q(angle, phi, &qid(0))
+                    } else {
+                        sim.try_rxyxy2q(angle, phi, &[(0.into(), 1.into())])
+                    };
+                    assert_eq!(
+                        supports_clifford_rotation(kind, &[angle, phi]),
+                        result.is_ok(),
+                        "{kind:?} {angle} {phi}"
+                    );
+                    assert!(!supports_clifford_rotation(kind, &[angle]));
+                }
+            }
+        }
+        assert!(!supports_clifford_rotation(GateType::T, &[]));
+    }
 
     #[test]
     fn try_rz_clifford_angles() {

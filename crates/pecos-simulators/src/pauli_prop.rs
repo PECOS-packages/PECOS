@@ -833,6 +833,7 @@ impl CliffordGateable for PauliProp {
     /// * `&mut Self` - Returns self for method chaining
     #[inline]
     fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "CX");
         for &(q1, q2) in pairs {
             let q1 = q1.index();
             let q2 = q2.index();
@@ -852,6 +853,7 @@ impl CliffordGateable for PauliProp {
     /// Applies the controlled-Y gate.
     #[inline]
     fn cy(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "CY");
         for &(q1, q2) in pairs {
             let q1 = q1.index();
             let q2 = q2.index();
@@ -869,6 +871,7 @@ impl CliffordGateable for PauliProp {
     /// Applies the controlled-Z gate.
     #[inline]
     fn cz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "CZ");
         for &(q1, q2) in pairs {
             let q1 = q1.index();
             let q2 = q2.index();
@@ -886,6 +889,7 @@ impl CliffordGateable for PauliProp {
     /// Applies the square root of XX gate.
     #[inline]
     fn sxx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SXX");
         for &(q1, q2) in pairs {
             let q1 = q1.index();
             let q2 = q2.index();
@@ -906,6 +910,7 @@ impl CliffordGateable for PauliProp {
     /// Ignoring global phase, `SXX` and `SXXdg` have the same binary Pauli action.
     #[inline]
     fn sxxdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SXXDG");
         for &(q1, q2) in pairs {
             let q1 = q1.index();
             let q2 = q2.index();
@@ -924,6 +929,7 @@ impl CliffordGateable for PauliProp {
     /// Applies the square root of YY gate.
     #[inline]
     fn syy(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SYY");
         for &(q1, q2) in pairs {
             let q1 = q1.index();
             let q2 = q2.index();
@@ -943,6 +949,7 @@ impl CliffordGateable for PauliProp {
     /// Ignoring global phase, `SYY` and `SYYdg` have the same binary Pauli action.
     #[inline]
     fn syydg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SYYDG");
         for &(q1, q2) in pairs {
             let q1 = q1.index();
             let q2 = q2.index();
@@ -960,6 +967,7 @@ impl CliffordGateable for PauliProp {
     /// Applies the square root of ZZ gate.
     #[inline]
     fn szz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SZZ");
         for &(q1, q2) in pairs {
             let q1 = q1.index();
             let q2 = q2.index();
@@ -980,6 +988,7 @@ impl CliffordGateable for PauliProp {
     /// Ignoring global phase, `SZZ` and `SZZdg` have the same binary Pauli action.
     #[inline]
     fn szzdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SZZDG");
         for &(q1, q2) in pairs {
             let q1 = q1.index();
             let q2 = q2.index();
@@ -998,6 +1007,7 @@ impl CliffordGateable for PauliProp {
     /// Applies the SWAP gate.
     #[inline]
     fn swap(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SWAP");
         for &(q1, q2) in pairs {
             let q1 = q1.index();
             let q2 = q2.index();

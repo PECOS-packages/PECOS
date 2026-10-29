@@ -39,11 +39,13 @@ use pecos_random::{PecosRng, RngExt};
 use pecos_simulators::measurement_sampler::{MeasurementKind, SampleResult};
 use pecos_simulators::symbolic_sparse_stab::MeasurementHistory;
 use pecos_simulators::{BitmaskPauliProp, CliffordGateable};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 
 mod stratified;
-pub use stratified::{FaultCountError, FaultCountPmf, FaultStratumCounts, StratifiedEstimate};
+pub use stratified::{
+    ExactFaultStratum, FaultCountError, FaultCountPmf, FaultStratumCounts, StratifiedEstimate,
+};
 
 use super::circuit_definitions::{
     CircuitDefinitions, DefinitionError, definitions_from_tick_circuit,
@@ -444,7 +446,7 @@ fn xor_sorted_unique_indices(left: &[usize], right: &[usize]) -> Vec<usize> {
 }
 
 /// Core forward propagation: evolve a Pauli through gates, collecting affected measurements.
-fn propagate_forward(
+pub(crate) fn propagate_forward(
     prop: &mut BitmaskPauliProp,
     start: usize,
     gates: &[GateLoc],
@@ -595,6 +597,11 @@ pub enum FaultChannel {
     PMeas,
     /// State preparation flip (`p_prep`).
     PPrep,
+    /// Caller-supplied mechanism; `with_noise` preserves all its probabilities.
+    /// It follows the same model as every location: alternatives are equally
+    /// likely given that the location fires (see [`FaultLocation`]), which
+    /// [`FaultCatalog::to_mechanisms`] relies on.
+    Explicit,
 }
 
 /// One alternative within a physical fault location.
@@ -705,7 +712,7 @@ impl FaultCatalog {
         build_structural_fault_catalog(tc)
     }
 
-    /// Recompute noise-dependent probability fields for this catalog.
+    /// Recompute built-in channel probabilities, leaving explicit locations untouched.
     ///
     /// This updates only `channel_probability`, `no_fault_probability`, and
     /// `absolute_probability`. Structural fields such as `num_alternatives`,
@@ -723,6 +730,7 @@ impl FaultCatalog {
                 FaultChannel::P2 => noise.p2,
                 FaultChannel::PMeas => noise.p_meas,
                 FaultChannel::PPrep => noise.p_prep,
+                FaultChannel::Explicit => continue,
             };
             let k = loc.num_alternatives;
             debug_assert!(k > 0, "fault location has no alternatives");
@@ -790,61 +798,116 @@ impl FaultCatalog {
     }
 }
 
+// Range products avoid rescanning every inactive location for each configuration.
+// A product tree needs no division, so zero factors and underflowed full products
+// do not prevent computing a nonzero product over the unselected locations.
+struct NoFaultProducts {
+    tree: Vec<f64>,
+    width: usize,
+    len: usize,
+}
+
+impl NoFaultProducts {
+    fn new(catalog: &FaultCatalog) -> Self {
+        let len = catalog.locations.len();
+        let width = len.next_power_of_two();
+        let mut tree = vec![1.0; 2 * width];
+        for (i, location) in catalog.locations.iter().enumerate() {
+            tree[width + i] = location.no_fault_probability;
+        }
+        for i in (1..width).rev() {
+            tree[i] = tree[2 * i] * tree[2 * i + 1];
+        }
+        Self { tree, width, len }
+    }
+
+    fn range(&self, start: usize, end: usize) -> f64 {
+        let (mut left, mut right) = (start + self.width, end + self.width);
+        let mut product = 1.0;
+        while left < right {
+            if left % 2 == 1 {
+                product *= self.tree[left];
+                left += 1;
+            }
+            if right % 2 == 1 {
+                right -= 1;
+                product *= self.tree[right];
+            }
+            left /= 2;
+            right /= 2;
+        }
+        product
+    }
+
+    fn excluding(&self, selected: &[usize]) -> f64 {
+        // Selected indices must be strictly ascending and below the catalog length.
+        debug_assert!(
+            selected.iter().all(|&index| index < self.len)
+                && selected.windows(2).all(|pair| pair[0] < pair[1]),
+            "selected locations must be strictly ascending and below the catalog length"
+        );
+        let mut product = 1.0;
+        let mut start = 0;
+        for &index in selected {
+            product *= self.range(start, index);
+            start = index + 1;
+        }
+        product * self.range(start, self.len)
+    }
+}
+
+// Sort once, retaining precisely the indices with odd multiplicity.
+fn parity_indices(mut indices: Vec<usize>) -> Vec<usize> {
+    indices.sort_unstable();
+    let mut end = 0;
+    let mut start = 0;
+    while start < indices.len() {
+        let value = indices[start];
+        let mut next = start + 1;
+        while next < indices.len() && indices[next] == value {
+            next += 1;
+        }
+        if (next - start) % 2 == 1 {
+            indices[end] = value;
+            end += 1;
+        }
+        start = next;
+    }
+    indices.truncate(end);
+    indices
+}
+
 /// Construct effects and stored probabilities for an ascending location selection.
 fn build_fault_configuration(
     catalog: &FaultCatalog,
     location_indices: Vec<usize>,
     alternative_indices: Vec<usize>,
+    products: &NoFaultProducts,
 ) -> FaultConfiguration {
-    let mut meas_set = std::collections::BTreeSet::new();
-    let mut det_set = std::collections::BTreeSet::new();
-    let mut obs_set = std::collections::BTreeSet::new();
-    let mut tracked_pauli_set = std::collections::BTreeSet::new();
+    let mut meas_set = Vec::new();
+    let mut det_set = Vec::new();
+    let mut obs_set = Vec::new();
+    let mut tracked_pauli_set = Vec::new();
     let mut selected_prob = 1.0;
 
     for (&location_index, &alternative_index) in location_indices.iter().zip(&alternative_indices) {
         let loc = &catalog.locations[location_index];
         let alt = &loc.faults[alternative_index];
         selected_prob *= alt.absolute_probability;
-        for &m in &alt.affected_measurements {
-            if !meas_set.remove(&m) {
-                meas_set.insert(m);
-            }
-        }
-        for &d in &alt.affected_detectors {
-            if !det_set.remove(&d) {
-                det_set.insert(d);
-            }
-        }
-        for &o in &alt.affected_observables {
-            if !obs_set.remove(&o) {
-                obs_set.insert(o);
-            }
-        }
-        for &op in &alt.affected_tracked_paulis {
-            if !tracked_pauli_set.remove(&op) {
-                tracked_pauli_set.insert(op);
-            }
-        }
+        meas_set.extend_from_slice(&alt.affected_measurements);
+        det_set.extend_from_slice(&alt.affected_detectors);
+        obs_set.extend_from_slice(&alt.affected_observables);
+        tracked_pauli_set.extend_from_slice(&alt.affected_tracked_paulis);
     }
-
-    let selected_set: std::collections::BTreeSet<usize> =
-        location_indices.iter().copied().collect();
-    let unselected_no_fault: f64 = catalog
-        .locations
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| !selected_set.contains(i))
-        .map(|(_, loc)| loc.no_fault_probability)
-        .product();
+    let unselected_no_fault = products.excluding(&location_indices);
 
     FaultConfiguration {
         location_indices,
         alternative_indices,
-        affected_measurements: meas_set.into_iter().collect(),
-        affected_detectors: det_set.into_iter().collect(),
-        affected_observables: obs_set.into_iter().collect(),
-        affected_tracked_paulis: tracked_pauli_set.into_iter().collect(),
+        affected_measurements: parity_indices(meas_set),
+        affected_detectors: parity_indices(det_set),
+        affected_observables: parity_indices(obs_set),
+        affected_tracked_paulis: parity_indices(tracked_pauli_set),
         selected_probability: selected_prob,
         configuration_probability: selected_prob * unselected_no_fault,
     }
@@ -857,6 +920,7 @@ fn build_fault_configuration(
 /// Combinations range over nonzero-probability fault alternatives only; the
 /// full structural catalog remains available through `FaultCatalog::locations`.
 struct FaultConfigCursor {
+    products: NoFaultProducts,
     k: usize,
     location_indices: Vec<usize>,
     alternative_indices: Vec<Vec<usize>>,
@@ -887,6 +951,7 @@ impl FaultConfigCursor {
         let num_active_locations = location_indices.len();
         if k == 0 || k > num_active_locations {
             return Self {
+                products: NoFaultProducts::new(catalog),
                 k,
                 location_indices,
                 alternative_indices,
@@ -904,6 +969,7 @@ impl FaultConfigCursor {
             .collect();
         let alt_indices = vec![0usize; k];
         Self {
+            products: NoFaultProducts::new(catalog),
             k,
             location_indices,
             alternative_indices,
@@ -957,6 +1023,7 @@ impl FaultConfigCursor {
                 .zip(&self.alt_indices)
                 .map(|(&loc_pos, &alt_pos)| self.alternative_indices[loc_pos][alt_pos])
                 .collect(),
+            &self.products,
         )
     }
 
@@ -1459,25 +1526,12 @@ fn toggle_sorted(values: &mut Vec<usize>, value: usize) {
 pub enum MeasurementHistoryError {
     /// A gate outside the supported Clifford/prep/measurement/metadata set.
     UnsupportedGate(UnsupportedGateError),
-    /// The circuit contains a `MeasureLeaked`.
-    ///
-    /// It collapses its qubit and later outcomes can depend on the result, but
-    /// it consumes no measurement record, so it has no column in a
-    /// record-aligned history and its dependencies cannot be expressed without
-    /// one.
-    LeakedMeasurementNotRepresentable { tick: usize, qubits: Vec<usize> },
 }
 
 impl fmt::Display for MeasurementHistoryError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::UnsupportedGate(err) => write!(f, "{err}"),
-            Self::LeakedMeasurementNotRepresentable { tick, qubits } => write!(
-                f,
-                "MeasureLeaked at tick {tick} on qubits {qubits:?} consumes no measurement \
-                 record, so it cannot appear in a record-aligned measurement history; \
-                 remove it or use a path that does not require record alignment"
-            ),
         }
     }
 }
@@ -1502,36 +1556,47 @@ impl From<UnsupportedGateError> for MeasurementHistoryError {
 /// (which detector/DEM-output record indices reference).
 ///
 /// One column per measurement *record*. `MeasureLeaked` collapses its qubit but
-/// consumes no record, so it gets no column and the remaining columns are
-/// renumbered around it.
+/// consumes no record. Its random outcome stays hidden until a recorded
+/// measurement observes it, so simulator indices equal record columns.
 ///
 /// # Errors
 ///
 /// Returns [`MeasurementHistoryError::UnsupportedGate`] for a gate outside the
-/// supported Clifford/prep/measurement/metadata set, and
-/// [`MeasurementHistoryError::LeakedMeasurementNotRepresentable`] when a
-/// recorded outcome depends on a `MeasureLeaked` result -- that dependency
-/// names a column this history has no way to express.
+/// supported Clifford/prep/measurement/metadata set.
 pub fn symbolic_measurement_history(
     tc: &TickCircuit,
 ) -> Result<MeasurementHistory, MeasurementHistoryError> {
-    use super::symbolic_replay::{Dispatch, apply_lowered_clifford, apply_unitary_clifford};
-    use pecos_simulators::SymbolicSparseStab;
+    let sim = pecos_simulators::SymbolicSparseStab::new(measurement_history_num_qubits(tc));
+    replay_measurement_history(tc, 0..tc.num_ticks(), sim)
+}
 
-    let num_qubits = tc
-        .iter_gate_batches()
+/// Use the full circuit, including qubits first touched after a replay window.
+pub(crate) fn measurement_history_num_qubits(tc: &TickCircuit) -> usize {
+    tc.iter_gate_batches()
         .flat_map(|g| g.as_gate().qubits.iter())
         .map(|q| q.index() + 1)
         .max()
-        .unwrap_or(0);
+        .unwrap_or(0)
+}
 
-    let mut sim = SymbolicSparseStab::new(num_qubits);
-    // Simulator measurement index -> record column, for the measurements that
-    // consume a record; and the leaked ones, which consume none.
-    let mut column_of: BTreeMap<usize, usize> = BTreeMap::new();
-    let mut leaked_sites: BTreeMap<usize, (usize, Vec<usize>)> = BTreeMap::new();
+/// Record-aligned replay shared by full histories and detector suffix probes.
+/// The supplied simulator has no measurements yet; it may be Bell-purified.
+/// Tick locations in errors remain absolute, while record columns start at zero.
+pub(crate) fn replay_measurement_history(
+    tc: &TickCircuit,
+    ticks: std::ops::Range<usize>,
+    mut sim: pecos_simulators::SymbolicSparseStab,
+) -> Result<MeasurementHistory, MeasurementHistoryError> {
+    use super::symbolic_replay::{Dispatch, apply_lowered_clifford, apply_unitary_clifford};
 
-    for (tick_idx, tick) in tc.iter_ticks() {
+    debug_assert_eq!(
+        sim.measurement_count(),
+        0,
+        "replay columns start at zero, so the supplied simulator must not have measured yet"
+    );
+
+    for (offset, tick) in tc.ticks()[ticks.clone()].iter().enumerate() {
+        let tick_idx = ticks.start + offset;
         for gate in tick.iter_gate_batches() {
             let gate_idx = gate.batch_index();
             let qs: Vec<usize> = gate.qubits.iter().map(pecos_core::QubitId::index).collect();
@@ -1566,32 +1631,16 @@ pub fn symbolic_measurement_history(
                         }
                     }
                 }
-                // `MeasureLeaked` consumes no measurement record, so it has no
-                // place in a record-aligned history -- but it does collapse its
-                // qubit, and later outcomes can depend on the result. A symbolic
-                // result carries its dependencies as indices into the
-                // simulator's own numbering, so dropping the column would strand
-                // every reference to it. Representing that needs a notion of a
-                // hidden random source this history does not have, so say so
-                // rather than return a history whose dependencies dangle.
-                GateType::MX
-                | GateType::MZ
-                | GateType::MeasureFree
-                | GateType::MeasureLeaked
-                | GateType::MPZ => {
-                    // Every measurement collapses its qubit, so all of them run.
-                    // Only the record-bearing ones earn a column.
-                    let records_a_result = gate.gate_type.consumes_measurement_record();
+                // Collapse without advancing record indices; later observations
+                // re-root any hidden outcome onto a recorded measurement.
+                GateType::MeasureLeaked => sim.mz_unrecorded(&qs),
+                GateType::MX | GateType::MZ | GateType::MeasureFree | GateType::MPZ => {
                     if gate.gate_type == GateType::MX {
                         sim.h(&qs);
                     }
-                    for result in sim.mz(&qs) {
-                        if records_a_result {
-                            let column = column_of.len();
-                            column_of.insert(result.index, column);
-                        } else {
-                            leaked_sites.insert(result.index, (tick_idx, qs.clone()));
-                        }
+                    sim.mz(&qs);
+                    if gate.gate_type == GateType::MX {
+                        sim.h(&qs);
                     }
                     // Measure-and-prepare resets after the readout.
                     if gate.gate_type == GateType::MPZ {
@@ -1618,56 +1667,7 @@ pub fn symbolic_measurement_history(
         }
     }
 
-    if leaked_sites.is_empty() {
-        return Ok(sim.measurement_history().clone());
-    }
-    remap_history_onto_records(sim.measurement_history(), &column_of, &leaked_sites)
-}
-
-/// Renumber a measurement history onto record columns, dropping the leaked
-/// measurements that hold no record.
-///
-/// A symbolic result names its dependencies by the simulator's own measurement
-/// index, so dropping a column means every surviving reference has to be
-/// rewritten. A dependency on a *leaked* measurement cannot be rewritten at all
-/// -- it names a random source with no column -- so that is where this gives up
-/// rather than emit a history whose dependencies dangle.
-fn remap_history_onto_records(
-    history: &MeasurementHistory,
-    column_of: &BTreeMap<usize, usize>,
-    leaked_sites: &BTreeMap<usize, (usize, Vec<usize>)>,
-) -> Result<MeasurementHistory, MeasurementHistoryError> {
-    let mut remapped = MeasurementHistory::new();
-    for result in history.iter() {
-        let Some(&column) = column_of.get(&result.index) else {
-            continue;
-        };
-        let mut outcome = pecos_core::BitSet::new();
-        for dependency in &result.outcome {
-            if let Some(&dependency_column) = column_of.get(&dependency) {
-                outcome.insert(dependency_column);
-            } else {
-                let (tick, qubits) = leaked_sites.get(&dependency).cloned().expect(
-                    "every simulator measurement index is either a record column or a \
-                     leaked site, so a dependency outside both means the two maps were \
-                     not built from the same walk",
-                );
-                return Err(MeasurementHistoryError::LeakedMeasurementNotRepresentable {
-                    tick,
-                    qubits,
-                });
-            }
-        }
-        remapped.push(
-            pecos_simulators::symbolic_sparse_stab::SymbolicMeasurementResult {
-                outcome,
-                flip: result.flip,
-                is_deterministic: result.is_deterministic,
-                index: column,
-            },
-        );
-    }
-    Ok(remapped)
+    Ok(sim.measurement_history().clone())
 }
 
 // ============================================================================
@@ -2558,10 +2558,10 @@ mod tests {
         );
     }
 
-    /// A leaked measurement nothing depends on is simply renumbered around: it
-    /// holds no record, so the measurements that do keep contiguous columns.
+    /// A leaked measurement holds no record, so recorded measurements keep
+    /// contiguous columns.
     #[test]
-    fn a_leaked_measurement_nothing_depends_on_is_renumbered_around() {
+    fn a_leaked_measurement_keeps_record_columns_contiguous() {
         let mut tc = TickCircuit::new();
         tc.tick().pz(&[0, 1]);
         tc.tick()
@@ -2575,15 +2575,13 @@ mod tests {
         assert_eq!(
             history.get(0).expect("one column").index,
             0,
-            "the surviving measurement takes column 0, not the simulator's index 1"
+            "the recorded measurement takes simulator index and record column 0"
         );
     }
 
-    /// When a recorded outcome *does* depend on the leaked result, there is no
-    /// column to point at, so the circuit is refused rather than handed back
-    /// with a dependency naming a column that does not exist.
+    /// The first recorded observation of a leaked outcome is random.
     #[test]
-    fn a_recorded_outcome_depending_on_a_leaked_result_is_refused() {
+    fn a_recorded_outcome_depending_on_a_leaked_result_is_random() {
         let mut tc = TickCircuit::new();
         tc.tick().pz(&[0, 1]);
         tc.tick().h(&[0]);
@@ -2593,17 +2591,12 @@ mod tests {
             .expect("gate is valid");
         tc.tick().mz(&[1]);
 
-        match symbolic_measurement_history(&tc)
-            .expect_err("the MZ outcome depends on the leaked measurement")
-        {
-            MeasurementHistoryError::LeakedMeasurementNotRepresentable { tick, qubits } => {
-                assert_eq!(tick, 3, "the error must name the leaked measurement's tick");
-                assert_eq!(qubits, vec![0], "and its qubit");
-            }
-            other @ MeasurementHistoryError::UnsupportedGate(_) => {
-                panic!("expected the leaked-dependency refusal, got: {other}")
-            }
-        }
+        let history = symbolic_measurement_history(&tc).expect("hidden outcomes are representable");
+        assert_eq!(history.len(), 1);
+        let result = history.get(0).expect("the MZ holds record 0");
+        assert!(!result.is_deterministic);
+        assert_eq!(result.outcome, pecos_core::BitSet::single(0));
+        assert!(!result.flip);
     }
 
     /// `MeasureFree` consumes a record, so it keeps a column of its own. Nothing
@@ -2668,6 +2661,36 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn mx_history_restores_x_eigenstate() {
+        for prepared in [false, true] {
+            for minus in [false, true] {
+                let mut tc = TickCircuit::new();
+                if prepared {
+                    tc.tick().h(&[0]);
+                }
+                if minus {
+                    tc.tick().z(&[0]);
+                }
+                tc.tick().mx(&[0]);
+                tc.tick().mx(&[0]);
+                let history = symbolic_measurement_history(&tc).unwrap();
+                let first = history.get(0).unwrap();
+                let second = history.get(1).unwrap();
+                assert_eq!(first.is_deterministic, prepared);
+                assert!(second.is_deterministic);
+                assert_eq!(second.outcome, first.outcome);
+                assert_eq!(second.flip, first.flip);
+                if prepared {
+                    assert!(second.outcome.is_empty());
+                    assert_eq!(second.flip, minus);
+                } else {
+                    assert_eq!(second.outcome.iter().collect::<Vec<_>>(), [0]);
+                }
+            }
+        }
+    }
+
     // ---- symbolic_measurement_history tests ----
 
     #[test]
@@ -2687,9 +2710,6 @@ mod tests {
                     UnsupportedGateLocation::Tick { tick: 1, .. }
                 ));
                 assert_eq!(err.qubits, vec![0]);
-            }
-            other @ MeasurementHistoryError::LeakedMeasurementNotRepresentable { .. } => {
-                panic!("expected an unsupported-gate error, got: {other}")
             }
         }
     }

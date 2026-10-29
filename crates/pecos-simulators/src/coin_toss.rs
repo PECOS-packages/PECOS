@@ -260,7 +260,8 @@ where
     fn sz(&mut self, _qubits: &[QubitId]) -> &mut Self {
         self
     }
-    fn cx(&mut self, _pairs: &[(QubitId, QubitId)]) -> &mut Self {
+    fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "CX");
         self
     }
 
@@ -287,7 +288,8 @@ where
     fn rz(&mut self, _theta: Angle64, _qubits: &[QubitId]) -> &mut Self {
         self
     }
-    fn rzz(&mut self, _theta: Angle64, _pairs: &[(QubitId, QubitId)]) -> &mut Self {
+    fn rzz(&mut self, _theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "RZZ");
         self
     }
 }

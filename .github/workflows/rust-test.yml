@@ -94,10 +94,13 @@ jobs:
           rustup show
 
       - name: Install just
-        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: just@1.59.0
+          fallback: none
 
       - name: Cache Rust
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
         with:
           cache-bin: false
           prefix-key: v1-rust-no-bin
@@ -167,7 +170,7 @@ jobs:
           rustup show
 
       - name: Cache Rust
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
         with:
           cache-bin: false
           prefix-key: v1-rust-no-bin
@@ -232,10 +235,13 @@ jobs:
           rustup show
 
       - name: Install just
-        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: just@1.59.0
+          fallback: none
 
       - name: Cache Rust
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
         with:
           cache-bin: false
           prefix-key: v1-rust-no-bin
@@ -298,6 +304,45 @@ jobs:
       - name: Compile tests (Windows)
         if: runner.os == 'Windows'
         run: cargo build --locked -p pecos-cli --release
+
+      # Run these before the broader suite so unrelated failures cannot hide
+      # native DEM results. The default suite does not enable pecos-qec/hugr.
+      - name: Build native DEM runtime libraries
+        if: matrix.os != 'macos-latest'
+        run: cargo build --locked -p pecos-qis
+
+      - name: Build native DEM runtime libraries (macOS)
+        if: matrix.os == 'macos-latest'
+        env:
+          LIBRARY_PATH: /usr/lib
+        run: |
+          unset LD_LIBRARY_PATH DYLD_LIBRARY_PATH DYLD_FALLBACK_LIBRARY_PATH PKG_CONFIG_PATH
+          cargo build --locked -p pecos-qis
+
+      - name: Test native DEM inference helpers
+        if: matrix.os != 'macos-latest'
+        run: |
+          cargo test --locked -p pecos-qec --features hugr --lib -- dem_inference:: dem_selene:: dem_hugr::
+
+      - name: Test native DEM inference helpers (macOS)
+        if: matrix.os == 'macos-latest'
+        env:
+          LIBRARY_PATH: /usr/lib
+        run: |
+          unset LD_LIBRARY_PATH DYLD_LIBRARY_PATH DYLD_FALLBACK_LIBRARY_PATH PKG_CONFIG_PATH
+          cargo test --locked -p pecos-qec --features hugr --lib -- dem_inference:: dem_selene:: dem_hugr::
+
+      - name: Test native DEM inference with optional HUGR compiler
+        if: matrix.os != 'macos-latest'
+        run: cargo test --locked -p pecos-qec --features hugr --test dem_inference_builder --test dem_selene_builder
+
+      - name: Test native DEM inference with optional HUGR compiler (macOS)
+        if: matrix.os == 'macos-latest'
+        env:
+          LIBRARY_PATH: /usr/lib
+        run: |
+          unset LD_LIBRARY_PATH DYLD_LIBRARY_PATH DYLD_FALLBACK_LIBRARY_PATH PKG_CONFIG_PATH
+          cargo test --locked -p pecos-qec --features hugr --test dem_inference_builder --test dem_selene_builder
 
       - name: Run tests (macOS)
         if: matrix.os == 'macos-latest'

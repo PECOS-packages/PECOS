@@ -668,8 +668,8 @@ pub enum NoiseResponse {
     None,
     /// Inject these gates after the current gate
     InjectGates(Vec<GateCommand>),
-    /// Skip/remove the current gate
-    SkipGate,
+    /// Suppress operand groups containing a listed qubit
+    SkipGate(SmallVec<[QubitId; 4]>),
     /// Multiple responses to combine
     Multiple(Vec<NoiseResponse>),
 }

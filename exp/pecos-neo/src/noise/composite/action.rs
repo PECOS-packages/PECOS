@@ -2626,7 +2626,13 @@ pub mod actions {
 
         match response {
             NoiseResponse::None => CompositeResponse::None,
-            NoiseResponse::SkipGate => CompositeResponse::SkipGate,
+            NoiseResponse::SkipGate(qs) => {
+                if qs.contains(&qubit) {
+                    CompositeResponse::SkipGate
+                } else {
+                    CompositeResponse::None
+                }
+            }
             NoiseResponse::InjectGates(gates) => CompositeResponse::InjectGates(gates.to_vec()),
             NoiseResponse::MarkLeaked(qs) => {
                 if qs.contains(&qubit) {
@@ -2706,6 +2712,24 @@ pub mod actions {
     #[must_use]
     pub fn channel_action<C: crate::noise::NoiseChannel + 'static>(channel: C) -> ChannelAdapter {
         ChannelAdapter::new(channel)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn test_convert_skip_only_for_current_qubit() {
+            let response = crate::noise::NoiseResponse::SkipGate(smallvec::smallvec![QubitId(0)]);
+            assert!(matches!(
+                convert_noise_response(response.clone(), QubitId(0)),
+                CompositeResponse::SkipGate
+            ));
+            assert!(matches!(
+                convert_noise_response(response, QubitId(1)),
+                CompositeResponse::None
+            ));
+        }
     }
 }
 

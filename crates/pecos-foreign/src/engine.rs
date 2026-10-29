@@ -153,7 +153,7 @@ pub unsafe extern "C" fn pecos_engine_create(
     // On 32-bit targets, these array layouts can exceed isize::MAX despite the u32 index bound.
     let arrays_fit = match type_str {
         "sparse_stab" | "stabilizer" => {
-            std::alloc::Layout::array::<pecos_core::BitSet>(num_qubits).is_ok()
+            std::alloc::Layout::array::<pecos_simulators::SparseStabSet>(num_qubits).is_ok()
         }
         "stab_vec" => std::alloc::Layout::array::<Angle64>(num_qubits).is_ok(),
         _ => true,
@@ -191,7 +191,7 @@ pub unsafe extern "C" fn pecos_engine_create(
 
 /// Process a circuit (`ByteMessage`) through an engine.
 ///
-/// Takes version-5 bytes from `pecos_circuit_build`, runs the circuit, and returns outcomes.
+/// Takes version-8 bytes from `pecos_circuit_build`, runs the circuit, and returns outcomes.
 /// Gate angles are little-endian u64 fractions; non-angle parameters remain f64.
 /// Legacy version-1 f64-angle batches are rejected and must be rebuilt.
 ///
@@ -308,7 +308,7 @@ pub extern "C" fn pecos_circuit_new() -> *mut PecosCircuitBuilder {
 /// Add H gate(s) to the circuit.
 ///
 /// Returns 0 on success, -1 if the qubit count exceeds the slice size limit.
-/// Also returns -1 for indices above `u32::MAX` or more than 255 operands per gate.
+/// Also returns -1 for indices above `u32::MAX`.
 /// On error the circuit is unchanged.
 ///
 /// # Safety
@@ -324,7 +324,7 @@ pub unsafe extern "C" fn pecos_circuit_h(
     }
     let c = unsafe { &mut *circuit };
     let qs = unsafe { std::slice::from_raw_parts(qubits, num_qubits) };
-    if qs.len() > usize::from(u8::MAX) || qs.iter().any(|&q| u32::try_from(q).is_err()) {
+    if qs.iter().any(|&q| u32::try_from(q).is_err()) {
         return -1;
     }
     if !c.can_append(qs.len(), 0, false) {
@@ -337,7 +337,7 @@ pub unsafe extern "C" fn pecos_circuit_h(
 /// Add X gate(s) to the circuit.
 ///
 /// Returns 0 on success, -1 if the qubit count exceeds the slice size limit.
-/// Also returns -1 for indices above `u32::MAX` or more than 255 operands per gate.
+/// Also returns -1 for indices above `u32::MAX`.
 /// On error the circuit is unchanged.
 ///
 /// # Safety
@@ -353,7 +353,7 @@ pub unsafe extern "C" fn pecos_circuit_x(
     }
     let c = unsafe { &mut *circuit };
     let qs = unsafe { std::slice::from_raw_parts(qubits, num_qubits) };
-    if qs.len() > usize::from(u8::MAX) || qs.iter().any(|&q| u32::try_from(q).is_err()) {
+    if qs.iter().any(|&q| u32::try_from(q).is_err()) {
         return -1;
     }
     if !c.can_append(qs.len(), 0, false) {
@@ -366,7 +366,7 @@ pub unsafe extern "C" fn pecos_circuit_x(
 /// Add Z gate(s) to the circuit.
 ///
 /// Returns 0 on success, -1 if the qubit count exceeds the slice size limit.
-/// Also returns -1 for indices above `u32::MAX` or more than 255 operands per gate.
+/// Also returns -1 for indices above `u32::MAX`.
 /// On error the circuit is unchanged.
 ///
 /// # Safety
@@ -382,7 +382,7 @@ pub unsafe extern "C" fn pecos_circuit_z(
     }
     let c = unsafe { &mut *circuit };
     let qs = unsafe { std::slice::from_raw_parts(qubits, num_qubits) };
-    if qs.len() > usize::from(u8::MAX) || qs.iter().any(|&q| u32::try_from(q).is_err()) {
+    if qs.iter().any(|&q| u32::try_from(q).is_err()) {
         return -1;
     }
     if !c.can_append(qs.len(), 0, false) {
@@ -395,7 +395,7 @@ pub unsafe extern "C" fn pecos_circuit_z(
 /// Add S (SZ) gate(s) to the circuit.
 ///
 /// Returns 0 on success, -1 if the qubit count exceeds the slice size limit.
-/// Also returns -1 for indices above `u32::MAX` or more than 255 operands per gate.
+/// Also returns -1 for indices above `u32::MAX`.
 /// On error the circuit is unchanged.
 ///
 /// # Safety
@@ -411,7 +411,7 @@ pub unsafe extern "C" fn pecos_circuit_sz(
     }
     let c = unsafe { &mut *circuit };
     let qs = unsafe { std::slice::from_raw_parts(qubits, num_qubits) };
-    if qs.len() > usize::from(u8::MAX) || qs.iter().any(|&q| u32::try_from(q).is_err()) {
+    if qs.iter().any(|&q| u32::try_from(q).is_err()) {
         return -1;
     }
     if !c.can_append(qs.len(), 0, false) {
@@ -427,7 +427,7 @@ pub unsafe extern "C" fn pecos_circuit_sz(
 ///
 /// # Returns
 /// 0 on success, -1 if the pair count exceeds the slice size limit.
-/// Also returns -1 for indices above `u32::MAX` or more than 255 operands per gate.
+/// Also returns -1 for indices above `u32::MAX`.
 /// On error the circuit is unchanged.
 ///
 /// # Safety
@@ -446,7 +446,7 @@ pub unsafe extern "C" fn pecos_circuit_cx(
         return -1;
     };
     let flat = unsafe { std::slice::from_raw_parts(pairs, flat_len) };
-    if flat.len() > usize::from(u8::MAX) || flat.iter().any(|&q| u32::try_from(q).is_err()) {
+    if flat.iter().any(|&q| u32::try_from(q).is_err()) {
         return -1;
     }
     if !c.can_append(flat.len(), 0, false) {
@@ -466,7 +466,7 @@ pub unsafe extern "C" fn pecos_circuit_cx(
 ///
 /// # Returns
 /// 0 on success, -1 if the angle is not finite or the qubit count exceeds the slice size limit.
-/// Also returns -1 for indices above `u32::MAX` or more than 255 operands per gate.
+/// Also returns -1 for indices above `u32::MAX`.
 /// On error the circuit is unchanged.
 ///
 /// # Safety
@@ -486,7 +486,7 @@ pub unsafe extern "C" fn pecos_circuit_rx(
     }
     let c = unsafe { &mut *circuit };
     let qs = unsafe { std::slice::from_raw_parts(qubits, num_qubits) };
-    if qs.len() > usize::from(u8::MAX) || qs.iter().any(|&q| u32::try_from(q).is_err()) {
+    if qs.iter().any(|&q| u32::try_from(q).is_err()) {
         return -1;
     }
     if !c.can_append(qs.len(), 1, false) {
@@ -500,7 +500,7 @@ pub unsafe extern "C" fn pecos_circuit_rx(
 ///
 /// # Returns
 /// 0 on success, -1 if the angle is not finite or the qubit count exceeds the slice size limit.
-/// Also returns -1 for indices above `u32::MAX` or more than 255 operands per gate.
+/// Also returns -1 for indices above `u32::MAX`.
 /// On error the circuit is unchanged.
 ///
 /// # Safety
@@ -520,7 +520,7 @@ pub unsafe extern "C" fn pecos_circuit_rz(
     }
     let c = unsafe { &mut *circuit };
     let qs = unsafe { std::slice::from_raw_parts(qubits, num_qubits) };
-    if qs.len() > usize::from(u8::MAX) || qs.iter().any(|&q| u32::try_from(q).is_err()) {
+    if qs.iter().any(|&q| u32::try_from(q).is_err()) {
         return -1;
     }
     if !c.can_append(qs.len(), 1, false) {
@@ -534,7 +534,7 @@ pub unsafe extern "C" fn pecos_circuit_rz(
 ///
 /// # Returns
 /// 0 on success, -1 for a non-finite angle, unrepresentable pair count,
-/// more than 127 pairs, or a qubit index above `u32::MAX`. The circuit is unchanged on error.
+/// or a qubit index above `u32::MAX`. The circuit is unchanged on error.
 ///
 /// # Safety
 /// `circuit` must be valid. `pairs` must point to `2 * num_pairs` valid `usize` values.
@@ -556,7 +556,7 @@ pub unsafe extern "C" fn pecos_circuit_rzz(
     };
     let c = unsafe { &mut *circuit };
     let flat = unsafe { std::slice::from_raw_parts(pairs, flat_len) };
-    if flat.len() > usize::from(u8::MAX) || flat.iter().any(|&q| u32::try_from(q).is_err()) {
+    if flat.iter().any(|&q| u32::try_from(q).is_err()) {
         return -1;
     }
     if !c.can_append(flat.len(), 1, false) {

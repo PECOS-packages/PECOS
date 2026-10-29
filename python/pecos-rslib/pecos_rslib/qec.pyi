@@ -15,14 +15,46 @@
 from __future__ import annotations
 
 import os
-from typing import Any, ClassVar, Mapping, Sequence
+from typing import Any, Callable, ClassVar, Mapping, Sequence, TypedDict
 
 from pecos_rslib import decoders
 from pecos_rslib.decoders import ObservableFlips
 
-from pecos_rslib import DagCircuit, ParityCheckMatrix, PauliString, StabilizerCodeSpec, TickCircuit
+from pecos_rslib import DagCircuit, ParityCheckMatrix, PauliString, Qis, StabilizerCodeSpec, TickCircuit
 
 DEM_SLICE_ROUND_ATTRIBUTE: str
+
+class DiscoveredDetectors:
+    """Record parities with integer noiseless references (0 or 1)."""
+
+    @property
+    def detectors(self) -> list[tuple[list[int], int]]: ...
+    @property
+    def observables(self) -> list[tuple[list[int], int]]: ...
+
+def discover_detectors(
+    tc: TickCircuit,
+    observables: Sequence[Sequence[int]] = (),
+    conjugates: Sequence[tuple[int, str]] = (),
+) -> DiscoveredDetectors:
+    """Discover logical-free detectors relative to the supplied conjugates.
+
+    Each observable requires a (before_tick, pauli) conjugate. The string is
+    parsed as a sparse ("X0 X3") or dense PauliString; phase is ignored.
+    before_tick=1 means after tick 0. Pairing requires each conjugate to flip
+    only its own completed observable and rejects dependent observables.
+    Cleaning XORs completed observables and their references into detectors;
+    independent detectors are selected with unflipped canonical ones preferred,
+    then sorted by their newest record. Undeclared logicals remain detectors.
+
+    Precondition: each conjugate must be a genuine logical, commuting with every
+    measured check and anticommuting with its own observable only. Records alone
+    cannot identify logical content or verify this; a wrong conjugate may pass
+    pairing and silently lower the fault distance. Invalid declarations, counts,
+    tick/qubit bounds, pairing and Pauli strings raise ValueError; conjugate
+    arguments are parsed before the observables are validated.
+    """
+    ...
 
 class BivariateBicycleCode:
     """A validated bivariate-bicycle CSS code."""
@@ -153,6 +185,44 @@ class DemSliceRoundSchedule:
         forward_boundary: str = ...,
     ) -> DetectorErrorModel: ...
     def __repr__(self) -> str: ...
+
+class DemInferenceSettings:
+    """Immutable fluent settings for empirical DEM annotation inference."""
+
+    def __init__(self) -> None: ...
+    def with_raw_tag(self, tag: str) -> DemInferenceSettings: ...
+    def with_detector_tag(self, tag: str) -> DemInferenceSettings: ...
+    def with_observable_tags(self, tags: Sequence[str]) -> DemInferenceSettings: ...
+    def with_probe_shots(self, shots: int) -> DemInferenceSettings: ...
+    def with_provenance_shots(self, shots: int) -> DemInferenceSettings: ...
+    def with_validation_rows(self, rows: int) -> DemInferenceSettings: ...
+    def with_require_raw_provenance(self, required: bool) -> DemInferenceSettings: ...
+    def validate(self) -> None: ...
+    def resolved_probe_shots(self, raw_width: int) -> int: ...
+    def infer(
+        self,
+        raw_measurement_ids: Sequence[int],
+        raw_rows: Sequence[Sequence[int]],
+        detector_rows: Sequence[Sequence[int]],
+        observable_rows: Sequence[Sequence[int]],
+    ) -> tuple[list[list[int]], list[list[int]]]:
+        """Infer detector and observable supports from bound bit-valued probe rows."""
+        ...
+
+    @property
+    def raw_tag(self) -> str: ...
+    @property
+    def detector_tag(self) -> str: ...
+    @property
+    def observable_tags(self) -> list[str]: ...
+    @property
+    def probe_shots(self) -> int | None: ...
+    @property
+    def provenance_shots(self) -> int: ...
+    @property
+    def validation_rows(self) -> int: ...
+    @property
+    def require_raw_provenance(self) -> bool: ...
 
 class DetectorErrorModel:
     """Rust-backed detector error model."""
@@ -621,18 +691,30 @@ class DecodeStats:
     per_shot_max: float
     quantiles: list[float]
 
+class DecodeRecovery:
+    shot_index: int
+    undecoded: bool
+    logical_error: bool | None
+    fallback_used: bool
+    syndrome_consistent: bool | None
+    deltas_tried: list[float]
+
 class DecodeResult:
     @property
     def projection(self) -> ProjectionReport | None:
         """Shared report, or None if unneeded or projected within members without a shared policy."""
     num_shots: int
     num_errors: int
+    num_scored: int
+    num_undecoded: int
+    num_fallback: int
+    recovery: list[DecodeRecovery]
     logical_error_rate: float
     execution_path: str
     workers_used: int
     reproducibility_warnings: list[str]
     sampling_seed_used: int | None
-    predictions: list[int] | None
+    predictions: list[int | None] | None
     stats: DecodeStats | None
     def interval(self, alpha: float = ...) -> tuple[float, float]: ...
 
@@ -788,3 +870,50 @@ class PauliFrameLookup:
     def row(self, tracked_idx: int) -> tuple[list[int], list[int]]: ...
     def mask_firings(self, pauli_masks: Any) -> list[list[bool]]: ...
     def compute_mask_xor(self, pauli_masks: Any) -> tuple[list[list[bool]], list[list[bool]]]: ...
+
+class _SeleneRuntimeSpec:
+    def __init__(self) -> None: ...
+    def selene_runtime(
+        self,
+        runtime_name: str | None = None,
+        *,
+        custom_event_policy: str = "reject_unhandled",
+        native_gates: list[str] | None = None,
+        batch_adapter_factory: Callable[[], object] | None = None,
+        clock_model: str = "continuous",
+    ) -> _SeleneRuntimeSpec: ...
+    def selene_runtime_plugin(
+        self,
+        library_file: str,
+        init_args: list[str] | None = None,
+        library_search_dirs: list[str] | None = None,
+        *,
+        custom_event_policy: str = "reject_unhandled",
+        native_gates: list[str] | None = None,
+        batch_adapter_factory: Callable[[], object] | None = None,
+        clock_model: str = "continuous",
+    ) -> _SeleneRuntimeSpec: ...
+
+class _DemEvidence(TypedDict):
+    circuit: TickCircuit
+    raw_measurement_ids: list[int]
+    raw_rows: list[list[int]]
+    detector_rows: list[list[int]]
+    observable_rows: list[list[int]]
+    binding: str
+    detector_outputs: list[tuple[str, int]]
+    observable_outputs: list[tuple[str, int]]
+    probe_shots: int
+    correlation_shots: int
+    schedule_shots: int
+    named_result_traces: list[dict[str, Any]]
+
+def _capture_dem_evidence(
+    program: Qis,
+    num_qubits: int,
+    seed: int,
+    runtime: _SeleneRuntimeSpec,
+    settings: DemInferenceSettings,
+    detector_outputs: Sequence[tuple[str, int]] | None = None,
+    observable_outputs: Sequence[tuple[str, int]] | None = None,
+) -> _DemEvidence: ...

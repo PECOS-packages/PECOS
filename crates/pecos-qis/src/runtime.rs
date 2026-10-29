@@ -366,6 +366,49 @@ pub trait QisRuntime: Send + Sync + dyn_clone::DynClone {
         ))
     }
 
+    /// The runtime owns future values and shot completion, as in Selene.
+    ///
+    /// Consumers poll ready work instead of inserting terminal barriers, query
+    /// native futures instead of returning simulator outcomes directly, and
+    /// allow the end hook to decide what pending work to release.
+    fn uses_native_runtime_protocol(&self) -> bool {
+        false
+    }
+
+    /// Read a native future after returning any physical measurement feedback.
+    /// `None` means the future is pending. The value belongs to the runtime and
+    /// may differ from an individual physical measurement outcome.
+    ///
+    /// # Errors
+    /// Returns an error if native result reads are unsupported or fail.
+    fn read_result(&mut self, _program_result: usize) -> Result<Option<u64>> {
+        Err(RuntimeError::ExecutionError(
+            "native result reads are unsupported".into(),
+        ))
+    }
+
+    /// Ask the scheduler to make a program measurement result available for a read.
+    ///
+    /// Measurement submission alone must not force execution. Return `true` when
+    /// this runtime supports targeted result forcing; the caller then extracts
+    /// ready operations with an empty lowering call. Return `false` to retain
+    /// the generic runtime drain fallback. This does not simulate a measurement.
+    ///
+    /// # Errors
+    /// Returns an error for an unknown result or a failed scheduler request.
+    fn force_result(&mut self, _program_result: usize) -> Result<bool> {
+        Ok(false)
+    }
+
+    /// Whether lowering yields at measurement batches for immediate feedback.
+    ///
+    /// After delivering outcomes, the engine polls with empty input before
+    /// allowing the program to submit further work. This preserves runtimes
+    /// whose scheduling decisions depend on receiving those outcomes.
+    fn yields_at_measurements(&self) -> bool {
+        false
+    }
+
     /// Extract original scheduler batches before idle insertion or physical effects.
     /// This opt-in Rust API is not used by the ordinary QIS engine. Opaque events
     /// are unhandled data, not metadata acknowledgements. See [`crate::scheduled`].
@@ -394,6 +437,13 @@ pub trait QisRuntime: Send + Sync + dyn_clone::DynClone {
         Err(RuntimeError::ExecutionError(
             "runtime does not support scheduled drain".into(),
         ))
+    }
+
+    /// Whether every custom event in this shot has been modeled or explicitly
+    /// acknowledged as metadata. Capture-only histories must return false, even
+    /// after those histories have been drained.
+    fn runtime_events_complete(&self) -> bool {
+        true
     }
 
     /// Lower freshly collected program operations through the runtime with provenance.

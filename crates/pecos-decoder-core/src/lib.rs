@@ -36,6 +36,7 @@ pub mod dem_views;
 pub mod ensemble;
 pub mod erasure;
 pub mod errors;
+pub mod feasibility;
 pub mod ghost_protocol;
 pub mod graphlike_projection;
 pub mod k_mwpm;
@@ -44,6 +45,7 @@ pub mod logical_subgraph;
 pub mod matrix;
 pub mod multi_decoder;
 pub mod obs_mask;
+pub mod outcome;
 pub mod pauli_frame;
 pub mod perturbed;
 pub mod preprocessor;
@@ -193,6 +195,18 @@ pub trait ObservableDecoder {
     ///
     /// Returns [`DecoderError`] if decoding fails.
     fn decode_obs(&mut self, syndrome: &[u8]) -> Result<crate::obs_mask::ObsMask, DecoderError>;
+
+    /// Decode with explicit recovery metadata. The default wraps `decode_obs`.
+    ///
+    /// # Errors
+    /// Propagates decoder failures. Opt-in reporting may instead return no prediction.
+    fn decode_outcome(
+        &mut self,
+        syndrome: &[u8],
+    ) -> Result<crate::outcome::ObservableDecodeOutcome, DecoderError> {
+        self.decode_obs(syndrome)
+            .map(crate::outcome::ObservableDecodeOutcome::decoded)
+    }
 
     /// Narrowing convenience over [`Self::decode_obs`]: the predicted observable
     /// flips packed into a `u64` (bit `i` = observable `i`).

@@ -4,7 +4,8 @@
 //! event is data, never acknowledgement that its physical effect was simulated.
 
 /// One operation in native emission order. Qubit IDs are runtime physical IDs.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum RuntimeScheduledOp {
     /// Rotation about an axis in the XY plane.
     Rxy {
@@ -77,7 +78,8 @@ pub struct ScheduledMeasurement {
     pub operation_index: usize,
     /// Future allocated by the native runtime.
     pub runtime_result: u64,
-    /// Result expected by the source program; may repeat when a slot is re-measured.
+    /// Source measurement identity. Native-FFI programs use unique occurrence IDs;
+    /// direct runtime callers may reuse their own result slots.
     pub program_result: usize,
     /// Source measurement requires a leakage-aware result, even if the ABI
     /// emitted an ordinary measurement operation.
@@ -101,10 +103,8 @@ pub struct ScheduledBatch {
     pub measurements: Vec<ScheduledMeasurement>,
 }
 
-// Bounds on each indivisible native callback batch, not the entire drain.
-// Every collection also has a transport-derived limit, including empty batches.
-#[cfg(feature = "selene")]
-pub(crate) const MAX_OPERATIONS: usize = 4096;
+// Payload bound on each indivisible native callback batch. Records and batch
+// framing are charged to the collection's schedule byte budget instead.
 #[cfg(feature = "selene")]
 pub(crate) const MAX_PAYLOAD_BYTES: usize = 262_144;
 

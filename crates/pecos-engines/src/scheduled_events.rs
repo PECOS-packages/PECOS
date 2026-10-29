@@ -2,7 +2,8 @@
 //!
 //! Adapters normalize complete inputs before quantum execution. They cannot observe
 //! measurement outcomes or access simulator/RNG state. This is not an arbitrary
-//! execution-time physical-event interface. The admitted noise is restricted to checked local profiles.
+//! execution-time physical-event interface. Checked profiles may opt into typed
+//! crosstalk exposures resolved by the existing noise/quantum exchange.
 use crate::noise::{IntoNoiseModel, NoiseModel};
 use crate::runtime_frame::{ShotContext, error, processing_error};
 use crate::scheduled_frame::{
@@ -14,10 +15,53 @@ use pecos_core::{RngManageable, errors::PecosError};
 use pecos_random::PecosRng;
 use std::{any::Any, collections::BTreeSet, sync::Arc};
 
-/// Maximum source or expanded operations per original batch.
-pub const MAX_BATCH_OPERATIONS: usize = 4096;
 /// Maximum total opaque payload bytes per original batch.
 pub const MAX_BATCH_PAYLOAD: usize = 256 * 1024;
+
+/// One ordered exposure. Logical IDs must be unique and within profile capacity.
+/// Repeated exposures are separate records; local list order is preserved.
+#[derive(Clone, Debug)]
+pub enum ScheduledCrosstalk {
+    /// Potential victims in sampling order; unprepared/leaked qubits are skipped.
+    Local(Vec<usize>),
+    /// Prepared logical qubits outside this exclusion list, in general-model order.
+    GlobalExcluding(Vec<usize>),
+}
+impl ScheduledCrosstalk {
+    fn into_gate(self) -> Gate {
+        let (kind, ids) = match self {
+            Self::Local(ids) => (GateType::MeasCrosstalkLocalPayload, ids),
+            Self::GlobalExcluding(ids) => (GateType::MeasCrosstalkGlobalPayload, ids),
+        };
+        Gate::new(
+            kind,
+            vec![],
+            vec![],
+            ids.into_iter().map(pecos_core::QubitId).collect::<Vec<_>>(),
+        )
+    }
+}
+fn validate_spectator(gate: &Gate, capacity: Option<usize>) -> Result<(), PecosError> {
+    let qubits = capacity.ok_or_else(|| error("scheduled crosstalk profile required"))?;
+    if !gate.gate_type.is_crosstalk_payload()
+        || gate.qubits.len() > qubits
+        || !gate.angles.is_empty()
+        || !gate.params.is_empty()
+        || !gate.meas_ids.is_empty()
+        || gate.channel.is_some()
+    {
+        return Err(error("invalid scheduled spectator fields"));
+    }
+    let mut seen = BTreeSet::new();
+    for q in &gate.qubits {
+        if q.0 >= qubits || !seen.insert(q.0) {
+            return Err(error(
+                "scheduled spectator IDs must be distinct and within capacity",
+            ));
+        }
+    }
+    Ok(())
+}
 
 /// Native order, including events which must never silently disappear.
 #[derive(Clone, Debug)]
@@ -69,13 +113,12 @@ fn measured(gate: &Gate) -> bool {
     matches!(gate.gate_type, GateType::MZ | GateType::MeasureLeaked)
 }
 fn validate_batch(batch: &ScheduledEventBatch) -> Result<(), PecosError> {
-    if batch.operations.len() > MAX_BATCH_OPERATIONS
-        || batch
-            .start_nanos
-            .checked_add(batch.duration_nanos)
-            .is_none()
+    if batch
+        .start_nanos
+        .checked_add(batch.duration_nanos)
+        .is_none()
     {
-        return Err(error("scheduled event batch limit or time overflow"));
+        return Err(error("scheduled event batch time overflow"));
     }
     let mut payload = 0usize;
     let mut positions = Vec::new();
@@ -218,19 +261,24 @@ pub fn decode_event_batches(input: &ByteMessage) -> Result<Vec<ScheduledEventBat
     let mut result = Vec::new();
     for _ in 0..count {
         let nested_bytes = r.size()?;
-        // A nested v6 frame holds exactly one bounded batch, without opaque data.
-        if nested_bytes > 56 + MAX_BATCH_OPERATIONS * 40 {
-            return Err(error("event gate count limit"));
-        }
         let mut nested = scheduled_frame::decode(&ByteMessage::new(r.take(nested_bytes)?))?;
         if nested.len() != 1 {
             return Err(error("expected one nested scheduled batch"));
         }
         let b = nested.remove(0);
         let events = r.size()?;
-        if events > MAX_BATCH_OPERATIONS || b.gates.len() > MAX_BATCH_OPERATIONS - events {
-            return Err(error("event operation count limit"));
+        // Every event needs position, tag and payload-length words before payload.
+        if events > r.0.len() / 24 {
+            return Err(error(&format!(
+                "event count {events} exceeds remaining transport bytes {}; correct the event count",
+                r.0.len()
+            )));
         }
+        let operation_count = b
+            .gates
+            .len()
+            .checked_add(events)
+            .ok_or_else(|| error("event operation count overflow"))?;
         let mut opaque = Vec::new();
         let mut total = 0usize;
         let mut previous = None;
@@ -242,7 +290,7 @@ pub fn decode_event_batches(input: &ByteMessage) -> Result<Vec<ScheduledEventBat
                 .checked_add(len)
                 .ok_or_else(|| error("event payload overflow"))?;
             if total > MAX_BATCH_PAYLOAD
-                || pos >= b.gates.len() + events
+                || pos >= operation_count
                 || previous.is_some_and(|p| pos <= p)
             {
                 return Err(error("invalid event position or payload limit"));
@@ -253,7 +301,7 @@ pub fn decode_event_batches(input: &ByteMessage) -> Result<Vec<ScheduledEventBat
         let mut gates = b.gates.into_iter();
         let mut opaque = opaque.into_iter().peekable();
         let mut operations = Vec::new();
-        for i in 0..gates.len() + events {
+        for i in 0..operation_count {
             if opaque.peek().is_some_and(|e| e.0 == i) {
                 let (_, tag, payload) = opaque.next().ok_or_else(|| error("missing event"))?;
                 operations.push(ScheduledEventOp::Custom { tag, payload });
@@ -291,8 +339,9 @@ pub fn decode_event_batches(input: &ByteMessage) -> Result<Vec<ScheduledEventBat
     Ok(result)
 }
 
-/// Bounded gate output for one original batch; no nested events or measurements
-/// beyond those in the source are permitted by the execution owner.
+/// Output for one batch, charged to the remaining normalized schedule byte budget.
+/// Typed exposures are allowed on opted-in profiles; nested events and additional
+/// program measurements are not.
 /// This writer borrows owner-held state; adapters cannot construct replacements.
 ///
 /// ```compile_fail
@@ -309,22 +358,75 @@ pub struct ScheduledGateBuffer<'a> {
 struct GateOutput {
     gates: Vec<Gate>,
     failure: Option<String>,
+    spectator_capacity: Option<usize>,
+    remaining_bytes: usize,
 }
 impl ScheduledGateBuffer<'_> {
+    /// Bytes available for further normalized records, including explicit spectator IDs.
+    #[must_use]
+    pub fn remaining_bytes(&self) -> usize {
+        self.state.remaining_bytes
+    }
+
+    // Callers have already returned any latched failure.
+    fn charge(&mut self, bytes: usize) -> Result<(), PecosError> {
+        let Some(remaining) = self.state.remaining_bytes.checked_sub(bytes) else {
+            let message = format!(
+                "expanded schedule limit: {bytes} bytes requested with {} remaining; reduce adapter output",
+                self.state.remaining_bytes
+            );
+            self.state.failure = Some(message.clone());
+            return Err(error(&message));
+        };
+        self.state.remaining_bytes = remaining;
+        Ok(())
+    }
+
+    /// Append an explicit ordered exposure, without physical occupancy or user results.
+    /// Requires a profile opted into measurement crosstalk. Empty lists are valid:
+    /// local selects no victims; global excludes none. Errors remain latched.
+    /// # Errors
+    /// Rejects unsupported profiles, invalid IDs and output above the schedule byte budget.
+    pub fn push_crosstalk(&mut self, effect: ScheduledCrosstalk) -> Result<(), PecosError> {
+        if let Some(message) = &self.state.failure {
+            return Err(error(message));
+        }
+        // Check the owned list against capacity before converting/allocating its
+        // internal gate. A missing crosstalk profile is rejected by validation below.
+        let ids = match &effect {
+            ScheduledCrosstalk::Local(ids) | ScheduledCrosstalk::GlobalExcluding(ids) => ids,
+        };
+        if self
+            .state
+            .spectator_capacity
+            .is_some_and(|capacity| ids.len() > capacity)
+        {
+            let message = "scheduled spectator list limit";
+            self.state.failure = Some(message.into());
+            return Err(error(message));
+        }
+        self.charge(40usize.saturating_add(ids.len().saturating_mul(8)))?;
+        let gate = effect.into_gate();
+        match validate_spectator(&gate, self.state.spectator_capacity) {
+            Ok(()) => {
+                self.state.gates.push(gate);
+                Ok(())
+            }
+            Err(failure) => {
+                self.state.failure = Some(failure.to_string());
+                Err(failure)
+            }
+        }
+    }
     /// Append an admitted ordinary gate.
     /// # Errors
-    /// Rejects unsupported fields/gates and expansion above the per-batch bound.
+    /// Rejects unsupported fields/gates and output above the schedule byte budget.
     pub fn push(&mut self, gate: Gate) -> Result<(), PecosError> {
         if let Some(message) = &self.state.failure {
             return Err(error(message));
         }
-        let admitted = scheduled_frame::fields(&gate).map(|_| ()).and_then(|()| {
-            if self.state.gates.len() == MAX_BATCH_OPERATIONS {
-                Err(error("event expansion limit"))
-            } else {
-                Ok(())
-            }
-        });
+        self.charge(40)?;
+        let admitted = scheduled_frame::fields(&gate);
         if let Err(failure) = admitted {
             self.state.failure = Some(failure.to_string());
             return Err(failure);
@@ -338,7 +440,8 @@ impl ScheduledGateBuffer<'_> {
 /// Validation must inspect every event schema without mutating state. Translation
 /// may update shot-local classical state; it runs before any quantum execution of
 /// this input. Neither method receives outcomes, RNG or simulator access. Arbitrary
-/// execution-time effects, leakage and crosstalk are not supported by this profile.
+/// execution-time callbacks are not supported. Checked profiles may admit typed
+/// crosstalk exposures; the noise controller resolves their internal measurements.
 /// Implementations are responsible for bounding their own retained state.
 pub trait ScheduledBatchAdapter: Send + Sync {
     /// Validate a complete batch without side effects.
@@ -362,7 +465,8 @@ type Factory =
 pub type ScheduledEventIdleZ = ScheduledEventNoise;
 /// Compatibility name for [`ScheduledEventNoise`], retaining the supplied profile.
 pub type ScheduledEventIdleNoise = ScheduledEventNoise;
-/// Explicit opt-in to mandatory v7 with the same checked local physics as v6.
+/// Explicit opt-in to mandatory v7 with checked local noise and optional typed
+/// measurement-crosstalk exposures.
 #[derive(Clone)]
 pub struct ScheduledEventNoise {
     profile: ScheduledNoise,
@@ -388,7 +492,7 @@ impl IntoNoiseModel for ScheduledEventNoise {
     fn into_noise_model(self) -> Result<Box<dyn NoiseModel>, PecosError> {
         let inner = self.profile.build_model();
         Ok(Box::new(ScheduledEventModel {
-            source_timeline: ScheduleTimeline::new(inner.qubits()),
+            source_timeline: ScheduleTimeline::new(),
             inner,
             factory: self.factory,
             adapter: None,
@@ -460,9 +564,21 @@ impl ScheduledEventModel {
             adapter.validate(batch)?;
         }
         let mut translated = Vec::new();
-        let mut size = 16usize;
+        let mut remaining_bytes = size_limit
+            .checked_sub(16)
+            .ok_or_else(|| error("expanded schedule limit: header requires 16 bytes"))?;
         for batch in batches {
-            let mut output = GateOutput::default();
+            remaining_bytes = remaining_bytes.checked_sub(40).ok_or_else(|| {
+                error(&format!(
+                    "expanded schedule limit: batch framing requires 40 bytes with \
+                     {remaining_bytes} remaining; reduce adapter output"
+                ))
+            })?;
+            let mut output = GateOutput {
+                remaining_bytes,
+                spectator_capacity: self.inner.config.spectator_capacity(),
+                ..GateOutput::default()
+            };
             adapter.translate(batch, &mut ScheduledGateBuffer { state: &mut output })?;
             if let Some(message) = output.failure {
                 return Err(error(&message));
@@ -483,7 +599,7 @@ impl ScheduledEventModel {
             {
                 return Err(error("adapter changed measurement order, kind or targets"));
             }
-            size = expanded_size(size, output.gates.len(), size_limit)?;
+            remaining_bytes = output.remaining_bytes;
             translated.push(TimedBatch {
                 runtime_shot_id: batch.runtime_shot_id,
                 batch_index: batch.batch_index,
@@ -494,17 +610,6 @@ impl ScheduledEventModel {
         }
         Ok(translated)
     }
-}
-fn expanded_size(current: usize, gates: usize, limit: usize) -> Result<usize, PecosError> {
-    let size = gates
-        .checked_mul(40)
-        .and_then(|bytes| bytes.checked_add(40))
-        .and_then(|bytes| current.checked_add(bytes))
-        .ok_or_else(|| error("expanded schedule overflow"))?;
-    if size > limit {
-        return Err(error("expanded schedule limit"));
-    }
-    Ok(size)
 }
 impl ControlEngine for ScheduledEventModel {
     type Input = ByteMessage;
@@ -526,7 +631,7 @@ impl ControlEngine for ScheduledEventModel {
     fn reset(&mut self) -> Result<(), PecosError> {
         self.adapter = None;
         self.inner.reset()?;
-        self.source_timeline = ScheduleTimeline::new(self.inner.qubits());
+        self.source_timeline = ScheduleTimeline::new();
         Ok(())
     }
 }
@@ -605,18 +710,129 @@ mod tests {
         }
     }
     #[test]
-    fn expanded_schedule_size_boundary_and_overflow() {
-        assert_eq!(
-            expanded_size(MAX_SCHEDULE_BYTES - 80, 1, MAX_SCHEDULE_BYTES).unwrap(),
-            MAX_SCHEDULE_BYTES
-        );
+    fn incremental_output_budget_rejects_at_push_and_latches() {
+        struct Expand(bool);
+        impl ScheduledBatchAdapter for Expand {
+            fn validate(&self, _: &ScheduledEventBatch) -> Result<(), PecosError> {
+                Ok(())
+            }
+            fn translate(
+                &mut self,
+                _: &ScheduledEventBatch,
+                out: &mut ScheduledGateBuffer<'_>,
+            ) -> Result<(), PecosError> {
+                let push = |out: &mut ScheduledGateBuffer<'_>| {
+                    if self.0 {
+                        out.push_crosstalk(ScheduledCrosstalk::Local(vec![0]))
+                    } else {
+                        out.push(Gate::pz(&[0]))
+                    }
+                };
+                push(out)?;
+                push(out)?;
+                assert_eq!(out.remaining_bytes(), 0);
+                assert!(
+                    push(out)
+                        .unwrap_err()
+                        .to_string()
+                        .contains("expanded schedule limit")
+                );
+                assert_eq!(out.state.gates.len(), 2);
+                assert!(out.push(Gate::pz(&[0])).is_err());
+                assert!(
+                    out.push_crosstalk(ScheduledCrosstalk::GlobalExcluding(vec![]))
+                        .is_err()
+                );
+                assert_eq!(out.state.gates.len(), 2);
+                Ok(()) // A swallowed push failure must still reject normalization.
+            }
+        }
+        for spectators in [false, true] {
+            let profile = ScheduledNoise::new(1)
+                .unwrap()
+                .with_measurement_crosstalk(
+                    0.0,
+                    0.0,
+                    std::collections::BTreeMap::from([("0->1".into(), 1.0), ("1->0".into(), 1.0)]),
+                )
+                .unwrap();
+            let mut noise =
+                ScheduledEventNoise::new(profile, move |_| Ok(Box::new(Expand(spectators))))
+                    .into_noise_model()
+                    .unwrap();
+            let model = noise
+                .as_any_mut()
+                .downcast_mut::<ScheduledEventModel>()
+                .unwrap();
+            let batch = ScheduledEventBatch {
+                runtime_shot_id: 1,
+                batch_index: 0,
+                start_nanos: 0,
+                duration_nanos: 0,
+                operations: vec![],
+                measurements: vec![],
+            };
+            // Header + batch framing + two records, plus one ID per local exposure.
+            let size_limit = 16 + 40 + 2 * (40 + usize::from(spectators) * 8);
+            let error = model
+                .normalize(
+                    &[batch],
+                    ShotContext {
+                        run: 0,
+                        worker: 0,
+                        shot: 0,
+                    },
+                    size_limit,
+                )
+                .unwrap_err();
+            assert!(error.to_string().contains("expanded schedule limit"));
+        }
+    }
+
+    #[test]
+    fn normalization_charges_framing_before_translation() {
+        struct NoTranslate;
+        impl ScheduledBatchAdapter for NoTranslate {
+            fn validate(&self, _: &ScheduledEventBatch) -> Result<(), PecosError> {
+                Ok(())
+            }
+            fn translate(
+                &mut self,
+                _: &ScheduledEventBatch,
+                _: &mut ScheduledGateBuffer<'_>,
+            ) -> Result<(), PecosError> {
+                panic!("batch framing must be admitted before translation")
+            }
+        }
+        let mut noise = ScheduledEventNoise::new(ScheduledNoise::new(1).unwrap(), |_| {
+            Ok(Box::new(NoTranslate))
+        })
+        .into_noise_model()
+        .unwrap();
+        let model = noise
+            .as_any_mut()
+            .downcast_mut::<ScheduledEventModel>()
+            .unwrap();
+        let batch = ScheduledEventBatch {
+            runtime_shot_id: 1,
+            batch_index: 0,
+            start_nanos: 0,
+            duration_nanos: 0,
+            operations: vec![],
+            measurements: vec![],
+        };
         assert!(
-            expanded_size(MAX_SCHEDULE_BYTES - 79, 1, MAX_SCHEDULE_BYTES)
-                .unwrap_err()
-                .to_string()
-                .contains("expanded schedule limit")
+            model
+                .normalize(
+                    &[batch],
+                    ShotContext {
+                        run: 0,
+                        worker: 0,
+                        shot: 0
+                    },
+                    55
+                )
+                .is_err()
         );
-        assert!(expanded_size(16, usize::MAX, MAX_SCHEDULE_BYTES).is_err());
-        assert!(expanded_size(usize::MAX, 1, MAX_SCHEDULE_BYTES).is_err());
     }
 }

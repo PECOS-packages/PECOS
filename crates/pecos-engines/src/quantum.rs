@@ -229,8 +229,7 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
             }
 
             GateType::MX => {
-                sim.h(&cmd.qubits);
-                for meas_id in sim.mz(&cmd.qubits) {
+                for meas_id in sim.mx(&cmd.qubits) {
                     measurements.push(usize::from(meas_id.outcome));
                 }
             }
@@ -595,8 +594,7 @@ fn process_general_message<
             }
 
             GateType::MX => {
-                sim.h(&cmd.qubits);
-                for meas_id in sim.mz(&cmd.qubits) {
+                for meas_id in sim.mx(&cmd.qubits) {
                     measurements.push(usize::from(meas_id.outcome));
                 }
             }
@@ -685,6 +683,65 @@ pub trait QuantumEngine:
 
     /// Returns a mutable reference to this object as Any, for downcasting
     fn as_any_mut(&mut self) -> &mut dyn Any;
+}
+
+// Closed admission of reviewed built-in backends. This is not an opt-in promise
+// from arbitrary QuantumEngine implementations: new consumers need validation.
+#[derive(Clone, Copy)]
+pub(crate) struct ScheduledBackend {
+    pub(crate) capacity: usize,
+    pub(crate) clifford: bool,
+}
+impl ScheduledBackend {
+    pub(crate) fn inspect(engine: &dyn QuantumEngine) -> Result<Self, PecosError> {
+        if let Some(sim) = engine.as_any().downcast_ref::<StateVecEngine>() {
+            Ok(Self {
+                capacity: sim.simulator().num_qubits(),
+                clifford: false,
+            })
+        } else if let Some(sim) = engine.as_any().downcast_ref::<StabilizerEngine>() {
+            Ok(Self {
+                capacity: sim.simulator.num_qubits(),
+                clifford: true,
+            })
+        } else {
+            Err(PecosError::Input(
+                "scheduled execution requires StateVecEngine or StabilizerEngine".into(),
+            ))
+        }
+    }
+    pub(crate) fn validate(&self, gates: &[Gate], metadata: bool) -> Result<(), PecosError> {
+        for gate in gates {
+            gate.validate().map_err(PecosError::Input)?;
+            check_qubit_capacity(gate.gate_type, &gate.qubits, self.capacity)?;
+            if !self.clifford {
+                continue;
+            }
+            let admitted = match gate.gate_type {
+                GateType::PZ
+                | GateType::MZ
+                | GateType::MeasureLeaked
+                | GateType::X
+                | GateType::Y
+                | GateType::Z
+                | GateType::I => true,
+                GateType::Idle
+                | GateType::MeasCrosstalkLocalPayload
+                | GateType::MeasCrosstalkGlobalPayload => metadata,
+                kind => pecos_simulators::clifford_rotation::supports_clifford_rotation(
+                    kind,
+                    &gate.angles,
+                ),
+            };
+            if !admitted {
+                return Err(PecosError::Input(format!(
+                    "unsupported scheduled stabilizer gate {:?}: requires supported Clifford rotations",
+                    gate.gate_type
+                )));
+            }
+        }
+        Ok(())
+    }
 }
 
 dyn_clone::clone_trait_object!(QuantumEngine);
@@ -1143,15 +1200,14 @@ where
                     self.simulator.rxy1q(theta, phi, &cmd.qubits);
                 }
 
-                // Batch consecutive MZ commands into one simulator call.
-                // This enables joint-sampling optimizations (fewer state vector passes).
                 GateType::MX => {
-                    self.simulator.h(&cmd.qubits);
-                    let meas_ids = self.simulator.mz(&cmd.qubits);
+                    let meas_ids = self.simulator.mx(&cmd.qubits);
                     for meas_id in meas_ids {
                         measurements.push(usize::from(meas_id.outcome));
                     }
                 }
+                // Batch consecutive MZ commands into one simulator call.
+                // This enables joint-sampling optimizations (fewer state vector passes).
                 GateType::MZ | GateType::MeasureLeaked => {
                     // Collect qubits from consecutive MZ/MeasureLeaked commands
                     let mut mz_qubits: Vec<QubitId> = cmd.qubits.to_vec();

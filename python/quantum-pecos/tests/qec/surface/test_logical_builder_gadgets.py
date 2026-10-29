@@ -14,8 +14,9 @@ import pytest
 import stim
 from pecos.guppy_gen.gadget_render import render_gadget_function
 from pecos.qec import DetectorErrorModel
+from pecos.qec.circuit_steps import CircuitStep, OpType
 from pecos.qec.surface import LogicalCircuitBuilder, SurfacePatch, gadgets, logical_circuit
-from pecos.qec.surface.circuit_builder import OpType, QubitAllocation, SurfaceCircuitStep, tick_circuit_to_stim
+from pecos.qec.surface.circuit_builder import QubitAllocation, tick_circuit_to_stim
 from pecos.qec.surface.logical_circuit import (
     LogicalGateType,
     LogicalOp,
@@ -1398,7 +1399,7 @@ def test_disjoint_terminal_bases():
     assert len(builder.operations) == 2
     assert builder.operations[0].basis == "Y"
     assert tick_circuit_to_stim(builder.to_tick_circuit()) == tick_circuit_to_stim(lowered)
-    assert builder.build_dem()
+    assert str(builder.build_dem())
     with pytest.raises(
         ValueError,
         match=(
@@ -1412,7 +1413,7 @@ def test_disjoint_terminal_bases():
 
 
 def test_split_zip_padding_and_measurement_labels():
-    step = SurfaceCircuitStep
+    step = CircuitStep
     generator = GeneratorProbe({}, [])
     measurements = generator.emit_steps(
         [
@@ -1556,11 +1557,11 @@ def test_unequal_patch_streams_preserve_prep_and_rounds():
 
 def test_allocation_order_with_old_and_fresh_patches():
     generator = GeneratorProbe({}, [])
-    generator.emit_steps([(SurfaceCircuitStep(OpType.ALLOC, [0]),)])
+    generator.emit_steps([(CircuitStep(OpType.ALLOC, [0]),)])
     generator.emit_steps(
         [
-            (SurfaceCircuitStep(OpType.ALLOC, [0]),),
-            (SurfaceCircuitStep(OpType.ALLOC, [1]),),
+            (CircuitStep(OpType.ALLOC, [0]),),
+            (CircuitStep(OpType.ALLOC, [1]),),
         ],
     )
     assert [(g.gate_type.name, g.qubits) for g in generator.tc.get_tick(1).gate_batches()] == [
@@ -1630,9 +1631,9 @@ def test_same_type_conflict_rejected_across_subticks():
         generator.emit_steps(
             [
                 (
-                    SurfaceCircuitStep(OpType.H, [0]),
-                    SurfaceCircuitStep(OpType.Z, [0]),
-                    SurfaceCircuitStep(OpType.H, [0]),
+                    CircuitStep(OpType.H, [0]),
+                    CircuitStep(OpType.Z, [0]),
+                    CircuitStep(OpType.H, [0]),
                 ),
             ],
         )
@@ -1643,7 +1644,7 @@ def test_same_type_on_separate_tick_groups_allowed():
     generator = GeneratorProbe({}, [])
     generator.emit_steps(
         [
-            (SurfaceCircuitStep(OpType.H, [0]), SurfaceCircuitStep(OpType.TICK), SurfaceCircuitStep(OpType.H, [0])),
+            (CircuitStep(OpType.H, [0]), CircuitStep(OpType.TICK), CircuitStep(OpType.H, [0])),
         ],
     )
     assert generator.tc.num_ticks() == 2
@@ -1654,7 +1655,7 @@ def test_multi_qubit_measurement_step_rejected_before_emission():
     with pytest.raises(ValueError, match="MEASURE requires exactly one qubit"):
         generator.emit_steps(
             [
-                (SurfaceCircuitStep(OpType.MEASURE, [0, 1], "pair"), SurfaceCircuitStep(OpType.MEASURE, [2], "later")),
+                (CircuitStep(OpType.MEASURE, [0, 1], "pair"), CircuitStep(OpType.MEASURE, [2], "later")),
             ],
         )
     assert generator.meas_count == 0
@@ -1844,7 +1845,7 @@ def test_teleportation_readout_requires_logical_operator(helper):
 
 def test_empty_tick_groups_preserved_until_stream_end():
     generator = GeneratorProbe({}, [])
-    step = SurfaceCircuitStep
+    step = CircuitStep
     generator.emit_steps(
         [
             (
@@ -1886,8 +1887,8 @@ def test_physical_steps_require_qubits_before_emission(op_type):
     with pytest.raises(ValueError, match=f"{op_type.name} requires at least one qubit"):
         generator.emit_steps(
             [
-                (SurfaceCircuitStep(OpType.ALLOC, [0]),),
-                (SurfaceCircuitStep(op_type),),
+                (CircuitStep(OpType.ALLOC, [0]),),
+                (CircuitStep(op_type),),
             ],
         )
     assert generator.tc.num_ticks() == 0

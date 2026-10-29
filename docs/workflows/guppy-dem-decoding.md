@@ -174,6 +174,17 @@ assert dem.num_observables == 1
 print(f"detectors: {dem.num_detectors}, mechanisms: {dem.to_string().count('error(')}")
 ```
 
+If your program already emits computed detector and observable parities, plus
+all raw measurements, replace the two explicit-definition setters with
+`.with_inference(DemInferenceSettings())`. Import `DemInferenceSettings` from
+`pecos.qec`; use its chained `with_*` methods for custom tags and probe settings.
+The remaining noise, idle, sampling, and decoding stages are the same, including
+`dem_build.evaluate_result_columns(...)`, which uses the inferred raw-output
+binding. See [Inferring a DEM from Guppy Outputs](../user-guide/inferred-guppy-dem.md)
+for the program contract and inference audit. The program above uses scalar
+measurement tags and must first emit the required raw and computed outputs to
+use that route.
+
 Pass the DEM object to built-in decoder specs. BP+OSD and PECOS's built-in
 Tesseract consume raw hyperedges; graph specs such as PyMatching project them
 during preparation, retaining the object's fault-sector labels. Results expose
@@ -216,9 +227,13 @@ for text, filename in (
 
 </div>
 
-The program-to-DEM steps (stages 1–3) and program simulation (stage 4b) are
-Python-only for now. The Rust tabs start from the DEM text stage 3 produces,
-shipped with this page as `docs/assets/test-data/guppy_dem_decoding.dem`.
+This page uses Python for Guppy authoring, program-to-DEM construction
+(stages 1–3), and program simulation (stage 4b). Rust can also build DEMs directly
+from QIS or compiled HUGR with the optional `SeleneDemProgram` adapter, including
+explicit, inferred, and mixed definitions; see the
+[native Rust API](../user-guide/inferred-guppy-dem.md#rust-settings-and-circuitprobe-builds).
+The Rust tabs below start from the DEM text stage 3 produces, shipped with this
+page as `docs/assets/test-data/guppy_dem_decoding.dem`.
 
 ## 4a. Sample the DEM
 
@@ -354,7 +369,11 @@ Pass the same sampled batch to `batch.decode(...)` with a typed specification
 for PyMatching, Tesseract, BP+OSD, and the Rust-backed Frontier and BP-Trellis
 decoders. A shot counts as a logical error when the predicted observable flip
 disagrees with the flip the sample actually carried. The
-returned `DecodeResult` supplies the aggregate count and rate directly.
+returned `DecodeResult` supplies the aggregate count and rate directly. These
+examples use Frontier's strict default: a shot with no retained path raises an
+error. For runs that should retry or continue with a fallback, use the
+[recovery policy below](#5b-optional-recover-from-frontier-no-path-outcomes)
+in place of the Frontier specification in this stage.
 
 === ":fontawesome-brands-python: Python"
 
@@ -448,10 +467,10 @@ returned `DecodeResult` supplies the aggregate count and rate directly.
     ```
 
 In Rust, Tesseract follows the same pattern through `DecoderSpec::Tesseract`
-(with the `pecos-decoders` `tesseract` feature). Frontier and BP-Trellis batch
-decoding is Python-only for now, so the Rust tab shows `DecodeOptions` (explicit
-workers and retained predictions) on BP+OSD instead; stage 6 shows the Rust
-Frontier decoder used directly.
+(with the `pecos-decoders` `tesseract` feature). The experimental `frontier(...)`
+and `bp_trellis(...)` specification factories are Python APIs. Rust also exposes
+direct experimental batch APIs; the recovery section below shows Frontier's
+`decode_batch`, and stage 6 shows its detailed single-shot results.
 
 `frontier` and `bp_trellis` are experimental: importing them from
 `pecos.decoders` loads the optional `pecos-rslib-exp` package, which must be
@@ -516,6 +535,132 @@ with genuinely hyperedge-like noise. Frontier, BP-Trellis, and BP+OSD consume th
 in this example, as does PECOS's built-in Tesseract. Frontier and BP-Trellis
 receive the raw text export because they are Python decoder providers.
 
+## 5b. Optional: recover from Frontier no-path outcomes
+
+A valid syndrome can have no path left after pruning. Keep strict behavior when
+that should stop the run, or explicitly choose retries and a fallback for long
+batches. The following policy starts at `delta=16`, retries at 32 and then 64,
+and stops as soon as decoding succeeds. `k` stays fixed. Omitting `delta_max`
+disables retries; a cap such as 50 produces 16, 32, 50. A proof that the syndrome
+is incompatible with the DEM skips retries because a wider search cannot help.
+
+=== ":fontawesome-brands-python: Python"
+
+    <!--continuation-->
+    ```python
+    recovery_spec = frontier(
+        k=256,
+        delta=16,
+        delta_max=64,
+        on_no_path="fallback",
+        fallback="feasible_then_zero",
+    )
+    recovered = batch.decode(raw_text, recovery_spec, workers=4, predictions=True)
+
+    assert recovered.num_undecoded == 0
+    assert recovered.num_scored == batch.num_shots
+    fallback_errors = sum(r.logical_error for r in recovered.recovery if r.fallback_used)
+    incompatible = sum(r.syndrome_consistent is False for r in recovered.recovery)
+    print(f"all shots: {recovered.num_errors}/{recovered.num_scored} logical errors")
+    print(f"fallback shots: {fallback_errors}/{recovered.num_fallback} logical errors")
+    print(f"fallback shots incompatible with the DEM: {incompatible}")
+    for record in recovered.recovery[:5]:
+        print(record.shot_index, record.deltas_tried, record.fallback_used, record.logical_error)
+    ```
+
+=== ":fontawesome-brands-rust: Rust"
+
+    <!--continuation-->
+    ```rust
+    use pecos_frontier::recovery::{
+        FallbackPolicy, FrontierRecoveryDecoder, FrontierRecoveryOutcome,
+        NoPathAction, RecoveryOptions,
+    };
+
+    let recovery_dem = pecos_frontier::SparseDem::from_dem_str(&raw_text)?;
+    let recovery_config = pecos_frontier::FrontierConfig {
+        k: 256,
+        delta: 16.0,
+        column_order: pecos_frontier::TrellisOrdering::Deadline.resolve(&recovery_dem)?,
+        ..Default::default()
+    };
+    let recovery_decoder = FrontierRecoveryDecoder::from_sparse_dem(
+        &recovery_dem, recovery_config, Some(FallbackPolicy::FeasibleThenZero),
+    )?;
+    let syndromes: Vec<_> = batch.shots().map(|shot| shot.syndrome).collect();
+    let outcomes = recovery_decoder.decode_batch(&syndromes, 4, RecoveryOptions {
+        delta_max: Some(64.0),
+        on_no_path: NoPathAction::Fallback,
+    })?;
+
+    let (mut errors, mut fallback_errors, mut fallbacks, mut incompatible) = (0, 0, 0, 0);
+    for (shot, outcome) in batch.shots().zip(outcomes) {
+        let (prediction, used_fallback) = match outcome? {
+            FrontierRecoveryOutcome::Decoded { result, .. } => (result.predicted, false),
+            FrontierRecoveryOutcome::Fallback { predicted, syndrome_consistent, .. } => {
+                fallbacks += 1;
+                incompatible += usize::from(syndrome_consistent == Some(false));
+                (predicted, true)
+            }
+            FrontierRecoveryOutcome::NoPath(_) => {
+                return Err("fallback mode returned no prediction".into());
+            }
+        };
+        let logical_error = prediction != shot.observable_flips;
+        errors += usize::from(logical_error);
+        fallback_errors += usize::from(used_fallback && logical_error);
+    }
+    println!("all shots: {errors}/{} logical errors", batch.num_shots());
+    println!("fallback shots: {fallback_errors}/{fallbacks} logical errors");
+    println!("fallback shots incompatible with the DEM: {incompatible}");
+    ```
+
+The fallback runs after the configured retries are exhausted. When an explanation
+exists in the independent binary DEM, `feasible_then_zero` finds a fault set that
+reproduces the fired detectors and derives the logical prediction from that same
+set. It is a heuristic, so syndrome compatibility does not guarantee logical
+success. Every fallback prediction is scored against the shot's true logical
+observables; a wrong logical prediction counts as an error in the full run and
+in the fallback-only count above.
+
+If no explanation exists, this policy returns a zero prediction marked
+`syndrome_consistent=False`. Count and investigate those cases: neither retries
+nor fallback repair a circuit/DEM mismatch or detector-ordering error. Invalid
+inputs and engine faults still raise in every mode. This “always-answer” policy
+covers normal no-path outcomes, not arbitrary errors.
+
+Use the same `recovery_spec` with `sim_batch.decode(raw_text, recovery_spec, ...)`
+for the circuit-simulated shots, or with
+`sampler.decode(raw_text, 2000, recovery_spec, seed=1, workers=4)` for fused
+sampling and decoding. Python retains recovery records even without
+`predictions=True`; Rust's direct batch API returns a per-shot `Result` in input
+order. Both Python extensions must include the recovery API; update the standard
+`pecos-rslib` and optional `pecos-rslib-exp` together.
+
+To retry but still raise when no path remains, omit the fallback options and use
+`frontier(k=256, delta=16, delta_max=64)`. To continue while explicitly leaving
+failed shots undecoded, set `on_no_path="report"` instead:
+
+<!--continuation-->
+```python
+reported = batch.decode(
+    raw_text,
+    frontier(k=256, delta=16, delta_max=64, on_no_path="report"),
+    workers=4,
+    predictions=True,
+)
+assert sum(prediction is None for prediction in reported.predictions) == reported.num_undecoded
+print(f"{reported.num_errors} errors among {reported.num_scored} scored shots")
+print(f"{reported.num_undecoded} undecoded shots out of {reported.num_shots}")
+```
+
+Reporting supplies no prediction for undecoded shots. If any remain,
+`logical_error_rate` is NaN and `interval()` raises: do not turn those holes into
+identity predictions or silently exclude them when reporting a full-run logical
+error rate. Rust uses `NoPathAction::Report` for the same distinction. See the
+[Frontier recovery API guide](../user-guide/decoders.md#strict-reporting-and-always-answer-frontier-calls)
+for result fields, fallback witnesses, and the shared Rust batch adapter.
+
 ## 6. Optional: per-shot confidence with an experimental decoder
 
 !!! warning "Experimental API"
@@ -526,9 +671,9 @@ receive the raw text export because they are Python decoder providers.
     when you need per-shot confidence data; that data is not returned by
     `batch.decode(...)`.
 
-Every decoder in stage 5 answers "which observables flipped?". None of them
-reports how close the call was. The experimental Frontier and BP-Trellis
-decoders add a **complementary gap**: the log-probability margin between the
+Stage 5 reports predictions and recovery outcomes, but no measure of how close
+the call was. The experimental Frontier and BP-Trellis detailed-result APIs add
+a **complementary gap**: the log-probability margin between the
 winning logical class and the runner-up. When the result's `status` is
 `"exact"` (nothing was pruned), a large gap is a confident shot and a gap near
 zero means the evidence barely favoured the answer -- the natural signal for
@@ -537,6 +682,10 @@ gap describes only what the search retained, so treat it as a diagnostic
 rather than a confidence; the gap is `None` whenever fewer than two logical
 classes survive to the end, which can happen on a fully exact decode too, so a
 missing gap is not a pruning signal.
+
+The examples below use strict calls. If using reporting or fallback instead,
+inspect the outcome before accessing confidence fields: no-path reports and
+fallback predictions do not carry a complementary gap or likelihood estimate.
 
 The Rust tab uses `pecos-frontier`, an experimental crate not published on
 crates.io. Rust's `FrontierConfig::default()` processes mechanisms in DEM order,
@@ -617,3 +766,12 @@ about whether pruning affected the answer.
 - [Decoders](../user-guide/decoders.md) describes the available decoder APIs.
 - [Runtime QIS Tracing](../user-guide/runtime-qis-tracing.md) explains how PECOS
   captures the runtime-lowered gate stream used to build this DEM.
+
+
+The builder also accepts mixed lists such as
+`[Detector(rec[-2], rec[-1]), Detector.inferred("checks", element=0)]`.
+`Observable.inferred(...)` selects logical outputs in the same way. Only selected
+outputs are inferred; supplied explicit definitions and empty lists take
+precedence over `.with_inference(...)` defaults. If every definition is explicit,
+no inference probes or solver run. See [mixed definitions](../user-guide/inferred-guppy-dem.md#mix-explicit-and-inferred-definitions)
+for Python and Rust examples and the per-definition audit.

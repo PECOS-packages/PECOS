@@ -39,11 +39,13 @@ from typing import TYPE_CHECKING, Literal
 from pecos_rslib.qec import DEM_SLICE_ROUND_ATTRIBUTE, transform_two_patch_pauli
 
 from pecos.qec._replay import _replay_measurements
+from pecos.qec.circuit_steps import OpType
 from pecos.qec.surface import gadgets
-from pecos.qec.surface.circuit_builder import OpType, QubitAllocation, _build_observable_descriptors
+from pecos.qec.surface.circuit_builder import QubitAllocation, _build_observable_descriptors
 
 if TYPE_CHECKING:
-    from pecos.qec.surface.circuit_builder import SurfaceCircuitStep
+    from pecos.qec import DetectorErrorModel
+    from pecos.qec.circuit_steps import CircuitStep
     from pecos.qec.surface.patch import Stabilizer, SurfacePatch
 
 PatchSnapshot = dict[str, bool]
@@ -2289,7 +2291,7 @@ class LogicalCircuitBuilder:
         p2: float = 0.001,
         p_meas: float = 0.001,
         p_prep: float = 0.0,
-    ) -> str:
+    ) -> DetectorErrorModel:
         """Generate a DEM using the PECOS-native fault analysis pipeline.
 
         TickCircuit -> DagCircuit -> DagFaultAnalyzer -> DemBuilder.
@@ -2305,7 +2307,9 @@ class LogicalCircuitBuilder:
             p_prep: Preparation error rate.
 
         Returns:
-            DEM string in Stim-compatible format.
+            DetectorErrorModel retaining detector ``fault_sector`` labels used by
+            graph decoders. ``str(dem)`` or ``dem.to_string()`` gives the
+            standard DEM text in Stim-compatible format.
         """
         cached = self._build_structured_dem_from_cached_slices(
             p1=p1,
@@ -2317,7 +2321,7 @@ class LogicalCircuitBuilder:
             dem, _, _ = self._build_structured_dem(p1=p1, p2=p2, p_meas=p_meas, p_prep=p_prep)
         else:
             dem, _ = cached
-        return str(dem)
+        return dem
 
     def build_sampler_and_decoder(
         self,
@@ -2667,7 +2671,7 @@ class LogicalCircuitBuilder:
             dem = circuit.detector_error_model(ignore_decomposition_failures=True).flattened()
             dem_str = str(dem)
         else:
-            dem_str = self.build_dem(p1=p1, p2=p2, p_meas=p_meas, p_prep=p_prep)
+            dem_str = str(self.build_dem(p1=p1, p2=p2, p_meas=p_meas, p_prep=p_prep))
 
         sc = self.stab_coords()
         decoder = LogicalSubgraphDecoder(dem_str, sc, inner_decoder)
@@ -2971,7 +2975,7 @@ class _CircuitGenerator:
             [q + ps.qubit_offset for q in allocation.z_ancilla_qubits],
         )
 
-    def _emit_steps(self, step_lists: list[tuple[SurfaceCircuitStep, ...]]) -> dict[tuple[int, int], int]:
+    def _emit_steps(self, step_lists: list[tuple[CircuitStep, ...]]) -> dict[tuple[int, int], int]:
         """Split different-type conflicts within TICK groups, then zip with padding.
 
         Each TICK-delimited group, including a comment-only group, produces
@@ -2994,6 +2998,9 @@ class _CircuitGenerator:
             group_used = set()
             layer_label = "unnamed"
             for step in steps:
+                if step.op_type == OpType.RELABEL:
+                    msg = f"_emit_steps does not support RELABEL step {step!r}; use pecos.qec.helix.lower_steps"
+                    raise ValueError(msg)
                 if step.op_type == OpType.COMMENT:
                     layer_label = step.label
                     continue

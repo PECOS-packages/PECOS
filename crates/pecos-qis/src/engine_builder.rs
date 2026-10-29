@@ -69,6 +69,18 @@ impl QisEngineBuilder {
         self
     }
 
+    /// Store LLVM IR for dynamic execution without eagerly collecting operations.
+    ///
+    /// The selected `.interface(...)` compiles this source when the engine is
+    /// built. This avoids an unused preliminary execution for trace consumers.
+    /// A runtime and a dynamic-capable interface builder must also be supplied.
+    #[must_use]
+    pub fn program_ir(mut self, source: impl Into<String>) -> Self {
+        self.program_source = Some(source.into());
+        self.interface = None;
+        self
+    }
+
     /// Set a pre-built interface (for testing)
     #[must_use]
     pub fn with_interface(mut self, interface: OperationCollector) -> Self {
@@ -206,7 +218,12 @@ impl QisEngineBuilder {
                 // Store the LLVM IR source for later loading
                 match &qis_prog.content {
                     pecos_programs::QisContent::Ir(ir_string) => {
+                        // QisEngine executes dynamically. Static collection would
+                        // run custom calls without their configured runtime and
+                        // is never used by the dynamic engine built below.
                         self.program_source = Some(ir_string.clone());
+                        self.interface = None;
+                        return Ok(self);
                     }
                     pecos_programs::QisContent::Bitcode(_bitcode) => {
                         // For bitcode, we'll need to convert or handle differently
@@ -239,7 +256,7 @@ impl QisEngineBuilder {
     }
 
     /// Preserve original native batches in mandatory transport. Requires the
-    /// matching scheduled noise capability and a state-vector simulator.
+    /// matching scheduled noise capability and an admitted state-vector or stabilizer simulator.
     /// Enabling preserves v7 if selected; disabling turns all scheduled transport off.
     #[must_use]
     pub fn scheduled_batches(mut self, enabled: bool) -> Self {
@@ -460,6 +477,16 @@ mod tests {
             assert_eq!(builder.scheduled_transport, expected);
             assert_eq!(builder.clone().scheduled_transport, expected);
         }
+    }
+
+    #[test]
+    fn program_ir_is_lazy_and_survives_cloning() {
+        let builder = qis_engine().program_ir("not yet compiled");
+        assert!(builder.interface.is_none());
+        assert_eq!(
+            builder.clone().program_source.as_deref(),
+            Some("not yet compiled")
+        );
     }
 
     // Note: Full builder tests with runtime and interface are in integration tests

@@ -21,6 +21,8 @@
 //! [`FrontierDecoder`] is the parity port of Leverrier and Urbanke's Frontier
 //! decoder. Its input-order defaults remain those of that port.
 
+pub mod recovery;
+
 use pecos_decoder_core::ObservableDecoder;
 pub use pecos_trellis::factor::{Factor, FactorModel, Outcome};
 pub use pecos_trellis::{

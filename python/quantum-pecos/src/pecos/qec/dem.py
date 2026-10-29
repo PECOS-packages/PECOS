@@ -52,6 +52,7 @@ from collections.abc import Mapping, Sequence
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
+from pecos_rslib.qec import DemInferenceSettings
 from pecos_rslib.qec import DetectorErrorModel as _RustDetectorErrorModel
 
 from pecos._traced_circuit import (
@@ -65,6 +66,7 @@ from pecos.qec._qis_result_tags import _CertificationError
 from pecos.qec.dem_spec import (
     GuppyDemBuild,
     ResultRef,
+    _metadata_entry,
     _resolve_dem_specs,
     _resolved_schema_from_validated_json,
 )
@@ -326,9 +328,13 @@ def _apply_traced_idle_passes(
     *,
     strip_traced_idles: bool | None,
     idle_after_2q_duration: float | None,
-    idle_noise_parameters: Sequence[float | None],
+    idle_noise_parameters: Mapping[str, float | None],
 ) -> None:
-    """Apply requested idle passes and reject idle noise with no target gates."""
+    """Apply requested idle passes and reject idle noise with no target gates.
+
+    A rate requests idle noise when it is nonzero; ``t1`` and ``t2`` request it
+    whenever set. Zero rates stay valid, matching the Rust builders.
+    """
     if strip_traced_idles is None:
         # Inserting a uniform idle convention on top of runtime-emitted idles
         # would double-count idle noise, so insertion implies stripping first.
@@ -345,10 +351,15 @@ def _apply_traced_idle_passes(
             raise ValueError(msg)
         circuit.insert_idle_after_two_qubit_gates(idle_after_2q_duration)
 
-    if any(value is not None for value in idle_noise_parameters) and circuit.gate_counts_by_type().get("Idle", 0) == 0:
+    requested = [
+        f"{name}={value!r}"
+        for name, value in idle_noise_parameters.items()
+        if value is not None and (name in {"t1", "t2"} or value != 0.0)
+    ]
+    if requested and circuit.gate_counts_by_type().get("Idle", 0) == 0:
         msg = (
-            "idle-noise parameters have no idle gates to attach to; either pass "
-            "idle_after_2q_duration=..., or use a Selene runtime that emits scheduled idles"
+            f"idle-noise parameters have no idle gates to attach to (requested: {', '.join(requested)}); "
+            "either pass idle_after_2q_duration=..., or use a Selene runtime that emits scheduled idles"
         )
         raise ValueError(msg)
 
@@ -997,6 +1008,55 @@ def _generator_certified_result_traces(
     ]
 
 
+def _check_certified_raw_binding(
+    certified: Sequence[Mapping[str, Any]],
+    bound: Sequence[Mapping[str, Any]],
+    raw_tag: str,
+    *,
+    generator_slots: bool = False,
+) -> None:
+    """Check certified raw-tag measurement IDs against the inference binding.
+
+    Both are compared at flattened raw-tag element positions. A compiler
+    record names a runtime call occurrence, which starts after the bound calls
+    before it. A generator record names a flattened slot, either
+    ``(raw_tag, index)`` or ``(f"{raw_tag}:meas:{index}", 0)``. Certificate
+    values are placeholders and are never compared.
+    """
+    calls = [list(item["result_ids"]) for item in bound if item["name"] == raw_tag]
+    bound_ids = [identity for ids in calls for identity in ids]
+    starts = [sum(len(ids) for ids in calls[:index]) for index in range(len(calls))]
+    for item in certified:
+        ids = item.get("result_ids") or []
+        if not ids:
+            continue
+        name, occurrence = item["name"], item["occurrence"]
+        base, separator, element_text = name.rpartition(":meas:")
+        if not generator_slots and name == raw_tag:
+            if occurrence < len(calls) and len(calls[occurrence]) != len(ids):
+                msg = (
+                    f"raw tag {raw_tag!r} call {occurrence} emits {len(calls[occurrence])} value(s), "
+                    f"but its certificate names {len(ids)} measurement(s)"
+                )
+                raise ValueError(msg)
+            position = starts[occurrence] if occurrence < len(calls) else len(bound_ids)
+        elif generator_slots and name == raw_tag:
+            position = occurrence
+        elif generator_slots and separator and base == raw_tag and element_text.isdecimal() and occurrence == 0:
+            position = int(element_text)
+        else:
+            continue
+        for element, identity in enumerate(ids):
+            index = position + element
+            inferred = bound_ids[index] if index < len(bound_ids) else None
+            if inferred != identity:
+                msg = (
+                    f"raw tag {raw_tag!r} element {index}: certified measurement ID {identity} "
+                    f"disagrees with inference binding ID {inferred}"
+                )
+                raise ValueError(msg)
+
+
 _UNSET = object()
 _LEGACY_NOISE = object()
 
@@ -1020,6 +1080,7 @@ class GuppyDemBuilder:
         "_detectors_kind",
         "_detectors_value",
         "_idle_after_2q",
+        "_inference",
         "_max_hosted_tick_separation",
         "_noise",
         "_num_measurements",
@@ -1036,6 +1097,7 @@ class GuppyDemBuilder:
 
     def __init__(self) -> None:
         """Create an empty builder whose required inputs are not yet set."""
+        self._inference: Any = _UNSET
         self._program: Any = _UNSET
         self._qubits: Any = _UNSET
         self._detectors_kind: str | object = _UNSET
@@ -1106,8 +1168,28 @@ class GuppyDemBuilder:
         self._set_specs("observables", "json", text)
         return self
 
+    def with_inference(self, settings: DemInferenceSettings) -> Self:
+        """Configure inference and infer roles whose definitions are unspecified.
+
+        Settings are immutable values shared with the Rust API. Inference is
+        empirical; the returned build records its evidence separately from
+        compiler-certified explicit bindings.
+        """
+        if not isinstance(settings, DemInferenceSettings):
+            msg = "with_inference() requires a DemInferenceSettings instance"
+            raise TypeError(msg)
+        settings.validate()
+        if self._num_measurements is not _UNSET:
+            msg = "with_inference() cannot be combined with with_num_measurements()"
+            raise ValueError(msg)
+        self._set_once("_inference", settings, "with_inference")
+        return self
+
     def with_num_measurements(self, count: int) -> Self:
         """Set the measurement count used by raw JSON record references."""
+        if self._inference is not _UNSET:
+            msg = "with_num_measurements() cannot be combined with with_inference()"
+            raise ValueError(msg)
         if self._detectors_kind == "typed" or self._observables_kind == "typed":
             msg = "with_num_measurements() cannot be combined with typed with_detectors() or with_observables()"
             raise ValueError(msg)
@@ -1233,14 +1315,18 @@ class GuppyDemBuilder:
         return value
 
     def build(self) -> GuppyDemBuild:
-        """Trace the configured program once and return its audited DEM build."""
+        """Prepare explicit or inferred annotations and return an audited DEM build."""
         from pecos.programs import Qis as _QisProgram
+        from pecos.qec.dem_spec import Detector, InferredOutput, Observable
         from pecos.tracing import _collect_program_result_traces, trace_program_to_tick_circuit
 
         program = self._required("_program", "with_program")
         num_qubits = self._required("_qubits", "with_qubits")
-        if self._detectors_kind is _UNSET:
-            msg = "build() requires with_detectors() or with_detectors_json()"
+        inferred_observables = self._observables_kind == "typed" and any(
+            isinstance(spec, Observable) and spec.inferred_output is not None for spec in self._observables_value
+        )
+        if self._detectors_kind is _UNSET and self._inference is _UNSET and not inferred_observables:
+            msg = "build() requires with_detectors() or with_detectors_json() or with_inference()"
             raise ValueError(msg)
 
         noise_parameters = self._noise_parameters()
@@ -1299,6 +1385,35 @@ class GuppyDemBuilder:
         )
         typed_detectors = self._detectors_value if self._detectors_kind == "typed" else ()
         typed_observables = self._observables_value if self._observables_kind == "typed" else ()
+
+        def requested_outputs(specs: Any, kind: Any, role: str, expected_type: Any) -> Any:
+            ids = []
+            outputs = []
+            for index, spec in enumerate(specs):
+                if not isinstance(spec, expected_type):
+                    msg = f"with_{role}() requires {expected_type.__name__} definitions"
+                    raise TypeError(msg)
+                _metadata_entry(spec.metadata)
+                identity = index if spec.id is None else spec.id
+                if isinstance(identity, bool) or not isinstance(identity, int) or identity < 0:
+                    msg = f"{role} ids must be non-negative integers"
+                    raise ValueError(msg)
+                ids.append(identity)
+                if spec.inferred_output is not None:
+                    outputs.append((spec.inferred_output.tag, spec.inferred_output.element))
+            if len(set(ids)) != len(ids):
+                msg = f"{role} ids must be unique"
+                raise ValueError(msg)
+            if role == "detectors" and sorted(ids) != list(range(len(ids))):
+                msg = "detector ids must be unique and dense from 0 to len(detectors)-1"
+                raise ValueError(msg)
+            if kind is _UNSET and self._inference is not _UNSET:
+                return None
+            return outputs
+
+        detector_outputs = requested_outputs(typed_detectors, self._detectors_kind, "detectors", Detector)
+        observable_outputs = requested_outputs(typed_observables, self._observables_kind, "observables", Observable)
+        needs_inference = any(outputs is None or bool(outputs) for outputs in (detector_outputs, observable_outputs))
         referenced_tags = sorted(
             {
                 ref.tag
@@ -1310,15 +1425,32 @@ class GuppyDemBuilder:
         raw_detectors_json = self._detectors_value if self._detectors_kind == "json" else "[]"
         raw_observables_json = self._observables_value if self._observables_kind == "json" else "[]"
         json_needs_tags = _result_tags_present(raw_detectors_json, raw_observables_json)
-        generator_layout, analysis = _preflight_guppy_static_schedule(
-            program,
-            required_tags=referenced_tags,
-            json_result_tags=json_needs_tags,
-        )
-        with _collect_program_result_traces() as runtime_result_traces:
-            circuit = trace_program_to_tick_circuit(
-                _QisProgram(analysis.qis),
-                num_qubits,
+        inference = None
+        generator_layout = None
+        analysis = None
+        # Pure inference and mixed record-ID definitions need no compiler tag
+        # analysis. Explicit programs retain their static-schedule certification.
+        if not needs_inference or referenced_tags or json_needs_tags:
+            generator_layout, analysis = _preflight_guppy_static_schedule(
+                program,
+                required_tags=referenced_tags,
+                json_result_tags=json_needs_tags,
+            )
+        inferred_supports = {}
+        if needs_inference:
+            from pecos.qec.guppy_output_dem import infer_guppy_dem_annotations
+
+            settings = DemInferenceSettings() if self._inference is _UNSET else self._inference
+            inference = infer_guppy_dem_annotations(
+                _QisProgram(analysis.qis) if analysis is not None else program,
+                num_qubits=num_qubits,
+                raw_tag=settings.raw_tag,
+                detector_tag=settings.detector_tag,
+                observable_tags=settings.observable_tags,
+                probe_shots=settings.probe_shots,
+                provenance_shots=settings.provenance_shots,
+                validation_rows=settings.validation_rows,
+                require_raw_provenance=settings.require_raw_provenance,
                 seed=0 if self._seed is _UNSET else self._seed,
                 runtime=None if self._runtime is _UNSET else self._runtime,
                 require_hosted_operation_order=(
@@ -1327,47 +1459,79 @@ class GuppyDemBuilder:
                 max_hosted_tick_separation=(
                     None if self._max_hosted_tick_separation is _UNSET else self._max_hosted_tick_separation
                 ),
+                detector_outputs=detector_outputs,
+                observable_outputs=observable_outputs,
             )
-        normalize_traced_tick_circuit(circuit, context="GuppyDemBuilder.build")
+            circuit = inference.circuit
+            result_traces = list(inference.result_traces)
+            if analysis is not None:
+                certified = _compiler_certified_result_traces(
+                    generator_layout,
+                    analysis,
+                    circuit,
+                    inference.source_result_traces,
+                    required_tags=referenced_tags,
+                )
+                _check_certified_raw_binding(
+                    certified,
+                    result_traces,
+                    settings.raw_tag,
+                    generator_slots=generator_layout is not None,
+                )
+                # Raw-array bindings have their own provenance evidence.
+                result_traces.extend(item for item in certified if item["name"] != settings.raw_tag)
+            inferred_supports = {
+                InferredOutput(tag, element): support
+                for labels, supports in (
+                    (inference.detector_labels, inference.detector_supports),
+                    (inference.observable_labels, inference.observable_supports),
+                )
+                for (tag, element), support in zip(labels, supports, strict=True)
+            }
+        else:
+            with _collect_program_result_traces() as result_traces:
+                circuit = trace_program_to_tick_circuit(
+                    _QisProgram(analysis.qis),
+                    num_qubits,
+                    seed=0 if self._seed is _UNSET else self._seed,
+                    runtime=None if self._runtime is _UNSET else self._runtime,
+                    require_hosted_operation_order=(
+                        False
+                        if self._require_hosted_operation_order is _UNSET
+                        else self._require_hosted_operation_order
+                    ),
+                    max_hosted_tick_separation=(
+                        None if self._max_hosted_tick_separation is _UNSET else self._max_hosted_tick_separation
+                    ),
+                )
+            normalize_traced_tick_circuit(circuit, context="GuppyDemBuilder.build")
+            result_traces = _compiler_certified_result_traces(
+                generator_layout,
+                analysis,
+                circuit,
+                result_traces,
+                required_tags=referenced_tags,
+            )
 
-        _apply_traced_idle_passes(
-            circuit,
-            strip_traced_idles=None if self._strip_traced_idles is _UNSET else self._strip_traced_idles,
-            idle_after_2q_duration=None if self._idle_after_2q is _UNSET else self._idle_after_2q,
-            idle_noise_parameters=(
-                p_idle_linear,
-                p_idle_sin_squared,
-                t1,
-                t2,
-                p_idle_linear_rate,
-                p_idle_quadratic_rate,
-                p_idle_x_linear_rate,
-                p_idle_y_linear_rate,
-                p_idle_z_linear_rate,
-                p_idle_x_quadratic_rate,
-                p_idle_y_quadratic_rate,
-                p_idle_z_quadratic_rate,
-                p_idle_quadratic_sine_rate,
-                p_idle_x_quadratic_sine_rate,
-                p_idle_y_quadratic_sine_rate,
-                p_idle_z_quadratic_sine_rate,
-            ),
-        )
-        result_traces = _compiler_certified_result_traces(
-            generator_layout,
-            analysis,
-            circuit,
-            runtime_result_traces,
-            required_tags=referenced_tags,
-        )
-        typed_schema = _resolve_dem_specs(
-            typed_detectors,
-            typed_observables,
-            circuit=circuit,
-            result_traces=result_traces,
-        )
-        detectors_json = typed_schema.detectors_json if self._detectors_kind == "typed" else raw_detectors_json
-        observables_json = typed_schema.observables_json if self._observables_kind == "typed" else raw_observables_json
+        detectors_json = raw_detectors_json
+        observables_json = raw_observables_json
+        if self._detectors_kind == "typed" or self._observables_kind == "typed":
+            typed_schema = _resolve_dem_specs(
+                typed_detectors,
+                typed_observables,
+                circuit=circuit,
+                result_traces=result_traces,
+                inferred_supports=inferred_supports,
+            )
+            if self._detectors_kind == "typed":
+                detectors_json = typed_schema.detectors_json
+            if self._observables_kind == "typed":
+                observables_json = typed_schema.observables_json
+        if inference is not None:
+            if detector_outputs is None:
+                detectors_json = inference.detectors_json
+            if observable_outputs is None:
+                observables_json = inference.observables_json
         if json_needs_tags:
             from pecos_rslib import resolve_result_tags_for_guppy
 
@@ -1389,6 +1553,29 @@ class GuppyDemBuilder:
                 measurement_ids_in_execution_order(circuit),
             )
 
+        _apply_traced_idle_passes(
+            circuit,
+            strip_traced_idles=None if self._strip_traced_idles is _UNSET else self._strip_traced_idles,
+            idle_after_2q_duration=None if self._idle_after_2q is _UNSET else self._idle_after_2q,
+            idle_noise_parameters={
+                "p_idle_linear": p_idle_linear,
+                "p_idle_sin_squared": p_idle_sin_squared,
+                "t1": t1,
+                "t2": t2,
+                "p_idle_linear_rate": p_idle_linear_rate,
+                "p_idle_quadratic_rate": p_idle_quadratic_rate,
+                "p_idle_x_linear_rate": p_idle_x_linear_rate,
+                "p_idle_y_linear_rate": p_idle_y_linear_rate,
+                "p_idle_z_linear_rate": p_idle_z_linear_rate,
+                "p_idle_x_quadratic_rate": p_idle_x_quadratic_rate,
+                "p_idle_y_quadratic_rate": p_idle_y_quadratic_rate,
+                "p_idle_z_quadratic_rate": p_idle_z_quadratic_rate,
+                "p_idle_quadratic_sine_rate": p_idle_quadratic_sine_rate,
+                "p_idle_x_quadratic_sine_rate": p_idle_x_quadratic_sine_rate,
+                "p_idle_y_quadratic_sine_rate": p_idle_y_quadratic_sine_rate,
+                "p_idle_z_quadratic_sine_rate": p_idle_z_quadratic_sine_rate,
+            },
+        )
         circuit.set_meta("detectors", detectors_json)
         circuit.set_meta("observables", observables_json)
         measurement_count = circuit.num_measurements() if self._num_measurements is _UNSET else self._num_measurements
@@ -1422,9 +1609,38 @@ class GuppyDemBuilder:
             observables_json,
             circuit=circuit,
             result_traces=result_traces,
+            raw_array_tag=inference.raw_tag if inference is not None else None,
         )
+        definition_origins = []
+        for role, specs, ids, selectors in (
+            ("detector", typed_detectors, schema.detector_ids, detector_outputs),
+            (
+                "observable",
+                typed_observables,
+                [identity for identity, _ in schema.observable_meas_ids],
+                observable_outputs,
+            ),
+        ):
+            selected = {
+                index if spec.id is None else spec.id: spec.inferred_output
+                for index, spec in enumerate(specs)
+                if spec.inferred_output is not None
+            }
+            for identity in sorted(ids):
+                origin = {"role": role, "id": identity, "source": "explicit"}
+                if selectors is None:
+                    labels = inference.detector_labels if role == "detector" else inference.observable_labels
+                    tag, element = labels[identity]
+                    origin.update(source="inferred", tag=tag, element=element)
+                elif identity in selected:
+                    output = selected[identity]
+                    origin.update(source="inferred", tag=output.tag, element=output.element)
+                definition_origins.append(origin)
+
         circuit.set_meta("dem_schema_fingerprint", schema.schema_fingerprint)
-        if generator_layout is not None:
+        if inference is not None:
+            named_result_binding = inference.raw_binding
+        elif generator_layout is not None:
             named_result_binding = "generator_layout_v2_program_bound"
         else:
             result_ids = [result_id for _, ids in schema.result_ids_by_tag for result_id in ids]
@@ -1449,6 +1665,8 @@ class GuppyDemBuilder:
             _detector_meas_ids=schema.detector_meas_ids,
             _observable_meas_ids=schema.observable_meas_ids,
             _result_ids_by_tag=schema.result_ids_by_tag,
+            inference=inference,
+            definition_origins=tuple(definition_origins),
         )
 
 

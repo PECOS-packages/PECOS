@@ -19,6 +19,30 @@ use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
+type InitFn =
+    unsafe extern "C" fn(*mut *mut c_void, u64, u64, u32, *const *const std::ffi::c_char) -> i32;
+type DelayFn = unsafe extern "C" fn(*mut c_void, u64) -> i32;
+static REAL_INIT: Mutex<Option<InitFn>> = Mutex::new(None);
+static REAL_DELAY: Mutex<Option<DelayFn>> = Mutex::new(None);
+static CLOCKS: Mutex<BTreeMap<usize, u64>> = Mutex::new(BTreeMap::new());
+
+unsafe extern "C" fn init(
+    instance: *mut *mut c_void,
+    capacity: u64,
+    time: u64,
+    argc: u32,
+    argv: *const *const std::ffi::c_char,
+) -> i32 {
+    let errno = unsafe { REAL_INIT.lock().unwrap().unwrap()(instance, capacity, time, argc, argv) };
+    if errno == 0 {
+        CLOCKS
+            .lock()
+            .unwrap()
+            .insert(unsafe { *instance } as usize, time);
+    }
+    errno
+}
+
 type EndFn = unsafe extern "C" fn(*mut c_void) -> i32;
 type StartFn = unsafe extern "C" fn(*mut c_void, u64, u64) -> i32;
 static REAL_START: Mutex<Option<StartFn>> = Mutex::new(None);
@@ -37,11 +61,24 @@ static EMITTED: AtomicBool = AtomicBool::new(false);
 static CALLS: AtomicUsize = AtomicUsize::new(0);
 static BARRIER_AFTER_END: AtomicBool = AtomicBool::new(false);
 static MODE: AtomicUsize = AtomicUsize::new(0);
+static RESERVED: AtomicUsize = AtomicUsize::new(0);
+static EXPECTED_RESERVATIONS: AtomicUsize = AtomicUsize::new(0);
+static PREFIX_BATCHES: AtomicUsize = AtomicUsize::new(0);
 unsafe extern "C" fn end(instance: *mut c_void) -> i32 {
     CALLS.fetch_add(1, Ordering::SeqCst);
     let errno = unsafe { REAL_END.lock().unwrap().unwrap()(instance) };
     ENDED.store(true, Ordering::SeqCst);
     errno
+}
+// Mode 3 fills the collection with full-payload custom batches: (bytes per
+// batch, number of batches that fit after the 16-byte header).
+fn mode3_prefix() -> (usize, usize) {
+    use crate::scheduled_transport::BudgetLayout;
+    let layout = BudgetLayout::Minimum;
+    let prefix_bytes =
+        layout.framing_bytes(0) + layout.operation_bytes(Some(MAX_PAYLOAD_BYTES), false);
+    let prefix_count = (pecos_engines::scheduled_frame::MAX_SCHEDULE_BYTES - 16) / prefix_bytes;
+    (prefix_bytes, prefix_count)
 }
 unsafe extern "C" fn next(instance: *mut c_void, out: SeleneRuntimeGetOperationHandle) -> i32 {
     if ENDED.load(Ordering::SeqCst) {
@@ -51,15 +88,58 @@ unsafe extern "C" fn next(instance: *mut c_void, out: SeleneRuntimeGetOperationH
         if MODE.load(Ordering::SeqCst) == 2 {
             return 19;
         }
+        if MODE.load(Ordering::SeqCst) == 3 {
+            let (_, prefix_count) = mode3_prefix();
+            if PREFIX_BATCHES.fetch_add(1, Ordering::SeqCst) < prefix_count {
+                let payload = vec![0; MAX_PAYLOAD_BYTES];
+                unsafe {
+                    (out.interface.custom)(
+                        out.instance,
+                        7301,
+                        payload.as_ptr().cast(),
+                        payload.len(),
+                    );
+                }
+                return 0;
+            }
+        }
         if !EMITTED.swap(true, Ordering::SeqCst) {
             unsafe {
-                (out.interface.set_batch_time)(out.instance, 123, 17);
+                // The terminal batch advances the same per-instance clock as
+                // ordinary batches, including the wrapped runtime's next shot.
+                let mut clocks = CLOCKS.lock().unwrap();
+                let clock = clocks.get_mut(&(instance as usize)).unwrap();
+                (out.interface.set_batch_time)(out.instance, *clock + 123, 17);
+                *clock += 140;
+                let errno = REAL_DELAY.lock().unwrap().unwrap()(instance, 140);
+                if errno != 0 {
+                    return errno;
+                }
                 if MODE.load(Ordering::SeqCst) == 1 {
                     (out.interface.custom)(out.instance, 7301, std::ptr::null(), 0);
                 } else if MODE.load(Ordering::SeqCst) == 3 {
-                    for _ in 0..=MAX_OPERATIONS {
+                    use crate::scheduled_transport::BudgetLayout;
+                    use pecos_engines::scheduled_frame::MAX_SCHEDULE_BYTES;
+                    // 255 custom batches use 255 * (40 + 24 + 262144) bytes.
+                    // After this batch's framing, 245768 bytes fit 6144 gates;
+                    // the 6145th must fail reservation on both drain routes.
+                    let layout = BudgetLayout::Minimum;
+                    let (prefix_bytes, prefix_count) = mode3_prefix();
+                    let remaining = MAX_SCHEDULE_BYTES
+                        - 16
+                        - prefix_count * prefix_bytes
+                        - layout.framing_bytes(0);
+                    let count = remaining / layout.operation_bytes(None, false);
+                    EXPECTED_RESERVATIONS.store(count, Ordering::SeqCst);
+                    for _ in 0..=count {
                         (out.interface.rxy)(out.instance, 0, 0.0, 0.0);
                     }
+                    RESERVED.store(
+                        (*out.instance.cast::<RuntimeOperationBatch>())
+                            .operations
+                            .len(),
+                        Ordering::SeqCst,
+                    );
                 } else {
                     (out.interface.rxy)(out.instance, 0, std::f64::consts::PI, 0.0);
                 }
@@ -67,7 +147,17 @@ unsafe extern "C" fn next(instance: *mut c_void, out: SeleneRuntimeGetOperationH
         }
         return 0;
     }
-    unsafe { REAL_NEXT.lock().unwrap().unwrap()(instance, out) }
+    let batch = out.instance.cast::<RuntimeOperationBatch>();
+    let errno = unsafe { REAL_NEXT.lock().unwrap().unwrap()(instance, out) };
+    // This fixture receives the same batch pointer as the production callbacks.
+    let batch = unsafe { &*batch };
+    if errno == 0 && batch.timing_set {
+        CLOCKS
+            .lock()
+            .unwrap()
+            .insert(instance as usize, batch.end_time_nanos());
+    }
+    errno
 }
 unsafe extern "C" fn barrier(instance: *mut c_void, duration: u64) -> i32 {
     if ENDED.load(Ordering::SeqCst) {
@@ -95,6 +185,9 @@ fn install_descriptor() -> (
     let library = unsafe { libloading::Library::new(&public.plugin_path).unwrap() };
     let mut descriptor =
         Box::new(unsafe { SeleneRuntime::runtime_plugin_descriptor(&library).unwrap() });
+    *REAL_INIT.lock().unwrap() = Some(descriptor.init_fn);
+    *REAL_DELAY.lock().unwrap() = descriptor.simulate_delay_fn;
+    descriptor.init_fn = init;
     *REAL_END.lock().unwrap() = Some(descriptor.shot_end_fn);
     *REAL_START.lock().unwrap() = Some(descriptor.shot_start_fn);
     descriptor.shot_start_fn = start;
@@ -129,6 +222,8 @@ fn reset_shim(mode: usize) {
     CALLS.store(0, Ordering::SeqCst);
     BARRIER_AFTER_END.store(false, Ordering::SeqCst);
     MODE.store(mode, Ordering::SeqCst);
+    PREFIX_BATCHES.store(0, Ordering::SeqCst);
+    RESERVED.store(0, Ordering::SeqCst);
 }
 
 #[test]
@@ -150,6 +245,9 @@ fn native_end_tail_preserves_identity_timing_and_strict_rejection() {
             for shot in [73, 74] {
                 runtime.reset().unwrap();
                 reset_shim(mode);
+                if mode == 3 {
+                    runtime.set_custom_event_policy(RuntimeCustomEventPolicy::Capture);
+                }
                 runtime.shot_start(shot, Some(9)).unwrap();
                 let operations = [Operation::AllocateQubit { id: 0 }];
                 if scheduled {
@@ -182,7 +280,14 @@ fn native_end_tail_preserves_identity_timing_and_strict_rejection() {
                 if mode == 3 {
                     // Must fail on the extraction bound, not on any later check.
                     let message = result.as_ref().unwrap_err().to_string();
-                    assert!(message.contains("budget exceeded"), "{message}");
+                    assert!(
+                        message.contains("runtime operation byte budget exceeded"),
+                        "{message}"
+                    );
+                    assert_eq!(
+                        RESERVED.load(Ordering::SeqCst),
+                        EXPECTED_RESERVATIONS.load(Ordering::SeqCst)
+                    );
                 }
                 assert_eq!(CALLS.load(Ordering::SeqCst), 1);
                 if mode != 0 || legacy {
@@ -400,5 +505,48 @@ fn native_end_tail_executes_before_engine_completion() {
             assert_eq!(CALLS.load(Ordering::SeqCst), 1);
             assert!(!BARRIER_AFTER_END.load(Ordering::SeqCst));
         }
+    }
+}
+
+#[test]
+fn custom_event_times_are_relative_across_reused_shots() {
+    const CHILD: &str = "PECOS_TEST_REUSED_CUSTOM_EVENT_TIME";
+    if std::env::var_os(CHILD).is_none() {
+        crate::test_env::run_test_in_child(
+            "selene_runtime::terminal_tests::custom_event_times_are_relative_across_reused_shots",
+            &[(CHILD, "1".as_ref())],
+        );
+        return;
+    }
+    let (_library, _fixture, _descriptor, path, public) = install_descriptor();
+    let make_runtime = || {
+        let mut runtime =
+            SeleneRuntime::with_plugin_config(&path, public.init_args.clone(), Vec::new());
+        runtime.set_num_qubits(1);
+        runtime.set_custom_event_policy(RuntimeCustomEventPolicy::Capture);
+        runtime
+    };
+    let run = |runtime: &mut SeleneRuntime, shot| {
+        reset_shim(1);
+        runtime.shot_start(shot, None).unwrap();
+        runtime
+            .lower_operations(&[Operation::AllocateQubit { id: 0 }])
+            .unwrap();
+        runtime.drain_pending_operations().unwrap();
+        runtime.finish_operations().unwrap();
+        runtime.custom_events().to_vec()
+    };
+    let expected = run(&mut make_runtime(), 0);
+    assert_eq!(expected.len(), 1);
+    assert_eq!(
+        (expected[0].start_time_nanos, expected[0].duration_nanos),
+        (123, 17)
+    );
+    let mut runtime = make_runtime();
+    let mut instance = None;
+    for shot in 0..3 {
+        runtime.reset().unwrap();
+        assert_eq!(run(&mut runtime, shot), expected);
+        assert_eq!(*instance.get_or_insert(runtime.instance), runtime.instance);
     }
 }

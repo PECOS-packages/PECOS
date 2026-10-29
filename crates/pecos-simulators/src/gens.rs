@@ -31,14 +31,25 @@ pub enum PauliClassification {
     Logical,
 }
 
+/// Meaning of overlapping X and Z support in a generator tableau.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PauliConvention {
+    /// X and Z on the same qubit mean XZ = -iY.
+    W,
+    /// X and Z on the same qubit mean Y = iXZ.
+    Y,
+}
+
 /// Storage for stabilizer/destabilizer generators, generic over the set type.
 ///
 /// Uses `IndexSet` trait to allow different implementations:
-/// - [`BitSet`]: O(1) toggle operations, efficient for larger circuits
+/// - [`AdaptiveIndexSet`](pecos_core::AdaptiveIndexSet): default, adaptive dense/sparse storage
+/// - [`BitSet`]: dense words with O(1) toggle operations
 /// - [`VecSet<usize>`]: Lower overhead for small sets
 #[derive(Clone, Debug)]
 pub struct GensGeneric<S: IndexSet> {
     num_qubits: usize,
+    convention: PauliConvention,
     pub col_x: Vec<S>,
     pub col_z: Vec<S>,
     pub row_x: Vec<S>,
@@ -47,10 +58,10 @@ pub struct GensGeneric<S: IndexSet> {
     pub signs_i: S,
 }
 
-/// Default generator storage using `BitSet` for O(1) toggle operations.
-pub type Gens = GensGeneric<BitSet>;
+/// Default generator storage using adaptive dense/sparse index sets.
+pub type Gens = GensGeneric<crate::SparseStabSet>;
 
-/// Generator storage using `BitSet` (same as `Gens`).
+/// Generator storage using explicit `BitSet` storage.
 pub type GensBitSet = GensGeneric<BitSet>;
 
 /// Generator storage using `VecSet<usize>` for lower overhead on small sets.
@@ -236,11 +247,20 @@ impl GensHybrid {
 }
 
 impl<S: IndexSet> GensGeneric<S> {
+    /// Create empty generators in the W convention (X and Z mean XZ).
     #[must_use]
     #[inline]
     pub fn new(num_qubits: usize) -> Self {
+        Self::with_convention(num_qubits, PauliConvention::W)
+    }
+
+    /// Create empty generators with a fixed Pauli storage convention.
+    #[must_use]
+    #[inline]
+    pub fn with_convention(num_qubits: usize, convention: PauliConvention) -> Self {
         Self {
             num_qubits,
+            convention,
             col_x: (0..num_qubits).map(|_| S::new()).collect(),
             col_z: (0..num_qubits).map(|_| S::new()).collect(),
             row_x: (0..num_qubits).map(|_| S::new()).collect(),
@@ -250,7 +270,10 @@ impl<S: IndexSet> GensGeneric<S> {
         }
     }
 
-    /// Create a new `GensGeneric` from pre-populated parts.
+    /// Create a new `GensGeneric` in the W convention from pre-populated parts.
+    ///
+    /// For Y-convention generators, build with [`Self::with_convention`] and
+    /// fill the public fields.
     ///
     /// # Safety
     /// The caller must ensure all vectors have length `num_qubits`.
@@ -271,6 +294,7 @@ impl<S: IndexSet> GensGeneric<S> {
         debug_assert_eq!(row_z.len(), num_qubits);
         Self {
             num_qubits,
+            convention: PauliConvention::W,
             col_x,
             col_z,
             row_x,
@@ -278,6 +302,13 @@ impl<S: IndexSet> GensGeneric<S> {
             signs_minus,
             signs_i,
         }
+    }
+
+    /// Returns the fixed convention used by this tableau's rows and sign bits.
+    #[inline]
+    #[must_use]
+    pub fn convention(&self) -> PauliConvention {
+        self.convention
     }
 
     #[inline]
@@ -376,7 +407,9 @@ impl<S: IndexSet> GensGeneric<S> {
         self.row_x.len()
     }
 
-    /// Computes the phase of generator `i` from the sign bits.
+    /// Returns the raw phase bits of generator `i` in this tableau's convention.
+    ///
+    /// Use [`Self::generator`] for the phase of the Pauli written with explicit Ys.
     #[inline]
     #[must_use]
     pub fn generator_phase(&self, i: usize) -> QuarterPhase {
@@ -391,7 +424,12 @@ impl<S: IndexSet> GensGeneric<S> {
     /// Extracts generator `i` as a `PauliString`.
     ///
     /// Returns the Pauli operator for the i-th generator (stabilizer or destabilizer,
-    /// depending on which `Gens` this is), including its phase.
+    /// depending on which `Gens` this is), including its phase. W rows contribute
+    /// a factor of -i per Y position; Y rows already store the explicit Pauli phase.
+    ///
+    /// In either convention, destabilizer phases are meaningful only while their
+    /// signs are maintained: sign tracking must be on, with no measurement or
+    /// refactor since.
     ///
     /// # Panics
     /// Panics if `i >= num_generators()`.
@@ -422,15 +460,21 @@ impl<S: IndexSet> GensGeneric<S> {
 
             paulis.push((pauli, QubitId::new(q)));
         }
-        for _ in 0..num_y_terms {
-            phase = phase.multiply(&QuarterPhase::MinusI);
+        if self.convention == PauliConvention::W {
+            for _ in 0..num_y_terms % 4 {
+                phase = phase.multiply(&QuarterPhase::MinusI);
+            }
         }
 
         PauliString::with_phase_and_paulis(phase, paulis)
             .expect("tableau conversion emits one Pauli per qubit")
     }
 
-    /// Extracts all generators as a `Vec<PauliString>`.
+    /// Extracts all generators as explicit Paulis, converting this tableau's convention.
+    ///
+    /// In either convention, destabilizer phases are meaningful only while their
+    /// signs are maintained: sign tracking must be on, with no measurement or
+    /// refactor since. See [`Self::generator`].
     #[must_use]
     pub fn generators(&self) -> Vec<PauliString> {
         (0..self.num_generators())
@@ -496,7 +540,7 @@ impl<S: IndexSet> GensGeneric<S> {
         self.commutes_with_all(pauli.x_positions(), pauli.z_positions())
     }
 
-    /// Returns indices of generators that anticommute with the given Pauli operator.
+    /// Returns ascending indices of generators that anticommute with the given Pauli operator.
     ///
     /// # Parameters
     /// - `x_positions`: Iterator of qubit indices with X component
@@ -750,8 +794,14 @@ impl<S: IndexSet> GensGeneric<S> {
     /// 1. The individual signs (±1, ±i) of each generator
     /// 2. The sign changes from reordering Paulis (ZX → -XZ)
     ///
+    /// Factors are multiplied in `stab_indices` iteration order (irrelevant for
+    /// commuting stabilizers). In the Y convention, each factor is converted to
+    /// W form with `i^{n_Y}`, then the product is converted back with `(-i)^{n_Y}`.
+    /// Stored imaginary phases contribute in both conventions.
+    ///
     /// # Returns
-    /// The resulting phase as a `QuarterPhase`.
+    /// The product's phase in this tableau's storage convention: the sign bits
+    /// needed for a generator whose rows are the XOR of the selected rows.
     #[must_use]
     pub fn compute_product_sign(&self, stab_indices: &S) -> QuarterPhase {
         // Count minus signs from individual stabilizers
@@ -767,21 +817,21 @@ impl<S: IndexSet> GensGeneric<S> {
             }
         }
 
-        // Sign correction due to ZX → -XZ when reordering Paulis.
-        // When multiplying stabilizers, we accumulate X positions and count
-        // how many Z positions overlap with accumulated Xs.
-        let mut cumulative_x: S = S::new();
+        // In forward product order, the accumulated Zs cross the next factor's Xs.
+        let mut cumulative_z: S = S::new();
         for stab_id in stab_indices.iter() {
-            // Count overlaps between this stabilizer's Z positions and accumulated Xs
-            for q in self.row_z[stab_id].iter() {
-                if cumulative_x.contains(q) {
-                    num_minuses += 1;
-                }
+            num_minuses += cumulative_z.intersection_count(&self.row_x[stab_id]);
+            cumulative_z.xor_assign(&self.row_z[stab_id]);
+        }
+
+        if self.convention == PauliConvention::Y {
+            let mut cumulative_x: S = S::new();
+            for stab_id in stab_indices.iter() {
+                num_is += self.row_x[stab_id].intersection_count(&self.row_z[stab_id]);
+                cumulative_x.xor_assign(&self.row_x[stab_id]);
             }
-            // Add this stabilizer's X positions to the accumulator
-            for q in self.row_x[stab_id].iter() {
-                cumulative_x.toggle(q);
-            }
+            // Convert the W product back to Y storage, modulo four to avoid underflow.
+            num_is += (4 - cumulative_x.intersection_count(&cumulative_z) % 4) % 4;
         }
 
         // Convert imaginary count to phase contribution
@@ -806,7 +856,11 @@ impl<S: IndexSet> GensGeneric<S> {
     /// Computes the sign of a Pauli operator that is in the stabilizer group.
     ///
     /// This combines finding which generators produce the operator with computing
-    /// the resulting sign.
+    /// the resulting sign, converting from this tableau's storage convention
+    /// to an operator with `num_ys` explicit Y factors. A Y-storage phase P is
+    /// multiplied by `i^{|X intersection Z|} * (-i)^{num_ys}`; a W-storage phase
+    /// is multiplied by `(-i)^{num_ys}`. When `num_ys` is the actual overlap count,
+    /// both conventions return the same explicit Pauli phase.
     ///
     /// # Parameters
     /// - `destabs`: The destabilizer generators (paired with these stabilizers)
@@ -827,18 +881,29 @@ impl<S: IndexSet> GensGeneric<S> {
         I: IntoIterator<Item = usize> + Clone,
         J: IntoIterator<Item = usize> + Clone,
     {
-        let stab_indices = self.find_stabilizers_for_pauli(destabs, x_positions, z_positions)?;
+        let stab_indices =
+            self.find_stabilizers_for_pauli(destabs, x_positions.clone(), z_positions.clone())?;
 
         let mut phase = self.compute_product_sign(&stab_indices);
 
-        // Correct for Y operators in the input.
-        // Y = iXZ, so each Y contributes an extra i.
-        // But we already have XZ positions, so we need to account for the i factor.
-        // Actually, the input already has Ys decomposed as X and Z, so we need
-        // to subtract the i's that came from Ys.
+        // Convert a Y-storage product to W form before applying the explicit Y count.
+        if self.convention == PauliConvention::Y {
+            let mut xs = S::new();
+            let mut zs = S::new();
+            for q in x_positions {
+                xs.insert(q);
+            }
+            for q in z_positions {
+                zs.insert(q);
+            }
+            for _ in 0..xs.intersection_count(&zs) % 4 {
+                phase = phase.multiply(&QuarterPhase::PlusI);
+            }
+        }
+        // Each explicit Y = iXZ removes one i from the W-form coefficient.
         let y_phase_correction = num_ys % 4;
         for _ in 0..y_phase_correction {
-            phase = phase.multiply(&QuarterPhase::MinusI); // Subtract i by multiplying by -i
+            phase = phase.multiply(&QuarterPhase::MinusI);
         }
 
         Some(phase)
@@ -846,7 +911,8 @@ impl<S: IndexSet> GensGeneric<S> {
 
     /// Computes the sign of a `PauliString` that is in the stabilizer group.
     ///
-    /// Convenience method that extracts positions and Y count from a `PauliString`.
+    /// Extracts positions and the true Y count, returning the same explicit Pauli
+    /// phase in either storage convention. The input's phase is ignored.
     pub fn find_pauli_string_sign(
         &self,
         destabs: &GensGeneric<S>,
@@ -907,7 +973,7 @@ impl<S: IndexSet> GensGeneric<S> {
         self.row_x[gen_id].len() + self.row_z[gen_id].len()
     }
 
-    /// Finds the generator with minimum weight from a set of candidates.
+    /// Finds the generator with minimum (weight, id) from a set of candidates.
     ///
     /// This is used to keep the tableau sparse by preferring low-weight generators
     /// when we have a choice of which to modify.
@@ -918,7 +984,7 @@ impl<S: IndexSet> GensGeneric<S> {
     fn min_weight_generator(&self, candidates: &S) -> usize {
         candidates
             .iter()
-            .min_by_key(|&gen_id| self.generator_weight(gen_id))
+            .min_by_key(|&gen_id| (self.generator_weight(gen_id), gen_id))
             .expect("candidates must not be empty")
     }
 
@@ -926,6 +992,9 @@ impl<S: IndexSet> GensGeneric<S> {
     ///
     /// Given a Pauli operator that is in the stabilizer group, this modifies the
     /// generators so that the given operator becomes one of the generators.
+    /// The new stabilizer's sign bits use this tableau's storage convention.
+    /// Destabilizer signs are left unchanged, as during measurement; only gates
+    /// maintain them when destabilizer sign tracking is enabled.
     ///
     /// # Parameters
     /// - `destabs`: The destabilizer generators (will be modified)
@@ -983,6 +1052,10 @@ impl<S: IndexSet> GensGeneric<S> {
             self.min_weight_generator(&available)
         };
 
+        // Compute the full product phase, including Pauli reordering, before
+        // removing the chosen generator or mutating any of the source rows.
+        let product_sign = self.compute_product_sign(&build_stabs);
+
         // Remove the chosen generator from the set (it will become the new operator)
         build_stabs.remove(new_stab);
 
@@ -1037,53 +1110,444 @@ impl<S: IndexSet> GensGeneric<S> {
             }
         }
 
-        // Update signs
-        self.update_signs_for_product(&build_stabs, new_stab);
+        // Assign the product phase in the tableau's storage convention.
+        if matches!(product_sign, QuarterPhase::MinusOne | QuarterPhase::MinusI) {
+            self.signs_minus.insert(new_stab);
+        } else {
+            self.signs_minus.remove(new_stab);
+        }
+        if matches!(product_sign, QuarterPhase::PlusI | QuarterPhase::MinusI) {
+            self.signs_i.insert(new_stab);
+        } else {
+            self.signs_i.remove(new_stab);
+        }
 
         Some(new_stab)
-    }
-
-    /// Updates the sign of generator `target` after multiplying by the product of `sources`.
-    ///
-    /// This is a helper for refactoring that handles the sign algebra.
-    fn update_signs_for_product(&mut self, sources: &S, target: usize) {
-        // Count signs from source generators
-        let mut num_i = 0usize;
-        let mut num_minus = 0usize;
-
-        for g in sources.iter() {
-            if self.signs_i.contains(g) {
-                num_i += 1;
-            }
-            if self.signs_minus.contains(g) {
-                num_minus += 1;
-            }
-        }
-
-        // i^2 = -1, i^3 = -i, so i^n contributes to minus if n >= 2
-        if num_i % 4 > 1 {
-            num_minus += 1;
-        }
-
-        // If odd number of i's, toggle the i sign of target
-        if num_i % 2 == 1 {
-            // i * i = -1
-            if self.signs_i.contains(target) {
-                num_minus += 1;
-            }
-            self.signs_i.toggle(target);
-        }
-
-        // If odd number of minuses, toggle the minus sign of target
-        if num_minus % 2 == 1 {
-            self.signs_minus.toggle(target);
-        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{CliffordGateable, SparseStab, SparseStabBitSet, SparseStabY};
+    use pecos_random::PecosRng;
+    use rand::RngExt;
+
+    fn apply_convention_gate<T: CliffordGateable>(
+        state: &mut T,
+        gate: usize,
+        first: QubitId,
+        second: QubitId,
+    ) {
+        match gate {
+            0 => state.h(&[first]),
+            1 => state.sz(&[first]),
+            2 => state.sy(&[first]),
+            3 => state.cx(&[(first, second)]),
+            4 => state.cy(&[(first, second)]),
+            5 => state.cz(&[(first, second)]),
+            6 => state.sxx(&[(first, second)]),
+            7 => state.syy(&[(first, second)]),
+            8 => state.szz(&[(first, second)]),
+            _ => state.iswap(&[(first, second)]),
+        };
+    }
+
+    fn assert_convention_rows(w: &SparseStabBitSet, y: &SparseStabY) {
+        for (w_gens, y_gens) in [(w.stabs(), y.stabs()), (w.destabs(), y.destabs())] {
+            assert_eq!(w_gens.row_x, y_gens.row_x, "X row oracle precondition");
+            assert_eq!(w_gens.row_z, y_gens.row_z, "Z row oracle precondition");
+            assert_eq!(w_gens.col_x, y_gens.col_x, "X column oracle precondition");
+            assert_eq!(w_gens.col_z, y_gens.col_z, "Z column oracle precondition");
+        }
+    }
+
+    fn convention_circuits() -> Vec<(SparseStabBitSet, SparseStabY)> {
+        let mut rng = PecosRng::seed_from_u64(0x5eed_2026);
+        (0..140)
+            .map(|trial| {
+                let num_qubits = 2 + trial % 7;
+                let mut w = SparseStabBitSet::new(num_qubits);
+                let mut y = SparseStabY::new(num_qubits);
+                for step in 0..80 {
+                    let first = QubitId(rng.random_range(0..num_qubits));
+                    let second = QubitId((first.0 + rng.random_range(1..num_qubits)) % num_qubits);
+                    let gate = rng.random_range(0..10);
+                    apply_convention_gate(&mut w, gate, first, second);
+                    apply_convention_gate(&mut y, gate, first, second);
+                    if step % 5 == 0 {
+                        let forced = rng.random();
+                        assert_eq!(
+                            w.mz_forced(first.0, forced).outcome,
+                            y.mz_forced(first.0, forced).outcome
+                        );
+                    }
+                    assert_convention_rows(&w, &y);
+                }
+                (w, y)
+            })
+            .collect()
+    }
+
+    fn convention_product(w: &SparseStabBitSet, rng: &mut PecosRng) -> (BitSet, PauliString) {
+        let mut sources = BitSet::new();
+        let generators = w.stabs().generators();
+        for g in 0..generators.len() {
+            if rng.random() {
+                sources.insert(g);
+            }
+        }
+        if sources.is_empty() {
+            sources.insert(rng.random_range(0..generators.len()));
+        }
+        let product = sources
+            .iter()
+            .fold(PauliString::identity(), |p, g| p * &generators[g]);
+        (sources, product)
+    }
+
+    #[test]
+    fn test_convention_generators_random_cliffords() {
+        for (w, y) in convention_circuits() {
+            assert_eq!(w.stabs().generators(), y.stabs().generators());
+        }
+    }
+
+    #[test]
+    fn test_convention_product_sign_random_cliffords() {
+        let mut rng = PecosRng::seed_from_u64(0xc0de_2026);
+        for (w, y) in convention_circuits() {
+            for _ in 0..8 {
+                let (sources, product) = convention_product(&w, &mut rng);
+                let mut w_phase = w.stabs().compute_product_sign(&sources);
+                for _ in 0..product.y_qubits().len() % 4 {
+                    w_phase = w_phase.multiply(&QuarterPhase::MinusI);
+                }
+                assert_eq!(w_phase, product.phase());
+                assert_eq!(y.stabs().compute_product_sign(&sources), product.phase());
+            }
+        }
+    }
+
+    #[test]
+    fn test_convention_find_sign_random_cliffords() {
+        let mut rng = PecosRng::seed_from_u64(0xc0de_2026);
+        for (w, y) in convention_circuits() {
+            for _ in 0..8 {
+                let (_, product) = convention_product(&w, &mut rng);
+                let expected = Some(product.phase());
+                assert_eq!(
+                    w.stabs().find_pauli_string_sign(w.destabs(), &product),
+                    expected
+                );
+                assert_eq!(
+                    y.stabs().find_pauli_string_sign(y.destabs(), &product),
+                    expected
+                );
+                // Explicit Y count may differ from the overlap: preserve the W API's rule.
+                for num_ys in 0..4 {
+                    assert_eq!(
+                        w.stabs().find_pauli_sign(
+                            w.destabs(),
+                            product.x_positions(),
+                            product.z_positions(),
+                            num_ys
+                        ),
+                        y.stabs().find_pauli_sign(
+                            y.destabs(),
+                            product.x_positions(),
+                            product.z_positions(),
+                            num_ys
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
+    fn assert_convention_refactor(
+        original_w: &SparseStabBitSet,
+        original_y: &SparseStabY,
+        sources: &BitSet,
+        product: &PauliString,
+        protected: Option<&BitSet>,
+        chosen: usize,
+    ) {
+        let mut w = original_w.clone();
+        let mut y = original_y.clone();
+        let mut replaced = Vec::new();
+        for (stabs, destabs) in [w.stabs_and_destabs_mut(), y.stabs_and_destabs_mut()] {
+            let old_destab_minus = destabs.signs_minus.clone();
+            let old_destab_i = destabs.signs_i.clone();
+            let g = stabs
+                .refactor(
+                    destabs,
+                    product.x_positions(),
+                    product.z_positions(),
+                    None,
+                    protected,
+                )
+                .unwrap();
+            replaced.push(g);
+            assert_eq!(stabs.generator(g), *product);
+            assert_eq!(destabs.signs_minus, old_destab_minus);
+            assert_eq!(destabs.signs_i, old_destab_i);
+            for generator in original_w.stabs().generators() {
+                assert_eq!(
+                    stabs.find_pauli_string_sign(destabs, &generator),
+                    Some(generator.phase())
+                );
+            }
+            if protected.is_some() {
+                assert_eq!(g, chosen);
+                for other in sources.iter().filter(|&other| other != chosen) {
+                    assert_eq!(stabs.generator(other), original_w.stabs().generator(other));
+                }
+            }
+        }
+        assert_eq!(replaced[0], replaced[1]);
+        assert_convention_rows(&w, &y);
+        assert_eq!(w.stabs().generators(), y.stabs().generators());
+        let qubits: Vec<_> = (0..w.num_qubits()).map(QubitId).collect();
+        for forced in [false, true] {
+            let mut measured_w = w.clone();
+            let mut measured_y = y.clone();
+            measured_w.h(&qubits).sz(&qubits);
+            measured_y.h(&qubits).sz(&qubits);
+            for q in &qubits {
+                assert_eq!(
+                    measured_w.mz_forced(q.0, forced).outcome,
+                    measured_y.mz_forced(q.0, forced).outcome
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_convention_refactor_random_cliffords() {
+        let mut rng = PecosRng::seed_from_u64(0xc0de_2026);
+        for (mut w, mut y) in convention_circuits() {
+            for _ in 0..8 {
+                let (sources, product) = convention_product(&w, &mut rng);
+                let chosen = sources
+                    .iter()
+                    .nth(rng.random_range(0..sources.len()))
+                    .unwrap();
+                let mut protected = sources.clone();
+                protected.remove(chosen);
+                for protection in [None, Some(&protected)] {
+                    assert_convention_refactor(&w, &y, &sources, &product, protection, chosen);
+                }
+                for (stabs, destabs) in [w.stabs_and_destabs_mut(), y.stabs_and_destabs_mut()] {
+                    let before = stabs.generators();
+                    assert_eq!(
+                        stabs.refactor(
+                            destabs,
+                            product.x_positions(),
+                            product.z_positions(),
+                            None,
+                            Some(&sources)
+                        ),
+                        None
+                    );
+                    assert_eq!(stabs.generators(), before);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_convention_stored_i_product() {
+        let mut y = GensBitSet::with_convention(1, PauliConvention::Y);
+        y.row_x = vec![BitSet::from_iter([0]), BitSet::new()];
+        y.row_z = vec![BitSet::new(), BitSet::from_iter([0])];
+        y.col_x[0].insert(0);
+        y.col_z[0].insert(1);
+        y.signs_i.insert(0);
+        let mut w = GensBitSet::new(1);
+        w.row_x.clone_from(&y.row_x);
+        w.row_z.clone_from(&y.row_z);
+        w.col_x.clone_from(&y.col_x);
+        w.col_z.clone_from(&y.col_z);
+        w.signs_i.clone_from(&y.signs_i);
+        let sources = BitSet::from_iter([0, 1]);
+        assert_eq!(y.compute_product_sign(&sources), QuarterPhase::PlusOne);
+        assert_eq!(w.compute_product_sign(&sources), QuarterPhase::PlusI);
+        assert_eq!(w.convention(), PauliConvention::W);
+        assert_eq!(y.clone().convention(), PauliConvention::Y);
+
+        // Raw phases remain raw, including imaginary coefficients on explicit Y rows.
+        y.row_x[1].insert(0);
+        y.col_x[0].insert(1);
+        for (minus, imaginary, phase) in [
+            (false, false, QuarterPhase::PlusOne),
+            (true, false, QuarterPhase::MinusOne),
+            (false, true, QuarterPhase::PlusI),
+            (true, true, QuarterPhase::MinusI),
+        ] {
+            y.signs_minus.clear();
+            y.signs_i.clear();
+            if minus {
+                y.signs_minus.insert(1);
+            }
+            if imaginary {
+                y.signs_i.insert(1);
+            }
+            assert_eq!(y.generator_phase(1), phase);
+            assert_eq!(y.generator(1).phase(), phase);
+        }
+    }
+
+    #[test]
+    fn test_convention_y_eigenstates() {
+        for negative in [false, true] {
+            let mut y = SparseStabY::new(1);
+            y.h(&[QubitId(0)]).sz(&[QubitId(0)]);
+            if negative {
+                y.z(&[QubitId(0)]);
+            }
+            let phase = if negative {
+                QuarterPhase::MinusOne
+            } else {
+                QuarterPhase::PlusOne
+            };
+            let expected =
+                PauliString::with_phase_and_paulis(phase, vec![(Pauli::Y, QubitId(0))]).unwrap();
+            assert_eq!(y.stabs().generator(0), expected);
+            assert_eq!(
+                y.stabs().find_pauli_string_sign(y.destabs(), &expected),
+                Some(phase)
+            );
+        }
+    }
+
+    #[test]
+    fn test_refactor_graph_state_preserves_sign_and_measurements() {
+        let mut original = SparseStab::new(2);
+        original.h(&[QubitId(0), QubitId(1)]);
+        original.cz(&[(QubitId(0), QubitId(1))]);
+        let sign = original
+            .stabs()
+            .find_pauli_sign(original.destabs(), [0, 1], [0, 1], 2)
+            .unwrap();
+        assert_eq!(sign, QuarterPhase::PlusOne);
+
+        for forced in [false, true] {
+            let mut expected = original.clone();
+            let mut actual = original.clone();
+            let (stabs, destabs) = actual.stabs_and_destabs_mut();
+            let new_stab = stabs.refactor(destabs, [0, 1], [0, 1], None, None).unwrap();
+            let generator = stabs.generator(new_stab);
+            assert_eq!(generator.x_positions(), vec![0, 1]);
+            assert_eq!(generator.z_positions(), vec![0, 1]);
+
+            for state in [&mut expected, &mut actual] {
+                state.szdg(&[QubitId(0), QubitId(1)]);
+                state.h(&[QubitId(0), QubitId(1)]);
+            }
+            let expected_outcomes = [
+                expected.mz_forced(0, forced).outcome,
+                expected.mz_forced(1, forced).outcome,
+            ];
+            let actual_outcomes = [
+                actual.mz_forced(0, forced).outcome,
+                actual.mz_forced(1, forced).outcome,
+            ];
+            assert_eq!(expected_outcomes, [forced, forced]);
+            assert_eq!(
+                (generator.phase(), actual_outcomes),
+                (sign, expected_outcomes)
+            );
+        }
+    }
+
+    fn random_clifford_state(num_qubits: usize, rng: &mut PecosRng) -> SparseStab {
+        let mut state = SparseStab::new(num_qubits);
+        for _ in 0..80 {
+            let first = QubitId(rng.random_range(0..num_qubits));
+            let second = QubitId((first.0 + rng.random_range(1..num_qubits)) % num_qubits);
+            match rng.random_range(0..5) {
+                0 => {
+                    state.h(&[first]);
+                }
+                1 => {
+                    state.sz(&[first]);
+                }
+                2 => {
+                    state.cx(&[(first, second)]);
+                }
+                3 => {
+                    state.cz(&[(first, second)]);
+                }
+                _ => {
+                    state.mz_forced(first.0, rng.random());
+                }
+            }
+        }
+        state
+    }
+
+    #[test]
+    fn test_refactor_random_cliffords_preserves_signed_group() {
+        let mut rng = PecosRng::seed_from_u64(0x5eed_2026);
+        for trial in 0..350 {
+            let num_qubits = 2 + trial % 7;
+            let original = random_clifford_state(num_qubits, &mut rng);
+            let mut sources = crate::SparseStabSet::new();
+            for g in 0..num_qubits {
+                if rng.random() {
+                    sources.insert(g);
+                }
+            }
+            if sources.is_empty() {
+                sources.insert(rng.random_range(0..num_qubits));
+            }
+            let mut xs = crate::SparseStabSet::new();
+            let mut zs = crate::SparseStabSet::new();
+            for g in &sources {
+                for q in &original.stabs().row_x[g] {
+                    xs.toggle(q);
+                }
+                for q in &original.stabs().row_z[g] {
+                    zs.toggle(q);
+                }
+            }
+            let phase = original.stabs().compute_product_sign(&sources);
+            let chosen = sources
+                .iter()
+                .nth(rng.random_range(0..sources.len()))
+                .unwrap();
+            let mut protected = crate::SparseStabSet::new();
+            for g in 0..num_qubits {
+                if g != chosen {
+                    protected.insert(g);
+                }
+            }
+
+            for protection in [None, Some(&protected)] {
+                let mut state = original.clone();
+                let (stabs, destabs) = state.stabs_and_destabs_mut();
+                let new_stab = stabs.refactor(destabs, &xs, &zs, None, protection).unwrap();
+                for g in 0..num_qubits {
+                    let generator = original.stabs().generator(g);
+                    assert_eq!(
+                        stabs.find_pauli_string_sign(destabs, &generator),
+                        Some(generator.phase()),
+                        "trial {trial}, generator {g}, protected {protection:?}"
+                    );
+                    if protection.is_some_and(|p| p.contains(g)) {
+                        assert_eq!(stabs.generator(g), generator);
+                    }
+                }
+                assert!(stabs.row_x[new_stab].iter().eq(xs.iter()));
+                assert!(stabs.row_z[new_stab].iter().eq(zs.iter()));
+                assert_eq!(stabs.generator_phase(new_stab), phase, "trial {trial}");
+                if protection.is_some() {
+                    assert_eq!(new_stab, chosen);
+                }
+            }
+        }
+    }
 
     /// Helper to create stabilizer/destabilizer generators for a simple 2-qubit state |00>.
     /// Stabilizers: Z0, Z1
@@ -1175,7 +1639,7 @@ mod tests {
         let (stabs, _destabs) = setup_two_qubit_z_state();
 
         // Product of generators with no signs should give +1
-        let mut indices = BitSet::new();
+        let mut indices = crate::SparseStabSet::new();
         indices.insert(0);
         assert_eq!(stabs.compute_product_sign(&indices), QuarterPhase::PlusOne);
 
@@ -1190,7 +1654,7 @@ mod tests {
         // Add a minus sign to stabilizer 0
         stabs.signs_minus.insert(0);
 
-        let mut indices = BitSet::new();
+        let mut indices = crate::SparseStabSet::new();
         indices.insert(0);
         assert_eq!(stabs.compute_product_sign(&indices), QuarterPhase::MinusOne);
 
@@ -1254,7 +1718,7 @@ mod tests {
         stabs.col_z[0].insert(2);
 
         // Build candidate set with all three
-        let mut candidates = BitSet::new();
+        let mut candidates = crate::SparseStabSet::new();
         candidates.insert(0);
         candidates.insert(1);
         candidates.insert(2);
@@ -1262,9 +1726,22 @@ mod tests {
         // Should choose generator 0 (weight 1)
         assert_eq!(stabs.min_weight_generator(&candidates), 0);
 
-        // Remove generator 0, should choose one of the weight-2 generators
+        // Remove generator 0; ties choose the lowest generator id.
         candidates.remove(0);
-        let chosen = stabs.min_weight_generator(&candidates);
-        assert!(chosen == 1 || chosen == 2);
+        assert_eq!(stabs.min_weight_generator(&candidates), 1);
+    }
+
+    #[test]
+    fn test_min_weight_generator_unsorted_tie() {
+        let mut stabs = GensGeneric::<VecSet<usize>>::new(3);
+        stabs.row_z[1].insert(1);
+        stabs.col_z[1].insert(1);
+        stabs.row_z[2].insert(2);
+        stabs.col_z[2].insert(2);
+        let mut candidates = VecSet::new();
+        candidates.insert(2);
+        candidates.insert(1);
+        assert_eq!(candidates.iter().copied().collect::<Vec<_>>(), [2, 1]);
+        assert_eq!(stabs.min_weight_generator(&candidates), 1);
     }
 }

@@ -27,8 +27,8 @@
 
 pub use crate::TrellisOrdering;
 use crate::{
-    DecodeMode, DecoderError, MetricMode, ObsMask, PruneParams, SparseDem, TrellisConfig,
-    TrellisDecodeAttempt, TrellisDecoder, TrellisPrepared, TrellisResult,
+    DecoderError, MetricMode, ObsMask, PruneParams, SparseDem, TrellisConfig, TrellisDecodeAttempt,
+    TrellisDecoder, TrellisPrepared, TrellisResult,
 };
 use pecos_decoder_core::ObservableDecoder;
 
@@ -371,9 +371,7 @@ impl BpTrellisDecoder {
 
 impl ObservableDecoder for BpTrellisDecoder {
     fn decode_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
-        match self.decode_with_attempt(syndrome, |inner, params| {
-            inner.attempt_with_mode(params, DecodeMode::PredictionOnly)
-        })? {
+        match self.decode_with_attempt(syndrome, TrellisDecoder::attempt_prediction_only)? {
             BpTrellisOutcome::Decoded(result) => Ok(result.predicted),
             BpTrellisOutcome::NoPath(report) => Err(report.into_error()),
         }

@@ -13,7 +13,7 @@ def event_runtime(tmp_path: Path, scheduled_support):
     return scheduled_support.build_runtime(tmp_path, 0, events=True)[0], scheduled_support.ramsey
 
 
-def simulation(runtime, factory, program=None):
+def simulation(runtime, factory, program=None, *, backend="state_vector"):
     library, default_program = runtime
     program = default_program if program is None else program
     import pecos
@@ -34,7 +34,7 @@ def simulation(runtime, factory, program=None):
         pecos.sim(pecos.Qis(program) if isinstance(program, str) else program)
         .classical(classical)
         .qubits(1)
-        .quantum(pr.state_vector())
+        .quantum(getattr(pr, backend)())
         .noise(pr.scheduled_event_idle_z(1, factory))
         .seed(42)
         .workers(2)
@@ -122,7 +122,10 @@ def test_callback_errors_are_reported(event_runtime, stage):
     [
         ("iterator", "scheduled adapter output:"),
         ("wrong_type", "scheduled adapter output gate:"),
-        ("too_many", "scheduled adapter expansion limit"),
+        (
+            "too_many",
+            r"scheduled adapter expansion limit: \d+ records need at least \d+ bytes, with \d+ remaining",
+        ),
         ("remove_measurement", "adapter changed measurement order, kind or targets"),
         ("unsupported_gate", "scheduled adapter output gate:.*unsupported scheduled gate"),
     ],
@@ -140,7 +143,10 @@ def test_output_contract_rejects(event_runtime, output, message):
             if output == "wrong_type":
                 return [None]
             if output == "too_many" and gates:
-                return [gates[0]] * 4097
+                # Header + batch framing leave this many fixed-size records.
+                count = (64 * 1024 * 1024 - 16 - 40) // 40 + 1
+                # The invalid first item proves rejection precedes element conversion.
+                return [None] + [gates[0]] * (count - 1)
             if output == "remove_measurement" and batch.measurements:
                 return []
             return gates
@@ -148,6 +154,20 @@ def test_output_contract_rejects(event_runtime, output, message):
     error = ValueError if output in {"too_many", "remove_measurement", "unsupported_gate"} else RuntimeError
     with pytest.raises(error, match=message):
         simulation(event_runtime, lambda _: Invalid()).run(1)
+
+
+def test_adapter_output_above_old_count_is_accepted(event_runtime):
+    class Expand(PhaseAdapter):
+        def translate(self, batch):
+            from pecos_rslib.quantum import Gate, GateType
+
+            gates = super().translate(batch)
+            if batch.batch_index == 0:
+                identity = Gate(GateType.RZ, [0.0], [0])
+                return [identity] * 4097 + gates
+            return gates
+
+    assert simulation(event_runtime, lambda _: Expand()).run(1).to_dict()["measurement_0"] == [1]
 
 
 def test_validate_requires_none(event_runtime):
@@ -165,7 +185,7 @@ def test_factory_configuration():
     with pytest.raises(TypeError, match="must be callable"):
         pr.scheduled_event_idle_z(1, None)
     with pytest.raises(ValueError, match="capacity"):
-        pr.scheduled_event_idle_z(17, lambda _: PhaseAdapter())
+        pr.scheduled_event_idle_z(0, lambda _: PhaseAdapter())
 
 
 def run_isolated(runtime, body):
@@ -426,7 +446,7 @@ def test_trace_capture_rejects_event_factory(event_runtime):
         simulation(event_runtime, lambda _: PhaseAdapter()).capture_operation_trace()
 
 
-def test_repeated_program_result_ids_reach_python_adapter(tmp_path, scheduled_support):
+def test_reused_qir_slots_reach_python_adapter_as_distinct_occurrences(tmp_path, scheduled_support):
     library, _ = scheduled_support.build_runtime(tmp_path, 0, events=True, coalesce_queued=True)
     seen = []
 
@@ -444,17 +464,170 @@ def test_repeated_program_result_ids_reach_python_adapter(tmp_path, scheduled_su
     declare void @print_int_selene(ptr, i64, i64)
     declare i32 @__quantum__qis__m__body(i64, i64)
     declare void @__quantum__qis__x__body(i64)
-    declare i1 @___read_future_bool(i64)
+    declare i32 @__quantum__rt__result_get_one(i64)
     define i64 @qmain(i64 %shot) {
         %first = call i32 @__quantum__qis__m__body(i64 0, i64 7)
         call void @__quantum__qis__x__body(i64 0)
         %second = call i32 @__quantum__qis__m__body(i64 0, i64 7)
-        %read = call i1 @___read_future_bool(i64 7)
-        %value = zext i1 %read to i64
+        %read = call i32 @__quantum__rt__result_get_one(i64 7)
+        %value = zext i32 %read to i64
         call void @print_int_selene(ptr @tag, i64 6, i64 %value)
         ret i64 0
     }
     """
-    result = simulation((library, program), lambda _: RepeatedSlotAdapter()).run(2).to_dict()
+    result = simulation((library, program), lambda _: RepeatedSlotAdapter()).workers(1).run(2).to_dict()
     assert result["latest"] == [1, 1]
-    assert any(ids == [7, 7] for ids in seen)
+    # Native polling after each call may split measurements across batches.
+    # Reusing a QIR slot preserves distinct occurrences, restarting per shot.
+    assert [source for ids in seen for source in ids] == [0, 1, 0, 1]
+
+
+@pytest.mark.parametrize("global_exposure", [False, True])
+@pytest.mark.parametrize("probability", [0.0, 1.0])
+@pytest.mark.parametrize("backend", ["state_vector", "stabilizer"])
+def test_spectator_exchange_through_monte_carlo(event_runtime, global_exposure, probability, backend):
+    """Live runtime -> HybridEngine -> QuantumSystem, including worker reuse."""
+    import pecos_rslib as pr
+
+    contexts = []
+
+    class ExposureAdapter(PhaseAdapter):
+        def translate(self, batch):
+            return [
+                (
+                    (
+                        pr.ScheduledCrosstalk.global_excluding([])
+                        if global_exposure
+                        else pr.ScheduledCrosstalk.local([0])
+                    )
+                    if isinstance(op, tuple)
+                    else op
+                )
+                for op in batch.operations
+            ]
+
+    def factory(context):
+        contexts.append(context)
+        return ExposureAdapter()
+
+    # An exposure after the first Ramsey rotation leaks with certainty when
+    # enabled. Its internal measurement result must not become a program result.
+    profile = pr.scheduled_measurement_crosstalk(
+        pr.scheduled_idle_noise(1),
+        {"0->L": 1.0, "1->L": 1.0},
+        local_probability=probability,
+        global_probability=probability,
+    )
+    # Explicit preparation makes the qubit live for spectator exposure.
+    program = (
+        event_runtime[1]
+        .replace(
+            "declare void @setup",
+            "declare void @___reset(i64)\ndeclare void @setup",
+        )
+        .replace("  %q = call i64 @___qalloc()", "  %q = call i64 @___qalloc()\n  call void @___reset(i64 %q)")
+    )
+    built = (
+        simulation(event_runtime, factory, program=program, backend=backend)
+        .noise(pr.scheduled_event_idle_noise(profile, factory))
+        .build()
+    )
+    for _ in range(2):
+        result = built.run(8).to_dict()
+        assert result["measurement_0"] == [int(probability)] * 8
+        assert "measurement_1" not in result
+    assert len(contexts) == len(set(contexts)) == 16
+    assert {context[1] for context in contexts} == {0, 1}
+
+
+def test_spectator_requires_profile_opt_in_and_capacity(event_runtime):
+    import pecos_rslib as pr
+
+    class ExposureAdapter(PhaseAdapter):
+        def translate(self, batch):
+            return [pr.ScheduledCrosstalk.local([0]) if isinstance(op, tuple) else op for op in batch.operations]
+
+    with pytest.raises(Exception, match="crosstalk profile required"):
+        simulation(event_runtime, lambda _: ExposureAdapter()).run(1)
+
+    class BadVictim(PhaseAdapter):
+        def translate(self, batch):
+            return [pr.ScheduledCrosstalk.local([1]) if isinstance(op, tuple) else op for op in batch.operations]
+
+    profile = pr.scheduled_measurement_crosstalk(pr.scheduled_idle_noise(1), {"0->1": 1.0, "1->0": 1.0})
+    with pytest.raises(Exception, match="within capacity"):
+        simulation(event_runtime, lambda _: BadVictim()).noise(
+            pr.scheduled_event_idle_noise(profile, lambda _: BadVictim()),
+        ).run(1)
+
+
+@pytest.mark.parametrize(("ids", "duplicate"), [([0, 0], 0), ([1, 4096, 1], 1)])
+def test_spectator_ids_are_checked(ids, duplicate):
+    import pecos_rslib as pr
+
+    for constructor in [pr.ScheduledCrosstalk.local, pr.ScheduledCrosstalk.global_excluding]:
+        with pytest.raises(ValueError, match=f"spectator ID {duplicate} appears more than once"):
+            constructor(ids)
+
+
+def test_spectator_parameters_validate_and_preserve_profile_type():
+    import pecos_rslib as pr
+
+    base = pr.scheduled_local_noise(pr.scheduled_idle_noise(2), prep=0.2)
+    for value in [-0.1, 1.1, math.nan, math.inf]:
+        with pytest.raises(ValueError, match="Probability must be between"):
+            pr.scheduled_measurement_crosstalk(base, {"0->1": 1.0, "1->0": 1.0}, local_probability=value)
+        with pytest.raises(ValueError, match="Probability must be between"):
+            pr.scheduled_measurement_crosstalk(base, {"0->1": 1.0, "1->0": 1.0}, global_probability=value)
+    with pytest.raises(ValueError, match="weighted_map cannot be empty"):
+        pr.scheduled_measurement_crosstalk(base, {})
+    assert isinstance(pr.scheduled_measurement_crosstalk(base, {"0->1": 1.0, "1->0": 1.0}), pr.ScheduledIdleNoise)
+
+
+@pytest.mark.parametrize("probability", [0.0, 1.0])
+@pytest.mark.parametrize("backend", ["state_vector", "stabilizer"])
+def test_guppy_feedback_after_spectator_measurement(event_runtime, probability, backend):
+    import pecos_rslib as pr
+    from guppylang import guppy
+    from guppylang.std.angles import angle
+    from guppylang.std.builtins import owned, result
+    from guppylang.std.quantum import measure, qubit, ry, x
+
+    @guppy.declare
+    def pecos_qis_runtime_barrier_qubit_hugr(q: qubit @ owned) -> qubit: ...
+
+    @guppy
+    def feedback() -> None:
+        q = qubit()
+        ry(q, angle(0.5))
+        q = pecos_qis_runtime_barrier_qubit_hugr(q)
+        ry(q, angle(-0.5))
+        first = measure(q).read()
+        result("first", first)
+        # This branch must resume with the user readout, not an internal result.
+        q2 = qubit()
+        if first:
+            x(q2)
+        result("feedback", measure(q2).read())
+
+    class ExposureAdapter(PhaseAdapter):
+        def translate(self, batch):
+            return [pr.ScheduledCrosstalk.local([0]) if isinstance(op, tuple) else op for op in batch.operations]
+
+    profile = pr.scheduled_measurement_crosstalk(
+        pr.scheduled_idle_noise(1),
+        {"0->L": 1.0, "1->L": 1.0},
+        local_probability=probability,
+    )
+
+    def factory(_context):
+        return ExposureAdapter()
+
+    values = (
+        simulation(event_runtime, factory, feedback, backend=backend)
+        .noise(pr.scheduled_event_idle_noise(profile, factory))
+        .run(4)
+        .to_dict()
+    )
+    assert values["first"] == [int(probability)] * 4
+    assert values["feedback"] == [int(probability)] * 4

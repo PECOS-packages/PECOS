@@ -334,8 +334,8 @@ class TestDistanceScaling:
         b = LogicalCircuitBuilder()
         b.add_patch(patch5, "A")
         b.add_memory("A", 2, "Z")
-        dem_str = b.build_dem(p1=0.001, p2=0.001, p_meas=0.001)
-        errors = [line for line in dem_str.split("\n") if line.startswith("error(")]
+        dem = b.build_dem(p1=0.001, p2=0.001, p_meas=0.001)
+        errors = [line for line in str(dem).split("\n") if line.startswith("error(")]
         assert len(errors) > 0
 
 
@@ -519,12 +519,12 @@ class TestDecoderPipeline:
         b = LogicalCircuitBuilder()
         b.add_patch(patch, "A")
         b.add_memory("A", 3, "Z")
-        dem_str = b.build_dem(p1=0.001, p2=0.001, p_meas=0.001)
+        dem = b.build_dem(p1=0.001, p2=0.001, p_meas=0.001)
 
-        parsed = ParsedDem.from_string(dem_str)
+        parsed = ParsedDem.from_string(str(dem))
         rust_sampler = parsed.to_dem_sampler()
         batch = rust_sampler.sample_batch(5000, seed=42)
-        errors = batch.decode(dem_str, bp_osd()).num_errors
+        errors = batch.decode(dem, bp_osd()).num_errors
         ler = errors / 5000
         # At d=3 p=0.001, LER should be very low
         assert ler < 0.05, f"LER too high: {ler}"
@@ -540,9 +540,9 @@ class TestDecoderPipeline:
         b.add_transversal_cx("C", "T")
         b.add_memory(["C", "T"], 3, "Z")
 
-        dem_str = b.build_dem(p1=0.001, p2=0.001, p_meas=0.001)
+        dem = b.build_dem(p1=0.001, p2=0.001, p_meas=0.001)
         sc = b.stab_coords()
-        decoder = LogicalSubgraphDecoder(dem_str, sc, "pecos_uf:fast")
+        decoder = LogicalSubgraphDecoder(str(dem), sc, "pecos_uf:fast")
         assert decoder.num_observables() == 2
 
         sizes = decoder.subgraph_sizes()
@@ -560,11 +560,11 @@ class TestDecoderPipeline:
         b.add_transversal_cx("C", "T")
         b.add_memory(["C", "T"], 3, "Z")
 
-        dem_str = b.build_dem(p1=0.001, p2=0.001, p_meas=0.001)
-        parsed = ParsedDem.from_string(dem_str)
+        dem = b.build_dem(p1=0.001, p2=0.001, p_meas=0.001)
+        parsed = ParsedDem.from_string(str(dem))
         rust_sampler = parsed.to_dem_sampler()
         batch = rust_sampler.sample_batch(5000, seed=42)
-        errors = batch.decode(dem_str, bp_osd()).num_errors
+        errors = batch.decode(dem, bp_osd()).num_errors
         ler = errors / 5000
         assert ler < 0.1, f"CX LER too high: {ler}"
 
@@ -817,21 +817,21 @@ class TestPecosDemWithLogicalSubgraph:
         b.add_transversal_cx("C", "T")
         b.add_memory(["C", "T"], 3, "Z")
 
-        dem_str = b.build_dem(p1=0.001, p2=0.001, p_meas=0.001)
+        dem = b.build_dem(p1=0.001, p2=0.001, p_meas=0.001)
 
         # Verify DEM has content
-        errors = [line for line in dem_str.split("\n") if line.startswith("error(")]
+        errors = [line for line in str(dem).split("\n") if line.startswith("error(")]
         assert len(errors) > 0
 
         # Build logical-subgraph decoder decoder from PECOS DEM
         sc = b.stab_coords()
-        decoder = LogicalSubgraphDecoder(dem_str, sc, "pecos_uf:fast")
+        decoder = LogicalSubgraphDecoder(str(dem), sc, "pecos_uf:fast")
         assert decoder.num_observables() == 2
 
         # Sample and decode
-        parsed = ParsedDem.from_string(dem_str)
+        parsed = ParsedDem.from_string(str(dem))
         batch = parsed.to_dem_sampler().sample_batch(5000, seed=42)
-        errors = batch.decode(dem_str, bp_osd()).num_errors
+        errors = batch.decode(dem, bp_osd()).num_errors
         ler = errors / 5000
         assert ler < 0.1, f"PECOS DEM + logical-subgraph decoder CX LER too high: {ler}"
 

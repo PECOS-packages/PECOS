@@ -32,6 +32,7 @@ allow-registry = [
 ]
 allow-git = [
     "https://github.com/Quantinuum/selene",
+    "https://github.com/Quantinuum/tket2",
     "https://github.com/yuewuo/mwpf",
 ]
 unused-allowed-source = "allow"

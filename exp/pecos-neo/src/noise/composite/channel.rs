@@ -479,7 +479,7 @@ impl<P: Primitive + Clone + 'static> NoiseChannel for CompositeChannel<P> {
 fn composite_to_noise_response(response: CompositeResponse, qubit: QubitId) -> NoiseResponse {
     match response {
         CompositeResponse::None => NoiseResponse::None,
-        CompositeResponse::SkipGate => NoiseResponse::SkipGate,
+        CompositeResponse::SkipGate => NoiseResponse::SkipGate(smallvec![qubit]),
         CompositeResponse::Leak => NoiseResponse::MarkLeaked(smallvec![qubit]),
         CompositeResponse::Unleak => NoiseResponse::MarkUnleaked(smallvec![qubit]),
         CompositeResponse::FlipOutcome => NoiseResponse::FlipOutcomes(smallvec![qubit]),
@@ -1369,17 +1369,17 @@ mod tests {
         // Mark qubit as leaked
         ctx.mark_leaked(QubitId(0));
 
-        let qubits = [QubitId(0)];
+        let qubits = [QubitId(0), QubitId(1), QubitId(2), QubitId(3)];
         let angles = [];
         let event = NoiseEvent::BeforeGate {
-            gate_type: GateType::H,
+            gate_type: GateType::CX,
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
         };
 
         let response = channel.apply(&event, &mut ctx, &mut rng);
-        assert!(response.should_skip_gate());
+        assert_eq!(response.skipped_qubits().as_slice(), &[QubitId(0)]);
     }
 
     #[test]

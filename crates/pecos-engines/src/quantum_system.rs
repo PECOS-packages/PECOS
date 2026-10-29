@@ -37,6 +37,85 @@ pub struct QuantumSystem {
     host_blocked: bool,
 }
 
+// Per native batch, across all internal simulator calls. Only checked profiles
+// choose these limits; neither a runtime nor a noise callback can replenish them.
+#[derive(Clone, Copy)]
+struct ScheduledExecutionLimits {
+    operations: usize,
+    bytes: usize,
+    simulator_calls: usize,
+}
+
+impl ScheduledExecutionLimits {
+    fn for_batch(gates: &[crate::Gate], qubits: usize) -> Result<Self, PecosError> {
+        // Admission bounds record bytes and validates spectator IDs against capacity.
+        let overflow = || runtime_frame::error("scheduled expansion overflow");
+        let mut exposures = 0usize;
+        let mut targets = 0usize;
+        for gate in gates {
+            if gate.gate_type.is_crosstalk_payload() {
+                exposures += 1;
+                let candidates = if gate.gate_type == crate::GateType::MeasCrosstalkGlobalPayload {
+                    qubits
+                } else {
+                    gate.qubits.len()
+                };
+                targets = targets.checked_add(candidates).ok_or_else(overflow)?;
+            }
+        }
+        let ordinary = gates.len() - exposures;
+        // Each preparation can collapse every other prepared qubit. The
+        // general model emits one internal MZ command per affected target.
+        let preparations = gates
+            .iter()
+            .filter(|g| g.gate_type == crate::GateType::PZ)
+            .count();
+        let operations = ordinary
+            .checked_mul(16)
+            .and_then(|n| {
+                preparations
+                    .checked_mul(qubits)
+                    .and_then(|p| n.checked_add(p))
+            })
+            .and_then(|n| targets.checked_mul(2).and_then(|t| n.checked_add(t)))
+            .ok_or_else(overflow)?;
+        if exposures == 0 {
+            return Self::single_pass(operations);
+        }
+        // Each exposure yields at most once, followed by the last transition/
+        // source suffix. Per candidate target the general model emits at most one
+        // single-qubit internal MZ and one transition gate; the exposure itself
+        // emits nothing. Every emitted command fits the 128-byte operation charge.
+        let simulator_calls = exposures.checked_add(1).ok_or_else(overflow)?;
+        let bytes = operations
+            .checked_mul(128)
+            .and_then(|n| {
+                simulator_calls
+                    .checked_mul(16)
+                    .and_then(|h| n.checked_add(h))
+            })
+            .ok_or_else(overflow)?;
+        Ok(Self {
+            operations,
+            bytes,
+            simulator_calls,
+        })
+    }
+    // Existing closed profiles still admit exactly one simulator call. Their
+    // emitted commands have at most two targets, fitting within 128 bytes each.
+    fn single_pass(operations: usize) -> Result<Self, PecosError> {
+        let bytes = operations
+            .checked_mul(128)
+            .and_then(|n| n.checked_add(16))
+            .ok_or_else(|| runtime_frame::processing_error("scheduled byte budget overflow"))?;
+        Ok(Self {
+            operations,
+            bytes,
+            simulator_calls: 1,
+        })
+    }
+}
+
 impl QuantumSystem {
     /// Create a new `QuantumSystem` with the given noise model and quantum engine
     ///
@@ -93,32 +172,49 @@ impl QuantumSystem {
 
     fn drive_scheduled(
         &mut self,
-        stage: crate::EngineStage<ByteMessage, ByteMessage>,
-        budget: usize,
+        mut stage: crate::EngineStage<ByteMessage, ByteMessage>,
+        limits: ScheduledExecutionLimits,
     ) -> Result<ByteMessage, PecosError> {
-        match stage {
-            crate::EngineStage::Complete(output) => Ok(output),
-            crate::EngineStage::NeedsProcessing(commands) => {
-                // Check bytes before parsing/allocation, then the actual operation
-                // count before executing. Admitted scheduled outputs have <=2 targets.
-                let byte_limit = budget
-                    .checked_mul(128)
-                    .and_then(|n| n.checked_add(16))
-                    .ok_or_else(|| {
-                        runtime_frame::processing_error("scheduled byte budget overflow")
+        // The caller starts the controller once and latches shot poison before
+        // entering. A continuation is part of that lifecycle, never a new input.
+        let mut remaining = limits;
+        loop {
+            match stage {
+                crate::EngineStage::Complete(output) => return Ok(output),
+                crate::EngineStage::NeedsProcessing(commands) => {
+                    remaining.simulator_calls =
+                        remaining.simulator_calls.checked_sub(1).ok_or_else(|| {
+                            runtime_frame::processing_error(&format!(
+                                "scheduled simulator call limit: batch allows {} call(s)",
+                                limits.simulator_calls
+                            ))
+                        })?;
+                    // Bound bytes before parsing/allocation, then operations before
+                    // executing. Empty messages consume a call and their header bytes.
+                    let bytes = commands.as_bytes().len();
+                    remaining.bytes = remaining.bytes.checked_sub(bytes).ok_or_else(|| {
+                        runtime_frame::processing_error(&format!(
+                            "scheduled noise expansion limit (bytes): request needs {bytes}, \
+                             {} of {} remain",
+                            remaining.bytes, limits.bytes
+                        ))
                     })?;
-                if commands.as_bytes().len() > byte_limit || commands.quantum_ops()?.len() > budget
-                {
-                    return Err(runtime_frame::processing_error(
-                        "scheduled noise expansion limit",
-                    ));
-                }
-                let reply = self.quantum_engine.process(commands)?;
-                match self.noise_model.continue_processing(reply)? {
-                    crate::EngineStage::Complete(output) => Ok(output),
-                    crate::EngineStage::NeedsProcessing(_) => Err(runtime_frame::processing_error(
-                        "scheduled noise requested an unsupported continuation",
-                    )),
+                    let gates = commands.quantum_ops()?;
+                    let operations = gates.len();
+                    remaining.operations = remaining
+                        .operations
+                        .checked_sub(operations)
+                        .ok_or_else(|| {
+                            runtime_frame::processing_error(&format!(
+                                "scheduled noise expansion limit (operations): request needs \
+                                 {operations}, {} of {} remain",
+                                remaining.operations, limits.operations
+                            ))
+                        })?;
+                    crate::quantum::ScheduledBackend::inspect(&*self.quantum_engine)?
+                        .validate(&gates, false)?;
+                    let reply = self.quantum_engine.process(commands)?;
+                    stage = self.noise_model.continue_processing(reply)?;
                 }
             }
         }
@@ -181,16 +277,8 @@ impl QuantumSystem {
         let model = self
             .scheduled_model()
             .ok_or_else(|| runtime_frame::error("scheduled capability required"))?;
-        let sim = self
-            .quantum_engine
-            .as_any()
-            .downcast_ref::<crate::StateVecEngine>()
-            .ok_or_else(|| runtime_frame::error("scheduled idle requires state vector"))?;
-        if sim.simulator().num_qubits() < model.qubits() {
-            return Err(runtime_frame::error(
-                "simulator capacity below scheduled profile",
-            ));
-        }
+        let backend = crate::quantum::ScheduledBackend::inspect(&*self.quantum_engine)?;
+        model.validate_backend(backend)?;
         // The classical engine can yield an empty wait message. No other legacy
         // input may bypass this capability's timing/capacity admission.
         if input.as_bytes() == ByteMessage::builder().build().as_bytes() {
@@ -215,6 +303,11 @@ impl QuantumSystem {
                 None,
             )
         };
+        // Validate every normalized batch before starting the noise controller.
+        // Later live inputs remain separate admissions, not whole-shot preflight.
+        for message in &prepared.messages {
+            backend.validate(&message.quantum_ops()?, true)?;
+        }
         self.frame_poisoned = true;
         let mut outcomes = Vec::new();
         for message in std::mem::take(&mut prepared.messages) {
@@ -229,15 +322,12 @@ impl QuantumSystem {
                 })
                 .map(|g| g.qubits.len())
                 .sum::<usize>();
-            // At most eight idle commands per target, or an ideal operation plus
-            // two Pauli faults. Sixteen per admitted command is conservative.
-            // Scheduled profiles have no crosstalk and need at most one simulator call.
-            let budget = gates
-                .len()
-                .checked_mul(16)
-                .ok_or_else(|| runtime_frame::error("scheduled expansion overflow"))?;
+            let limits = ScheduledExecutionLimits::for_batch(
+                &gates,
+                self.scheduled_model().expect("checked model").qubits(),
+            )?;
             let stage = self.scheduled_model_mut().start_admitted(&message)?;
-            let reply = self.drive_scheduled(stage, budget)?;
+            let reply = self.drive_scheduled(stage, limits)?;
             let values = reply.outcomes()?;
             if values.len() != expected {
                 return Err(runtime_frame::processing_error(
@@ -798,47 +888,4 @@ mod tests {
 }
 
 #[cfg(test)]
-mod scheduled_limits {
-    use super::*;
-    #[test]
-    fn byte_limit_rejects_one_oversized_command_before_execution() {
-        let mut system =
-            QuantumSystem::new_without_noise(Box::new(crate::StabilizerEngine::new(33)));
-        // A valid legacy grouped gate has one command but a large payload. Such
-        // output is outside the checked profiles' <=2-target emission contract.
-        let commands = ByteMessage::quantum_operations_builder()
-            .x(&(0..33).collect::<Vec<_>>())
-            .build();
-        assert_eq!(commands.quantum_ops().unwrap().len(), 1);
-        assert!(commands.as_bytes().len() > 16 + 128);
-        let result = system.drive_scheduled(crate::EngineStage::NeedsProcessing(commands), 1);
-        assert!(
-            result
-                .err()
-                .expect("byte limit must reject")
-                .to_string()
-                .contains("scheduled noise expansion limit")
-        );
-        let output = system
-            .drive_legacy(ByteMessage::quantum_operations_builder().mz(&[0]).build())
-            .unwrap();
-        assert_eq!(output.outcomes().unwrap(), vec![0]);
-    }
-    #[test]
-    fn expanded_commands_reject_before_simulator_mutation() {
-        let mut system = QuantumSystem::new_without_noise(Box::new(crate::StateVecEngine::new(1)));
-        for budget in [0, 2, usize::MAX] {
-            let mut commands = ByteMessage::quantum_operations_builder();
-            commands.x(&[0]).x(&[0]).x(&[0]);
-            let result = system.drive_scheduled(
-                crate::EngineStage::NeedsProcessing(commands.build()),
-                budget,
-            );
-            assert!(result.is_err());
-        }
-        let result = system
-            .drive_legacy(ByteMessage::quantum_operations_builder().mz(&[0]).build())
-            .unwrap();
-        assert_eq!(result.outcomes().unwrap(), vec![0]);
-    }
-}
+mod scheduled_driver;

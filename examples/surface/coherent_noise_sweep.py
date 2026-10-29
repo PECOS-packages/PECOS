@@ -80,7 +80,7 @@ def run_sweep(
     det_json = json.loads(tc.get_meta("detectors"))
     obs_json = json.loads(tc.get_meta("observables"))
     num_meas = int(tc.get_meta("num_measurements"))
-    dem_str = b.build_dem(p1=p_depol, p2=p_depol, p_meas=p_depol, p_prep=p_depol)
+    dem_str = str(b.build_dem(p1=p_depol, p2=p_depol, p_meas=p_depol, p_prep=p_depol))
     sc = b.stab_coords()
     decoder = LogicalSubgraphDecoder(dem_str, sc, "pymatching")
 

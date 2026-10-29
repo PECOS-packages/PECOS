@@ -5,6 +5,20 @@ from pecos.noise.error_depolar import DepolarizingErrorModel
 from pecos.simulators import SparseStab
 
 
+def test_run_preserves_classical_register_metadata() -> None:
+    """Runtime scratch and output overrides must not mutate the circuit's spec."""
+    from copy import deepcopy
+
+    from pecos.slr import CReg, Main, QReg, SlrConverter
+    from pecos.slr.qeclib import qubit as qb
+
+    q, c = QReg("data", 1), CReg("c", 1)
+    circuit = SlrConverter(Main(q, c, qb.X(q[0]), qb.Measure(q[0]) > c[0])).quantum_circuit()
+    original = deepcopy(circuit.metadata)
+    pc.HybridEngine().run(SparseStab(1), circuit, shot_id=0, output_spec={"extra": 2})
+    assert circuit.metadata == original
+
+
 def test_simple_conditional() -> None:
     """Verify simulation and noise modeling works with conditional operations."""
     qc = pc.QuantumCircuit(cvar_spec={"m": 1, "a": 1}, num_qubits=1)

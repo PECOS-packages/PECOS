@@ -1160,8 +1160,13 @@ fn mandatory_frames_are_rejected_by_ordinary_gate_consumers() {
 
 #[test]
 fn unknown_legacy_record_after_valid_prefix_is_rejected_atomically() {
+    use pecos_engines::byte_message::protocol::{BatchHeader, GateHeader, MessageHeader};
     let mut bytes = message(&[Gate::x(&[0]), Gate::z(&[0])]).as_bytes().to_vec();
-    bytes[32] = 250;
+    let second_header = size_of::<BatchHeader>()
+        + size_of::<MessageHeader>()
+        + size_of::<GateHeader>()
+        + size_of::<u32>();
+    bytes[second_header] = 250;
     let mut system = setup(GeneralNoiseModel::builder(), 11);
     let before = system.clone();
     assert!(matches!(

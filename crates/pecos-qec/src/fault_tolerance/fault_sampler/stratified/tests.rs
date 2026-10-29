@@ -933,3 +933,288 @@ fn tail_bound_is_continuous_across_regime_switch() {
         p = p.next_up();
     }
 }
+
+#[test]
+fn explicit_channel_preserves_probabilities_and_supports_fault_counts() {
+    let mut catalog = catalog();
+    let mut explicit = catalog
+        .locations
+        .iter()
+        .find(|l| l.channel == FaultChannel::PMeas)
+        .unwrap()
+        .clone();
+    explicit.channel = FaultChannel::Explicit;
+    explicit.channel_probability = 0.23;
+    explicit.no_fault_probability = 0.77;
+    explicit.faults[0].absolute_probability = 0.23;
+    assert!((explicit.faults[0].conditional_probability - 1.0).abs() < f64::EPSILON);
+    catalog.locations.push(explicit);
+    catalog.with_noise(&StochasticNoiseParams {
+        p1: 0.01,
+        p2: 0.02,
+        p_meas: 0.03,
+        p_prep: 0.04,
+    });
+    for location in &catalog.locations {
+        let expected = match location.channel {
+            FaultChannel::P1 => 0.01,
+            FaultChannel::P2 => 0.02,
+            FaultChannel::PMeas => 0.03,
+            FaultChannel::PPrep => 0.04,
+            FaultChannel::Explicit => 0.23,
+        };
+        assert!((location.channel_probability - expected).abs() < 1e-15);
+        assert!((location.no_fault_probability - (1.0 - expected)).abs() < 1e-15);
+        for alternative in &location.faults {
+            assert!(
+                (alternative.absolute_probability - expected * alternative.conditional_probability)
+                    .abs()
+                    < 1e-15
+            );
+        }
+    }
+    let pmf = catalog.fault_count_pmf(1).unwrap();
+    let configurations = catalog.fault_configurations(1).collect::<Vec<_>>();
+    let mass: f64 = configurations
+        .iter()
+        .map(|c| c.configuration_probability)
+        .sum();
+    assert!((mass - pmf.masses()[1]).abs() < 1e-14);
+    let explicit_index = catalog.locations.len() - 1;
+    assert!(
+        configurations
+            .iter()
+            .any(|c| c.location_indices == [explicit_index])
+    );
+    let samples = catalog.sample_fault_configurations(1, 128, 71).unwrap();
+    assert!(
+        samples
+            .iter()
+            .any(|c| c.location_indices == [explicit_index])
+    );
+}
+
+#[test]
+fn exact_strata_have_zero_variance() {
+    let pmf = catalog().fault_count_pmf(2).unwrap();
+    let exact = [
+        ExactFaultStratum {
+            k: 0,
+            log_survival_probability: 0.4_f64.ln(),
+            log_failure_probability: 0.02_f64.ln(),
+        },
+        ExactFaultStratum {
+            k: 1,
+            log_survival_probability: 0.1_f64.ln(),
+            log_failure_probability: 0.03_f64.ln(),
+        },
+    ];
+    let e = StratifiedEstimate::from_counts_and_exact(&pmf, &[], &exact).unwrap();
+    close(e.survival_probability, 0.5, 1e-14);
+    close(e.failure_probability, 0.05, 1e-14);
+    close(e.failure_given_survival.unwrap(), 0.1, 1e-14);
+    assert_eq!(e.failure_standard_error.to_bits(), 0.0_f64.to_bits());
+    assert_eq!(e.survival_standard_error.to_bits(), 0.0_f64.to_bits());
+    assert_eq!(e.ratio_standard_error.unwrap().to_bits(), 0.0_f64.to_bits());
+    close(e.unsampled_mass, pmf.masses()[2], 1e-14);
+}
+
+#[test]
+fn mixed_strata_use_total_ratio_in_sampled_variance() {
+    let pmf = FaultCountPmf {
+        masses: vec![0.7, 0.2, 0.1],
+        log_masses: [0.7_f64, 0.2, 0.1].map(f64::ln).into(),
+        tail_bound: 0.0,
+    };
+    let exact = [ExactFaultStratum {
+        k: 0,
+        log_survival_probability: 0.6_f64.ln(),
+        log_failure_probability: 0.12_f64.ln(),
+    }];
+    let counts = [FaultStratumCounts {
+        k: 1,
+        attempted: 100,
+        survived: 40,
+        failed: 10,
+    }];
+    let e = StratifiedEstimate::from_counts_and_exact(&pmf, &counts, &exact).unwrap();
+    let (a, b, p, n) = (0.1_f64, 0.4_f64, 0.2_f64, 100.0_f64);
+    let total_a = 0.12 + p * a;
+    let total_b = 0.6 + p * b;
+    let r = total_a / total_b;
+    let v = a * (1.0 - r).powi(2) + (b - a) * r.powi(2) - (a - r * b).powi(2);
+    close(e.failure_probability, total_a, 1e-14);
+    close(e.survival_probability, total_b, 1e-14);
+    close(e.failure_given_survival.unwrap(), r, 1e-14);
+    close(
+        e.failure_standard_error,
+        (p * p * a * (1.0 - a) / n).sqrt(),
+        1e-14,
+    );
+    close(
+        e.survival_standard_error,
+        (p * p * b * (1.0 - b) / n).sqrt(),
+        1e-14,
+    );
+    close(
+        e.ratio_standard_error.unwrap(),
+        (p * p * v / n).sqrt() / total_b,
+        1e-14,
+    );
+    close(e.unsampled_mass, 0.1, 1e-14);
+}
+
+#[test]
+fn exact_strata_share_stratum_validation() {
+    let pmf = catalog().fault_count_pmf(2).unwrap();
+    let valid = catalog().exact_fault_stratum(0).unwrap();
+    let counts = [FaultStratumCounts {
+        k: 0,
+        attempted: 10,
+        survived: 5,
+        failed: 1,
+    }];
+    assert!(matches!(
+        StratifiedEstimate::from_counts_and_exact(&pmf, &counts, &[valid]),
+        Err(FaultCountError::DuplicateStratum { k: 0 })
+    ));
+    assert!(matches!(
+        StratifiedEstimate::from_counts_and_exact(&pmf, &[], &[valid, valid]),
+        Err(FaultCountError::DuplicateStratum { k: 0 })
+    ));
+    assert!(matches!(
+        StratifiedEstimate::from_counts_and_exact(
+            &pmf,
+            &[],
+            &[ExactFaultStratum { k: 3, ..valid }]
+        ),
+        Err(FaultCountError::StratumOutsidePmf { k: 3 })
+    ));
+}
+
+#[test]
+fn no_fault_range_products_handle_zero_and_underflow() {
+    let base = catalog().locations[0].clone();
+    let mut c = FaultCatalog {
+        locations: vec![base; 400],
+    };
+    for location in &mut c.locations {
+        location.no_fault_probability = 0.01;
+    }
+    c.locations[0].no_fault_probability = 0.0;
+    let products = NoFaultProducts::new(&c);
+    assert_eq!(products.excluding(&[]).to_bits(), 0.0_f64.to_bits());
+    let selected = (0..399).collect::<Vec<_>>();
+    close(products.excluding(&selected), 0.01, 1e-14);
+    close(
+        products.excluding(&(0..400).collect::<Vec<_>>()),
+        1.0,
+        1e-14,
+    );
+    let c = catalog();
+    let products = NoFaultProducts::new(&c);
+    for mask in 0..(1_usize << c.locations.len()) {
+        let selected = (0..c.locations.len())
+            .filter(|&i| mask & (1 << i) != 0)
+            .collect::<Vec<_>>();
+        let expected = c
+            .locations
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !selected.contains(i))
+            .map(|(_, l)| l.no_fault_probability)
+            .product();
+        close(products.excluding(&selected), expected, 1e-14);
+    }
+}
+
+#[test]
+fn exact_strata_match_enumeration() {
+    for c in [catalog(), distinct_catalog()] {
+        for k in 0..=4 {
+            let (mut survival, mut failure) = (0.0, 0.0);
+            for configuration in c.fault_configurations(k) {
+                if configuration.affected_detectors.is_empty() {
+                    survival += configuration.configuration_probability;
+                    if !configuration.affected_observables.is_empty() {
+                        failure += configuration.configuration_probability;
+                    }
+                }
+            }
+            // Three faults take the signature path; the others enumerate.
+            let exact = c.exact_fault_stratum(k).unwrap();
+            assert_eq!(exact.k(), k);
+            close(exact.survival_probability(), survival, 1e-12);
+            close(exact.failure_probability(), failure, 1e-12);
+            let again = c.exact_fault_stratum(k).unwrap();
+            assert_eq!(
+                exact.survival_probability().to_bits(),
+                again.survival_probability().to_bits()
+            );
+            assert_eq!(
+                exact.failure_probability().to_bits(),
+                again.failure_probability().to_bits()
+            );
+        }
+    }
+    assert!(matches!(
+        catalog().exact_fault_stratum(active_count(&catalog()) + 1),
+        Err(FaultCountError::FaultCountTooLarge { .. })
+    ));
+}
+
+#[test]
+fn exact_strata_keep_mass_at_extreme_probabilities() {
+    // Every fault flips only the observable, so each stratum survives with its
+    // PMF mass and fails exactly when k is odd. The PMF is an independent oracle.
+    let mut circuit = TickCircuit::new();
+    circuit.tick().mz(&[QubitId(0)]);
+    circuit.set_meta("num_measurements", Attribute::String("1".into()));
+    circuit
+        .add_observable_metadata(&[-1], Some(0), Some("L"), None)
+        .unwrap();
+    let base = FaultCatalog::from_circuit(&circuit).unwrap();
+    for (locations, p, ks) in [
+        // Each configuration's probability, 0.5^1075, underflows at k = 1.
+        (1075, 0.5, 0..=3),
+        // The single configuration's odds product, ((1-p)/p)^-21, overflows.
+        (21, 0.999_999_999_999_999_9, 21..=21),
+        // Odds products underflow on the enumeration and signature paths.
+        (100, 1e-163, 2..=2),
+        (3, 1e-110, 3..=3),
+    ] {
+        let mut c = base.parameterized(&StochasticNoiseParams {
+            p1: 0.0,
+            p2: 0.0,
+            p_meas: p,
+            p_prep: 0.0,
+        });
+        c.locations.resize(locations, c.locations[0].clone());
+        let pmf = c.fault_count_pmf(*ks.end()).unwrap();
+        for k in ks {
+            let exact = c.exact_fault_stratum(k).unwrap();
+            let log_mass = pmf.log_masses()[k];
+            let context = format!("locations={locations}, p={p:e}, k={k}, exact={exact:?}");
+            // Log probabilities to 1e-10 absolute, i.e. probabilities to 1e-10 relative.
+            assert!(
+                (exact.log_survival_probability() - log_mass).abs() < 1e-10,
+                "{context}"
+            );
+            if k % 2 == 1 {
+                assert!(
+                    (exact.log_failure_probability() - log_mass).abs() < 1e-10,
+                    "{context}"
+                );
+                let estimate =
+                    StratifiedEstimate::from_counts_and_exact(&pmf, &[], &[exact]).unwrap();
+                close(estimate.failure_given_survival.unwrap(), 1.0, 1e-10);
+            } else {
+                assert_eq!(
+                    exact.log_failure_probability(),
+                    f64::NEG_INFINITY,
+                    "{context}"
+                );
+            }
+        }
+    }
+}

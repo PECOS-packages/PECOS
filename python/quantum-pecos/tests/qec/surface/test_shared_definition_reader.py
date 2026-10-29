@@ -228,7 +228,7 @@ def test_logical_dem_matches_pre_removal_baseline(monkeypatch):
     builder.add_patch(SurfacePatch.create(distance=3), "A")
     builder.add_memory("A", rounds=2, basis="Z")
     monkeypatch.setattr(builder, "_build_structured_dem_from_cached_slices", lambda **_kwargs: None)
-    assert builder.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004) == expected
+    assert str(builder.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004)) == expected
 
 
 @pytest.mark.parametrize("basis", ["Z", "X"])

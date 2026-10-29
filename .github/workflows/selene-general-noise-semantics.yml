@@ -28,11 +28,12 @@ jobs:
     timeout-minutes: 45
 
     steps:
-      - name: Harden the runner (egress audit)
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
-        with:
-          egress-policy: audit
-
+      # No harden-runner here: its audit agent grows to about 13.5 GB during the
+      # Selene semantic suite and exhausts the runner's memory. The worker then
+      # stops responding, so step timeouts never fire and the job log is lost.
+      # Measured on 2026-10-24: with v2.19.4, v2.22.2 or disable-file-monitoring
+      # the job ran out of memory; without the agent the suite passed with 11.5 GB
+      # still free (runs 40101278752, 40104083813, 40104086962, 40104090440).
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
@@ -53,7 +54,7 @@ jobs:
         run: rustup show
 
       - name: Cache Rust
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
         with:
           cache-bin: false
           prefix-key: v1-selene-general-noise-semantics
@@ -61,7 +62,10 @@ jobs:
 
       # The sim() parity tests build PECOS packages that link LLVM.
       - name: Install just
-        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: just@1.59.0
+          fallback: none
 
       - name: Cache LLVM ${{ env.LLVM_VERSION }}
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
@@ -97,7 +101,7 @@ jobs:
         shell: bash
         # A step timeout below the job's lets the always() steps below publish the
         # log when the suite runs long; a job timeout cancels them and the log is lost.
-        # The suite takes about 12 minutes on a warm runner.
+        # The suite takes about 4-6 minutes.
         timeout-minutes: 25
         run: |
           set -euo pipefail

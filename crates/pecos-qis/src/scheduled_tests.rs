@@ -80,7 +80,7 @@ fn native_callbacks_preserve_original_batch_and_result_namespaces() {
 
 #[test]
 fn invalid_batches_do_not_escape_and_failures_require_reset() {
-    for case in 0..5 {
+    for case in 0..4 {
         let mut runtime = synthetic();
         let mut bad = batch();
         match case {
@@ -92,7 +92,6 @@ fn invalid_batches_do_not_escape_and_failures_require_reset() {
                 }
             }
             2 => bad.operations[0] = RuntimeScheduledOp::Reset { qubit_id: u64::MAX },
-            3 => runtime.runtime_to_program_results.clear(),
             _ => bad.operations.push(RuntimeScheduledOp::Custom {
                 tag: 7302,
                 data: vec![0; MAX_PAYLOAD_BYTES],
@@ -119,7 +118,7 @@ fn invalid_batches_do_not_escape_and_failures_require_reset() {
 #[test]
 fn callback_budgets_reject_before_reading_oversize_payload_and_stop_appends() {
     let mut batch = RuntimeOperationBatch {
-        extraction_budget: Some((1, 2)),
+        extraction_budget: Some((crate::scheduled_transport::BudgetLayout::Minimum, 40, 2)),
         ..Default::default()
     };
     unsafe {
@@ -137,7 +136,7 @@ fn callback_budgets_reject_before_reading_oversize_payload_and_stop_appends() {
         Some("runtime payload budget exceeded")
     );
     let mut batch = RuntimeOperationBatch {
-        extraction_budget: Some((1, 0)),
+        extraction_budget: Some((crate::scheduled_transport::BudgetLayout::Minimum, 40, 0)),
         ..Default::default()
     };
     unsafe {
@@ -148,30 +147,32 @@ fn callback_budgets_reject_before_reading_oversize_payload_and_stop_appends() {
     assert_eq!(batch.operations.len(), 1);
     assert_eq!(
         batch.callback_error,
-        Some("runtime operation budget exceeded")
+        Some("runtime operation byte budget exceeded; reduce scheduled output")
     );
 }
 
 #[test]
-fn operation_limit_applies_to_one_native_batch() {
+fn byte_budget_applies_to_one_native_batch() {
     let mut runtime = synthetic();
-    assert!(
-        runtime
-            .collect_scheduled(|runtime| {
-                runtime.retain_scheduled_batch(RuntimeOperationBatch {
-                    operations: vec![RuntimeScheduledOp::Reset { qubit_id: 0 }; MAX_OPERATIONS + 1],
-                    ..Default::default()
-                })?;
-                Ok(vec![])
-            })
-            .is_err()
-    );
+    let (layout, remaining) = crate::scheduled_transport::EventBudget::default().batch_allowance();
+    // One framing plus floor(remaining / gate cost) + 1 = 1,677,721 resets exceeds 64 MiB.
+    let count = remaining / layout.operation_bytes(None, false) + 1;
+    let error = runtime
+        .collect_scheduled(|runtime| {
+            runtime.retain_scheduled_batch(RuntimeOperationBatch {
+                operations: vec![RuntimeScheduledOp::Reset { qubit_id: 0 }; count],
+                ..Default::default()
+            })?;
+            Ok(vec![])
+        })
+        .unwrap_err();
+    assert!(error.to_string().contains("event transport limit"));
 }
 
 #[test]
 fn preflight_rejects_unsupported_inputs_without_loading_plugin() {
     for op in [
-        QuantumOp::Idle(1e-9, 0).into(),
+        QuantumOp::Idle(0.5e-9, 0).into(),
         QuantumOp::H(usize::MAX).into(),
         QuantumOp::CX(0, usize::MAX).into(),
         QuantumOp::CCX(0, 1, usize::MAX).into(),
@@ -405,7 +406,7 @@ fn deferred_schedule_drains_without_inserting_barriers() {
 }
 
 #[test]
-fn shot_end_requires_a_successful_terminal_drain() {
+fn shot_end_does_not_require_a_host_barrier() {
     let mut runtime = crate::selene_runtimes::selene_soft_rz_runtime().unwrap();
     runtime.set_num_qubits(4);
     runtime.shot_start(33, None).unwrap();
@@ -413,15 +414,13 @@ fn shot_end_requires_a_successful_terminal_drain() {
         runtime
             .lower_scheduled_operations(&[QuantumOp::RXY(0.25, 0.5, 0).into()])
             .unwrap(),
-        []
+        Vec::<ScheduledBatch>::new()
     );
-    assert!(
-        runtime.shot_end().is_err(),
-        "shot_end discarded pending native work"
+    assert_eq!(
+        runtime.finish_scheduled_operations().unwrap(),
+        Vec::<ScheduledBatch>::new()
     );
-    let batches = runtime.drain_pending_scheduled_operations().unwrap();
-    assert!(batches.iter().any(|b| !b.operations.is_empty()));
-    runtime.shot_end().unwrap();
+    runtime.shot_start(34, None).unwrap();
 }
 
 #[test]
@@ -451,7 +450,7 @@ fn clone_guard_rejects_before_loading_a_valid_runtime() {
 }
 
 #[test]
-fn new_submission_invalidates_terminal_drain_and_prevents_shot_replacement() {
+fn new_submission_requires_shot_end_before_replacement() {
     let mut runtime = crate::selene_runtimes::selene_soft_rz_runtime().unwrap();
     runtime.set_num_qubits(4);
     runtime.shot_start(40, None).unwrap();
@@ -462,16 +461,11 @@ fn new_submission_invalidates_terminal_drain_and_prevents_shot_replacement() {
     runtime
         .lower_scheduled_operations(&[QuantumOp::RXY(0.25, 0.5, 1).into()])
         .unwrap();
-    assert!(runtime.shot_end().is_err());
     assert!(runtime.shot_start(41, None).is_err());
-    assert!(
-        !runtime
-            .drain_pending_scheduled_operations()
-            .unwrap()
-            .is_empty(),
-        "new submission must produce pending scheduled operations"
+    assert_eq!(
+        runtime.finish_scheduled_operations().unwrap(),
+        Vec::<ScheduledBatch>::new()
     );
-    runtime.shot_end().unwrap();
     runtime.shot_start(41, None).unwrap();
 }
 
@@ -488,7 +482,7 @@ fn non_finite_source_angles_have_a_specific_diagnostic() {
 }
 
 #[test]
-fn measurement_feedback_invalidates_terminal_drain() {
+fn measurement_feedback_must_precede_shot_end() {
     let mut runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
     runtime.set_num_qubits(1);
     runtime.shot_start(42, None).unwrap();
@@ -498,17 +492,17 @@ fn measurement_feedback_invalidates_terminal_drain() {
             QuantumOp::Measure(0, 0).into(),
         ])
         .unwrap();
-    runtime.drain_pending_scheduled_operations().unwrap();
-    runtime
-        .provide_measurement_outcomes(Vec::from([(0, 0)]))
-        .unwrap();
     assert!(
         runtime.shot_end().is_err(),
-        "feedback must invalidate terminal drain"
+        "emitted measurements require feedback"
     );
-    assert!(runtime.shot_start(43, None).is_err());
-    runtime.drain_pending_scheduled_operations().unwrap();
-    runtime.provide_measurement_outcomes(Vec::new()).unwrap();
+    // Failed admission is sticky, so test successful feedback on a fresh shot.
+    runtime.reset().unwrap();
+    runtime.shot_start(43, None).unwrap();
+    runtime
+        .lower_scheduled_operations(&[QuantumOp::Measure(0, 0).into()])
+        .unwrap();
+    runtime.provide_measurement_outcomes(vec![(0, 0)]).unwrap();
     runtime.shot_end().unwrap();
 }
 
@@ -608,4 +602,54 @@ fn budget_rejected_batch_has_no_measurement_or_custom_effects() {
     assert!(error.contains("event transport limit"), "{error}");
     assert!(runtime.emitted_measurements.is_empty());
     assert_eq!(*delivered.lock().unwrap(), vec![0; accepted]);
+}
+
+#[test]
+fn callback_reservation_matches_both_transport_layouts() {
+    use crate::scheduled_transport::{BudgetLayout, EventBudget};
+    for layout in [BudgetLayout::Minimum, BudgetLayout::V7] {
+        let mut budget = EventBudget::new(layout);
+        let (layout, allowance) = budget.batch_allowance();
+        let mut batch = RuntimeOperationBatch {
+            extraction_budget: Some((layout, allowance, MAX_PAYLOAD_BYTES)),
+            ..Default::default()
+        };
+        unsafe {
+            runtime_batch_reset((&raw mut batch).cast(), 0);
+            runtime_batch_measure((&raw mut batch).cast(), 0, 1);
+            runtime_batch_measure_leaked((&raw mut batch).cast(), 0, 2);
+            runtime_batch_custom((&raw mut batch).cast(), 1, b"abc".as_ptr().cast(), 3);
+        }
+        let expected = layout.operation_bytes(None, false)
+            + 2 * layout.operation_bytes(None, true)
+            + layout.operation_bytes(Some(3), false);
+        assert_eq!(batch.extraction_budget.unwrap().1, allowance - expected);
+        budget.charge(&batch.operations, 2).unwrap();
+        assert_eq!(
+            budget.batch_allowance().1,
+            allowance - expected - layout.framing_bytes(0)
+        );
+    }
+}
+
+#[test]
+fn scheduled_internal_measurement_has_feedback_without_source_provenance() {
+    let mut runtime = synthetic();
+    runtime.runtime_to_program_results.clear();
+    let batches = runtime
+        .collect_scheduled(|runtime| {
+            runtime.retain_scheduled_batch(batch())?;
+            Ok(vec![])
+        })
+        .unwrap();
+    let measurement = &batches[0].measurements[0];
+    assert_eq!(measurement.runtime_result, 901);
+    assert_eq!(
+        measurement.program_result,
+        pecos_qis_ffi_types::RUNTIME_OWNED_MEASUREMENT_ID
+    );
+    assert_eq!(
+        runtime.emitted_measurements[&measurement.program_result].front(),
+        Some(&(901, false))
+    );
 }

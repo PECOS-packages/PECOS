@@ -2624,6 +2624,7 @@ fn py_locations_from_catalog(
                     FaultChannel::P2 => "p2",
                     FaultChannel::PMeas => "p_meas",
                     FaultChannel::PPrep => "p_prep",
+                    FaultChannel::Explicit => "explicit",
                 }
                 .to_string(),
                 channel_probability: loc.channel_probability,

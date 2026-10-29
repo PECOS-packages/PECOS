@@ -15,7 +15,7 @@
 //! Benchmarks surface code syndrome extraction at various distances and round counts
 //! to compare the three stabilizer simulator backends:
 //!
-//! - `SparseStab` (pure Rust, BitSet-based sparse representation)
+//! - `SparseStab` (pure Rust, adaptive sparse representation)
 //! - `CppSparseStab` (C++ implementation via cxx FFI)
 //! - `Stabilizer` (pure Rust, `DenseStab` with row+column bit-matrix layout)
 
@@ -88,7 +88,7 @@ impl SurfaceCodeParams {
     }
 }
 
-/// Run surface code syndrome extraction on `SparseStab` (pure Rust, BitSet-based).
+/// Run surface code syndrome extraction on `SparseStab` (pure Rust, adaptive).
 fn run_circuit_sparse_stab(sim: &mut SparseStab, params: &SurfaceCodeParams, rounds: usize) {
     // Initialize data qubits in |+> state
     for i in 0..params.num_data {
@@ -195,7 +195,7 @@ fn bench_rust_vs_cpp_surface_code<M: Measurement>(c: &mut Criterion<M>) {
             let ops_per_run = rounds * (params.num_ancillas * 3 + params.num_ancillas);
             group.throughput(Throughput::Elements(ops_per_run as u64));
 
-            // --- Pure Rust SparseStab (BitSet-based) ---
+            // --- Pure Rust SparseStab (adaptive) ---
             group.bench_with_input(BenchmarkId::new("SparseStab_Rust", &label), &(), |b, ()| {
                 b.iter_batched(
                     || {

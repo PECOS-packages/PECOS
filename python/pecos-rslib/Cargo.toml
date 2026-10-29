@@ -83,7 +83,7 @@ pecos-decoders = { workspace = true, features = [
 ] }
 
 # QEC (fault tolerance)
-pecos-qec.workspace = true
+pecos-qec = { workspace = true, features = ["selene"] }
 
 # Build tools (LLVM/CUDA detection)
 pecos-build.workspace = true
@@ -103,7 +103,6 @@ serde_json.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
 log.workspace = true
-dirs.workspace = true
 
 [build-dependencies]
 # Reads the wheel version out of pyproject.toml for the module's `__version__`.

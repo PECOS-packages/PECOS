@@ -190,7 +190,7 @@ def run_sweep(
                     cell_idx += 1
                     print(f"[{cell_idx}/{total_cells}] d={d} w={w} depth={depth} p={p:.4g} ...", end=" ", flush=True)
 
-                    dem_str = b.build_dem(p1=p, p2=p, p_meas=p, p_prep=p)
+                    dem_str = str(b.build_dem(p1=p, p2=p, p_meas=p, p_prep=p))
 
                     # Sample
                     t0 = time.perf_counter()
@@ -687,7 +687,7 @@ def main():
             for p in args.error_rates:
                 b = build_t_teleportation_circuit(d, args.seed, patch, args.rounds_per_layer)
                 sc = b.stab_coords()
-                dem_str = b.build_dem(p1=p, p2=p, p_meas=p, p_prep=p)
+                dem_str = str(b.build_dem(p1=p, p2=p, p_meas=p, p_prep=p))
                 parsed = ParsedDem.from_string(dem_str)
                 batch = parsed.to_dem_sampler().sample_batch(args.shots, seed=args.seed)
 

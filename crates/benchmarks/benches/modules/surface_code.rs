@@ -21,7 +21,8 @@ use criterion::{BenchmarkId, Criterion, Throughput, measurement::Measurement};
 use pecos::prelude::*;
 use pecos::simulators::measurement_sampler::{MeasurementSampler, SequentialMeasurementSampler};
 use pecos::simulators::{
-    SparseStab, SparseStabVecSet, SymbolicSparseStab, SymbolicSparseStabVecSet,
+    SparseStab, SparseStabBitSet, SparseStabGeneric, SparseStabVecSet, SymbolicSparseStab,
+    SymbolicSparseStabVecSet,
 };
 use pecos_engines::quantum::SparseStabEngine;
 use pecos_engines::{Engine, EngineSystem, QuantumSystem};
@@ -250,8 +251,8 @@ fn bench_surface_code_simulation<M: Measurement>(c: &mut Criterion<M>) {
 }
 
 /// Run surface code circuit on `SparseStab` (for Monte Carlo benchmarking).
-fn run_circuit_sparse_stab<R: Rng + SeedableRng + std::fmt::Debug>(
-    sim: &mut SparseStab<R>,
+fn run_circuit_sparse_stab<S: pecos_core::IndexSet, R: Rng + SeedableRng + std::fmt::Debug>(
+    sim: &mut SparseStabGeneric<S, R>,
     params: &SurfaceCodeParams,
     rounds: usize,
 ) {
@@ -481,7 +482,7 @@ fn run_circuit_sparse_stab_vecset<R: Rng + SeedableRng + std::fmt::Debug>(
 ///
 /// Both simulators implement the same stabilizer algorithm but with different
 /// underlying set implementations:
-/// - `SparseStab` (BitSet): O(1) bit operations for toggle
+/// - `SparseStabBitSet`: O(1) bit operations for toggle
 /// - `SparseStabVecSet`: O(n) linear search for toggle operations
 fn bench_sparse_stab_bitset_vs_vecset<M: Measurement>(c: &mut Criterion<M>) {
     use criterion::BatchSize;
@@ -520,14 +521,14 @@ fn bench_sparse_stab_bitset_vs_vecset<M: Measurement>(c: &mut Criterion<M>) {
                 },
             );
 
-            // BitSet version (SparseStab default)
+            // Explicit BitSet version
             group.bench_with_input(
                 BenchmarkId::new("BitSet/circuit_only", &label),
                 &(),
                 |b, ()| {
                     b.iter_batched(
                         || {
-                            let mut sim = SparseStab::new(params.num_qubits);
+                            let mut sim = SparseStabBitSet::new(params.num_qubits);
                             sim.reset();
                             sim
                         },

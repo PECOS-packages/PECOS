@@ -115,6 +115,16 @@ impl PyQasmEngineBuilder {
     }
 }
 
+pub(crate) fn runtime_clock_model(value: &str) -> PyResult<pecos_qis::RuntimeClockModel> {
+    match value {
+        "continuous" => Ok(pecos_qis::RuntimeClockModel::Continuous),
+        "shot_relative" => Ok(pecos_qis::RuntimeClockModel::ShotRelative),
+        _ => Err(pyo3::exceptions::PyValueError::new_err(
+            "clock_model must be 'continuous' or 'shot_relative'",
+        )),
+    }
+}
+
 fn runtime_custom_event_policy(value: &str) -> PyResult<pecos_qis::RuntimeCustomEventPolicy> {
     match value {
         "capture" => Ok(pecos_qis::RuntimeCustomEventPolicy::Capture),
@@ -178,34 +188,28 @@ impl PyQisEngineBuilder {
     }
 
     /// Use a Selene runtime built into the current PECOS/Cargo target.
-    #[pyo3(signature = (runtime_name = None, *, custom_event_policy = "reject_unhandled", native_gates = None))]
+    #[pyo3(signature = (runtime_name = None, *, custom_event_policy = "reject_unhandled", native_gates = None, batch_adapter_factory = None, clock_model = "continuous"))]
     fn selene_runtime(
         &mut self,
         runtime_name: Option<&str>,
         custom_event_policy: &str,
         native_gates: Option<Vec<String>>,
+        batch_adapter_factory: Option<Py<PyAny>>,
+        clock_model: &str,
+        py: Python<'_>,
     ) -> PyResult<Self> {
-        let policy = runtime_custom_event_policy(custom_event_policy)?;
-        let mut runtime = match runtime_name {
-            None | Some("selene_simple_runtime") => pecos_qis::selene_simple_runtime(),
-            Some(name) => pecos_qis::selene_runtime_auto(name),
-        }
-        .map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "Failed to load Selene runtime: {e}"
-            ))
-        })?;
-        if let Some(names) = native_gates {
-            runtime = runtime.with_native_gate_set(runtime_native_gate_set(names)?);
-        }
-        runtime.set_custom_event_policy(policy);
+        let clock_model = runtime_clock_model(clock_model)?;
+        let mut runtime =
+            configured_selene_runtime(runtime_name, custom_event_policy, native_gates)?;
+        runtime = runtime.with_clock_model(clock_model);
+        crate::runtime_batch_adapter::configure(&mut runtime, batch_adapter_factory, py)?;
         self.inner = self.inner.clone().runtime(runtime);
         self.runtime_configured = true;
         Ok(self.clone())
     }
 
     /// Use a generic Selene runtime plugin by its shared library and plugin arguments.
-    #[pyo3(signature = (library_file, init_args = None, library_search_dirs = None, *, custom_event_policy = "reject_unhandled", native_gates = None))]
+    #[pyo3(signature = (library_file, init_args = None, library_search_dirs = None, *, custom_event_policy = "reject_unhandled", native_gates = None, batch_adapter_factory = None, clock_model = "continuous"))]
     fn selene_runtime_plugin(
         &mut self,
         library_file: &str,
@@ -213,21 +217,20 @@ impl PyQisEngineBuilder {
         library_search_dirs: Option<Vec<String>>,
         custom_event_policy: &str,
         native_gates: Option<Vec<String>>,
+        batch_adapter_factory: Option<Py<PyAny>>,
+        clock_model: &str,
+        py: Python<'_>,
     ) -> PyResult<Self> {
-        let policy = runtime_custom_event_policy(custom_event_policy)?;
-        let mut runtime = pecos_qis::SeleneRuntime::with_plugin_config(
+        let clock_model = runtime_clock_model(clock_model)?;
+        let mut runtime = configured_selene_runtime_plugin(
             library_file,
-            init_args.unwrap_or_default(),
-            library_search_dirs
-                .unwrap_or_default()
-                .into_iter()
-                .map(PathBuf::from)
-                .collect(),
-        );
-        if let Some(names) = native_gates {
-            runtime = runtime.with_native_gate_set(runtime_native_gate_set(names)?);
-        }
-        runtime.set_custom_event_policy(policy);
+            init_args,
+            library_search_dirs,
+            custom_event_policy,
+            native_gates,
+        )?;
+        runtime = runtime.with_clock_model(clock_model);
+        crate::runtime_batch_adapter::configure(&mut runtime, batch_adapter_factory, py)?;
         self.inner = self.inner.clone().runtime(runtime);
         self.runtime_configured = true;
         Ok(self.clone())
@@ -1372,11 +1375,14 @@ pub struct PyScheduledLocalNoise {
 /// Add Pauli gate faults, preparation faults and asymmetric readout.
 /// p2_pauli_model optionally selects ordered nonidentity I/X/Y/Z pair weights.
 /// prep_leak_ratio is the conditional leakage probability given a preparation fault.
+/// prep_crosstalk independently collapses other prepared qubits in Z on preparation.
+/// p2_angle_params and p2_angle_power opt into the general model's signed angle scaling.
+/// Optional p1/p2 emission ratios, models and seepage use the existing general model.
 /// The idle base must come from scheduled_idle_noise(), not scheduled_idle_z().
 /// For Z-only channels, scheduled_idle_noise() uses Z models by default.
 /// Probabilities are event probabilities in [0, 1], not average gate infidelities.
 #[pyfunction]
-#[pyo3(signature = (idle, *, p1 = 0.0, p2 = 0.0, prep = 0.0, meas0 = 0.0, meas1 = 0.0, prep_leak_ratio = 0.0, p2_pauli_model = None))]
+#[pyo3(signature = (idle, *, p1 = 0.0, p2 = 0.0, prep = 0.0, meas0 = 0.0, meas1 = 0.0, prep_leak_ratio = 0.0, prep_crosstalk = 0.0, p2_pauli_model = None, p2_angle_params = None, p2_angle_power = None, p1_emission_ratio = 0.0, p1_emission_model = None, p1_seepage_prob = 0.0, p2_emission_ratio = 0.0, p2_emission_model = None, p2_seepage_prob = 0.0))]
 pub fn scheduled_local_noise(
     idle: PyScheduledIdleNoise,
     p1: f64,
@@ -1385,15 +1391,45 @@ pub fn scheduled_local_noise(
     meas0: f64,
     meas1: f64,
     prep_leak_ratio: f64,
+    prep_crosstalk: f64,
     p2_pauli_model: Option<std::collections::BTreeMap<String, f64>>,
+    p2_angle_params: Option<(f64, f64, f64, f64)>,
+    p2_angle_power: Option<f64>,
+    p1_emission_ratio: f64,
+    p1_emission_model: Option<std::collections::BTreeMap<String, f64>>,
+    p1_seepage_prob: f64,
+    p2_emission_ratio: f64,
+    p2_emission_model: Option<std::collections::BTreeMap<String, f64>>,
+    p2_seepage_prob: f64,
 ) -> PyResult<PyScheduledLocalNoise> {
     Ok(PyScheduledLocalNoise {
         inner: pecos_engines::scheduled_frame::ScheduledLocalNoise::new(
             idle.inner, p1, p2, prep, meas0, meas1,
         )
         .and_then(|profile| profile.with_prep_leak_ratio(prep_leak_ratio))
+        .and_then(|profile| profile.with_prep_crosstalk(prep_crosstalk))
         .and_then(|profile| match p2_pauli_model {
             Some(model) => profile.with_p2_pauli_model(model),
+            None => Ok(profile),
+        })
+        .and_then(|profile| match p2_angle_params {
+            Some((a, b, c, d)) => profile.with_p2_angle_params(a, b, c, d),
+            None => Ok(profile),
+        })
+        .and_then(|profile| match p2_angle_power {
+            Some(power) => profile.with_p2_angle_power(power),
+            None => Ok(profile),
+        })
+        .and_then(|profile| profile.with_p1_emission_ratio(p1_emission_ratio))
+        .and_then(|profile| profile.with_p1_seepage_prob(p1_seepage_prob))
+        .and_then(|profile| match p1_emission_model {
+            Some(model) => profile.with_p1_emission_model(model),
+            None => Ok(profile),
+        })
+        .and_then(|profile| profile.with_p2_emission_ratio(p2_emission_ratio))
+        .and_then(|profile| profile.with_p2_seepage_prob(p2_seepage_prob))
+        .and_then(|profile| match p2_emission_model {
+            Some(model) => profile.with_p2_emission_model(model),
             None => Ok(profile),
         })
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?,
@@ -2528,6 +2564,52 @@ pub fn register_engine_builders(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(self::coin_toss, m)?)?;
 
     Ok(())
+}
+
+pub(crate) fn configured_selene_runtime(
+    runtime_name: Option<&str>,
+    custom_event_policy: &str,
+    native_gates: Option<Vec<String>>,
+) -> PyResult<pecos_qis::SeleneRuntime> {
+    let policy = runtime_custom_event_policy(custom_event_policy)?;
+    let mut runtime = match runtime_name {
+        None | Some("selene_simple_runtime") => pecos_qis::selene_simple_runtime(),
+        Some(name) => pecos_qis::selene_runtime_auto(name),
+    }
+    .map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+            "Failed to load Selene runtime: {e}"
+        ))
+    })?;
+    if let Some(names) = native_gates {
+        runtime = runtime.with_native_gate_set(runtime_native_gate_set(names)?);
+    }
+    runtime.set_custom_event_policy(policy);
+    Ok(runtime)
+}
+
+pub(crate) fn configured_selene_runtime_plugin(
+    library_file: &str,
+    init_args: Option<Vec<String>>,
+    library_search_dirs: Option<Vec<String>>,
+    custom_event_policy: &str,
+    native_gates: Option<Vec<String>>,
+) -> PyResult<pecos_qis::SeleneRuntime> {
+    let policy = runtime_custom_event_policy(custom_event_policy)?;
+    let mut runtime = pecos_qis::SeleneRuntime::with_plugin_config(
+        library_file,
+        init_args.unwrap_or_default(),
+        library_search_dirs
+            .unwrap_or_default()
+            .into_iter()
+            .map(PathBuf::from)
+            .collect(),
+    );
+    if let Some(names) = native_gates {
+        runtime = runtime.with_native_gate_set(runtime_native_gate_set(names)?);
+    }
+    runtime.set_custom_event_policy(policy);
+    Ok(runtime)
 }
 
 #[cfg(test)]

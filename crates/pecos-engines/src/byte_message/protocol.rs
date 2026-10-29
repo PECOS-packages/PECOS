@@ -8,10 +8,11 @@ use bytemuck::{Pod, Zeroable};
 
 // Magic bytes to identify PECOS message batches - "PECS"
 pub const BATCH_MAGIC: u32 = 0x50_45_43_53;
-// Version 5 stores ordinary gate angles as u64 fractions; versions 6/7 do
-// the same for scheduled batches/events. Version 2 is the runtime envelope.
+// Version 8 widens ordinary gate qubit counts to u32, retaining version 5's
+// u64 angle fractions. Versions 6/7 encode scheduled batches/events; version 2
+// is the runtime envelope.
 // Legacy versions 1 (ordinary) and 3/4 (scheduled) used lossy f64 radians.
-pub const PROTOCOL_VERSION: u8 = 5;
+pub const PROTOCOL_VERSION: u8 = 8;
 /// Scheduled frame transport with exact angle fractions.
 pub const SCHEDULED_FRAME_VERSION: u8 = 6;
 /// Scheduled event transport with exact angle fractions.
@@ -126,9 +127,9 @@ impl MessageHeader {
 #[derive(Debug, Copy, Clone, Pod, Zeroable)]
 pub struct GateHeader {
     pub gate_type: u8,  // Gate type (using GateType enum values)
-    pub num_qubits: u8, // Number of qubits
     pub has_params: u8, // Whether gate has parameters (1=yes, 0=no)
-    pub reserved: u8,   // Reserved for future use (padding for alignment)
+    pub reserved: u16,  // Reserved for future use
+    pub num_qubits: u32, // Number of qubits
                         // Followed by:
                         // - qubit_indices: [u32; num_qubits]
                         // - angles: little-endian u64 Angle64 fractions (angle_arity words)

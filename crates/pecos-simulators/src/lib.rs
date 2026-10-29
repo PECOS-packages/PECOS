@@ -80,7 +80,9 @@ pub type GensData = (
 pub use dense_stab::DenseStab;
 pub use dense_stab_variants::{DenseStabColOnly, DenseStabRowOnly, SparseColOnly, SparseRowOnly};
 pub use density_matrix::DensityMatrix;
-pub use gens::{Gens, GensBitSet, GensGeneric, GensHybrid, GensVecSet, PauliClassification};
+pub use gens::{
+    Gens, GensBitSet, GensGeneric, GensHybrid, GensVecSet, PauliClassification, PauliConvention,
+};
 pub use gpu_stab::GpuStab;
 pub use gpu_stab_opt::GpuStabOpt;
 pub use gpu_stab_parallel::GpuStabParallel;
@@ -105,8 +107,8 @@ pub use qudit::{
 };
 pub use sign_algebra::{PhaseSign, SignAlgebra, SymbolicSign};
 pub use sparse_stab::{
-    SparseStab, SparseStabBitSet, SparseStabGeneric, SparseStabHybrid, SparseStabSortedVecSet,
-    SparseStabUnsortedVecSet, SparseStabVecSet,
+    SparseStab, SparseStabBitSet, SparseStabGeneric, SparseStabHybrid, SparseStabSet,
+    SparseStabSortedVecSet, SparseStabUnsortedVecSet, SparseStabVecSet,
 };
 pub use sparse_stab_y::{
     SparseStabY, SparseStabYBitSet, SparseStabYGeneric, SparseStabYUnsortedVecSet,

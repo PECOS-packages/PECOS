@@ -179,9 +179,10 @@ impl ExtendedAdaptor for StabilizerMeasurementAdaptor {
         _angles: &[Angle64],
         ancillas: &[QubitId],
     ) -> AdaptedSequence {
-        assert!(
-            qubits.len() >= 2,
-            "Stabilizer measurement requires 2 data qubits"
+        assert_eq!(
+            qubits.len(),
+            2,
+            "Stabilizer measurement requires exactly 2 data qubits; adapt each pair separately"
         );
         assert!(
             !ancillas.is_empty(),
@@ -297,9 +298,10 @@ impl ExtendedAdaptor for StabilizerPreparationAdaptor {
         _angles: &[Angle64],
         _ancillas: &[QubitId],
     ) -> AdaptedSequence {
-        assert!(
-            qubits.len() >= 2,
-            "Stabilizer preparation requires 2 qubits"
+        assert_eq!(
+            qubits.len(),
+            2,
+            "Stabilizer preparation requires exactly 2 qubits; adapt each pair separately"
         );
 
         let (q0, q1) = (qubits[0], qubits[1]);
@@ -458,6 +460,25 @@ mod tests {
                 basis: PrepBasis::X
             }
         ));
+    }
+
+    #[test]
+    #[should_panic(expected = "exactly 2 qubits")]
+    fn test_stabilizer_preparation_rejects_batched_pairs() {
+        let qubits: Vec<_> = (0..4).map(QubitId).collect();
+        StabilizerPreparationAdaptor::new().adapt(stabilizer_gates::PZX, &qubits, &[], &[]);
+    }
+
+    #[test]
+    #[should_panic(expected = "exactly 2 data qubits")]
+    fn test_stabilizer_measurement_rejects_batched_pairs() {
+        let qubits: Vec<_> = (0..4).map(QubitId).collect();
+        StabilizerMeasurementAdaptor::new().adapt(
+            stabilizer_gates::MZX,
+            &qubits,
+            &[],
+            &[QubitId(4)],
+        );
     }
 
     #[test]

@@ -18,6 +18,7 @@ system resources.
 
 from __future__ import annotations
 
+from math import tau
 from typing import TYPE_CHECKING, Any
 
 from pecos.simulators.batch_validation import is_empty_batch, replayable_locations, validate_batch
@@ -161,11 +162,12 @@ class DefaultSimulator:
         steps = []
         for location in locations:
             qubits = list(location) if isinstance(location, tuple) else [location]
-            angles = list(params.get("angles", ()))
-            steps.extend(gate_registry.decompose(symbol, qubits, angles))
+            # Simulator bindings use radians; the registry API uses turns.
+            angles = [angle / tau for angle in params.get("angles", ())]
+            steps.extend(gate_registry.decompose(symbol, qubits, angles) or ())
 
         validated_steps = []
-        for step_symbol, step_qubits, step_angles, step_meta in steps:
+        for step_symbol, step_qubits, step_turns, step_meta in steps:
             # Registry steps are built-in gate types; nested registered gates
             # are not supported by the builder or run_gate dispatch.
             if step_symbol not in self.bindings:
@@ -173,6 +175,7 @@ class DefaultSimulator:
                 raise ValueError(msg)
             step_loc = {step_qubits[0] if len(step_qubits) == 1 else tuple(step_qubits)}
             step_params = dict(params)
+            step_angles = [angle * tau for angle in step_turns]
             if step_angles:
                 step_params["angles"] = tuple(step_angles)
                 if len(step_angles) == 1:
@@ -181,8 +184,13 @@ class DefaultSimulator:
                 step_params.pop("angles", None)
                 step_params.pop("angle", None)
             step_params.update(step_meta)
+            if not params.get("simulate_gate", True):
+                step_params["simulate_gate"] = False
             try:
                 self.validate_gate_batch(step_symbol, step_loc, **step_params)
+                param_validator = getattr(self, "validate_gate_params", None)
+                if step_params.get("simulate_gate", True) and param_validator is not None:
+                    param_validator(step_symbol, **step_params)
             except ValueError as error:
                 msg = f"Gate {symbol} step {step_symbol}: {error}"
                 raise ValueError(msg) from error

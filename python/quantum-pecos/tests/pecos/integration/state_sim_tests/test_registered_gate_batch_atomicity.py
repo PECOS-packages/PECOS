@@ -152,7 +152,7 @@ def test_valid_batch_preserves_angles_and_metadata():
     for qubit in locations:
         fresh.run_gate("H", {qubit})
         fresh.run_gate("RX", {qubit}, angles=(0.125,), angle=0.125)
-        fresh.run_gate("RZ", {qubit}, angles=(0.25,), angle=0.25)
+        fresh.run_gate("RZ", {qubit}, angles=(pi / 2,), angle=pi / 2)
         expected.update(fresh.run_gate("MZ", {qubit}))
     assert result == expected
     assert snapshot == pytest.approx(_snapshot(fresh))
@@ -189,16 +189,16 @@ def test_registered_bad_angle_preserves_state_and_rng(symbol, qubits, angles, me
 
 
 @pytest.mark.parametrize(("symbol", "qubits", "angles"), [*_ROTATIONS, ("U1q", [0], (0.1, 0.0))])
-@pytest.mark.parametrize("simulate_gate", [False, True])
 @pytest.mark.parametrize("hybrid", [False, True])
-def test_plain_bad_angle_preserves_state_and_rng(symbol, qubits, angles, simulate_gate, hybrid):
+def test_plain_disabled_rotation_ignores_params(symbol, qubits, angles, hybrid):
     pecos.random.seed(721)
     state = _make()
     locations = [0, 1] if len(qubits) == 1 else [(0, 1), (2, 3)]
     run = partial(pecos.HybridEngine.run_gate, state, {}) if hybrid else state.run_gate
-    with pytest.raises(ValueError, match="not a Clifford rotation"):
-        run(symbol, iter(locations), angles=angles, simulate_gate=simulate_gate)
+    run(symbol, iter(locations), angles=angles, simulate_gate=False)
     _assert_untouched(state)
+    with pytest.raises(ValueError, match="out of bounds"):
+        run(symbol, [99] if len(qubits) == 1 else [(0, 99)], angles=angles, simulate_gate=False)
 
 
 @pytest.mark.parametrize(
@@ -248,40 +248,94 @@ def test_plain_rotation_keeps_binding_parameter_precedence(params):
     assert _snapshot(state) == _snapshot(fresh)
 
 
-@pytest.mark.parametrize("symbol", ["RX", "RXY1Q", "U1q"])
-@pytest.mark.parametrize("params", [{}, {"angles": ()}, {"angles": (0.25, 0.0, 0.0)}])
-def test_plain_missing_or_wrong_angle_count_preserves_state_and_rng(symbol, params):
-    pecos.random.seed(721)
-    state = _make()
-    with pytest.raises(ValueError, match=r"requires|expected .*angle parameters"):
-        state.run_gate(symbol, [0, 1], **params)
-    _assert_untouched(state)
-
-
-def test_overridden_rotation_keeps_its_parameter_contract():
+def test_registered_overridden_rotation_keeps_its_parameter_contract():
+    registry = GateRegistry()
+    (
+        registry.define("OVERRIDE", 1)
+        .angle_arity(1)
+        .step_with_angles("RZ", [0], [AngleSource.input(0)])
+        .register_into(registry)
+    )
     state = _make()
     calls = []
     state.bindings["RZ"] = lambda _state, qubit, **params: calls.append((qubit, params))
-    state.run_gate("RZ", [0], angles=(0.1,))
-    assert calls == [(0, {"angles": (0.1,), "angle": 0.1})]
+    state.run_circuit(_circuit("OVERRIDE", [0], angles=(pi / 4,)), gate_registry=registry)
+    assert calls == [(0, {"angles": (pi / 4,), "angle": pi / 4})]
 
 
-def test_registered_step_metadata_is_validated():
+@pytest.mark.parametrize("outer_enabled", [False, True])
+@pytest.mark.parametrize("step_enabled", [False, True])
+def test_registered_step_params_only_checked_when_enabled(outer_enabled, step_enabled):
     registry = GateRegistry()
     registry.define("META", 1).step("H", [0]).step_with_metadata(
         "RZ",
         [0],
         [AngleSource.fixed(0.25)],
-        {"angles": [0.1], "simulate_gate": False},
+        {"angles": [0.1], "simulate_gate": step_enabled},
     ).register_into(registry)
     pecos.random.seed(721)
     state = _make()
-    with pytest.raises(ValueError, match=r"Gate META step RZ.*not a Clifford rotation"):
-        state.run_circuit(_circuit("META", [0]), gate_registry=registry)
-    _assert_untouched(state)
+    circuit = _circuit("META", [0], simulate_gate=outer_enabled)
+    if outer_enabled and step_enabled:
+        with pytest.raises(ValueError, match=r"Gate META step RZ.*not a Clifford rotation"):
+            state.run_circuit(circuit, gate_registry=registry)
+        _assert_untouched(state)
+    else:
+        assert state.run_circuit(circuit, gate_registry=registry) == {}
+        if outer_enabled:
+            fresh = _make()
+            fresh.run_gate("H", [0])
+            assert _snapshot(state) == _snapshot(fresh)
+        else:
+            _assert_untouched(state)
 
 
-@pytest.mark.parametrize("container", [list, iter])
-def test_empty_rotation_batch_keeps_ignored_params(container):
+@pytest.mark.parametrize(
+    ("source", "input_angles", "direct_angle"),
+    [
+        (AngleSource.input(0), (pi / 2,), pi / 2),
+        (AngleSource.fixed(0.25), (), pi / 2),
+        (AngleSource.neg_input(0), (pi / 2,), -pi / 2),
+    ],
+    ids=["input-radians", "fixed-quarter-turn", "negative-input"],
+)
+def test_registered_angles_match_direct_state(source, input_angles, direct_angle):
+    registry = GateRegistry()
+    (
+        registry.define("ROTATE", 1)
+        .angle_arity(len(input_angles))
+        .step("H", [0])
+        .step_with_angles("RZ", [0], [source])
+        .step("H", [0])
+        .register_into(registry)
+    )
+    state = _make(StateVec)
+    DefaultSimulator._run_decomposed_gate(  # noqa: SLF001 - exercise real StateVec bindings
+        state,
+        registry,
+        "ROTATE",
+        [0],
+        angles=input_angles,
+    )
+    fresh = _make(StateVec)
+    fresh.run_gate("H", [0])
+    fresh.run_gate("RZ", [0], angle=direct_angle)
+    fresh.run_gate("H", [0])
+    # Angle64 wraps turns, so negative rotations may differ by global phase.
+    # Compare the full density matrix, including off-diagonal coherences.
+    actual, expected = _snapshot(state), _snapshot(fresh)
+    assert [a * b.conjugate() for a in actual for b in actual] == pytest.approx(
+        [a * b.conjugate() for a in expected for b in expected],
+    )
+
+
+@pytest.mark.parametrize("simulate_gate", [False, True])
+def test_empty_registered_decomposition_is_noop(simulate_gate):
+    registry = GateRegistry()
+    registry.define("EMPTY", 1).register_into(registry)
+    pecos.random.seed(721)
     state = _make()
-    assert state.run_gate("RZ", container([]), angles=(0.1,)) == {}
+    assert state.run_circuit(_circuit("EMPTY", iter([0, 1]), simulate_gate=simulate_gate), gate_registry=registry) == {}
+    with pytest.raises(ValueError, match=r"Gate EMPTY.*out of bounds"):
+        state.run_circuit(_circuit("EMPTY", [0, 99], simulate_gate=simulate_gate), gate_registry=registry)
+    _assert_untouched(state)

@@ -688,9 +688,9 @@ def test_registry_location_order_angles_and_metadata():
     )
     assert calls == [
         ("RX", 1, {"angles": (0.25,), "angle": 0.25, "step": "first", "tag": "kept"}),
-        ("RZ", 1, {"angles": (0.5,), "angle": 0.5, "step": "second", "tag": "kept"}),
+        ("RZ", 1, {"angles": (pi,), "angle": pi, "step": "second", "tag": "kept"}),
         ("RX", 0, {"angles": (0.25,), "angle": 0.25, "step": "first", "tag": "kept"}),
-        ("RZ", 0, {"angles": (0.5,), "angle": 0.5, "step": "second", "tag": "kept"}),
+        ("RZ", 0, {"angles": (pi,), "angle": pi, "step": "second", "tag": "kept"}),
     ]
 
 

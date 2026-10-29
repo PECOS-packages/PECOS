@@ -19,8 +19,8 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   plain `run_gate` and HybridEngine leave parameter checks to dispatch.
   With `simulate_gate=False`, locations and registered-step bindings are still
   validated, but rotation parameters are not. Step metadata can disable a step
-  (skipping parameter checks and execution), but cannot enable a disabled outer
-  gate. An unbound registered step now raises even when disabled, where it was
+  (skipping parameter checks and execution), but no longer re-enables a step
+  inside a gate whose outer `simulate_gate` is `False`. An unbound registered step now raises even when disabled, where it was
   previously silently skipped. Empty registered decompositions are valid no-ops
   after outer-location validation.
   Malformed locations,
@@ -84,6 +84,8 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   decomposed turns as radians, which silently produced incorrect rotations.
   The simulator now converts at the registry boundary, including fixed and
   negated input angles. The Python registry API continues to use turns.
+  Registered gates also accept `angle=` for a one-angle gate, as built-in gates
+  do, and `angle64` values; non-finite angles raise a gate-named `ValueError`.
 
 - **Breaking:** two-qubit gates in `pecos-simulators` now reject repeated-qubit
   pairs in debug and release builds. Such inputs could previously cause undefined

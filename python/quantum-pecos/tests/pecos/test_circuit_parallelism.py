@@ -33,7 +33,6 @@ def test_compaction_preserves_per_qubit_order() -> None:
     assert analysis.all_operations.mean_operations == 1.5
     assert analysis.all_operations.density(6) == 0.5
     assert analysis.unconditional == analysis.all_operations
-    assert circuit_parallelism(circuit, compact=False).all_operations.layer_count == 3
 
 
 def test_selection_barriers_are_explicit() -> None:
@@ -119,11 +118,10 @@ def test_mixed_arity_counts_occupied_qubits() -> None:
     assert analysis.all_operations.density(4) == 0.75
 
 
-def test_uncompacted_batches_do_not_claim_tick_depth() -> None:
-    """Different symbol batches in one tick remain separate without compaction."""
+def test_batches_in_one_tick_share_a_layer() -> None:
+    """Different symbol batches in one tick pack into one layer."""
     circuit = QuantumCircuit([{"X": {0}, "Z": {1}}])
     assert len(circuit) == 1
-    assert circuit_parallelism(circuit, compact=False).all_operations.layer_count == 2
     assert circuit_parallelism(circuit).all_operations.layer_count == 1
 
 
@@ -148,3 +146,107 @@ def test_random_packing_matches_independent_wire_depth_oracle() -> None:
         assert analysis.all_operations.operation_count == 20
         for layer in analysis.layers:
             assert len(layer.qubits) == 2 * len(layer.locations)
+
+
+def test_barrier_ignores_batch_order_within_a_tick() -> None:
+    """An omitted operation fences later ticks, whatever its position in its tick."""
+    layer_counts = []
+    for tick in [{"X": {0}, "H": {1}}, {"H": {1}, "X": {0}}]:
+        circuit = QuantumCircuit()
+        circuit.append(tick)
+        circuit.append("X", {2})
+        layer_counts.append(circuit_parallelism(circuit, gate_symbols={"X"}).all_operations.layer_count)
+    assert layer_counts == [2, 2]
+
+
+def test_results_are_unhashable_and_summaries_are_computed_once() -> None:
+    """Layers carry mutable condition copies, so hashing fails even without a condition."""
+    circuit = QuantumCircuit()
+    circuit.append("X", {0})
+    analysis = circuit_parallelism(circuit)
+    assert analysis.layers[0].condition is None
+    with pytest.raises(TypeError, match="unhashable"):
+        hash(analysis.layers[0])
+    with pytest.raises(TypeError, match="unhashable"):
+        hash(analysis)
+    assert analysis.all_operations is analysis.all_operations
+    assert analysis.unconditional is analysis.unconditional
+
+
+def _reference_layers(
+    circuit: QuantumCircuit,
+    symbols: set[str] | None,
+    *,
+    barriers: bool,
+) -> list[tuple[set[tuple[int, ...]], object]]:
+    """Scan back from the newest layer until a different condition or shared qubit."""
+    layers: list[tuple[set[tuple[int, ...]], object]] = []
+    barrier = 0
+    for tick in range(len(circuit)):
+        ignored = False
+        for symbol, locations, metadata in circuit.items(tick):
+            if not locations or (symbols is not None and symbol not in symbols):
+                ignored = True
+                continue
+            condition = metadata.get("cond")
+            for support in sorted((loc,) if isinstance(loc, int) else tuple(loc) for loc in locations):
+                target = len(layers)
+                for position in range(len(layers) - 1, barrier - 1, -1):
+                    supports, layer_condition = layers[position]
+                    if layer_condition != condition or any(q in other for other in supports for q in support):
+                        break
+                    target = position
+                if target == len(layers):
+                    layers.append((set(), condition))
+                layers[target][0].add(support)
+        if ignored and barriers:
+            barrier = len(layers)
+    return layers
+
+
+def test_random_packing_matches_backward_scan_with_conditions_and_barriers() -> None:
+    """Placement agrees with a direct backward scan across conditions, omissions and barriers."""
+    random = Random(7)
+    conditions = [None, {"a": "m", "op": "==", "b": 1}, {"a": "m", "op": "==", "b": 0}]
+    for _ in range(200):
+        circuit = QuantumCircuit()
+        for _ in range(15):
+            if random.random() < 0.1:
+                circuit.append("cop", set(), expr={"t": "m", "op": "=", "a": 1})
+                continue
+            qubits = random.sample(range(8), random.randint(1, 8))
+            tick: dict[str, set] = {}
+            while qubits:
+                symbol = random.choice(["X", "H", "CX"] if len(qubits) > 1 else ["X", "H"])
+                if symbol == "CX":
+                    tick.setdefault(symbol, set()).add((qubits.pop(), qubits.pop()))
+                else:
+                    tick.setdefault(symbol, set()).add(qubits.pop())
+            condition = random.choice(conditions)
+            if condition is None:
+                circuit.append(tick)
+            else:
+                circuit.append(tick, cond=condition)
+        for symbols in [None, {"X", "CX"}]:
+            for barriers in [True, False]:
+                analysis = circuit_parallelism(
+                    circuit,
+                    gate_symbols=symbols,
+                    ignored_operations_are_barriers=barriers,
+                )
+                expected = _reference_layers(circuit, symbols, barriers=barriers)
+                assert [(layer.locations, layer.condition) for layer in analysis.layers] == expected
+
+
+def test_condition_order_within_a_tick_does_not_change_packing() -> None:
+    """Concurrent batches with different conditions pack the same in any insertion order."""
+    first = {"a": "m", "op": "==", "b": 1}
+    second = {"a": "m", "op": "==", "b": 0}
+    results = []
+    for (qubit, condition), (other_qubit, other_condition) in [((0, first), (1, second)), ((1, second), (0, first))]:
+        circuit = QuantumCircuit()
+        circuit.append("X", {qubit}, cond=condition)
+        circuit.update("X", {other_qubit}, tick=0, cond=other_condition)
+        circuit.append("X", {2}, cond=first)
+        results.append([(layer.locations, layer.condition) for layer in circuit_parallelism(circuit).layers])
+    assert results[0] == results[1]

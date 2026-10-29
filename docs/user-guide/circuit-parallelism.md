@@ -30,14 +30,16 @@ averages, including zero density for an empty zero-qubit circuit.
 
 - `gate_symbols=None` selects all operation symbols. A collection selects exactly
   those symbols; an empty collection selects nothing.
-- `compact=True` moves selected operations backward across disjoint layers with
-  equal `cond` metadata. A shared qubit or different condition stops movement.
-- `compact=False` makes each selected operation batch from `circuit.items()` a
-  layer. Different symbol or parameter batches in one tick remain separate, so
-  this count is not the original circuit depth.
+- Selected operations move backward across layers with equal `cond` metadata
+  that share none of their qubits. A shared qubit or different condition stops
+  movement. Batches with different symbols or parameters can share a layer.
 - Unselected operations and operations without qubit locations are barriers by
-  default. Set `ignored_operations_are_barriers=False` only when intentionally
-  measuring a projection that ignores their dependencies.
+  default: operations in later ticks cannot move before them. Set
+  `ignored_operations_are_barriers=False` only when intentionally measuring a
+  projection that ignores their dependencies.
+- Operations in one tick are concurrent. Each tick's batches are packed in a
+  canonical order of their conditions, so the order in which gates were added
+  to a tick never changes the result.
 
 For example, an omitted measurement or classical operation can affect later
 execution even when its qubits do not occur in the selected gates. Keeping these
@@ -45,7 +47,8 @@ barriers is conservative, but the resulting metrics still do not track classical
 reads/writes or prove a valid schedule. Empty ticks do not represent timing here.
 
 The input circuit is not modified. Returned layers contain immutable location
-sets and independent copies of their conditions.
+sets and independent copies of their conditions. Because those copies are
+mutable, layers and results are unhashable.
 
 ## Conditional scenarios
 
@@ -69,5 +72,4 @@ Removing the conditional layer increases the mean in this example. If every
 selected layer is conditional, the unconditional scenario is empty and reports
 zero. Zero-qubit operations can stop movement but never contribute to averages.
 
-Compaction scans earlier layers and can take quadratic time in the number of
-selected operations. Memory use is linear in the selected operation supports.
+Packing takes time and memory linear in the selected operation supports.

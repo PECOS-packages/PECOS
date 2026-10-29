@@ -28,12 +28,6 @@ Example:
 from pecos.analysis import fault_tolerance_checks as fault_tolerance
 from pecos.analysis import pseudo_threshold_tools as pseudo_threshold
 from pecos.analysis import threshold_tools as threshold
-from pecos.analysis.circuit_parallelism import (
-    CircuitParallelism,
-    ParallelismSummary,
-    ParallelLayer,
-    circuit_parallelism,
-)
 from pecos.analysis.circuit_statistics import (
     CircuitRunStatistics,
     CircuitStatistics,
@@ -55,6 +49,12 @@ from pecos.analysis.find_cliffs import (
     rz2cliff,
     rz_ang2str,
     rz_matrix,
+)
+from pecos.analysis.parallelism import (
+    CircuitParallelism,
+    ParallelismSummary,
+    ParallelLayer,
+    circuit_parallelism,
 )
 from pecos.analysis.stabilizer_tools import (
     compatible_stabilizer_groups,

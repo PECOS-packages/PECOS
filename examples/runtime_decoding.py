@@ -6,7 +6,15 @@ fault tolerance or a noise-rate experiment.
 """
 
 from pecos import Qis, selene_engine, sim
-from pecos.qec import RuntimeDecoder, RuntimeDecodeWindow
+from pecos.qec import (
+    RuntimeDecodeBinding,
+    RuntimeDecodeContext,
+    RuntimeDecoder,
+    RuntimeDecodeSchema,
+    RuntimeDecodeWindow,
+    RuntimeDetectorBinding,
+    RuntimeRecordRef,
+)
 from pecos_rslib import DagCircuit
 from pecos_rslib.qec import DagFaultAnalyzer, DemBuilder
 
@@ -40,7 +48,7 @@ attributes #0 = { "EntryPoint" }
 """
 
 
-def main() -> None:
+def main(*, versioned: bool = False) -> None:
     """Build a supplied model and use its prediction in live execution."""
     circuit = DagCircuit()
     circuit.pz([0])
@@ -52,6 +60,46 @@ def main() -> None:
         .with_observables_json('[{"id":0,"records":[-1]}]')
         .build()
     )
+    # A synthetic frontend declares the read that produced the observed byte.
+    # This does not prove that the declaration matches arbitrary generated code.
+    binding = (
+        RuntimeDecodeBinding(
+            program_revision="synthetic-feedback-v1",
+            compiler_revision="synthetic-llvm-v1",
+            decode_site="qis:qmain/decode",
+            schema=RuntimeDecodeSchema(
+                detectors=(
+                    RuntimeDetectorBinding(
+                        detector_id="parity",
+                        records=(RuntimeRecordRef(name="observed", occurrence=0),),
+                    ),
+                ),
+                frame_ids=("frame_x",),
+            ),
+        )
+        if versioned
+        else None
+    )
+    source = PROGRAM
+    if binding is not None:
+        context = RuntimeDecodeContext(
+            version=1,
+            program_revision=binding.program_revision,
+            compiler_revision=binding.compiler_revision,
+            decode_site=binding.decode_site,
+            schema_id=binding.schema.schema_id,
+            branches=(),
+            loops=(),
+            inputs=(),
+        ).to_json()
+        escaped = "".join(f"\\{byte:02X}" for byte in context)
+        source = f'@context = private constant [{len(context)} x i8] c"{escaped}"\n' + source.replace(
+            "declare i64 @pecos_runtime_decode(i64, i64, ptr, i64)",
+            "declare i64 @pecos_runtime_decode_v1(i64, i64, ptr, i64, ptr, i64)",
+        ).replace(
+            "@pecos_runtime_decode(i64 7, i64 0, ptr %data, i64 1)",
+            f"@pecos_runtime_decode_v1(i64 7, i64 0, ptr %data, i64 1, ptr @context, i64 {len(context)})",
+        )
     window = RuntimeDecodeWindow(
         window_id=7,
         model=model,
@@ -63,9 +111,10 @@ def main() -> None:
         fault_ids=("readout",),
         independent=True,
         commit=("parity",),
+        binding=binding,
     )
     results = (
-        sim(Qis(PROGRAM))
+        sim(Qis(source))
         .classical(
             selene_engine().runtime_decoder(RuntimeDecoder({7: window})),
         )
@@ -81,3 +130,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+    main(versioned=True)

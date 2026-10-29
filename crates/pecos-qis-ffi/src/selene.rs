@@ -1220,9 +1220,51 @@ pub unsafe extern "C-unwind" fn pecos_runtime_decode(
             window_id,
             instance_id,
             syndrome,
+            context: None,
         })
     }));
     unsafe { finish_runtime_request(queued, "pecos_runtime_decode") }.value
+}
+
+/// Decode with a version-one, caller-declared schema/provenance context.
+/// The host transports this bounded payload without interpreting program semantics.
+///
+/// # Safety
+/// Both buffers must address their declared readable lengths. Execution must
+/// obey the non-nested guard and recovery discipline of the Selene entry points.
+#[unsafe(no_mangle)]
+pub unsafe extern "C-unwind" fn pecos_runtime_decode_v1(
+    window_id: u64,
+    instance_id: u64,
+    syndrome: *const u8,
+    length: u64,
+    context: *const u8,
+    context_length: u64,
+) -> u64 {
+    let input = (|| {
+        if length > pecos_qis_ffi_types::MAX_RUNTIME_DETECTORS as u64 {
+            return Err("runtime decoder detector limit exceeded".into());
+        }
+        if context_length == 0
+            || context_length > pecos_qis_ffi_types::MAX_RUNTIME_DECODE_CONTEXT as u64
+        {
+            return Err("runtime decoder context length must be 1..65536".into());
+        }
+        let syndrome = unsafe { copy_input(syndrome, length) }?;
+        if syndrome.iter().any(|&bit| bit > 1) {
+            return Err("decoder syndrome must contain only zero or one".into());
+        }
+        let context = unsafe { copy_input(context, context_length) }?;
+        std::str::from_utf8(&context).map_err(|_| "decoder context must be UTF-8".to_string())?;
+        Ok(RuntimeRequest::Decode {
+            window_id,
+            instance_id,
+            syndrome,
+            context: Some(context),
+        })
+    })();
+    let queued = queue_runtime_request(input);
+    unsafe { finish_runtime_request(queued, "pecos_runtime_decode_v1") }.value
 }
 
 fn invalidate_native_future_provenance() -> Result<(), String> {

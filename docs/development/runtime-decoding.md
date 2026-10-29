@@ -25,7 +25,7 @@ before suspension. It rejects null nonempty buffers, oversized lengths (more
 than 1,048,576 bytes), nonbinary data and collection-only execution. As with the
 other native imports, a caller must supply a valid readable pointer. Failed
 calls fail the shot; zero is a valid successful answer, never an error fallback.
-The QIS FFI data ABI is now version 5; rebuild host and FFI artifacts together.
+The QIS FFI data ABI is now version 6; rebuild host and FFI artifacts together.
 
 The returned mask is an XOR update to program-defined frame bits. It is derived
 from standard DEM observable predictions; it is not an arbitrary physical
@@ -68,7 +68,9 @@ turn it into a successful shot. No simulator object, noise sample, RNG seed,
 measurement store or logical truth is passed to a decoder/provider.
 
 `RuntimeDecoder` creates a fresh provider session for each shot. Its provider
-receives only `RuntimeDecodeRequest(window_id, instance_id)`. A collection shares
+receives `RuntimeDecodeRequest(window_id, instance_id, context)`. The context is
+`None` for the original intrinsic; the additive v1 intrinsic supplies a checked
+caller declaration described in [the versioned contract](runtime-decoder-contract.md). A collection shares
 immutable definitions; a provider factory must return fresh mutable state.
 Each native decoder is built, used and released inside its decode call on that
 worker, because Python structured decoders are thread-bound. Prepared model and
@@ -100,10 +102,10 @@ Names and mappings must describe the actual program data. Supplying the correct
 number of arbitrary Boolean values does not establish a valid model. This ABI
 checks the selected window, declared mappings, width and binary encoding; it
 does not carry a named measurement-record schema or prove which reads formed
-each parity. Binding the window to the program's observed-record schema remains
-a caller obligation. A same-width buffer built from the wrong reads cannot be
-detected from these bytes alone. The future provenance contract must make that
-binding explicit rather than describe dimensional checks as semantic validation.
+each parity. The additive v1 call checks an explicit declared schema binding,
+but verifying the actual observed reads remains a caller obligation. A same-width buffer built from the wrong reads cannot be
+detected from these bytes alone. The versioned contract makes that declaration explicit without describing
+dimensional or fingerprint checks as proof of semantic correctness.
 The live integration tests use independent reset/measurement regions with a known
 one-bit response. They establish host feedback behavior, not adaptive fault
 distance or a production streaming decoder. Nonzero composed-slice tests also
@@ -116,9 +118,10 @@ execution ordering; it does not derive a Pauli DEM for those noise channels.
 
 ## Follow-up: providers driven by emitted physical batches
 
-Keep full JIT compilation separate from this supplied-model milestone. Extend
-the provider with a versioned immutable context containing *observed execution
-provenance*, not simulator fault samples. Use the existing runtime batch,
+Keep full JIT compilation separate from this supplied-model milestone. The [v1 provider contract](runtime-decoder-contract.md) adds immutable
+caller-declared source context and schema binding. A future frontend must connect
+those declarations to verified *observed execution provenance*, not simulator
+fault samples. Use the existing runtime batch,
 source-metadata and slice-composition seams, rather than a second circuit or
 window implementation.
 

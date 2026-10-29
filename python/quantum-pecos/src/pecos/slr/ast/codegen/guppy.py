@@ -654,7 +654,7 @@ class AstToGuppy:
         slot), while Guppy allocates the ancilla internally and leaves the
         outer slot untouched. The two paths only agree when the outer slot
         is pure scratch -- never observed by the caller. If the caller
-        gates/measures/barriers/permutes/returns it, or hands it to another
+        gates/measures/permutes/returns it, or hands it to another
         block, the codegens diverge. Multiple scratch BlockCalls reusing
         the slot stay allowed (the intended SynExtractBare pattern).
 
@@ -662,6 +662,7 @@ class AstToGuppy:
         unobserved and dead under both lowerings (and the qeclib corpus
         wholesale-preps the ancilla register, e.g. `Prep(q)` covering
         `q[3]`, before using `q[3]` as a check ancilla).
+        Barriers emit comments and are neither uses nor definitions.
 
         Runs per scope: `program.body` AND every
         `BlockDecl.body` -- a nested BlockCall whose scratch arg references
@@ -717,12 +718,6 @@ class AstToGuppy:
                 for t in stmt.targets:
                     if (t.allocator, t.index) in scratch:
                         _reject("a Measure", (t.allocator, t.index))
-            elif isinstance(stmt, BarrierOp):
-                for alloc in stmt.allocators:
-                    if alloc in scratch_allocs:
-                        # Name-level: conservatively reject any barrier
-                        # naming a register that hosts a scratch slot.
-                        _reject_alloc("a Barrier", alloc)
             elif isinstance(stmt, PermuteOp):
                 # sources/targets are string refs (`q`, `q[0]`); a permute
                 # touching the scratch register reorders/observes it.

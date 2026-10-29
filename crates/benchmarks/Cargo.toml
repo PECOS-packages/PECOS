@@ -48,6 +48,10 @@ rand.workspace = true
 rand_xoshiro.workspace = true
 wide.workspace = true
 
+[[example]]
+name = "sparse_stab_scaling"
+test = true
+
 [[bench]]
 name = "benchmarks"
 harness = false

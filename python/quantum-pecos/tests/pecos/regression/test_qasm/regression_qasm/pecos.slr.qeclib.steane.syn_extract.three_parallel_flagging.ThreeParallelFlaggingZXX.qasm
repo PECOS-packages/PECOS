@@ -8,60 +8,60 @@ reset a_test[2];
 h a_test[0];
 h a_test[1];
 h a_test[2];
-barrier ;
+barrier a_test, q_test;
 cz a_test[0], q_test[3];
 // 5 -> 4
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 cx a_test[1], q_test[5];
 // 6 -> 6
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 cx a_test[2], q_test[2];
 // 7 -> 3
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 cz a_test[1], a_test[0];
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 cz a_test[0], q_test[0];
 // 1 -> 1
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 cx a_test[1], q_test[4];
 // 2 -> 5
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 cx a_test[2], q_test[3];
 // 5 -> 4
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 cz a_test[0], q_test[1];
 // 3 -> 2
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 cx a_test[1], q_test[2];
 // 7 -> 3
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 cx a_test[2], q_test[6];
 // 4 -> 7
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 cz a_test[2], a_test[0];
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 cz a_test[0], q_test[2];
 // 7 -> 3
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 cx a_test[1], q_test[1];
 // 3 -> 2
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 cx a_test[2], q_test[5];
 // 6 -> 6
-barrier ;
+barrier a_test, q_test;
 h a_test[0];
 h a_test[1];
 h a_test[2];

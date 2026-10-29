@@ -108,7 +108,6 @@ rand_distr = "0.6"
 rand_xoshiro = "0.8"
 
 # --- Data structures ---
-bitflags = "2"
 bitvec = { version = "1", features = ["serde"] }
 bytemuck = { version = "1", features = ["derive"] }
 dyn-clone = "1"
@@ -147,7 +146,7 @@ sha2 = "0.11"
 tar = "0.4"
 xz2 = "0.1"
 bzip2 = "0.6"
-zip = { version = "9", default-features = false, features = ["deflate"] }
+zip = { version = "9.0.5", default-features = false, features = ["deflate"] }
 zstd = "0.14.3"
 
 # --- Logging ---

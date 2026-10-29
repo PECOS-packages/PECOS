@@ -236,7 +236,7 @@ pub fn auto_configure_llvm(project_root: Option<PathBuf>) -> Result<PathBuf> {
         pecos_llvm_paths.push(legacy_llvm);
     }
     #[cfg(target_os = "windows")]
-    if let Some(home_dir) = dirs::home_dir() {
+    if let Some(home_dir) = std::env::home_dir() {
         pecos_llvm_paths.push(
             home_dir
                 .join(".pecos")

@@ -277,7 +277,7 @@ pub fn discover_plugins_in(dir: &Path) -> Vec<LoadedPlugin> {
 
 /// Default plugin directory: `~/.pecos/plugins/`
 fn default_plugin_dir() -> PathBuf {
-    dirs::home_dir()
+    std::env::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".pecos")
         .join("plugins")

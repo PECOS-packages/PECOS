@@ -303,3 +303,69 @@ def test_observed_trace_preserves_sources_and_live_feedback_through_json_and_rep
     ]
     assert [item["result_ids"] for item in named] == [[i] for i in range(6)]
     assert qis_operation_trace_to_tick_circuit(restored).num_measurements() == 6
+
+
+@pytest.mark.parametrize("runtime", ["selene_simple_runtime", "selene_soft_rz_runtime"])
+@pytest.mark.parametrize("valid", [True, False])
+def test_live_observed_parities_are_checked_before_detector_permutation(runtime, valid):
+    from pathlib import Path
+
+    from pecos.qec import RuntimeDecodeSchema, RuntimeDetectorBinding
+    from pecos_rslib import DagCircuit
+    from pecos_rslib.qec import DagFaultAnalyzer, DemBuilder
+
+    circuit = DagCircuit()
+    circuit.pz([0, 1])
+    circuit.mz([0])
+    circuit.mz([1])
+    model = (
+        DemBuilder(DagFaultAnalyzer(circuit).build_influence_map())
+        .with_noise(0.0, 0.0, 0.1, 0.0)
+        .with_detectors_json('[{"id":0,"records":[-2]},{"id":1,"records":[-1]}]')
+        .with_observables_json('[{"id":0,"records":[-2]}]')
+        .build()
+    )
+    a = RuntimeRecordRef(name="a", occurrence=0)
+    b = RuntimeRecordRef(name="b", occurrence=0)
+    schema = RuntimeDecodeSchema(
+        detectors=(
+            RuntimeDetectorBinding(detector_id="b", records=(b,)),
+            RuntimeDetectorBinding(detector_id="a", records=(a,)),
+        ),
+        frame_ids=("frame_x",),
+    )
+    definition = replace(
+        window(),
+        model=model,
+        detector_ids=("a", "b"),
+        detector_order=(1, 0),
+        commit=("a", "b"),
+        fault_ids=("synthetic-a", "synthetic-b"),
+        binding=replace(binding(), schema=schema),
+        read_sources=(RuntimeReadSource(record=a, source_id=0), RuntimeReadSource(record=b, source_id=1)),
+    )
+    payload = replace(context(), schema_id=schema.schema_id).to_json()
+    fixture = Path(__file__).resolve().parents[4] / "crates/pecos-qis/tests/fixtures/runtime_decode_permuted.ll"
+    escaped = "".join(f"\\{byte:02X}" for byte in payload)
+    source = f'@context = private constant [{len(payload)} x i8] c"{escaped}"\n'
+    source += fixture.read_text().replace("CONTEXT_SIZE", str(len(payload)))
+    if not valid:
+        source = source.replace("store i8 %bb, ptr %data", "store i8 %ab, ptr %data").replace(
+            "store i8 %ab, ptr %d1",
+            "store i8 %bb, ptr %d1",
+        )
+    runner = (
+        sim(Qis(source))
+        .classical(selene_engine(runtime).runtime_decoder(RuntimeDecoder({7: definition})))
+        .qubits(2)
+        .workers(2)
+        .build()
+    )
+    # a=1, b=0: program byte order is [b,a], model order is [a,b].
+    # Only model D0 drives the frame that flips q0 back to zero.
+    if valid:
+        for _ in range(2):
+            assert runner.run(4).to_dict()["after"] == [0] * 4
+    else:
+        with pytest.raises(Exception, match="parity disagrees"):
+            runner.run(1)

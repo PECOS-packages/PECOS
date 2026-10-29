@@ -104,6 +104,12 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   also returns `MeasurementWork`, the refactor and decouple work that
   measurement executed, for benchmarking.
 
+- Python: C4-Helix logical gate gadgets flag all seven physical CZs and compile
+  signed two-qubit Cliffords with minimal S0S1 count. Logic circuits discover
+  detectors using pulled-back logical conjugates. Distance tests pin the
+  gate-only weight-six witness, full-noise Z bounds of 5 <= d <= 6, and the
+  owner-accepted full-noise X distance of four.
+
 - Python: `pecos.guppy_gen.helix` renders certified C4-Helix memory programs
   with scalar, round-free result tags and `mem_swap` swap-out gadgets.
   `pecos.qec.helix.memory_definitions` supplies typed detectors and observables

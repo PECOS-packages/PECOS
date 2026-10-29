@@ -75,3 +75,20 @@ def test_registry_quantum_arity_comes_from_definition():
     assert registry.quantum_arity("EMPTY") == 0
     registry.define("PARTIAL", 2).step("H", [0]).register_into(registry)
     assert registry.quantum_arity("PARTIAL") == 2
+
+
+def test_decompose_angles_use_turns():
+    registry = GateRegistry()
+    (
+        registry.define("TURNS", 1)
+        .angle_arity(1)
+        .step_with_angles("RX", [0], [AngleSource.input(0)])
+        .step_with_angles("RY", [0], [AngleSource.fixed(0.25)])
+        .step_with_angles("RZ", [0], [AngleSource.neg_input(0)])
+        .register_into(registry)
+    )
+    assert registry.decompose("TURNS", [0], [0.25]) == [
+        ("RX", [0], [0.25], {}),
+        ("RY", [0], [0.25], {}),
+        ("RZ", [0], [0.75], {}),
+    ]

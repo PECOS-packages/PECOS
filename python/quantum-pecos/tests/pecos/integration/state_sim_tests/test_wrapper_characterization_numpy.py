@@ -1,15 +1,14 @@
 """NumPy wrapper pins recorded on dev ad1e97642, updated for #1480 batch validation.
 
-NumPy is not declared in the workspace test dependency group (quantum-pecos
-inherits it), so this separate module alone uses a module-level importorskip.
+NumPy is installed by the workspace test dependency group. This module groups
+NumPy scalar and array location cases separately from the main wrapper corpus.
 """
 
+import numpy as np
 import pecos
 import pytest
 from pecos import simulators
 from pecos.simulators import CoinToss, PauliProp
-
-np = pytest.importorskip("numpy")
 
 
 @pytest.fixture(params=["StateVec", "SparseStabPy", "PauliProp", "CoinToss"])
@@ -39,7 +38,7 @@ def test_numpy_integer_location(state):
 
 
 def test_numpy_bare_integer(state):
-    # KNOWN-WRONG (#1480): Bare NumPy zero silently skips dispatch while nonzero raises.
+    # KNOWN-WRONG (#1515): Bare NumPy zero silently skips dispatch while nonzero raises.
     assert state.run_gate("X", np.int64(0)) == {}
     if isinstance(state, CoinToss):
         assert state.run_gate("X", np.int64(1)) == {}
@@ -73,7 +72,7 @@ def test_numpy_zero_dimensional_location(state):
 
 
 def test_numpy_bare_zero_dimensional_array(state):
-    # KNOWN-WRONG (#1480): Bare 0-d zero skips dispatch, but a nonzero 0-d array raises.
+    # KNOWN-WRONG (#1515): Bare 0-d zero skips dispatch, but a nonzero 0-d array raises.
     assert state.run_gate("X", np.array(0)) == {}
     if isinstance(state, CoinToss):
         assert state.run_gate("X", np.array(1)) == {}

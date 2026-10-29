@@ -40,7 +40,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pecos.simulators.batch_validation import is_empty_batch
 from pecos.simulators.clifford_lowering import CLIFFORD_ROTATION_SYMBOLS, lower_rotation_params
 from pecos.simulators.gate_syms import alt_symbols
 from pecos.simulators.sim_class_types import Stabilizer
@@ -99,9 +98,8 @@ class SparseStabPy(Stabilizer):
 
         self.reset()
 
-    def validate_gate_batch(self, symbol: str, locations: object, **params: object) -> None:
-        """Check locations and the parameters accepted by the active rotation binding."""
-        super().validate_gate_batch(symbol, locations, **params)
+    def validate_gate_params(self, symbol: str, **params: object) -> None:
+        """Check an active registered step against its rotation binding's contract."""
         # Follow the callable, so aliases are checked and user replacements keep
         # their own parameter contract.
         binding = self.bindings.get(symbol)
@@ -110,8 +108,6 @@ class SparseStabPy(Stabilizer):
             None,
         )
         if rotation is not None:
-            if is_empty_batch(locations):
-                return
             # Match run_gate's normalization without changing the caller's params.
             if params.get("angles") and len(params["angles"]) == 1:
                 params["angle"] = params["angles"][0]

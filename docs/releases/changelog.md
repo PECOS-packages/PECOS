@@ -10,15 +10,19 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   validate whole known-gate batches per `run_gate` call and per circuit item
   before changing state, including when `simulate_gate=False`. Registered-gate
   batches are fully decomposed before any step runs. The pre-pass checks each
-  step's binding, qubits, and parameters where the state validates them, plus
-  every outer location's arity from the registry definition, distinct operands,
+  step's binding and qubits, plus every outer location's arity from the registry
+  definition, distinct operands,
   and bounds against the state's capacity (including unused operands).
   Step failures name the registered gate and failing step; outer-location failures
   name the registered gate. SparseStabPy uses the same pure Clifford rotation
-  lowering check for parameter validation and dispatch, including through plain
-  `run_gate` and HybridEngine; other states retain their parameter policies.
-  An unbound registered step now raises even with `simulate_gate=False`, where
-  it was previously silently skipped.
+  lowering check for active registered steps' parameters before any step runs;
+  plain `run_gate` and HybridEngine leave parameter checks to dispatch.
+  With `simulate_gate=False`, locations and registered-step bindings are still
+  validated, but rotation parameters are not. Step metadata can disable a step
+  (skipping parameter checks and execution), but cannot enable a disabled outer
+  gate. An unbound registered step now raises even when disabled, where it was
+  previously silently skipped. Empty registered decompositions are valid no-ops
+  after outer-location validation.
   Malformed locations,
   repeated operands within a location, and out-of-range qubits raise gate-named
   `ValueError`s; some errors previously raised `TypeError`.
@@ -30,8 +34,10 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   `X`; a pair location for `I` is rejected (use `II`), except by CoinToss, whose
   gates stay no-ops. Integer-like scalars are classified before sequences, and
   unhashable qubit indices are rejected up front, including inside locations.
-  Zero-dimensional arrays are now rejected even where Rust-backed bindings
-  accepted them for non-measuring gates. Multi-qubit locations must be ordered:
+  Zero-dimensional arrays used as qubit indices inside a batch (including
+  operands inside a location) are now rejected, even where Rust-backed bindings
+  and SparseStabPy accepted them for non-measuring gates. A bare `np.array(0)`
+  batch still skips dispatch in the wrappers. Multi-qubit locations must be ordered:
   set/frozenset pairs are rejected, including in SparseStabPy and CudaStateVec
   where they previously ran. Batches may still repeat or overlap qubits and
   execute sequentially.
@@ -65,6 +71,11 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   Locations execute in container order, including duplicates. Outcomes and
   coin use change for circuits that relied on the old silent skips or ignored
   `simulate_gate=False`.
+
+- Fixed registered simulator gates treating radians as turns and then treating
+  decomposed turns as radians, which silently produced incorrect rotations.
+  The simulator now converts at the registry boundary, including fixed and
+  negated input angles. The Python registry API continues to use turns.
 
 - **Breaking:** two-qubit gates in `pecos-simulators` now reject repeated-qubit
   pairs in debug and release builds. Such inputs could previously cause undefined

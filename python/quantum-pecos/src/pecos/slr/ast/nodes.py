@@ -747,6 +747,7 @@ class Program(AstNode):
     returns: tuple[TypeExpr, ...] = ()
     allocator: AllocatorDecl | None = None  # Base allocator
     block_decls: tuple[BlockDecl, ...] = ()
+    is_fragment: bool = False  # A standalone Block, rather than a complete Main
 
     def children(self) -> Sequence[AstNode]:
         nodes: list[AstNode] = []

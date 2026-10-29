@@ -1754,8 +1754,9 @@ for before_preparation in (True, False):
 
 `OpType.RELABEL` in `pecos.qec.circuit_steps` exchanges the physical qubits
 named by two distinct slots without applying a gate or recording a measurement.
-`pecos.qec.helix.lower_steps` supports it; surface and Guppy renderers reject
-these steps and direct callers to that lowering. Invalid slot lists are rejected
+`pecos.qec.helix.lower_steps` supports it, and `pecos.guppy_gen.helix` renders
+it as `mem_swap`. Surface renderers (Stim, DAG, TickCircuit, and surface Guppy)
+reject these steps and direct callers to the Helix lowering. Invalid slot lists are rejected
 when a `CircuitStep` is constructed and checked again during Helix lowering.
 
 ## Next steps

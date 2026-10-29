@@ -58,6 +58,8 @@ class QASMGenerator(Generator):
             )
         self.output = []
         self.current_scope = None
+        self._register_names: set[str] = set()
+        self._bit_swap_temp: str | None = None
         self.includes = includes
         self.cond = None
         self._cond_reads: set[tuple[str, str]] = set()  # (register, index or "") the condition reads
@@ -72,6 +74,10 @@ class QASMGenerator(Generator):
     def enter_block(self, block):
         previous_scope = self.current_scope
         self.current_scope = block
+        self._register_names.update(var.sym for var in block.vars if var is not None)
+        for op in block.ops:
+            if type(op).__name__ == "Vars":
+                self._register_names.update(var.sym for var in op.vars if var is not None)
 
         block_name = type(block).__name__
 
@@ -365,8 +371,13 @@ class QASMGenerator(Generator):
                         cycles.append(cycle)
 
                 # Declare a temporary bit once
-                temp_var = "_bit_swap"
-                self.write(f"creg {temp_var}[1];")
+                if cycles and self._bit_swap_temp is None:
+                    temp_var = "bitswap"
+                    while temp_var in self._register_names:
+                        temp_var += "x"
+                    self._bit_swap_temp = temp_var
+                    self.write(f"creg {temp_var}[1];")
+                temp_var = self._bit_swap_temp
 
                 # Process each cycle
                 for cycle in cycles:

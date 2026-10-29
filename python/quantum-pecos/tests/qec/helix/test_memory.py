@@ -3,6 +3,7 @@
 
 """Memory acceptance gates for C4-Helix, arXiv:2609.03194."""
 
+from collections import Counter
 from itertools import product
 
 import pytest
@@ -14,6 +15,7 @@ from pecos.qec.helix import (
     c4_helix_code,
     c4_round_steps,
     chosen_weight8_supports,
+    helix_result_refs,
     lower_steps,
     memory_circuit,
     memory_conjugates,
@@ -52,31 +54,31 @@ def test_relabel_and_asap_order() -> None:
         CircuitStep(OpType.H, [0]),
         CircuitStep(OpType.RELABEL, [0, 1]),
         CircuitStep(OpType.X, [1]),
-        CircuitStep(OpType.MEASURE, [1], "late"),
-        CircuitStep(OpType.MEASURE, [0], "early"),
+        CircuitStep(OpType.MEASURE, [1], "data:0"),
+        CircuitStep(OpType.MEASURE, [0], "data:1"),
     ]
     lowered = lower_steps(steps, 2)
     assert lowered.final_layout == (1, 0)
     assert _batches(lowered) == [[("PZ", [0]), ("MZ", [1])], [("H", [0])], [("X", [0])], [("MZ", [0])]]
-    assert lowered.record_labels == ("early", "late")
+    assert helix_result_refs(lowered.tick_circuit) == [("data:1", 0), ("data:0", 0)]
     assert lowered.tick_circuit.gate_count() == 5
 
 
 def test_barrier_comment_and_measurement_batch_order() -> None:
     lowered = lower_steps(
         [
-            CircuitStep(OpType.MEASURE, [5], "five"),
+            CircuitStep(OpType.MEASURE, [5], "data:5"),
             CircuitStep(OpType.COMMENT, label="ignored"),
             CircuitStep(OpType.H, [0]),
-            CircuitStep(OpType.MEASURE, [2], "two"),
+            CircuitStep(OpType.MEASURE, [2], "data:2"),
             CircuitStep(OpType.TICK),
             CircuitStep(OpType.Z, [4]),
             CircuitStep(OpType.CX, [0, 4]),
         ],
         6,
     )
-    assert _batches(lowered) == [[("MZ", [5, 2]), ("H", [0])], [("Z", [4])], [("CX", [0, 4])]]
-    assert lowered.record_labels == ("five", "two")
+    assert _batches(lowered) == [[("MZ", [5]), ("H", [0]), ("MZ", [2])], [("Z", [4])], [("CX", [0, 4])]]
+    assert helix_result_refs(lowered.tick_circuit) == [("data:5", 0), ("data:2", 0)]
     assert lowered.final_layout == tuple(range(6))
 
 
@@ -124,7 +126,7 @@ def test_invalid_basis(basis: str) -> None:
     for call in [
         lambda: HelixAllocation().check(basis, 0),
         lambda: chosen_weight8_supports(basis),
-        lambda: weight8_check_steps(basis, 0, 0),
+        lambda: weight8_check_steps(basis, 0),
         lambda: memory_steps(basis, 1),
         lambda: memory_circuit(basis, 1),
         lambda: memory_conjugates(basis),
@@ -141,7 +143,7 @@ def test_invalid_rounds(rounds: int) -> None:
 
 def test_invalid_variant() -> None:
     with pytest.raises(ValueError, match="other"):
-        c4_round_steps(0, "other", 0)
+        c4_round_steps(0, "other")
 
 
 @pytest.mark.parametrize("basis", ["X", "Z"])
@@ -170,7 +172,7 @@ def test_check_choice_and_cat_order(basis: str) -> None:
             (f1, f2),
             (a, f1),
         ]
-        assert [step.qubits for step in weight8_check_steps(basis, index, 0) if step.op_type == OpType.CX] == [
+        assert [step.qubits for step in weight8_check_steps(basis, index) if step.op_type == OpType.CX] == [
             list(pair if basis == "X" else pair[::-1]) for pair in pairs
         ]
 
@@ -207,11 +209,11 @@ def test_signed_c4_round(variant: str, basis: str, sx: int, sz: int) -> None:
     initial = lower_steps(prepared, 4)
     before = stabilizer_generators_after(initial.tick_circuit, initial.tick_circuit.num_ticks())
     assert all(group_contains(before, generator) for generator in generators)
-    lowered = lower_steps([*prepared, *c4_round_steps(0, variant, 0)], HelixAllocation.NUM_SLOTS)
+    lowered = lower_steps([*prepared, *c4_round_steps(0, variant)], HelixAllocation.NUM_SLOTS)
     tc = lowered.tick_circuit
     measurements, _, _ = simulate_tick_circuit(tc)
-    results = dict(zip(lowered.record_labels, measurements, strict=True))
-    mx, mz = results["c4x:0:0"], results["c4z:0:0"]
+    results = dict(zip(helix_result_refs(lowered.tick_circuit), measurements, strict=True))
+    mx, mz = results[("c4x:0", 0)], results[("c4z:0", 0)]
     assert (mx, mz) == (int(sx == -1), int(sz == -1))
     after = stabilizer_generators_after(tc, tc.num_ticks())
     width = len(after[0]) - 1
@@ -267,7 +269,7 @@ def _hook_violations(
 def test_weight8_hook_survey(basis: str, index: int) -> None:
     support = chosen_weight8_supports(basis)[index]
     ancillas = HelixAllocation().check(basis, index)
-    assert not _hook_violations(weight8_check_steps(basis, index, 0), ancillas, support, basis)
+    assert not _hook_violations(weight8_check_steps(basis, index), ancillas, support, basis)
     # Negative control: remove the flags and let a single bare ancilla drive all data.
     a = ancillas[0]
     twin = [CircuitStep(OpType.PREP, [a])]
@@ -287,21 +289,23 @@ def test_memory_records_determinism_and_completeness(basis: str, rounds: int) ->
     lowered = lower_steps(steps, HelixAllocation.NUM_SLOTS)
     layout = list(range(HelixAllocation.NUM_SLOTS))
     physical_labels = {}
+    occurrences = Counter()
     for step in steps:
         if step.op_type == OpType.RELABEL:
             a, b = step.qubits
             layout[a], layout[b] = layout[b], layout[a]
         elif step.op_type == OpType.MEASURE:
-            assert step.label not in physical_labels
-            physical_labels[step.label] = layout[step.qubits[0]]
+            ref = (step.label, occurrences[step.label])
+            occurrences[step.label] += 1
+            physical_labels[ref] = layout[step.qubits[0]]
     assert lowered.final_layout == tuple(layout)
-    assert [physical_labels[label] for label in lowered.record_labels] == [
+    assert [physical_labels[label] for label in helix_result_refs(lowered.tick_circuit)] == [
         q for q, _ in lowered.tick_circuit.measurement_emission()
     ]
-    assert set(lowered.record_labels) == {f"data:{q}" for q in range(20)} | {
-        f"{kind}:{b}:{r}" for kind in ("c4x", "c4z") for b in range(5) for r in range(rounds)
-    } | {f"{axis}8:{i}:{r}" for axis in "xz" for i in range(4) for r in range(rounds)} | {
-        f"flag:{axis}{i}.{k}:{r}" for axis in "xz" for i in range(4) for k in range(1, 4) for r in range(rounds)
+    assert set(helix_result_refs(lowered.tick_circuit)) == {(f"data:{q}", 0) for q in range(20)} | {
+        (f"{kind}:{b}", r) for kind in ("c4x", "c4z") for b in range(5) for r in range(rounds)
+    } | {(f"{axis}8:{i}", r) for axis in "xz" for i in range(4) for r in range(rounds)} | {
+        (f"flag:{axis}{i}.{k}", r) for axis in "xz" for i in range(4) for k in range(1, 4) for r in range(rounds)
     }
     tc = memory_circuit(basis, rounds)
     definitions = tc.circuit_definitions()
@@ -317,7 +321,7 @@ def test_memory_records_determinism_and_completeness(basis: str, rounds: int) ->
         sum(1 << record for record in entry["measurements"])
         for entry in [*definitions["detectors"], *definitions["observables"]]
     ]
-    n = tc.num_measurements()
+    n = len(helix_result_refs(tc))
     group = PauliStabilizerGroup(
         [PauliString.from_str("".join("Z" if mask >> q & 1 else "I" for q in range(n))) for mask in emitted],
     )
@@ -390,12 +394,12 @@ def test_signed_weight8_check(basis: str, index: int, sign: int) -> None:
         steps.extend(CircuitStep(OpType.H, [q]) for q in range(20))
     if sign == -1:
         steps.append(CircuitStep(OpType.Z if basis == "X" else OpType.X, [support[0]]))
-    steps.extend(weight8_check_steps(basis, index, 0))
+    steps.extend(weight8_check_steps(basis, index))
     lowered = lower_steps(steps, HelixAllocation.NUM_SLOTS)
     tc = lowered.tick_circuit
-    results = dict(zip(lowered.record_labels, simulate_tick_circuit(tc)[0], strict=True))
-    assert results[f"{basis.lower()}8:{index}:0"] == int(sign == -1)
-    assert [value for label, value in results.items() if label.startswith("flag:")] == [0, 0, 0]
+    results = dict(zip(helix_result_refs(lowered.tick_circuit), simulate_tick_circuit(tc)[0], strict=True))
+    assert results[(f"{basis.lower()}8:{index}", 0)] == int(sign == -1)
+    assert [value for label, value in results.items() if label[0].startswith("flag:")] == [0, 0, 0]
     after = stabilizer_generators_after(tc, tc.num_ticks())
     width = len(after[0]) - 1
     for q in range(20):

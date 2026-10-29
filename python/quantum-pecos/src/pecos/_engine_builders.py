@@ -205,6 +205,11 @@ class QisEngineBuilder:
         )
         return self
 
+    def runtime_decoder(self, factory: object) -> Self:
+        """Configure a fresh host decoder session per shot, for live QIS calls."""
+        self._builder = self._builder.runtime_decoder(factory)
+        return self
+
     def interface(self, builder: object) -> Self:
         """Set the interface builder.
 

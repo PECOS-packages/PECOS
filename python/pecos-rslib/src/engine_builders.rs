@@ -172,6 +172,15 @@ impl PyQisEngineBuilder {
         Ok(self.clone())
     }
 
+    /// Install a zero-argument factory for fresh shot-local decoder sessions.
+    fn runtime_decoder(&mut self, factory: Py<PyAny>, py: Python<'_>) -> PyResult<Self> {
+        self.inner = self
+            .inner
+            .clone()
+            .runtime_decoder(crate::runtime_decoder::factory(factory, py)?);
+        Ok(self.clone())
+    }
+
     /// Opt into mandatory scheduled transport; pair with scheduled_idle_z(),
     /// scheduled_idle_noise(), or scheduled_local_noise().
     #[pyo3(signature = (enabled = true))]

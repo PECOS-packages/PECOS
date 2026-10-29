@@ -208,7 +208,7 @@ class SlrToAst:
         self._block_decls = []
         self._decl_counter = 0
 
-        self._validate_loop_variable_names(block, {})
+        self._validate_names(block, {}, {})
 
         # Get the block name
         name = getattr(block, "block_name", block.__class__.__name__)
@@ -243,20 +243,38 @@ class SlrToAst:
             is_fragment=not isinstance(block, Main),
         )
 
-    def _validate_loop_variable_names(self, block: Block, outer_names: dict[str, str]) -> None:
-        """Reject ambiguous LoopVars before expressions lose their SLR identity."""
+    def _validate_names(
+        self,
+        block: Block,
+        outer_names: dict[str, str],
+        register_names: dict[str, str],
+    ) -> None:
+        """Reject ambiguous register and LoopVar names before SLR identity is lost."""
         names = dict(outer_names)
+
+        def declare_name(name: str, kind: str) -> None:
+            # Flattened blocks share backend register storage, including siblings.
+            previous = register_names.get(name)
+            if previous is not None and (previous == "CReg") != (kind == "CReg"):
+                msg = (
+                    f"SLR conversion: quantum register/allocator and classical register share name {name!r}; "
+                    "rename one of them."
+                )
+                raise ValueError(msg)
+            register_names[name] = kind
+            names[name] = kind
+
         for var in (*block.vars, *block.ops):
             decl = self._convert_var_to_declaration(var)
             if decl is not None:
-                names[decl.name] = type(var).__name__
+                declare_name(decl.name, type(var).__name__)
         if _has_block_inputs(block):
             for name in type(block).block_inputs:
                 var = getattr(block, name, None)
                 decl = self._convert_var_to_declaration(var)
                 if decl is not None:
-                    names[name] = type(var).__name__
-                    names[decl.name] = type(var).__name__
+                    declare_name(name, type(var).__name__)
+                    declare_name(decl.name, type(var).__name__)
         if type(block).__name__ == "For" and not block.var_is_string and block.var.name in names:
             name = block.var.name
             msg = (
@@ -266,10 +284,10 @@ class SlrToAst:
             raise ValueError(msg)
         for op in block.ops:
             if hasattr(op, "ops"):
-                self._validate_loop_variable_names(op, names)
+                self._validate_names(op, names, register_names)
         else_block = getattr(block, "else_block", None)
         if else_block is not None:
-            self._validate_loop_variable_names(else_block, names)
+            self._validate_names(else_block, names, register_names)
 
     def _convert_declarations(self, block: Block) -> list:
         """Convert block variables to AST declarations.

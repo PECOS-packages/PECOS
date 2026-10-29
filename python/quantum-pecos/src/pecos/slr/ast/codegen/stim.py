@@ -750,9 +750,8 @@ class AstToStim:
         if kinds == {True}:
             old = dict(self.context.permutation_map)
             self.context.permutation_map.update({s: old.get(t, t) for s, t in zip(src_all, tgt_all, strict=True)})
-        # A Permute ref is a bare string that may name a qubit or a classical
-        # register (SLR allows both under one name), so classical bits under
-        # any permuted name stop being valid If conditions.
+        # Classical element permutations invalidate the tracked measurement
+        # records under the permuted register names.
         for name in {ref[0] for ref in src_all}:
             self._invalidate_register(name)
 

@@ -23,6 +23,11 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   registers may share a string `For` variable's name. **Breaking:** explicit
   `LoopVar` names that collide with visible registers or allocators now raise
   `ValueError` during AST conversion; rename one to avoid ambiguous expressions.
+  **Breaking:** quantum register/allocator names (`QReg`, `QAlloc`, including
+  children) must be distinct from classical register (`CReg`) names throughout
+  the program. AST conversion now raises `ValueError` naming the collision
+  and asking callers to rename one, before a classical permutation can be
+  mistaken for a qubit relabel.
   Stim rejects mixed quantum/classical
   permutations while retaining classical-bit permutation provenance invalidation;
   QIR rejects cross-kind permutation pairs with an actionable error.

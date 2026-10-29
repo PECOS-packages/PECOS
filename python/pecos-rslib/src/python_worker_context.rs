@@ -125,6 +125,12 @@ mod tests {
     }
 
     fn fixture(py: Python<'_>, panic: bool) -> (Bound<'_, PyModule>, MonteCarloEngine) {
+        static NEXT_MODULE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let name = std::ffi::CString::new(format!(
+            "worker_context_test_{}",
+            NEXT_MODULE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ))
+        .unwrap();
         let module = PyModule::from_code(
             py,
             c"\
@@ -148,7 +154,7 @@ def callback(identity, label):
         raise ValueError('intentional callback error')
 ",
             c"worker_context_test.py",
-            c"worker_context_test",
+            &name,
         )
         .unwrap();
         let noise = CallbackNoise {

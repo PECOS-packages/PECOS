@@ -93,7 +93,8 @@ def test_built_simulation_repeated_runs(event_runtime):
 
 
 @pytest.mark.parametrize("stage", ["factory", "validate", "translate"])
-def test_callback_errors_are_reported(event_runtime, stage):
+@pytest.mark.parametrize("worker_context", [False, True])
+def test_callback_errors_are_reported(event_runtime, stage, worker_context):
     class Failing(PhaseAdapter):
         def validate(self, batch):
             if stage == "validate":
@@ -114,7 +115,7 @@ def test_callback_errors_are_reported(event_runtime, stage):
         return Failing()
 
     with pytest.raises(RuntimeError, match=f"scheduled adapter {stage}:"):
-        simulation(event_runtime, factory).run(1)
+        simulation(event_runtime, factory).python_worker_context(worker_context).run(1)
 
 
 @pytest.mark.parametrize(
@@ -215,7 +216,8 @@ runtime = (Path({str(library)!r}), {program!r})
 
 @pytest.mark.parametrize("method", ["run", "run_with_workers", "reset"])
 @pytest.mark.parametrize("stage", ["factory", "validate", "translate"])
-def test_callback_reentry_rejects_without_deadlock(event_runtime, method, stage):
+@pytest.mark.parametrize("worker_context", [False, True])
+def test_callback_reentry_rejects_without_deadlock(event_runtime, method, stage, worker_context):
     run_isolated(
         event_runtime,
         f"""
@@ -234,17 +236,18 @@ class Adapter(PhaseAdapter):
 def factory(_):
     if {stage!r} == 'factory': reenter()
     return Adapter()
-holder['built'] = simulation(runtime, factory).build()
+holder['built'] = simulation(runtime, factory).python_worker_context({worker_context!r}).build()
 assert holder['built'].run(1).to_dict()['measurement_0'] == [1]
 holder.clear()
 """,
     )
 
 
-def test_concurrent_reset_waits_without_holding_gil(event_runtime):
+@pytest.mark.parametrize("worker_context", [False, True])
+def test_concurrent_reset_waits_without_holding_gil(event_runtime, worker_context):
     run_isolated(
         event_runtime,
-        """
+        f"""
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event, Timer
 entered, release, reset_started = Event(), Event(), Event()
@@ -252,7 +255,7 @@ def factory(_):
     entered.set()
     assert release.wait(10)
     return PhaseAdapter()
-built = simulation(runtime, factory).build()
+built = simulation(runtime, factory).python_worker_context({worker_context!r}).build()
 def reset():
     reset_started.set()
     return built.reset()
@@ -320,7 +323,8 @@ done:
     assert result["measurement_1"] == [0] * 4
 
 
-def test_failed_run_does_not_reuse_adapter_state(event_runtime):
+@pytest.mark.parametrize("worker_context", [False, True])
+def test_failed_run_does_not_reuse_adapter_state(event_runtime, worker_context):
     fail = [True]
     instances = []
 
@@ -337,7 +341,7 @@ def test_failed_run_does_not_reuse_adapter_state(event_runtime):
         instances.append(obj)
         return obj
 
-    built = simulation(event_runtime, factory).build()
+    built = simulation(event_runtime, factory).python_worker_context(worker_context).build()
     with pytest.raises(RuntimeError, match="translation failed after state advanced"):
         built.run_with_workers(1, 1)
     assert instances[0].next_batch > 0
@@ -671,9 +675,7 @@ def test_python_worker_context_live_callbacks(event_runtime, enabled, built, wor
             return super().translate(batch)
 
     builder = (
-        simulation(event_runtime, lambda context: Adapter(context[1]))
-        .python_worker_context(enabled)
-        .workers(workers)
+        simulation(event_runtime, lambda context: Adapter(context[1])).python_worker_context(enabled).workers(workers)
     )
     runner = builder.build() if built else builder
     for _ in range(2):

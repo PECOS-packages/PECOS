@@ -6,6 +6,54 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Breaking:** SLR code generation rejects constructs it previously silently
+  dropped (#1189): QASM `While`, dynamic or non-integer `For` bounds, zero steps,
+  `Print`, and unsupported `Permute` shapes; QIR non-integer
+  `Repeat`; and unresolved block calls in QASM, Stim and QIR. Deprecated
+  `StimGenerator` and `QuantumCircuitGenerator` reject `Permute` at every nesting
+  level and direct callers to `SlrConverter(...).stim()` or `.quantum_circuit()`.
+  QASM now unrolls static integer `For` loops using the same bound resolver as
+  Stim, QIR and QuantumCircuit. Repeated QASM permutations compose correctly
+  and share their classical swap temporary. QIR preserves global barriers and
+  reuses barrier declarations across repeated calls. QASM preparation also
+  follows the current permutation. Deprecated QIR retains supported permutations
+  but rejects mixed quantum/classical permutations that previously lost the
+  classical part. QASM also rejects `For` bodies with unbound loop-variable
+  references and element permutations mixing quantum and classical refs. Declared
+  registers may share a string `For` variable's name. **Breaking:** explicit
+  `LoopVar` names that collide with any register or allocator in the program,
+  or with an enclosing block input's name, now raise `ValueError` during AST
+  conversion; rename one to avoid ambiguous expressions.
+  **Breaking:** quantum register/allocator names (`QReg`, `QAlloc`, including
+  children) must be distinct from classical register (`CReg`) names throughout
+  the program. AST conversion now raises `ValueError` naming the collision
+  and asking callers to rename one, before a classical permutation can be
+  mistaken for a qubit relabel. A block input's parameter name is not a
+  register name, so library blocks such as Steane `H` (input `q`) still accept
+  a `CReg` named `q`. QIR reports loop-variable-indexed assignment targets as
+  unsupported instead of as undeclared registers.
+  Stim rejects mixed quantum/classical
+  permutations while retaining classical-bit permutation provenance invalidation;
+  QIR rejects cross-kind permutation pairs with an actionable error.
+  Stim invalidates the whole register's measurement provenance after a symbolic
+  bit assignment, so later conditions cannot read stale measurement records.
+  QASM, Stim, QIR and QuantumCircuit report actionable errors for symbolic
+  `Permute` indices. Stim's undeclared `Permute` diagnostic explains the
+  block-local register limitation (#1511) and directs callers to Main scope.
+  Deprecated `QIRGenerator` now
+  rejects `For` and `While` instead of executing their bodies once and directs
+  callers to `SlrConverter(...).qir()`. Barrier conversion widens individual
+  qubits to their owning allocator, preserving operand order without duplicates.
+  Barrier tuples and lists expand recursively; invalid and loop-variable qubit
+  operands raise `ValueError`. Barriers do not count as scratch-slot uses or
+  definitions in Guppy. QASM barriers use declared root registers and follow the
+  current permutation; global barriers in fragments with no declared registers
+  now raise instead of disappearing. Empty global barriers in complete Main
+  programs remain valid. QASM and QIR deduplicate overlapping parent/child
+  barrier operands at the physical-qubit level in first-appearance order.
+  Both QASM generators use a legal, collision-free classical swap temporary,
+  declared once (#1238).
+
 - **Breaking:** `pecos_engines::byte_message::protocol::MessageFlags` is a plain
   `u8` newtype with `NONE` and `bits()`. The `bitflags`-generated methods and
   operators and the `RESERVED_*` constants are removed; no flag was ever defined.

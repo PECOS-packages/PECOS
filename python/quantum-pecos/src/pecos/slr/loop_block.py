@@ -65,7 +65,9 @@ class For(Block):
         ops = kwargs.pop("ops", None)
         allow_no_ops = kwargs.pop("allow_no_ops", True)
         super().__init__(ops=ops, allow_no_ops=allow_no_ops, **kwargs)
-        # Accept both string and LoopVar
+        # Preserve the distinction between an unroll label and an explicit
+        # LoopVar binding when checking register-name collisions during conversion.
+        self.var_is_string = isinstance(var, str)
         if isinstance(var, str):
             self.var = LoopVar(var)
         elif isinstance(var, LoopVar):

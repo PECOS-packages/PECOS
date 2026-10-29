@@ -66,10 +66,10 @@ def test_measurement_unrolling_qasm() -> None:
     # After permutation composition:
     # First perm: a[0] -> c[2], b[1] -> a[0], c[2] -> b[1]
     # Second perm (a <-> c swap): compose with first
-    # Result: a[0] -> a[2], a[1] -> c[1], a[2] -> c[2]
-    assert "measure a[2] -> m[0];" in qasm, f"Expected 'measure a[2] -> m[0];' not found in QASM:\n{qasm}"
+    # Result: a[0] -> c[0], a[1] -> c[1], a[2] -> b[1]
+    assert "measure c[0] -> m[0];" in qasm, f"Expected 'measure c[0] -> m[0];' not found in QASM:\n{qasm}"
     assert "measure c[1] -> m[1];" in qasm, f"Expected 'measure c[1] -> m[1];' not found in QASM:\n{qasm}"
-    assert "measure c[2] -> m[2];" in qasm, f"Expected 'measure c[2] -> m[2];' not found in QASM:\n{qasm}"
+    assert "measure b[1] -> m[2];" in qasm, f"Expected 'measure b[1] -> m[2];' not found in QASM:\n{qasm}"
 
     # Verify that running QASM generation twice produces consistent results
     qasm2 = SlrConverter(prog).qasm()

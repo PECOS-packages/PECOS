@@ -442,10 +442,11 @@ class TestAstToStimConditionals:
         with pytest.raises(NotImplementedError, match="no longer comes from a tracked measurement"):
             ast_to_stim(slr_to_ast(prog))
 
-    def test_qubit_permute_still_applies_when_a_creg_shares_the_name(self) -> None:
-        """SLR allows a QReg and a CReg with one name; the qubit swap must still happen."""
+    @pytest.mark.parametrize("collision", [False, True])
+    def test_qubit_permute_still_applies_when_a_creg_shares_the_name(self, collision) -> None:
+        """Reject shared names while preserving qubit swaps with distinct names."""
         q = QReg("same", 2)
-        c = CReg("same", 2)
+        c = CReg("same" if collision else "bits", 2)
         prog = Main(
             q,
             c,
@@ -455,9 +456,12 @@ class TestAstToStimConditionals:
             qb.Measure(q) > out,
         )
 
-        rows = _sample(prog, shots=4)
-
-        assert all(row == [0, 1] for row in rows)
+        if collision:
+            with pytest.raises(ValueError, match=r"quantum.*classical.*'same'.*[Rr]ename"):
+                slr_to_ast(prog)
+        else:
+            rows = _sample(prog, shots=4)
+            assert all(row == [0, 1] for row in rows)
 
     def test_else_body_is_rejected(self) -> None:
         """Stim has no else branch for a record-controlled Pauli."""

@@ -963,6 +963,12 @@ class AstToQir:
                 rhs,
             )
         elif isinstance(node.target, str):
+            if re.fullmatch(r"\w+\[.*\]", node.target):
+                msg = (
+                    f"QIR codegen: assignment target {node.target!r} requires a static integer index; "
+                    "loop-variable indices are not supported."
+                )
+                raise NotImplementedError(msg)
             # Whole-CReg `c.set(int)` (converter.py:928/930 -> target=str).
             # Unpack the i64 value bit-by-bit into the buffer.
             reg_name = node.target

@@ -205,9 +205,8 @@ def test_symbolic_classical_assignment_preserves_backend_errors(backend) -> None
     expected = {
         "qasm": "QASM codegen: For body references loop variable 'i'; binding it is not supported.",
         "qir": (
-            "QIR codegen: classical register 'd[i]' is used/measured/returned but was not declared at Main scope, "
-            "so it has no QIR storage. Inline / local-scope CRegs are not supported by the QIR backend "
-            "(their values would be silently dropped from the recorded output). Declare 'd[i]' in Main(...)."
+            "QIR codegen: assignment target 'd[i]' requires a static integer index; "
+            "loop-variable indices are not supported."
         ),
     }
     with pytest.raises(NotImplementedError) as error:

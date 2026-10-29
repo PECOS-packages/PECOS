@@ -18,6 +18,7 @@ import pytest
 from pecos.slr import Block, CReg, For, If, Main, Permute, QAlloc, QReg, SlrConverter
 from pecos.slr.ast import slr_to_ast
 from pecos.slr.qeclib import qubit as qb
+from pecos.slr.qeclib.steane.steane_class import Steane
 
 
 @pytest.mark.parametrize("kind", ["QReg", "QAlloc", "child"])
@@ -50,22 +51,29 @@ def test_quantum_classical_name_collision(kind, classical_first, scope) -> None:
         slr_to_ast(program)
 
 
-@pytest.mark.parametrize("alias_collision", [False, True])
-def test_block_input_names_reject_quantum_classical_collision(alias_collision) -> None:
-    quantum = QReg("quantum" if alias_collision else "shared", 2)
+def test_block_input_register_rejects_quantum_classical_collision() -> None:
+    quantum = QReg("shared", 2)
     classical = CReg("shared", 2)
-    input_name = "shared" if alias_collision else "input"
 
     class UsesQuantum(Block):
-        block_inputs: ClassVar[dict[str, str]] = {input_name: "live_preserved"}
+        block_inputs: ClassVar[dict[str, str]] = {"input": "live_preserved"}
 
         def __init__(self) -> None:
             super().__init__()
-            setattr(self, input_name, quantum)
+            self.input = quantum
             self.extend(qb.H(quantum[0]))
 
     with pytest.raises(ValueError, match=r"quantum.*classical.*'shared'.*[Rr]ename"):
         slr_to_ast(Main(classical, UsesQuantum()))
+
+
+@pytest.mark.parametrize("backend", ["qasm", "stim", "qir", "quantum_circuit", "guppy"])
+@pytest.mark.parametrize("gate", ["h", "cx"])
+def test_block_input_formal_name_may_match_a_classical_register(gate, backend) -> None:
+    # Steane's H block names its input `q`, and CX names its inputs `q1` and `q2`.
+    a, b = Steane("a"), Steane("b")
+    program = Main(a, CReg("q", 1), a.h()) if gate == "h" else Main(a, b, CReg("q1", 2), a.cx(b))
+    assert getattr(SlrConverter(program), backend)()
 
 
 @pytest.mark.parametrize("backend", ["ast", "qasm", "stim", "qir", "quantum_circuit", "guppy"])

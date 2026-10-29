@@ -12,6 +12,7 @@
 """Regressions from the fourth #1502 review."""
 
 import re
+from typing import ClassVar
 
 import pytest
 from pecos.slr import Barrier, Block, CReg, For, If, Main, Permute, QAlloc, QReg, Repeat, SlrConverter
@@ -24,7 +25,10 @@ from pecos.slr.vars import LoopVar
 
 
 @pytest.mark.parametrize("kind", ["QReg", "CReg", "QAlloc"])
-@pytest.mark.parametrize("scope", ["main", "nested", "else", "loop"])
+@pytest.mark.parametrize(
+    "scope",
+    ["main", "nested", "else", "loop", "block_in_loop", "sibling_before", "sibling_after"],
+)
 def test_loopvar_register_collision_rejected(kind, scope) -> None:
     i, c = LoopVar("i"), CReg("c", 2)
     register = QAlloc(2, name="i") if kind == "QAlloc" else {"QReg": QReg, "CReg": CReg}[kind]("i", 2)
@@ -35,11 +39,33 @@ def test_loopvar_register_collision_rejected(kind, scope) -> None:
         program = Main(c, Block(register, loop))
     elif scope == "else":
         program = Main(c, If(c == 0).Then().Else(Block(register, loop)))
-    else:
+    elif scope == "loop":
         loop.Do(register)
         program = Main(c, loop)
+    elif scope == "block_in_loop":
+        loop.Do(Block(register))
+        program = Main(c, loop)
+    elif scope == "sibling_before":
+        program = Main(c, Block(register), loop)
+    else:
+        program = Main(c, loop, Block(register))
     with pytest.raises(ValueError, match=rf"For.*loop variable 'i'.*{kind}.*'i'.*[Rr]ename"):
         slr_to_ast(program)
+
+
+def test_loopvar_block_input_formal_collision_rejected() -> None:
+    quantum, c, i = QReg("quantum", 2), CReg("c", 2), LoopVar("i")
+
+    class UsesQuantum(Block):
+        block_inputs: ClassVar[dict[str, str]] = {"i": "live_preserved"}
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.i = quantum
+            self.extend(For(i, 0, 2).Do(c.set(i)))
+
+    with pytest.raises(ValueError, match=r"For.*loop variable 'i'.*QReg.*'i'.*[Rr]ename"):
+        slr_to_ast(Main(quantum, c, UsesQuantum()))
 
 
 @pytest.mark.parametrize("transformed", [False, True])

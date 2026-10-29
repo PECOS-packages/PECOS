@@ -80,6 +80,8 @@ from pecos.slr.main import Main
 from pecos.slr.vars import SymbolicBit
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from pecos.slr.ast.nodes import (
         BlockArg,
         Expression,
@@ -208,7 +210,7 @@ class SlrToAst:
         self._block_decls = []
         self._decl_counter = 0
 
-        self._validate_names(block, {}, {})
+        self._validate_names(block)
 
         # Get the block name
         name = getattr(block, "block_name", block.__class__.__name__)
@@ -243,51 +245,55 @@ class SlrToAst:
             is_fragment=not isinstance(block, Main),
         )
 
-    def _validate_names(
-        self,
-        block: Block,
-        outer_names: dict[str, str],
-        register_names: dict[str, str],
-    ) -> None:
+    def _validate_names(self, block: Block) -> None:
         """Reject ambiguous register and LoopVar names before SLR identity is lost."""
-        names = dict(outer_names)
+        register_names: dict[str, str] = {}
+        self._collect_register_names(block, register_names)
+        self._check_loop_variables(block, register_names)
 
-        def declare_name(name: str, kind: str) -> None:
-            # Flattened blocks share backend register storage, including siblings.
-            previous = register_names.get(name)
+    def _collect_register_names(self, block: Block, register_names: dict[str, str]) -> None:
+        """Record every register name in the program, rejecting quantum/classical clashes.
+
+        Flattened blocks share backend register storage, including siblings,
+        so register names are program-wide. A block input's formal name is not
+        a register name; only the register bound to it is recorded.
+        """
+        bound = [*block.vars, *block.ops]
+        if _has_block_inputs(block):
+            bound.extend(getattr(block, name, None) for name in type(block).block_inputs)
+        for var in bound:
+            decl = self._convert_var_to_declaration(var)
+            if decl is None:
+                continue
+            kind = type(var).__name__
+            previous = register_names.get(decl.name)
             if previous is not None and (previous == "CReg") != (kind == "CReg"):
                 msg = (
-                    f"SLR conversion: quantum register/allocator and classical register share name {name!r}; "
+                    f"SLR conversion: quantum register/allocator and classical register share name {decl.name!r}; "
                     "rename one of them."
                 )
                 raise ValueError(msg)
-            register_names[name] = kind
-            names[name] = kind
+            register_names[decl.name] = kind
+        for child in _nested_blocks(block):
+            self._collect_register_names(child, register_names)
 
-        for var in (*block.vars, *block.ops):
-            decl = self._convert_var_to_declaration(var)
-            if decl is not None:
-                declare_name(decl.name, type(var).__name__)
+    def _check_loop_variables(self, block: Block, names: dict[str, str]) -> None:
+        """Reject a LoopVar named like any register or a visible block-input formal."""
         if _has_block_inputs(block):
+            names = dict(names)
             for name in type(block).block_inputs:
                 var = getattr(block, name, None)
-                decl = self._convert_var_to_declaration(var)
-                if decl is not None:
-                    declare_name(name, type(var).__name__)
-                    declare_name(decl.name, type(var).__name__)
+                if self._convert_var_to_declaration(var) is not None:
+                    names[name] = type(var).__name__
         if type(block).__name__ == "For" and not block.var_is_string and block.var.name in names:
             name = block.var.name
             msg = (
-                f"For loop variable {name!r} conflicts with visible {names[name]} {name!r}. "
+                f"For loop variable {name!r} conflicts with {names[name]} {name!r}. "
                 "Rename the loop variable or the register/allocator."
             )
             raise ValueError(msg)
-        for op in block.ops:
-            if hasattr(op, "ops"):
-                self._validate_names(op, names, register_names)
-        else_block = getattr(block, "else_block", None)
-        if else_block is not None:
-            self._validate_names(else_block, names, register_names)
+        for child in _nested_blocks(block):
+            self._check_loop_variables(child, names)
 
     def _convert_declarations(self, block: Block) -> list:
         """Convert block variables to AST declarations.
@@ -1092,6 +1098,13 @@ _EFFECT_NAME_MAP: dict[str, ResourceEffect] = {
 
 def _has_block_inputs(block: Block) -> bool:
     return isinstance(getattr(type(block), "block_inputs", None), dict)
+
+
+def _nested_blocks(block: Block) -> Iterator[Block]:
+    yield from (op for op in block.ops if hasattr(op, "ops"))
+    else_block = getattr(block, "else_block", None)
+    if else_block is not None:
+        yield else_block
 
 
 def _normalize_effect(value: Any, *, where: str) -> ResourceEffect:

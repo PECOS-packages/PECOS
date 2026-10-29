@@ -21,13 +21,17 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   classical part. QASM also rejects `For` bodies with unbound loop-variable
   references and element permutations mixing quantum and classical refs. Declared
   registers may share a string `For` variable's name. **Breaking:** explicit
-  `LoopVar` names that collide with visible registers or allocators now raise
-  `ValueError` during AST conversion; rename one to avoid ambiguous expressions.
+  `LoopVar` names that collide with any register or allocator in the program,
+  or with an enclosing block input's name, now raise `ValueError` during AST
+  conversion; rename one to avoid ambiguous expressions.
   **Breaking:** quantum register/allocator names (`QReg`, `QAlloc`, including
   children) must be distinct from classical register (`CReg`) names throughout
   the program. AST conversion now raises `ValueError` naming the collision
   and asking callers to rename one, before a classical permutation can be
-  mistaken for a qubit relabel.
+  mistaken for a qubit relabel. A block input's parameter name is not a
+  register name, so library blocks such as Steane `H` (input `q`) still accept
+  a `CReg` named `q`. QIR reports loop-variable-indexed assignment targets as
+  unsupported instead of as undeclared registers.
   Stim rejects mixed quantum/classical
   permutations while retaining classical-bit permutation provenance invalidation;
   QIR rejects cross-kind permutation pairs with an actionable error.

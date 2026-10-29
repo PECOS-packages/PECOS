@@ -631,3 +631,66 @@ def test_guppy_feedback_after_spectator_measurement(event_runtime, probability, 
     )
     assert values["first"] == [int(probability)] * 4
     assert values["feedback"] == [int(probability)] * 4
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.parametrize("built", [False, True])
+@pytest.mark.parametrize("workers", [1, 2])
+def test_python_worker_context_live_callbacks(event_runtime, enabled, built, workers):
+    """Observe the opt-in at actual runtime callback boundaries, across shots/runs."""
+    import threading
+    from contextvars import ContextVar
+
+    local = threading.local()
+    variable = ContextVar("worker_count", default=0)
+    records = []
+    finalized = []
+
+    class Marker:
+        def __del__(self):
+            finalized.append(True)
+
+    class Adapter(PhaseAdapter):
+        def __init__(self, worker):
+            super().__init__()
+            self.worker = worker
+
+        def observe(self):
+            local.count = getattr(local, "count", 0) + 1
+            if not hasattr(local, "marker"):
+                local.marker = Marker()
+            variable.set(variable.get() + 1)
+            records.append((self.worker, local.count, variable.get()))
+
+        def validate(self, batch):
+            self.observe()
+            super().validate(batch)
+
+        def translate(self, batch):
+            self.observe()
+            return super().translate(batch)
+
+    builder = (
+        simulation(event_runtime, lambda context: Adapter(context[1]))
+        .python_worker_context(enabled)
+        .workers(workers)
+    )
+    runner = builder.build() if built else builder
+    for _ in range(2):
+        records.clear()
+        finalized.clear()
+        assert runner.run(4).to_dict()["measurement_0"] == [1] * 4
+        for worker in range(workers):
+            observed = [(count, value) for key, count, value in records if key == worker]
+            assert len(observed) > 1
+            counts = range(1, len(observed) + 1) if enabled else [1] * len(observed)
+            assert observed == [(count, count) for count in counts]
+        assert len(finalized) == (workers if enabled else len(records))
+        assert variable.get() == 0
+
+
+def test_python_worker_context_rejects_unsupported_routes():
+    import pecos
+
+    with pytest.raises(ValueError, match="only for QIS"):
+        pecos.sim(pecos.Qasm("OPENQASM 2.0; qreg q[1];")).python_worker_context()

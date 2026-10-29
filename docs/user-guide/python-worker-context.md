@@ -6,9 +6,35 @@ time. QIS simulations can opt into retaining that state for one logical worker's
 shot loop:
 
 ```python
-builder = sim(qis_program).qubits(2).python_worker_context(True)
-results = builder.run(100)
-# The option also propagates through builder.build().run(...) and trace capture.
+from pecos import Qis, selene_engine, sim
+
+# A minimal QIS program that prepares and measures one qubit.
+qis_program = Qis("""
+declare void @setup(i64)
+declare i64 @___qalloc()
+declare i64 @___lazy_measure(i64)
+declare void @___qfree(i64)
+declare i64 @teardown()
+define i64 @qmain(i64 %arg) #0 {
+  call void @setup(i64 %arg)
+  %q = call i64 @___qalloc()
+  %r = call i64 @___lazy_measure(i64 %q)
+  call void @___qfree(i64 %q)
+  %end = call i64 @teardown()
+  ret i64 %end
+}
+attributes #0 = { "EntryPoint" }
+""")
+builder = (
+    sim(qis_program)
+    .classical(selene_engine("selene_simple_runtime"))
+    .qubits(1)
+    .workers(1)
+    .python_worker_context(True)
+)
+assert builder.run(4).to_dict()["measurement_0"] == [0] * 4
+# The option also propagates through build() and supported trace capture.
+assert builder.build().run(4).to_dict()["measurement_0"] == [0] * 4
 ```
 
 The default is `False`. This option currently accepts only QIS builders; other

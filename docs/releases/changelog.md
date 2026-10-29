@@ -14,6 +14,14 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   that module, so calling crates no longer need their own `paste` dependency.
   Generated test paths change from `test_<type>_<suite>` to `<name>::<suite>`.
 
+- `SamplingEngine::sample_statistics`, and Python `DemSampler.sample_statistics`
+  when it counts every `L<n>` output, gave neighbouring parallel chunks
+  overlapping random streams for DEMs with at least 50 mechanisms and at least
+  1000 shots (#1487). That inflated the run-to-run variance of every count about
+  2.6x, so error bars computed from the shot count were too small. Chunks now
+  draw independent shots. Seeded results on this path change, and they reproduce
+  only for a fixed Rayon thread count.
+
 - `SparseStab`, and therefore `StabilizerEngine` and `Stabilizer`, now use an
   adaptive sparse set. Initial memory is O(n) instead of O(n^2), and tableau
   memory scales with its nonzeros; measured peak memory at 130k qubits fell

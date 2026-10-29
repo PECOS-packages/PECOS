@@ -18,6 +18,12 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   `SymbolicSparseStabVecSet` and `SparseStabYUnsortedVecSet`, and for
   `GensVecSet::refactor`.
 
+- Python: `pecos.guppy_gen.helix` renders certified C4-Helix memory programs
+  with scalar, round-free result tags and `mem_swap` swap-out gadgets.
+  `pecos.qec.helix.memory_definitions` supplies typed detectors and observables
+  for `build_dem_from_guppy`. Helix lowering supports step-order certification
+  alongside ASAP detector discovery through the shared measurement reader.
+
 - **Breaking:** two-qubit gates in `pecos-simulators` now reject repeated-qubit
   pairs in debug and release builds. Such inputs could previously cause undefined
   behaviour or a wrong state in the sparse stabilizers and `DenseStab`, but were
@@ -74,7 +80,8 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 - Python: `pecos.qec.helix` adds C4-Helix [[20,2,6]] memory gadgets,
   slot-aware ASAP lowering, and memory circuits with discovered detectors and
   two logical observables. `OpType.RELABEL` exchanges two slot bindings without
-  applying a gate; surface and Guppy renderers reject it explicitly.
+  applying a gate; surface renderers (Stim, DAG, TickCircuit, and surface Guppy)
+  reject it explicitly. `pecos.guppy_gen.helix` renders it as `mem_swap`.
 
 - **Breaking:** SLR block conversion rejects input names that capture unbound
   outer references in the block body. The error identifies the block, input

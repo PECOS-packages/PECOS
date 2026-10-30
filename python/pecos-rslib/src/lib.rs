@@ -68,6 +68,8 @@ mod py_foreign_decoder;
 mod py_foreign_simulator;
 mod quantum_info_bindings;
 mod qudit_bindings;
+mod runtime_batch_adapter;
+mod runtime_decoder;
 mod scheduled_adapter;
 mod shot_results_bindings;
 mod sim;
@@ -164,7 +166,7 @@ fn setup_cuda_library_path() {
             .ok()
             .and_then(|p| p.parent().map(|d| d.join(cuda_backend_name))),
         // 2. ~/.pecos/lib/
-        dirs::home_dir().map(|h| h.join(".pecos").join("lib").join(cuda_backend_name)),
+        std::env::home_dir().map(|h| h.join(".pecos").join("lib").join(cuda_backend_name)),
         // 3. Cargo target directory (for development)
         Some(std::path::PathBuf::from("target/release").join(cuda_backend_name)),
     ];

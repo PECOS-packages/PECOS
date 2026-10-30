@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any, ClassVar, Mapping, Sequence, TypedDict
+from typing import Any, Callable, ClassVar, Mapping, Sequence, TypedDict
 
 from pecos_rslib import decoders
 from pecos_rslib.decoders import ObservableFlips
@@ -879,6 +879,8 @@ class _SeleneRuntimeSpec:
         *,
         custom_event_policy: str = "reject_unhandled",
         native_gates: list[str] | None = None,
+        batch_adapter_factory: Callable[[], object] | None = None,
+        clock_model: str = "continuous",
     ) -> _SeleneRuntimeSpec: ...
     def selene_runtime_plugin(
         self,
@@ -888,6 +890,8 @@ class _SeleneRuntimeSpec:
         *,
         custom_event_policy: str = "reject_unhandled",
         native_gates: list[str] | None = None,
+        batch_adapter_factory: Callable[[], object] | None = None,
+        clock_model: str = "continuous",
     ) -> _SeleneRuntimeSpec: ...
 
 class _DemEvidence(TypedDict):

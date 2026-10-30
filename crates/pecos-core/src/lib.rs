@@ -10,6 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
+pub mod adaptive_index_set;
 pub mod angle;
 pub mod bit;
 pub mod bit_int;
@@ -43,6 +44,7 @@ pub mod sorted_vec_set;
 pub mod unitary_rep;
 pub mod value;
 
+pub use adaptive_index_set::AdaptiveIndexSet;
 pub use angle::{
     Angle, Angle8, Angle16, Angle32, Angle64, Angle128, InverseTrigError, LossyInto,
     NonFiniteAngleError, ParseAngleError,

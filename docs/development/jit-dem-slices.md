@@ -440,3 +440,12 @@ PR as separate commits:
   types.
 - [#751](https://github.com/PECOS-packages/PECOS/issues/751) makes logical-gate
   boundary providers data-driven through one typed assembly description.
+
+## Embedded runtime decoding
+
+The [live supplied-window integration](runtime-decoding.md) connects program
+observations to existing structured decoders during `sim()` execution. It supports
+independently closed windows and returns mapped frame bits before the program
+continues. The same document specifies the separate JIT batch/provenance design,
+including cross-window carry, faulty branches and persistent leakage that remain
+outside this first supported contract.

@@ -6,6 +6,16 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- `SlrConverter.from_quantum_circuit` keeps the qubit register names that
+  SLR -> QuantumCircuit records in `qvars` and `qvar_spec` (#1498), so a round
+  trip reproduces `qreg data[2]; qreg anc[1];` instead of one `q` register.
+  Without that metadata the single `q` register stays. Supplying only one of
+  `qvars` and `qvar_spec`, a gate qubit missing from `qvars`, an out-of-range or
+  duplicate mapping, or a classical register sharing a quantum register's name
+  raises `ValueError`; a non-mapping `qvars` or `qvar_spec` raises `TypeError`.
+  A classical register named `q` is accepted when no quantum register is
+  named `q`.
+
 - `derive_seed` hashes its purpose string with a fixed SipHash-1-3 instead of
   `std`'s `DefaultHasher`, whose algorithm is unspecified across Rust releases
   (#1496). Every derived seed keeps its current value, so seeded results do not

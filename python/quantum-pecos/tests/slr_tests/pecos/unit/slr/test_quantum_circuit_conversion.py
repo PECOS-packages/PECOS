@@ -948,7 +948,10 @@ def test_qvars_reproducer(*, json_round_trip: bool) -> None:
 @pytest.mark.parametrize("flipped", [(), (0,), (1, 2), (0, 1, 2)])
 @pytest.mark.parametrize("json_round_trip", [False, True])
 def test_qvars_simulation_oracle(flipped: tuple, *, json_round_trip: bool) -> None:
-    """Red/green: preserve named declarations and deterministic QASM register values."""
+    """Red/green on the declarations; the register values are a compatibility guard.
+
+    The pre-fix converter already reproduced these values up to qubit renaming.
+    """
     data, anc, spare = QReg("data", 2), QReg("anc", 1), QReg("spare", 1)
     out, flags = CReg("out", 2), CReg("flags", 2)
     bits = (data[0], data[1], anc[0])
@@ -1018,6 +1021,8 @@ def test_qvars_metadata_must_be_mappings(metadata: dict, key: str) -> None:
         ],
         ({"qvars": {0: ("unknown", 0)}, "qvar_spec": {"data": 1}}, "'unknown'", "declare"),
         ({"qvars": {0: ([], 0)}, "qvar_spec": {"data": 1}}, "[]", "declare"),
+        ({"qvars": {0: ("data", True)}, "qvar_spec": {"data": 2}}, "True", "index below"),
+        ({"qvars": {"\u0663": ("data", 0)}, "qvar_spec": {"data": 1}}, repr("\u0663"), "non-negative int"),
         *[
             ({"qvars": {0: ("data", index)}, "qvar_spec": {"data": 1}}, repr(index), "index below")
             for index in (-1, 1, 0.5, "0", True, None)
@@ -1061,6 +1066,8 @@ def test_qvars_name_collision(source: str) -> None:
         SlrConverter.from_quantum_circuit(qc)
     assert repr(name) in str(exc.value)
     assert "quantum register" in str(exc.value)
+    if source == "automatic":
+        assert "destinations (cvar_spec, var or var_output)" in str(exc.value)
 
 
 @pytest.mark.parametrize("json_round_trip", [False, True])

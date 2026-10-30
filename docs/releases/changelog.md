@@ -13,8 +13,9 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   `qvars` and `qvar_spec`, a gate qubit missing from `qvars`, an out-of-range or
   duplicate mapping, or a classical register sharing a quantum register's name
   raises `ValueError`; a non-mapping `qvars` or `qvar_spec` raises `TypeError`.
-  A classical register named `q` is accepted when no quantum register is
-  named `q`.
+  With `qvars` and `qvar_spec` present, unused declared quantum registers
+  survive, JSON string keys are accepted, and a classical register named `q`
+  is accepted when no quantum register is named `q`.
 
 - `derive_seed` hashes its purpose string with a fixed SipHash-1-3 instead of
   `std`'s `DefaultHasher`, whose algorithm is unspecified across Rust releases

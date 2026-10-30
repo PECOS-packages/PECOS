@@ -268,6 +268,8 @@ def quantum_circuit_to_slr(qc: QuantumCircuit) -> Main:
     Note:
         - QuantumCircuit's parallel gate structure is preserved
         - Assumes standard gate names from PECOS
+        - qvars and qvar_spec, when present, select the quantum registers; otherwise
+          every qubit goes in a single q register
         - Destinations or cvar_spec select explicit classical registers; otherwise
           measurement results are allocated sequentially in a single c register
         - Gate groups within a tick are unordered, so bare measurements can move
@@ -325,7 +327,12 @@ def quantum_circuit_to_slr(qc: QuantumCircuit) -> Main:
     num_qubits = max_qubit + 1 if max_qubit >= 0 else 0
 
     if not destination_mode and measurement_count:
-        _validate_classical_register_name("c", "automatic measurement register", quantum_sizes)
+        if quantum_sizes is not None and "c" in quantum_sizes:
+            msg = (
+                "Quantum register 'c' conflicts with the automatic measurement register 'c'; "
+                "give the measurements destinations (cvar_spec, var or var_output) or rename the quantum register"
+            )
+            raise ValueError(msg)
         register_sizes["c"] = measurement_count
     cregs = {name: CReg(name, size) for name, size in register_sizes.items() if size}
 

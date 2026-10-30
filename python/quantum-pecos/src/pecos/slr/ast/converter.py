@@ -295,31 +295,51 @@ class SlrToAst:
             self._check_loop_variables(child, names)
 
     def _convert_declarations(self, block: Block) -> list:
-        """Convert block variables to AST declarations.
+        """Collect program storage in root-first, depth-first declaration order.
 
-        This scans both block.vars (for traditional QReg/CReg declarations)
-        and block.ops (for QAllocs created with walrus operator).
+        Scan vars and walrus QAlloc ops at every level. Child allocators retain
+        their parent and declaration order, which backends use for offsets.
+        Function blocks cannot declare storage, including in nested bodies.
         """
-        declarations = []
-        seen_names: set[str] = set()
+        declarations: dict[str, RegisterDecl | AllocatorDecl] = {}
 
-        # First, scan block.vars for declarations
-        for var in block.vars:
-            decl = self._convert_var_to_declaration(var)
-            if decl is not None:
-                declarations.append(decl)
-                seen_names.add(decl.name)
+        def collect(current: Block, function: str | None = None) -> None:
+            if _has_block_inputs(current):
+                function = type(current).__name__
+            variables = [*current.vars, *(op for op in current.ops if type(op).__name__ == "QAlloc")]
+            for var in variables:
+                decl = self._convert_var_to_declaration(var)
+                if decl is None:
+                    continue
+                if function is not None:
+                    msg = (
+                        f"Block {function!r} declares register {decl.name!r}; blocks with block_inputs "
+                        "cannot declare registers yet: declare it in Main or in an ordinary Block."
+                    )
+                    raise ValueError(msg)
+                previous = declarations.get(decl.name)
+                if previous is not None:
+                    size = decl.size if isinstance(decl, RegisterDecl) else decl.capacity
+                    previous_size = previous.size if isinstance(previous, RegisterDecl) else previous.capacity
+                    if size != previous_size:
+                        msg = (
+                            f"Register {decl.name!r} has conflicting sizes {previous_size} and {size}; "
+                            "rename one or use one size."
+                        )
+                        raise ValueError(msg)
+                    if decl != previous:
+                        msg = (
+                            f"Register {decl.name!r} is declared twice as different storage "
+                            f"({previous!r} and {decl!r}); rename one."
+                        )
+                        raise ValueError(msg)
+                else:
+                    declarations[decl.name] = decl
+            for child in _nested_blocks(current):
+                collect(child, function)
 
-        # Also scan block.ops for QAllocs (they end up in ops when using walrus operator)
-        for op in block.ops:
-            # Only add if QAlloc and not already seen (avoid duplicates)
-            if op.__class__.__name__ == "QAlloc" and op.name not in seen_names:
-                decl = self._convert_var_to_declaration(op)
-                if decl is not None:
-                    declarations.append(decl)
-                    seen_names.add(decl.name)
-
-        return declarations
+        collect(block)
+        return list(declarations.values())
 
     def _convert_return_types(self, block: Block) -> tuple[TypeExpr, ...]:
         """Convert block return type annotations to AST TypeExpr nodes.

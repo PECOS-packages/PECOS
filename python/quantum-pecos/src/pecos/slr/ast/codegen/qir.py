@@ -810,9 +810,9 @@ class AstToQir:
     def _require_creg(self, reg_name: str) -> None:
         """Fail LOUD if `reg_name` has no entry-block CReg storage.
 
-        Only CRegs declared at Main scope (`program.declarations`)
+        Only CRegs collected into `program.declarations`
         get an `alloca [N x i1]` in `_process_declarations`. An
-        inline / local-scope CReg -- e.g. one created in a block and
+        undeclared inline CReg -- e.g. one created in a block and
         only surfaced via `Return(creg)` -- has no storage, so every
         measure/assign/read against it used to be SILENTLY skipped
         (the store dropped, a read folded to constant 0) and the
@@ -825,10 +825,10 @@ class AstToQir:
             msg = (
                 f"QIR codegen: classical register {reg_name!r} is "
                 "used/measured/returned but was not declared at Main "
-                "scope, so it has no QIR storage. Inline / local-scope "
+                "scope or in an ordinary Block, so it has no QIR storage. Undeclared "
                 "CRegs are not supported by the QIR backend (their "
                 "values would be silently dropped from the recorded "
-                f"output). Declare {reg_name!r} in Main(...)."
+                f"output). Declare {reg_name!r} in Main(...) or in an ordinary Block."
             )
             raise NotImplementedError(msg)
 

@@ -6,6 +6,24 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- SLR registers and allocators declared in a nested `Block` (at any depth,
+  including `If`, `For`, `While`, `Repeat` and `Parallel` bodies) are now
+  declared in the generated program (#1511). Before, only the outermost
+  block's declarations were kept, so QASM wrote to registers it never
+  declared, and the QASM swap temporary could take a nested register's name.
+  `Vars(a, b)` keeps its arguments; it used to discard them. The parallel
+  optimizer keeps the declarations of the regions it regroups.
+  **Breaking:** two nested declarations with the same name must be the same
+  storage (same size and, for child allocators, the same parent), or
+  conversion raises `ValueError`. A block with `block_inputs` may not declare
+  registers in its body; conversion raises `ValueError` naming the block and
+  register.
+- Guppy code generation raises `GuppyCodegenError` for a classical reference it
+  cannot resolve in the current function (#1525). Before, a `block_inputs`
+  block that used an outer register with a loop-variable index, such as
+  `c[x].set(e[x])`, produced Guppy source with undefined names that failed
+  only at HUGR compilation.
+
 - **Breaking:** SLR code generation rejects constructs it previously silently
   dropped (#1189): QASM `While`, dynamic or non-integer `For` bounds, zero steps,
   `Print`, and unsupported `Permute` shapes; QIR non-integer

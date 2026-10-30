@@ -162,8 +162,25 @@ class ParallelOptimizer:
             else:
                 new_ops.append(Parallel(*group))
 
-        # Return a Block containing the optimized structure
-        return Block(*new_ops)
+        # Keep storage in its original block order even when executable ops
+        # are flattened and regrouped. In particular, child allocator offsets
+        # depend on declaration order, not the optimized gate order.
+        declarations = self._declaration_block(parallel)
+        return Block(*([declarations] if declarations is not None else []), *new_ops)
+
+    def _declaration_block(self, block: Block) -> Block | None:
+        """Retain the declaration tree of a region whose operations are flattened."""
+        declarations = Block()
+        declarations.vars = block.vars
+        declarations.ops = [op for op in block.ops if type(op).__name__ == "QAlloc"]
+        for op in block.ops:
+            if isinstance(op, Block):
+                child = self._declaration_block(op)
+                if child is not None:
+                    declarations.ops.append(child)
+        if not declarations.vars.vars and not declarations.ops:
+            return None
+        return declarations
 
     def _can_optimize_parallel(self, parallel: Parallel) -> bool:
         """Check if a Parallel block can be safely optimized.

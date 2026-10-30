@@ -53,10 +53,11 @@ class LoopVar:
 class Vars:
     """A collection of variables."""
 
-    def __init__(self, *_args) -> None:
+    def __init__(self, *args) -> None:
         self.vars = []
         # Store the source class name for code generation
         self.source_class = None
+        self.extend_vars(args)
 
     def extend(self, vars_obj: Vars) -> None:
         if isinstance(vars_obj, Vars):

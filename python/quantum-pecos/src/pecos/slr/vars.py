@@ -14,14 +14,14 @@ from __future__ import annotations
 
 import re
 
-from pecos.slr.cops import SET, PyCOp
+from pecos.slr.cops import EQUIV, GE, GT, LE, LT, MINUS, NEQUIV, PLUS, SET, PyCOp
 
 IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 # TODO: Make it a VarDef
 
 
-class LoopVar(PyCOp):
+class LoopVar:
     """Represents a loop iteration variable for symbolic indexing.
 
     Used with For loops to enable indexing registers with the loop variable:
@@ -34,13 +34,40 @@ class LoopVar(PyCOp):
     The symbolic element is resolved to concrete indices during code generation
     when the loop is unrolled.
 
-    Comparisons and arithmetic build SLR expressions, so `If(i == 0)` keeps
-    the loop variable instead of evaluating to a Python bool.
+    Comparisons, `+` and `-` build SLR expressions, so `If(i == 0)` keeps the
+    loop variable instead of evaluating to a Python bool. Bitwise and unary
+    operators are deliberately absent: code generators treat their operands as
+    bools, which a loop variable is not. Because `==` builds an expression,
+    `in` and `list.index` over LoopVars are always true; compare with `is`.
     """
 
-    # PyCOp's expression-building __eq__ would otherwise make LoopVar unhashable;
+    # The expression-building __eq__ would otherwise make LoopVar unhashable;
     # a loop variable is identified by the object itself.
     __hash__ = object.__hash__
+
+    def __eq__(self, other):
+        return EQUIV(self, other)
+
+    def __ne__(self, other):
+        return NEQUIV(self, other)
+
+    def __lt__(self, other):
+        return LT(self, other)
+
+    def __gt__(self, other):
+        return GT(self, other)
+
+    def __le__(self, other):
+        return LE(self, other)
+
+    def __ge__(self, other):
+        return GE(self, other)
+
+    def __add__(self, other):
+        return PLUS(self, other)
+
+    def __sub__(self, other):
+        return MINUS(self, other)
 
     def __init__(self, name: str) -> None:
         """Create a loop variable.

@@ -1023,7 +1023,8 @@ class AstToQir:
             # `VarExpr` whose name is not a declared Main-scope CReg
             # fails LOUD via `_require_creg`, preserving the
             # anti-silent-0 guarantee.
-            if expr.name in self.context.loop_variables:
+            # A string-label For may share a declared register's name (as in QASM).
+            if expr.name in self.context.loop_variables and expr.name not in self.context.creg_map:
                 msg = f"QIR codegen: For body references loop variable {expr.name!r}; binding it is not supported."
                 raise NotImplementedError(msg)
             self._require_creg(expr.name)

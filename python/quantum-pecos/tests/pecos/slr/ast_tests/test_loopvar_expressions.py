@@ -59,10 +59,10 @@ def test_loopvar_stays_hashable_by_identity() -> None:
     assert values[j] == 1
 
 
-def _condition_program():
+def _condition_program(condition=lambda i: i == 0, stop=2):
     i = LoopVar("i")
     q, c = QReg("q", 1), CReg("c", 1)
-    body = For(i, 0, 2).Do(If(i == 0).Then(qb.X(q[0])))
+    body = For(i, 0, stop).Do(If(condition(i)).Then(qb.X(q[0])))
     return Main(q, c, body, qb.Measure(q[0]) > c[0], Return(c))
 
 
@@ -74,13 +74,61 @@ def test_loopvar_condition_reaches_the_ast() -> None:
     assert branch.condition == BinaryExpr(op=BinaryOp.EQ, left=VarExpr(name="i"), right=LiteralExpr(value=0))
 
 
-def test_loopvar_condition_runs_once_in_guppy() -> None:
-    # X fires only on the first of two iterations, so every shot measures 1.
-    # With `i == 0` folded to False the branch never ran and every shot measured 0.
-    package = SlrConverter(_condition_program()).hugr()
+@pytest.mark.parametrize(
+    ("condition", "measured"),
+    [
+        # Over i in range(3), X flips the qubit once per true iteration.
+        (lambda i: i == 0, 1),
+        (lambda i: i != 1, 0),
+        (lambda i: i < 2, 0),
+        (lambda i: i >= 1, 0),
+        (lambda i: i > 1, 1),
+        (lambda i: i - 1 == 0, 1),
+    ],
+)
+def test_loopvar_condition_runs_in_guppy(condition, measured) -> None:
+    # With the comparison folded to False the branch never ran and every shot measured 0.
+    package = SlrConverter(_condition_program(condition, stop=3)).hugr()
     result = sim(Hugr(package.to_str().encode("utf-8"))).classical(selene_engine()).qubits(1).seed(7).run(8)
     raw = result.to_dict() if hasattr(result, "to_dict") else result
-    assert raw == {"measurement_0": [1] * 8}
+    assert raw == {"measurement_0": [measured] * 8}
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        operator.and_,
+        operator.or_,
+        operator.xor,
+        operator.lshift,
+        operator.rshift,
+    ],
+)
+def test_loopvar_bitwise_operators_are_unsupported(build) -> None:
+    # Code generators treat bitwise operands as bools, which a loop variable is not.
+    with pytest.raises(TypeError):
+        build(LoopVar("i"), 1)
+
+
+@pytest.mark.parametrize("build", [operator.invert, operator.neg])
+def test_loopvar_unary_operators_are_unsupported(build) -> None:
+    with pytest.raises(TypeError):
+        build(LoopVar("i"))
+
+
+def test_loopvar_outside_its_loop_is_rejected() -> None:
+    i = LoopVar("i")
+    q, c = QReg("q", 1), CReg("c", 1)
+    program = Main(q, c, For(i, 0, 2).Do(qb.X(q[0])), If(i == 0).Then(qb.X(q[0])))
+    with pytest.raises(ValueError, match=r"LoopVar 'i' is used outside the For loop that binds it"):
+        slr_to_ast(program)
+
+
+def test_qir_string_loop_label_may_name_a_declared_register() -> None:
+    q, i = QReg("q", 1), CReg("i", 2)
+    body = i.set(i + 1)
+    looped = Main(q, i, For("i", 0, 2).Do(body))
+    assert SlrConverter(looped).qir() == SlrConverter(Main(q, i, body, body)).qir()
 
 
 @pytest.mark.parametrize(
@@ -88,7 +136,7 @@ def test_loopvar_condition_runs_once_in_guppy() -> None:
     [
         ("qasm", r"QASM codegen: For body references loop variable 'i'; binding it is not supported\."),
         ("qir", r"QIR codegen: For body references loop variable 'i'; binding it is not supported\."),
-        ("stim", r"Stim codegen: unsupported If condition"),
+        ("stim", r"Stim codegen: unsupported If condition \(BinaryExpr\)"),
         ("quantum_circuit", r"If cannot be converted to QuantumCircuit format"),
     ],
 )

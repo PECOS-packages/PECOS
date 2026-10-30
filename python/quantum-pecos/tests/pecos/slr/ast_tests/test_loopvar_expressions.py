@@ -124,6 +124,16 @@ def test_loopvar_outside_its_loop_is_rejected() -> None:
         slr_to_ast(program)
 
 
+@pytest.mark.parametrize("optimize_parallel", [False, True])
+def test_string_loop_label_variable_survives_the_parallel_optimizer(optimize_parallel) -> None:
+    # The optimizer rebuilds For blocks; it must keep the loop's own LoopVar object.
+    q, c = QReg("q", 1), CReg("c", 1)
+    loop = For("k", 0, 3)
+    loop.Do(If(loop.var == 0).Then(qb.X(q[0])))
+    program = Main(q, c, loop, qb.Measure(q[0]) > c[0], Return(c))
+    assert "if (k == 0):" in SlrConverter(program, optimize_parallel=optimize_parallel).guppy()
+
+
 def test_qir_string_loop_label_may_name_a_declared_register() -> None:
     q, i = QReg("q", 1), CReg("i", 2)
     body = i.set(i + 1)

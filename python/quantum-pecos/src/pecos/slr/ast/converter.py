@@ -1036,7 +1036,7 @@ class SlrToAst:
             if not any(var is expr for var in self._loop_vars):
                 msg = (
                     f"LoopVar {expr.name!r} is used outside the For loop that binds it; "
-                    "use it only inside that loop's body."
+                    "use it only inside that loop's body, and pass this LoopVar object to For(...) to bind it."
                 )
                 raise ValueError(msg)
             return VarExpr(name=expr.name)

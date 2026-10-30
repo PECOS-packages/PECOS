@@ -64,6 +64,9 @@ class SparseStabPy(Stabilizer):
         gens (Tuple[Gens, Gens]):
     """
 
+    # Clifford lowering accepts singleton sequences, including the U1q alias.
+    _singleton_symbols = frozenset({"RX", "RY", "RZ", "RXY1Q", "R1XY", "U1q"})
+
     def __init__(self, num_qubits: int) -> None:
         """Initializes the stabilizer state.
 
@@ -77,6 +80,7 @@ class SparseStabPy(Stabilizer):
             msg = f"`num_qubits` should be of type `int` but got type: {type(num_qubits)}"
             raise TypeError(msg)
 
+        self.gate_capacity = num_qubits
         self.num_qubits = num_qubits
 
         self.bindings = dict(bindings.gate_dict)

@@ -26,13 +26,19 @@ class PauliPropagation(DefaultSimulator):
 class Stabilizer(DefaultSimulator):
     """Base class for stabilizer simulators."""
 
+    _allow_singletons = False
+
 
 class StateVector(DefaultSimulator):
     """Base class for state-vector simulators."""
 
+    _allow_singletons = False
+
 
 class StateTN(DefaultSimulator):
     """Base class for simulators whose state is represented as a tensor network."""
+
+    _allow_singletons = False
 
 
 class DensityMatrix(DefaultSimulator):

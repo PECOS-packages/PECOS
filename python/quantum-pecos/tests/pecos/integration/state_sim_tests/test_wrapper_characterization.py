@@ -9,7 +9,7 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-"""Wrapper contracts recorded on dev ad1e97642, before #1480 batch validation.
+"""Wrapper contracts recorded on dev ad1e97642, updated for #1480 batch validation.
 
 The public pecos.HybridEngine is the old bindings-based engine; PHIR uses the
 separate engines.hybrid_engine.HybridEngine. Optional dependencies alone may
@@ -119,7 +119,7 @@ def test_result_singleton_tuple(state):
             state.run_circuit(_items("Measure", {(1,)}))
     else:
         # These measurement helpers require a scalar qubit, even in a batch.
-        with pytest.raises(TypeError, match="tuple"):
+        with pytest.raises(ValueError, match="Measure"):
             state.run_gate("Measure", [(1,)])
 
 
@@ -192,8 +192,12 @@ def test_empty_locations(state, symbol):
 def test_simulate_gate_false(state, locations):
     if isinstance(state, PauliProp):
         state.faults = {"X": set(), "Y": set(), "Z": {1}}
-    # Disabled dispatch skips both valid and out-of-range batches without changing state.
-    assert state.run_gate("X", locations, simulate_gate=False) == {}
+    # Fixed wrappers validate before skipping; growable PauliProp has no upper bound.
+    if locations == [1, 99] and not isinstance(state, (PauliProp, CoinToss)):
+        with pytest.raises(ValueError, match="X"):
+            state.run_gate("X", locations, simulate_gate=False)
+    else:
+        assert state.run_gate("X", locations, simulate_gate=False) == {}
     if isinstance(state, PauliProp):
         assert state.faults == {"X": set(), "Y": set(), "Z": {1}}
         assert state.sign == 0
@@ -223,22 +227,28 @@ def test_identity_single_qubit_batch(state):
 
 @pytest.mark.parametrize("state", [*QUANTUM, "CoinToss"], indirect=True)
 def test_identity_pair_today(state):
-    # KNOWN-WRONG (#1480): Quantum identity helpers accept pair operands for the single-qubit I.
-    assert state.run_gate("I", {(0, 1)}) == {}
+    # CoinToss remains a no-op; quantum wrappers now require the II spelling.
+    if isinstance(state, CoinToss):
+        assert state.run_gate("I", {(0, 1)}) == {}
+    else:
+        with pytest.raises(ValueError, match="II"):
+            state.run_gate("I", {(0, 1)})
 
 
 @pytest.mark.parametrize("state", QUANTUM, indirect=True)
-@pytest.mark.xfail(strict=True, raises=pytest.fail.Exception, reason="#1480: 'I' on a pair will raise ValueError")
 def test_identity_pair_future(state):
-    # Future ValueError contracts xfail only when pytest.raises reports DID NOT RAISE.
+    # Q1: I has arity one; CoinToss run_gate remains out of scope.
     with pytest.raises(ValueError, match="II"):
         state.run_gate("I", {(0, 1)})
 
 
 @pytest.mark.parametrize("state", PAULI, indirect=True)
 def test_pauli_identity_pair_already_rejected(state):
-    # PauliProp already delegates one location to the native arity checker.
-    with pytest.raises(ValueError, match=r"^I: expected a non-negative qubit index or 1-tuple, got \(0, 1\)$"):
+    # Whole-batch validation now supplies the arity error and II hint.
+    with pytest.raises(
+        ValueError,
+        match=r"^I: expected 1 qubit\(s\) per location, got \(0, 1\); use II for the two-qubit identity$",
+    ):
         state.run_gate("I", {(0, 1)})
 
 
@@ -426,7 +436,12 @@ class _Location(int):
 def test_original_result_keys_from_overridden_binding(state, symbol, location, one, zero):
     state.bindings = dict(state.bindings)
     state.bindings[symbol] = lambda _state, _location, **_params: 1
-    # Mutable bindings may return results: scalar, singleton and pair keys stay original.
+    # Overrides retain the state's location policy as well as the spelling's arity.
+    if location == (1,) and type(state).__name__ in QUANTUM:
+        with pytest.raises(ValueError, match="Measure"):
+            state.run_gate(symbol, [location])
+        return
+    # Accepted scalar, singleton and pair keys stay original.
     result = state.run_gate(symbol, [location])
     assert result == one
     assert next(iter(result)) is location
@@ -481,7 +496,8 @@ def test_default_simulator_dispatch_edges():
     with pytest.raises(TypeError, match="not iterable"):
         state.run_gate("X", 1)
     assert state.run_gate("I", {1, 2, 3}) == {}
-    assert state.run_gate("I", {(0, 1)}) == {}
+    with pytest.raises(ValueError, match="II"):
+        state.run_gate("I", {(0, 1)})
     # The public engine also dispatches base-class user bindings directly and in order.
     pecos.HybridEngine.run_gate(state, {}, "X", [2, 1, 2])
     assert calls == [2, 1, 2]
@@ -493,7 +509,6 @@ def test_default_simulator_dispatch_edges():
     assert calls[3:] == list(pairs)
 
 
-@pytest.mark.xfail(strict=True, raises=pytest.fail.Exception, reason="#1480: 'I' on a pair will raise ValueError")
 def test_default_simulator_identity_pair_future():
     state = DefaultSimulator()
     state.bindings["I"] = lambda _state, _location, **_params: None
@@ -550,7 +565,7 @@ def test_unknown_nonempty_symbol(state):
 def test_pauli_identity_frame_circuit_short_circuit(state):
     circuit = QuantumCircuit()
     circuit.append("unknown-wrapper-symbol", {0})
-    # KNOWN-WRONG (#1480): PauliProp.run_circuit returns None and skips validation on an identity frame.
+    # KNOWN-WRONG (#1515): PauliProp.run_circuit still accepts unknown symbols on an identity frame.
     assert state.run_circuit(circuit) is None
     state.faults = {"X": {3}, "Y": set(), "Z": set()}
     with pytest.raises(Exception, match="Gate unknown-wrapper-symbol is not supported"):
@@ -561,6 +576,79 @@ def test_error_set_string_rejection():
     # KNOWN-WRONG (#1500): ErrorSet rejects its advertised string input after the NumPy migration.
     with pytest.raises(TypeError, match="Arrays cannot contain string objects"):
         Generator.ErrorSet(["X"])
+
+
+@pytest.mark.parametrize("state", [*WRAPPERS, "DefaultSimulator"], indirect=True)
+@pytest.mark.parametrize("values", [[], [0, 1]])
+def test_disabled_sized_batch(state, values, sized_sequence):
+    assert state.run_gate("X", sized_sequence(values), simulate_gate=False) == {}
+
+
+@pytest.mark.parametrize("state", ["SparseStabPy", "CuStateVec", "MPS", "CudaStateVec"], indirect=True)
+@pytest.mark.parametrize("container", ["custom", "range"])
+def test_sized_sequence_pair(state, container, sized_sequence):
+    location = sized_sequence([0, 1]) if container == "custom" else range(2)
+    state.run_gate("X", [0])
+    assert state.run_gate("CX", [location]) == {}
+    assert state.run_gate("Measure", [0, 1]) == {0: 1, 1: 1}
+
+
+@pytest.mark.parametrize("identity", [True, False])
+def test_pauli_list_locations_with_removal(identity):
+    state = PauliProp(num_qubits=2)
+    if not identity:
+        state.faults = {"X": {0}, "Y": set(), "Z": set()}
+    # Both frames use the existing set subtraction contract; inner lists are unhashable.
+    with pytest.raises(TypeError, match="unhashable type: 'list'"):
+        state.run_circuit(_items("CX", [[0, 1]]), removed_locations=set())
+
+
+@pytest.mark.parametrize("symbol", ["RX", "RY", "RZ", "RXY1Q", "R1XY", "U1q"])
+@pytest.mark.parametrize("shape", ["tuple", "list", "scalar"])
+def test_sparse_rotation_location_protocol(symbol, shape, index_scalar):
+    state, fresh = simulators.SparseStabPy(2), simulators.SparseStabPy(2)
+    for sim in (state, fresh):
+        sim.run_gate("H", [0, 1])
+    location = {"tuple": (1,), "list": [1], "scalar": index_scalar(1)}[shape]
+    params = {"angle": pi / 2} if symbol in {"RX", "RY", "RZ"} else {"angles": [pi / 2, 0]}
+    state.run_gate(symbol, [0, location], **params)
+    fresh.run_gate(symbol, [0, 1], **params)
+    assert state.stabs.row_string() == fresh.stabs.row_string()
+    assert state.destabs.row_string() == fresh.destabs.row_string()
+
+
+# CoinToss.run_gate is a no-op for every input, so it cannot observe this.
+@pytest.mark.parametrize("state", [*QUANTUM, *PAULI, "DefaultSimulator"], indirect=True)
+def test_zero_dimensional_empty_batch(state, index_scalar):
+    assert state.run_gate("unknown-private-gate", index_scalar(0)) == {}
+
+
+@pytest.mark.parametrize("state", ["SparseStabPy", "CudaStateVec"], indirect=True)
+@pytest.mark.parametrize("container", [set, frozenset])
+def test_unordered_pair_rejected(state, container):
+    with pytest.raises(ValueError, match="CX"):
+        state.run_gate("CX", [container({0, 1})])
+
+
+@pytest.mark.parametrize("state", QUANTUM, indirect=True)
+@pytest.mark.parametrize("location", [(0,), [0]])
+def test_identity_singleton_follows_state_policy(state, location):
+    # "I" is a single-qubit gate: a singleton location follows the same
+    # per-state policy as X; these wrappers take scalar locations only.
+    with pytest.raises(ValueError, match="I: expected a scalar qubit index"):
+        state.run_gate("I", [location])
+
+
+@pytest.mark.parametrize("state", PAULI, indirect=True)
+@pytest.mark.parametrize("location", [(0,), [0]])
+def test_identity_singleton_accepted_where_singletons_are(state, location):
+    assert state.run_gate("I", [location]) == {}
+
+
+def test_hybrid_engine_bare_int_still_raises():
+    # On dev the public HybridEngine iterated the batch and raised TypeError.
+    with pytest.raises(TypeError):
+        pecos.HybridEngine.run_gate(simulators.SparseStabPy(2), {}, "X", 0)
 
 
 def test_pauli_alias_identity():

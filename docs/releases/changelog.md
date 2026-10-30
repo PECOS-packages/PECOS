@@ -6,6 +6,34 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Breaking:** Python simulator wrappers and the public `pecos.HybridEngine`
+  validate whole known-gate batches per `run_gate` call and per circuit item
+  before changing state, including when `simulate_gate=False`. Registered-gate
+  decomposition is still validated per step until a later PR. Malformed locations,
+  repeated operands within a location, and out-of-range qubits raise gate-named
+  `ValueError`s; some errors previously raised `TypeError`.
+  StateVec, CuStateVec, MPS and CudaStateVec require scalar one-qubit locations.
+  SparseStabPy accepts singleton sequences for RX, RY, RZ, RXY1Q, R1XY and U1q;
+  its other one-qubit gates require scalars. PauliProp/PauliFaultProp accept
+  singleton tuples/lists, and DefaultSimulator accepts singleton sized, indexable
+  sequences. `I` is a single-qubit gate and follows the same per-state rule as
+  `X`; a pair location for `I` is rejected (use `II`), except by CoinToss, whose
+  gates stay no-ops. Integer-like scalars are classified before sequences, and
+  unhashable qubit indices are rejected up front, including inside locations.
+  Zero-dimensional arrays used as qubit indices inside a batch (including
+  operands inside a location) are now rejected, even where Rust-backed bindings
+  and SparseStabPy accepted them for non-measuring gates. A bare `np.array(0)`
+  batch still skips dispatch in the wrappers. Multi-qubit locations must be ordered:
+  set/frozenset pairs are rejected, including in SparseStabPy and CudaStateVec
+  where they previously ran. Batches may still repeat or overlap qubits and
+  execute sequentially.
+  Native SparseStab, Stabilizer, StateVec, StabVec, CoinToss and PauliProp expose
+  a read-only `gate_capacity` property; PauliProp returns `None` and remains
+  growable. CoinToss's own no-op `run_gate` and its `run_circuit` are unchanged.
+  Through HybridEngine, every CoinToss measurement binding (including MX/MY/MZ)
+  is validated for every iterable batch container; other CoinToss gates remain
+  no-ops.
+
 - `derive_seed` hashes its purpose string with a fixed SipHash-1-3 instead of
   `std`'s `DefaultHasher`, whose algorithm is unspecified across Rust releases
   (#1496). Every derived seed keeps its current value, so seeded results do not

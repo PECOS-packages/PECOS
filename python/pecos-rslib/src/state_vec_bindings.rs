@@ -489,6 +489,12 @@ impl PyStateVec {
         Py::new(py, pecos_array)
     }
 
+    /// Fixed register capacity, or None for a growable simulator.
+    #[getter]
+    fn gate_capacity(&self) -> Option<usize> {
+        self.inner.qubit_capacity()
+    }
+
     #[getter]
     fn num_qubits(&self) -> usize {
         self.inner.num_qubits()

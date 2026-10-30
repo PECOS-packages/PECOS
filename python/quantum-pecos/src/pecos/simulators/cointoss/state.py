@@ -22,6 +22,8 @@ from typing import TYPE_CHECKING
 
 from pecos_rslib.simulators import CoinToss as RustCoinToss
 
+from pecos.simulators.batch_validation import validate_batch
+
 if TYPE_CHECKING:
     from pecos.circuits import QuantumCircuit
     from pecos.typing import SimulatorGateParams
@@ -49,6 +51,7 @@ class CoinToss:
             seed (int | None): Optional seed for the random number generator.
         """
         self._sim = RustCoinToss(num_qubits, prob, seed)
+        self.gate_capacity = num_qubits
         self.num_qubits = num_qubits
         self.bindings = dict(gate_dict)
 
@@ -90,6 +93,11 @@ class CoinToss:
         """
         result = self._sim.run_measure(qubit)
         return next(iter(result.values())) if result else 0
+
+    def validate_gate_batch(self, symbol: str, locations: object) -> None:
+        """Check measurement spellings over every batch HybridEngine dispatches."""
+        if self.bindings.get(symbol) is _measure_gate:
+            validate_batch(symbol, locations, self.gate_capacity, allow_singletons=False)
 
     def run_gate(
         self,

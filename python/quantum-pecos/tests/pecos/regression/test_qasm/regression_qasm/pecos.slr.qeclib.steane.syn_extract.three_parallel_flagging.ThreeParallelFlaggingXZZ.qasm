@@ -16,9 +16,9 @@ cz a_test[1], q_test[5];
 // 6 -> 6
 cz a_test[2], q_test[2];
 // 7 -> 3
-barrier ;
+barrier a_test;
 cz a_test[0], a_test[1];
-barrier ;
+barrier a_test;
 cx a_test[0], q_test[0];
 // 1 -> 1
 cz a_test[1], q_test[4];
@@ -31,9 +31,9 @@ cz a_test[1], q_test[2];
 // 7 -> 3
 cz a_test[2], q_test[6];
 // 4 -> 7
-barrier ;
+barrier a_test;
 cz a_test[0], a_test[2];
-barrier ;
+barrier a_test;
 cx a_test[0], q_test[2];
 // 7 -> 3
 cz a_test[1], q_test[1];

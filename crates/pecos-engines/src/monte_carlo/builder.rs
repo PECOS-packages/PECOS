@@ -250,8 +250,8 @@ impl MonteCarloEngineBuilder {
     /// This seeds the internal random number generator that draws a base seed for
     /// each run. Every shot reseeds all components from that base seed and its
     /// global index, independently of worker count and draws in earlier shots.
-    /// Component seeds use `DefaultHasher`, so seeded samples are not promised
-    /// stable across Rust releases.
+    /// Component seeds are derived with a fixed hash, so they do not depend on
+    /// the Rust release.
     ///
     /// # Arguments
     /// * `seed` - The seed value

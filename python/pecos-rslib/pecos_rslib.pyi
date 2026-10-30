@@ -1127,6 +1127,10 @@ class QasmEngineBuilder:
 class QisEngineBuilder:
     """Builder for QIS engines."""
 
+    def runtime_decoder(self, factory: object) -> QisEngineBuilder:
+        """Configure a zero-argument factory returning a fresh shot-local decoder session."""
+        ...
+
     def scheduled_batches(self, enabled: bool = True) -> QisEngineBuilder: ...
     def scheduled_event_batches(self, enabled: bool = True) -> QisEngineBuilder: ...
     def selene_runtime(
@@ -1135,6 +1139,8 @@ class QisEngineBuilder:
         *,
         custom_event_policy: str = "reject_unhandled",
         native_gates: list[str] | None = None,
+        batch_adapter_factory: Callable[[], object] | None = None,
+        clock_model: str = "continuous",
     ) -> QisEngineBuilder: ...
     def selene_runtime_plugin(
         self,
@@ -1144,6 +1150,8 @@ class QisEngineBuilder:
         *,
         custom_event_policy: str = "reject_unhandled",
         native_gates: list[str] | None = None,
+        batch_adapter_factory: Callable[[], object] | None = None,
+        clock_model: str = "continuous",
     ) -> QisEngineBuilder: ...
 
 class PhirJsonEngineBuilder:

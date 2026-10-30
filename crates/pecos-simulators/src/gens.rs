@@ -43,7 +43,8 @@ pub enum PauliConvention {
 /// Storage for stabilizer/destabilizer generators, generic over the set type.
 ///
 /// Uses `IndexSet` trait to allow different implementations:
-/// - [`BitSet`]: O(1) toggle operations, efficient for larger circuits
+/// - [`AdaptiveIndexSet`](pecos_core::AdaptiveIndexSet): default, adaptive dense/sparse storage
+/// - [`BitSet`]: dense words with O(1) toggle operations
 /// - [`VecSet<usize>`]: Lower overhead for small sets
 #[derive(Clone, Debug)]
 pub struct GensGeneric<S: IndexSet> {
@@ -57,10 +58,10 @@ pub struct GensGeneric<S: IndexSet> {
     pub signs_i: S,
 }
 
-/// Default generator storage using `BitSet` for O(1) toggle operations.
-pub type Gens = GensGeneric<BitSet>;
+/// Default generator storage using adaptive dense/sparse index sets.
+pub type Gens = GensGeneric<crate::SparseStabSet>;
 
-/// Generator storage using `BitSet` (same as `Gens`).
+/// Generator storage using explicit `BitSet` storage.
 pub type GensBitSet = GensGeneric<BitSet>;
 
 /// Generator storage using `VecSet<usize>` for lower overhead on small sets.
@@ -539,7 +540,7 @@ impl<S: IndexSet> GensGeneric<S> {
         self.commutes_with_all(pauli.x_positions(), pauli.z_positions())
     }
 
-    /// Returns indices of generators that anticommute with the given Pauli operator.
+    /// Returns ascending indices of generators that anticommute with the given Pauli operator.
     ///
     /// # Parameters
     /// - `x_positions`: Iterator of qubit indices with X component
@@ -972,7 +973,7 @@ impl<S: IndexSet> GensGeneric<S> {
         self.row_x[gen_id].len() + self.row_z[gen_id].len()
     }
 
-    /// Finds the generator with minimum weight from a set of candidates.
+    /// Finds the generator with minimum (weight, id) from a set of candidates.
     ///
     /// This is used to keep the tableau sparse by preferring low-weight generators
     /// when we have a choice of which to modify.
@@ -983,7 +984,7 @@ impl<S: IndexSet> GensGeneric<S> {
     fn min_weight_generator(&self, candidates: &S) -> usize {
         candidates
             .iter()
-            .min_by_key(|&gen_id| self.generator_weight(gen_id))
+            .min_by_key(|&gen_id| (self.generator_weight(gen_id), gen_id))
             .expect("candidates must not be empty")
     }
 
@@ -1128,7 +1129,7 @@ impl<S: IndexSet> GensGeneric<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CliffordGateable, SparseStab, SparseStabY};
+    use crate::{CliffordGateable, SparseStab, SparseStabBitSet, SparseStabY};
     use pecos_random::PecosRng;
     use rand::RngExt;
 
@@ -1152,7 +1153,7 @@ mod tests {
         };
     }
 
-    fn assert_convention_rows(w: &SparseStab, y: &SparseStabY) {
+    fn assert_convention_rows(w: &SparseStabBitSet, y: &SparseStabY) {
         for (w_gens, y_gens) in [(w.stabs(), y.stabs()), (w.destabs(), y.destabs())] {
             assert_eq!(w_gens.row_x, y_gens.row_x, "X row oracle precondition");
             assert_eq!(w_gens.row_z, y_gens.row_z, "Z row oracle precondition");
@@ -1161,12 +1162,12 @@ mod tests {
         }
     }
 
-    fn convention_circuits() -> Vec<(SparseStab, SparseStabY)> {
+    fn convention_circuits() -> Vec<(SparseStabBitSet, SparseStabY)> {
         let mut rng = PecosRng::seed_from_u64(0x5eed_2026);
         (0..140)
             .map(|trial| {
                 let num_qubits = 2 + trial % 7;
-                let mut w = SparseStab::new(num_qubits);
+                let mut w = SparseStabBitSet::new(num_qubits);
                 let mut y = SparseStabY::new(num_qubits);
                 for step in 0..80 {
                     let first = QubitId(rng.random_range(0..num_qubits));
@@ -1188,7 +1189,7 @@ mod tests {
             .collect()
     }
 
-    fn convention_product(w: &SparseStab, rng: &mut PecosRng) -> (BitSet, PauliString) {
+    fn convention_product(w: &SparseStabBitSet, rng: &mut PecosRng) -> (BitSet, PauliString) {
         let mut sources = BitSet::new();
         let generators = w.stabs().generators();
         for g in 0..generators.len() {
@@ -1265,7 +1266,7 @@ mod tests {
     }
 
     fn assert_convention_refactor(
-        original_w: &SparseStab,
+        original_w: &SparseStabBitSet,
         original_y: &SparseStabY,
         sources: &BitSet,
         product: &PauliString,
@@ -1357,13 +1358,13 @@ mod tests {
 
     #[test]
     fn test_convention_stored_i_product() {
-        let mut y = Gens::with_convention(1, PauliConvention::Y);
+        let mut y = GensBitSet::with_convention(1, PauliConvention::Y);
         y.row_x = vec![BitSet::from_iter([0]), BitSet::new()];
         y.row_z = vec![BitSet::new(), BitSet::from_iter([0])];
         y.col_x[0].insert(0);
         y.col_z[0].insert(1);
         y.signs_i.insert(0);
-        let mut w = Gens::new(1);
+        let mut w = GensBitSet::new(1);
         w.row_x.clone_from(&y.row_x);
         w.row_z.clone_from(&y.row_z);
         w.col_x.clone_from(&y.col_x);
@@ -1492,7 +1493,7 @@ mod tests {
         for trial in 0..350 {
             let num_qubits = 2 + trial % 7;
             let original = random_clifford_state(num_qubits, &mut rng);
-            let mut sources = BitSet::new();
+            let mut sources = crate::SparseStabSet::new();
             for g in 0..num_qubits {
                 if rng.random() {
                     sources.insert(g);
@@ -1501,8 +1502,8 @@ mod tests {
             if sources.is_empty() {
                 sources.insert(rng.random_range(0..num_qubits));
             }
-            let mut xs = BitSet::new();
-            let mut zs = BitSet::new();
+            let mut xs = crate::SparseStabSet::new();
+            let mut zs = crate::SparseStabSet::new();
             for g in &sources {
                 for q in &original.stabs().row_x[g] {
                     xs.toggle(q);
@@ -1516,7 +1517,7 @@ mod tests {
                 .iter()
                 .nth(rng.random_range(0..sources.len()))
                 .unwrap();
-            let mut protected = BitSet::new();
+            let mut protected = crate::SparseStabSet::new();
             for g in 0..num_qubits {
                 if g != chosen {
                     protected.insert(g);
@@ -1638,7 +1639,7 @@ mod tests {
         let (stabs, _destabs) = setup_two_qubit_z_state();
 
         // Product of generators with no signs should give +1
-        let mut indices = BitSet::new();
+        let mut indices = crate::SparseStabSet::new();
         indices.insert(0);
         assert_eq!(stabs.compute_product_sign(&indices), QuarterPhase::PlusOne);
 
@@ -1653,7 +1654,7 @@ mod tests {
         // Add a minus sign to stabilizer 0
         stabs.signs_minus.insert(0);
 
-        let mut indices = BitSet::new();
+        let mut indices = crate::SparseStabSet::new();
         indices.insert(0);
         assert_eq!(stabs.compute_product_sign(&indices), QuarterPhase::MinusOne);
 
@@ -1717,7 +1718,7 @@ mod tests {
         stabs.col_z[0].insert(2);
 
         // Build candidate set with all three
-        let mut candidates = BitSet::new();
+        let mut candidates = crate::SparseStabSet::new();
         candidates.insert(0);
         candidates.insert(1);
         candidates.insert(2);
@@ -1725,9 +1726,22 @@ mod tests {
         // Should choose generator 0 (weight 1)
         assert_eq!(stabs.min_weight_generator(&candidates), 0);
 
-        // Remove generator 0, should choose one of the weight-2 generators
+        // Remove generator 0; ties choose the lowest generator id.
         candidates.remove(0);
-        let chosen = stabs.min_weight_generator(&candidates);
-        assert!(chosen == 1 || chosen == 2);
+        assert_eq!(stabs.min_weight_generator(&candidates), 1);
+    }
+
+    #[test]
+    fn test_min_weight_generator_unsorted_tie() {
+        let mut stabs = GensGeneric::<VecSet<usize>>::new(3);
+        stabs.row_z[1].insert(1);
+        stabs.col_z[1].insert(1);
+        stabs.row_z[2].insert(2);
+        stabs.col_z[2].insert(2);
+        let mut candidates = VecSet::new();
+        candidates.insert(2);
+        candidates.insert(1);
+        assert_eq!(candidates.iter().copied().collect::<Vec<_>>(), [2, 1]);
+        assert_eq!(stabs.min_weight_generator(&candidates), 1);
     }
 }

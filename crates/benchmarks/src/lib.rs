@@ -10,4 +10,6 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-// Intentionally empty
+//! Shared helpers for benchmark workloads.
+
+pub mod color_code;

@@ -196,6 +196,9 @@ _MANIFEST: dict[str, tuple[str, _Spec]] = {
     "v1.conditional_correction": ("D", (0,)),  # |0>->c0=0; If-not-taken; |0>->c1=0
     "legacy.individual_measurements": ("D", (0,)),  # four |0> -> packed 0
     "qeclib.generic_transversal_cx": ("D", (0,)),  # CX|0..0>=|0..0> -> all 0
+    # Noiseless logical-zero preparation leaves the verify ancilla zero;
+    # the other twelve declared CRegs remain zero-initialized.
+    "qeclib.steane_pz": ("D", (0,) * 13),
     # ----- P: hard invariant over fixed seeds -----
     "v1.bell": ("P", _bell2),
     "v1.ghz_three": ("P", _ghz3),
@@ -292,7 +295,7 @@ def test_qir_corpus_manifest_covers_qis_ok() -> None:
     stale = set(_MANIFEST) - qis_ok
     assert not stale, f"manifest entries no longer QIS_OK (remove/retriage): {sorted(stale)}"
     hist = {cls: sum(1 for c, _ in _MANIFEST.values() if c == cls) for cls in ("D", "P", "X")}
-    assert hist == {"D": 3, "P": 8, "X": 14}, f"manifest class histogram changed (deliberate?): {hist}"
+    assert hist == {"D": 4, "P": 8, "X": 14}, f"manifest class histogram changed (deliberate?): {hist}"
 
 
 # QIS_OK programs that build + lower via qir_to_qis but contain

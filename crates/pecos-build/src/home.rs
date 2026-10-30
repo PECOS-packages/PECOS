@@ -56,7 +56,7 @@ pub fn get_pecos_home_path_with_override(override_path: Option<&Path>) -> Result
     }
     if let Ok(dir) = std::env::var("PECOS_HOME") {
         Ok(PathBuf::from(dir))
-    } else if let Some(home) = dirs::home_dir() {
+    } else if let Some(home) = std::env::home_dir() {
         Ok(home.join(".pecos"))
     } else {
         Err(Error::HomeDir("Could not determine home directory".into()))

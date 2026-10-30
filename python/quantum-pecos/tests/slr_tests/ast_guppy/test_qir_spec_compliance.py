@@ -20,14 +20,10 @@ trips it deliberately.
 **Tier 1 -- `validate_qir` (QIR spec metadata).**
 The required QIR module metadata is emitted (`output_labeling_schema`,
 `qir_profiles=adaptive_profile`, the `qir_*_version` / `dynamic_*` /
-`arrays` module flags). Two `validate_qir` failures are pinned
-(`_EXPECTED_VALIDATE_FAILED`), neither a metadata gap:
-`legacy.empty_main` (qir-qis structurally requires the entry
-function to have >=1 qubit; that program has none) and
-`qeclib.steane_pz` (it *builds* -- see below -- and now
-reaches the qir-qis call allowlist, which rejects PECOS's
-non-standard `__quantum__qis__barrierN__body`; the barrier-naming
-gap is pre-existing and orthogonal to the CReg model). Tier-1b
+`arrays` module flags). The remaining `validate_qir` failure is
+`legacy.empty_main` (qir-qis requires at least one qubit). Reusing barrier
+function declarations (#1189) removes suffixed barrier names and lets
+`qeclib.steane_pz` validate and execute. Tier-1b
 additionally pins the exact entry attr
 *values* (qir-qis only checks presence).
 
@@ -40,7 +36,7 @@ point-of-use `gep`+`load`/`store`; `zext`/`shl`/`or` pack ->
 runtime helpers (`create_creg`/`get_creg_bit`/`set_creg_bit`/
 `get_int_from_creg`/`set_creg_to_int`/`mz_to_creg_bit`). Every
 validate-passing program
-(`_EXPECTED_QIS_OK`, n=25) now lowers via `qir_to_qis`; `qis_failed`
+(`_EXPECTED_QIS_OK`, n=26) now lowers via `qir_to_qis`; `qis_failed`
 is empty. A NEW qir_to_qis failure -- or a dropped program -- trips
 this deliberately. (`docs.while_loop` was once in this set on a
 silently-wrong single-pass approximation; the QIR backend now
@@ -77,10 +73,8 @@ factory). `docs.prep_basis_x` MOVED here -> QIS_OK
 (it is now a clean dedicated-gate `PX` program; the old
 non-Z-`Prep` string form is gone -- the prep basis is the
 gate identity). Identity pinned (`_EXPECTED_BUILD_FAILED`)
-so a NEW build regression trips here. (`qeclib.steane_pz` was once a pinned
-build failure -- the bespoke model emitted invalid bitcode
-for it; the static model produces valid bitcode so it now builds and
-moves to the pinned validate set above. A deliberate, triaged improvement.)
+so a NEW build regression trips here. `qeclib.steane_pz` now builds,
+validates and executes after barrier declarations are reused (#1189).
 The backend also fails loud on `VarExpr` (was silently 0) and `Print`
 (was silently dropped); no corpus program exercises those, so
 they add no build-failure pin -- but they are no longer silent
@@ -146,25 +140,14 @@ _EXPECTED_BUILD_FAILED: dict[str, tuple[str, str]] = {
     # BUILD_FAILED 7 -> 5; QIS_OK 22 -> 24.
 }
 
-# Tier 1: the non-metadata `validate_qir` failures (label -> stable,
-# quote-free message fragment) so a NEW validate failure (e.g. a
-# metadata regression) trips deliberately. Neither is a metadata gap:
-#  - legacy.empty_main: qir-qis requires the entry fn to have >=1
-#    qubit; this program has none (structural limitation).
-#  - qeclib.steane_pz: the static CReg model made it *build* (the
-#    bespoke model emitted invalid bitcode); it now reaches the
-#    qir-qis call allowlist, which rejects PECOS's non-standard
-#    `__quantum__qis__barrierN__body`. The barrier-naming gap is
-#    pre-existing and orthogonal to the CReg model (barrier lowering
-#    is a separate task).
+# Tier 1: empty_main has no qubits, which qir-qis rejects structurally.
 _EXPECTED_VALIDATE_FAILED: dict[str, str] = {
     "legacy.empty_main": "at least one qubit",
-    "qeclib.steane_pz": "Unsupported QIR QIS function",
 }
 
 # Tier 2: EVERY validate-passing program lowers via
 # `qir_to_qis` (the static CReg model replaced the bespoke CReg helpers).
-# This is the full set (n=25); `qis_failed` must be empty. A new
+# This is the full set (n=26); `qis_failed` must be empty. A new
 # qir_to_qis failure -- or a dropped/added program -- trips the
 # Tier-2 assertions and must be triaged deliberately.
 _EXPECTED_QIS_OK: frozenset[str] = frozenset(
@@ -198,6 +181,7 @@ _EXPECTED_QIS_OK: frozenset[str] = frozenset(
         "qeclib.generic_check_1flag_ch",
         "qeclib.generic_check_xyz",
         "qeclib.generic_transversal_cx",
+        "qeclib.steane_pz",
         "qeclib.surface_patch_builder_empty",
         "qeclib.surface_std_pz",
         "v1.bell",

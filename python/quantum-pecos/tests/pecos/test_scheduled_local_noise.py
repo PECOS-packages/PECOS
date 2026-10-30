@@ -131,7 +131,7 @@ done:
 
 @pytest.mark.parametrize("events", [False, True])
 @pytest.mark.parametrize("idle_only", [False, True])
-def test_native_multi_operation_batch_reuses_qubit_before_live_feedback(
+def test_native_measurements_and_reset_keep_feedback_order(
     tmp_path,
     scheduled_support,
     events,
@@ -207,9 +207,23 @@ attributes #0 = { "EntryPoint" }
         assert result["measurement_2"] == [0 if idle_only else 1] * shots
         assert result["measurement_3"] == [1 if idle_only else 0] * shots
         if events:
-            # The initial PZ is separate; MZ, MZ, PZ, MZ arrive together after
-            # the idle gap, then RXY, MZ arrive after the first result returns.
-            assert batches == [[(0, 1, []), (1_000_000_000, 4, [0, 1, 3]), (1_000_000_000, 2, [1])]] * shots
+            # Selene polls after each source call. This eager plugin emits one
+            # operation per batch even when the proxy can coalesce queued work.
+            assert (
+                batches
+                == [
+                    [
+                        (0, 1, []),
+                        (1_000_000_000, 1, [0]),
+                        (1_000_000_000, 1, [0]),
+                        (1_000_000_000, 1, []),
+                        (1_000_000_000, 1, [0]),
+                        (1_000_000_000, 1, []),
+                        (1_000_000_000, 1, [0]),
+                    ],
+                ]
+                * shots
+            )
 
 
 @pytest.mark.parametrize("events", [False, True])
@@ -256,9 +270,9 @@ attributes #0 = { "EntryPoint" }
     built = simulation(library, program, profile, events).build()
     for shots in (4, 6):
         result = built.run(shots).to_dict()
-        # This public runtime also emits PZ on allocation, so both the initial
-        # preparation and the explicit reset receive the configured fault.
-        assert result["measurement_0"] == [first] * shots
+        # Allocation emits no preparation. Only the explicit reset receives
+        # preparation noise and can cause leakage-driven control flow.
+        assert result["measurement_0"] == [0] * shots
         assert result["measurement_1"] == [first] * shots
         if first == 2:
             # This measurement is emitted only after the live integer future

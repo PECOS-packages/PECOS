@@ -3145,7 +3145,7 @@ class TestBlockInputCapture:
                 self.q = q
                 self.extend(qb.Measure(q[0]) > c[0] if reference == "bit" else c.set(1))
 
-        with pytest.raises(ValueError, match=r"Block 'MixedNames'.*input 'q'.*q.*rename.*input"):
+        with pytest.raises(ValueError, match=r"quantum.*classical.*'q'.*[Rr]ename"):
             slr_to_ast(Main(q, c, MixedNames()))
 
     @pytest.mark.parametrize("binding", ["whole", "element", "unrelated"])

@@ -78,6 +78,7 @@ pub mod prelude;
 
 pub mod qis_interface;
 pub mod runtime;
+pub mod runtime_decoder;
 pub mod scheduled;
 mod scheduled_transport;
 
@@ -113,12 +114,16 @@ pub use program::{InterfaceChoice, IntoQisInterface, QisEngineProgram, QisInterf
 #[cfg(feature = "selene")]
 pub mod executor;
 #[cfg(feature = "selene")]
+pub mod runtime_batch_adapter;
+#[cfg(feature = "selene")]
 #[path = "selene_builder.rs"]
 pub mod selene_builder;
 #[cfg(feature = "selene")]
 mod selene_native;
 #[cfg(feature = "selene")]
 pub mod selene_runtime;
+#[cfg(feature = "selene")]
+pub use runtime_batch_adapter::{RuntimeBatch, RuntimeBatchAdapter};
 #[cfg(feature = "selene")]
 pub mod selene_runtimes;
 
@@ -128,8 +133,8 @@ pub use executor::{HeliosSyncHandle, QisHeliosInterface};
 pub use selene_builder::{HeliosInterfaceBuilder, helios_interface_builder};
 #[cfg(feature = "selene")]
 pub use selene_runtime::{
-    RuntimeCustomEvent, RuntimeCustomEventDisposition, RuntimeCustomEventPolicy, RuntimeNativeGate,
-    RuntimeNativeGateSet, SeleneRuntime,
+    RuntimeClockModel, RuntimeCustomEvent, RuntimeCustomEventDisposition, RuntimeCustomEventPolicy,
+    RuntimeNativeGate, RuntimeNativeGateSet, SeleneRuntime,
 };
 #[cfg(feature = "selene")]
 pub use selene_runtimes::{

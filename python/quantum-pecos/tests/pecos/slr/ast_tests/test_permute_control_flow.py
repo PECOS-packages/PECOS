@@ -82,7 +82,8 @@ def test_while_permute_rejected(backend) -> None:
     """Even generators which skip unsupported bodies must reject their Permutes."""
     q, c = QReg("q", 2), CReg("c", 1)
     program = Main(q, c, While(c == 1).Do(Permute([q[0], q[1]], [q[1], q[0]])))
-    with pytest.raises(NotImplementedError, match=r"Permute.*While"):
+    reason = r"While.*SlrConverter.*qir" if backend == "legacy_qir" else r"Permute.*While"
+    with pytest.raises(NotImplementedError, match=reason):
         compile_program(program, backend)
 
 

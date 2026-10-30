@@ -103,7 +103,6 @@ serde_json.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
 log.workspace = true
-dirs.workspace = true
 
 [build-dependencies]
 # Reads the wheel version out of pyproject.toml for the module's `__version__`.

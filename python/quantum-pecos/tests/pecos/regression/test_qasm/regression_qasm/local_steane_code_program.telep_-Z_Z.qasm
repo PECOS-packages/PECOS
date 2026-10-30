@@ -47,7 +47,7 @@ creg sout_syn_x[3];
 creg sout_syn_z[3];
 creg sout_syndromes[3];
 creg sout_verify_prep[32];
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier smid_d, smid_a;
 reset smid_d[0];
 reset smid_d[1];
 reset smid_d[2];
@@ -56,7 +56,7 @@ reset smid_d[4];
 reset smid_d[5];
 reset smid_d[6];
 reset smid_a[0];
-barrier smid_d;
+barrier smid_d, smid_a;
 h smid_d[0];
 h smid_d[4];
 h smid_d[6];
@@ -68,14 +68,14 @@ cx smid_d[6], smid_d[5];
 cx smid_d[0], smid_d[3];
 cx smid_d[4], smid_d[1];
 cx smid_d[3], smid_d[2];
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier smid_a, smid_d;
 // verification step
 cx smid_d[5], smid_a[0];
 cx smid_d[1], smid_a[0];
 cx smid_d[3], smid_a[0];
 measure smid_a[0] -> smid_verify_prep[0];
 // Repeat 2 times (unrolled)
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier smid_d, smid_a;
 if(smid_verify_prep[0] == 1) reset smid_d[0];
 if(smid_verify_prep[0] == 1) reset smid_d[1];
 if(smid_verify_prep[0] == 1) reset smid_d[2];
@@ -84,7 +84,7 @@ if(smid_verify_prep[0] == 1) reset smid_d[4];
 if(smid_verify_prep[0] == 1) reset smid_d[5];
 if(smid_verify_prep[0] == 1) reset smid_d[6];
 if(smid_verify_prep[0] == 1) reset smid_a[0];
-barrier smid_d;
+barrier smid_d, smid_a;
 if(smid_verify_prep[0] == 1) h smid_d[0];
 if(smid_verify_prep[0] == 1) h smid_d[4];
 if(smid_verify_prep[0] == 1) h smid_d[6];
@@ -96,13 +96,13 @@ if(smid_verify_prep[0] == 1) cx smid_d[6], smid_d[5];
 if(smid_verify_prep[0] == 1) cx smid_d[0], smid_d[3];
 if(smid_verify_prep[0] == 1) cx smid_d[4], smid_d[1];
 if(smid_verify_prep[0] == 1) cx smid_d[3], smid_d[2];
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier smid_a, smid_d;
 // verification step
 if(smid_verify_prep[0] == 1) cx smid_d[5], smid_a[0];
 if(smid_verify_prep[0] == 1) cx smid_d[1], smid_a[0];
 if(smid_verify_prep[0] == 1) cx smid_d[3], smid_a[0];
 if(smid_verify_prep[0] == 1) measure smid_a[0] -> smid_verify_prep[0];
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier smid_d, smid_a;
 if(smid_verify_prep[0] == 1) reset smid_d[0];
 if(smid_verify_prep[0] == 1) reset smid_d[1];
 if(smid_verify_prep[0] == 1) reset smid_d[2];
@@ -111,7 +111,7 @@ if(smid_verify_prep[0] == 1) reset smid_d[4];
 if(smid_verify_prep[0] == 1) reset smid_d[5];
 if(smid_verify_prep[0] == 1) reset smid_d[6];
 if(smid_verify_prep[0] == 1) reset smid_a[0];
-barrier smid_d;
+barrier smid_d, smid_a;
 if(smid_verify_prep[0] == 1) h smid_d[0];
 if(smid_verify_prep[0] == 1) h smid_d[4];
 if(smid_verify_prep[0] == 1) h smid_d[6];
@@ -123,13 +123,13 @@ if(smid_verify_prep[0] == 1) cx smid_d[6], smid_d[5];
 if(smid_verify_prep[0] == 1) cx smid_d[0], smid_d[3];
 if(smid_verify_prep[0] == 1) cx smid_d[4], smid_d[1];
 if(smid_verify_prep[0] == 1) cx smid_d[3], smid_d[2];
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier smid_a, smid_d;
 // verification step
 if(smid_verify_prep[0] == 1) cx smid_d[5], smid_a[0];
 if(smid_verify_prep[0] == 1) cx smid_d[1], smid_a[0];
 if(smid_verify_prep[0] == 1) cx smid_d[3], smid_a[0];
 if(smid_verify_prep[0] == 1) measure smid_a[0] -> smid_verify_prep[0];
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sout_d, sout_a;
 reset sout_d[0];
 reset sout_d[1];
 reset sout_d[2];
@@ -138,7 +138,7 @@ reset sout_d[4];
 reset sout_d[5];
 reset sout_d[6];
 reset sout_a[0];
-barrier sout_d;
+barrier sout_d, sout_a;
 h sout_d[0];
 h sout_d[4];
 h sout_d[6];
@@ -150,14 +150,14 @@ cx sout_d[6], sout_d[5];
 cx sout_d[0], sout_d[3];
 cx sout_d[4], sout_d[1];
 cx sout_d[3], sout_d[2];
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sout_a, sout_d;
 // verification step
 cx sout_d[5], sout_a[0];
 cx sout_d[1], sout_a[0];
 cx sout_d[3], sout_a[0];
 measure sout_a[0] -> sout_verify_prep[0];
 // Repeat 2 times (unrolled)
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sout_d, sout_a;
 if(sout_verify_prep[0] == 1) reset sout_d[0];
 if(sout_verify_prep[0] == 1) reset sout_d[1];
 if(sout_verify_prep[0] == 1) reset sout_d[2];
@@ -166,7 +166,7 @@ if(sout_verify_prep[0] == 1) reset sout_d[4];
 if(sout_verify_prep[0] == 1) reset sout_d[5];
 if(sout_verify_prep[0] == 1) reset sout_d[6];
 if(sout_verify_prep[0] == 1) reset sout_a[0];
-barrier sout_d;
+barrier sout_d, sout_a;
 if(sout_verify_prep[0] == 1) h sout_d[0];
 if(sout_verify_prep[0] == 1) h sout_d[4];
 if(sout_verify_prep[0] == 1) h sout_d[6];
@@ -178,13 +178,13 @@ if(sout_verify_prep[0] == 1) cx sout_d[6], sout_d[5];
 if(sout_verify_prep[0] == 1) cx sout_d[0], sout_d[3];
 if(sout_verify_prep[0] == 1) cx sout_d[4], sout_d[1];
 if(sout_verify_prep[0] == 1) cx sout_d[3], sout_d[2];
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sout_a, sout_d;
 // verification step
 if(sout_verify_prep[0] == 1) cx sout_d[5], sout_a[0];
 if(sout_verify_prep[0] == 1) cx sout_d[1], sout_a[0];
 if(sout_verify_prep[0] == 1) cx sout_d[3], sout_a[0];
 if(sout_verify_prep[0] == 1) measure sout_a[0] -> sout_verify_prep[0];
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sout_d, sout_a;
 if(sout_verify_prep[0] == 1) reset sout_d[0];
 if(sout_verify_prep[0] == 1) reset sout_d[1];
 if(sout_verify_prep[0] == 1) reset sout_d[2];
@@ -193,7 +193,7 @@ if(sout_verify_prep[0] == 1) reset sout_d[4];
 if(sout_verify_prep[0] == 1) reset sout_d[5];
 if(sout_verify_prep[0] == 1) reset sout_d[6];
 if(sout_verify_prep[0] == 1) reset sout_a[0];
-barrier sout_d;
+barrier sout_d, sout_a;
 if(sout_verify_prep[0] == 1) h sout_d[0];
 if(sout_verify_prep[0] == 1) h sout_d[4];
 if(sout_verify_prep[0] == 1) h sout_d[6];
@@ -205,7 +205,7 @@ if(sout_verify_prep[0] == 1) cx sout_d[6], sout_d[5];
 if(sout_verify_prep[0] == 1) cx sout_d[0], sout_d[3];
 if(sout_verify_prep[0] == 1) cx sout_d[4], sout_d[1];
 if(sout_verify_prep[0] == 1) cx sout_d[3], sout_d[2];
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sout_a, sout_d;
 // verification step
 if(sout_verify_prep[0] == 1) cx sout_d[5], sout_a[0];
 if(sout_verify_prep[0] == 1) cx sout_d[1], sout_a[0];
@@ -246,9 +246,9 @@ cz smid_a[1], smid_d[5];
 // 6 -> 6
 cz smid_a[2], smid_d[2];
 // 7 -> 3
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier smid_a;
 cz smid_a[0], smid_a[1];
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier smid_a;
 cx smid_a[0], smid_d[0];
 // 1 -> 1
 cz smid_a[1], smid_d[4];
@@ -261,9 +261,9 @@ cz smid_a[1], smid_d[2];
 // 7 -> 3
 cz smid_a[2], smid_d[6];
 // 4 -> 7
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier smid_a;
 cz smid_a[0], smid_a[2];
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier smid_a;
 cx smid_a[0], smid_d[2];
 // 7 -> 3
 cz smid_a[1], smid_d[1];
@@ -288,60 +288,60 @@ if(smid_flags == 0) reset smid_a[2];
 if(smid_flags == 0) h smid_a[0];
 if(smid_flags == 0) h smid_a[1];
 if(smid_flags == 0) h smid_a[2];
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier smid_a, smid_d;
 if(smid_flags == 0) cz smid_a[0], smid_d[3];
 // 5 -> 4
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier smid_a, smid_d;
+barrier smid_a, smid_d;
 if(smid_flags == 0) cx smid_a[1], smid_d[5];
 // 6 -> 6
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier smid_a, smid_d;
+barrier smid_a, smid_d;
 if(smid_flags == 0) cx smid_a[2], smid_d[2];
 // 7 -> 3
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier smid_a, smid_d;
+barrier smid_a, smid_d;
 if(smid_flags == 0) cz smid_a[1], smid_a[0];
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier smid_a, smid_d;
+barrier smid_a, smid_d;
 if(smid_flags == 0) cz smid_a[0], smid_d[0];
 // 1 -> 1
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier smid_a, smid_d;
+barrier smid_a, smid_d;
 if(smid_flags == 0) cx smid_a[1], smid_d[4];
 // 2 -> 5
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier smid_a, smid_d;
+barrier smid_a, smid_d;
 if(smid_flags == 0) cx smid_a[2], smid_d[3];
 // 5 -> 4
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier smid_a, smid_d;
+barrier smid_a, smid_d;
 if(smid_flags == 0) cz smid_a[0], smid_d[1];
 // 3 -> 2
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier smid_a, smid_d;
+barrier smid_a, smid_d;
 if(smid_flags == 0) cx smid_a[1], smid_d[2];
 // 7 -> 3
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier smid_a, smid_d;
+barrier smid_a, smid_d;
 if(smid_flags == 0) cx smid_a[2], smid_d[6];
 // 4 -> 7
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier smid_a, smid_d;
+barrier smid_a, smid_d;
 if(smid_flags == 0) cz smid_a[2], smid_a[0];
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier smid_a, smid_d;
+barrier smid_a, smid_d;
 if(smid_flags == 0) cz smid_a[0], smid_d[2];
 // 7 -> 3
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier smid_a, smid_d;
+barrier smid_a, smid_d;
 if(smid_flags == 0) cx smid_a[1], smid_d[1];
 // 3 -> 2
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier smid_a, smid_d;
+barrier smid_a, smid_d;
 if(smid_flags == 0) cx smid_a[2], smid_d[5];
 // 6 -> 6
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier smid_a, smid_d;
 if(smid_flags == 0) h smid_a[0];
 if(smid_flags == 0) h smid_a[1];
 if(smid_flags == 0) h smid_a[2];
@@ -571,9 +571,9 @@ cz sout_a[1], sout_d[5];
 // 6 -> 6
 cz sout_a[2], sout_d[2];
 // 7 -> 3
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sout_a;
 cz sout_a[0], sout_a[1];
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sout_a;
 cx sout_a[0], sout_d[0];
 // 1 -> 1
 cz sout_a[1], sout_d[4];
@@ -586,9 +586,9 @@ cz sout_a[1], sout_d[2];
 // 7 -> 3
 cz sout_a[2], sout_d[6];
 // 4 -> 7
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sout_a;
 cz sout_a[0], sout_a[2];
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sout_a;
 cx sout_a[0], sout_d[2];
 // 7 -> 3
 cz sout_a[1], sout_d[1];
@@ -613,60 +613,60 @@ if(sout_flags == 0) reset sout_a[2];
 if(sout_flags == 0) h sout_a[0];
 if(sout_flags == 0) h sout_a[1];
 if(sout_flags == 0) h sout_a[2];
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sout_a, sout_d;
 if(sout_flags == 0) cz sout_a[0], sout_d[3];
 // 5 -> 4
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sout_a, sout_d;
+barrier sout_a, sout_d;
 if(sout_flags == 0) cx sout_a[1], sout_d[5];
 // 6 -> 6
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sout_a, sout_d;
+barrier sout_a, sout_d;
 if(sout_flags == 0) cx sout_a[2], sout_d[2];
 // 7 -> 3
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sout_a, sout_d;
+barrier sout_a, sout_d;
 if(sout_flags == 0) cz sout_a[1], sout_a[0];
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sout_a, sout_d;
+barrier sout_a, sout_d;
 if(sout_flags == 0) cz sout_a[0], sout_d[0];
 // 1 -> 1
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sout_a, sout_d;
+barrier sout_a, sout_d;
 if(sout_flags == 0) cx sout_a[1], sout_d[4];
 // 2 -> 5
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sout_a, sout_d;
+barrier sout_a, sout_d;
 if(sout_flags == 0) cx sout_a[2], sout_d[3];
 // 5 -> 4
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sout_a, sout_d;
+barrier sout_a, sout_d;
 if(sout_flags == 0) cz sout_a[0], sout_d[1];
 // 3 -> 2
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sout_a, sout_d;
+barrier sout_a, sout_d;
 if(sout_flags == 0) cx sout_a[1], sout_d[2];
 // 7 -> 3
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sout_a, sout_d;
+barrier sout_a, sout_d;
 if(sout_flags == 0) cx sout_a[2], sout_d[6];
 // 4 -> 7
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sout_a, sout_d;
+barrier sout_a, sout_d;
 if(sout_flags == 0) cz sout_a[2], sout_a[0];
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sout_a, sout_d;
+barrier sout_a, sout_d;
 if(sout_flags == 0) cz sout_a[0], sout_d[2];
 // 7 -> 3
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sout_a, sout_d;
+barrier sout_a, sout_d;
 if(sout_flags == 0) cx sout_a[1], sout_d[1];
 // 3 -> 2
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sout_a, sout_d;
+barrier sout_a, sout_d;
 if(sout_flags == 0) cx sout_a[2], sout_d[5];
 // 6 -> 6
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sout_a, sout_d;
 if(sout_flags == 0) h sout_a[0];
 if(sout_flags == 0) h sout_a[1];
 if(sout_flags == 0) h sout_a[2];
@@ -880,7 +880,7 @@ sout_last_raw_syn_z = 0;
 // sout_syn_z = 0;
 // sout_flags_z = 0;
 // sout_flags = 0;
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sin_d, sin_a;
 reset sin_d[0];
 reset sin_d[1];
 reset sin_d[2];
@@ -889,7 +889,7 @@ reset sin_d[4];
 reset sin_d[5];
 reset sin_d[6];
 reset sin_a[0];
-barrier sin_d;
+barrier sin_d, sin_a;
 h sin_d[0];
 h sin_d[4];
 h sin_d[6];
@@ -901,14 +901,14 @@ cx sin_d[6], sin_d[5];
 cx sin_d[0], sin_d[3];
 cx sin_d[4], sin_d[1];
 cx sin_d[3], sin_d[2];
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sin_a, sin_d;
 // verification step
 cx sin_d[5], sin_a[0];
 cx sin_d[1], sin_a[0];
 cx sin_d[3], sin_a[0];
 measure sin_a[0] -> sin_verify_prep[0];
 // Repeat 2 times (unrolled)
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sin_d, sin_a;
 if(sin_verify_prep[0] == 1) reset sin_d[0];
 if(sin_verify_prep[0] == 1) reset sin_d[1];
 if(sin_verify_prep[0] == 1) reset sin_d[2];
@@ -917,7 +917,7 @@ if(sin_verify_prep[0] == 1) reset sin_d[4];
 if(sin_verify_prep[0] == 1) reset sin_d[5];
 if(sin_verify_prep[0] == 1) reset sin_d[6];
 if(sin_verify_prep[0] == 1) reset sin_a[0];
-barrier sin_d;
+barrier sin_d, sin_a;
 if(sin_verify_prep[0] == 1) h sin_d[0];
 if(sin_verify_prep[0] == 1) h sin_d[4];
 if(sin_verify_prep[0] == 1) h sin_d[6];
@@ -929,13 +929,13 @@ if(sin_verify_prep[0] == 1) cx sin_d[6], sin_d[5];
 if(sin_verify_prep[0] == 1) cx sin_d[0], sin_d[3];
 if(sin_verify_prep[0] == 1) cx sin_d[4], sin_d[1];
 if(sin_verify_prep[0] == 1) cx sin_d[3], sin_d[2];
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sin_a, sin_d;
 // verification step
 if(sin_verify_prep[0] == 1) cx sin_d[5], sin_a[0];
 if(sin_verify_prep[0] == 1) cx sin_d[1], sin_a[0];
 if(sin_verify_prep[0] == 1) cx sin_d[3], sin_a[0];
 if(sin_verify_prep[0] == 1) measure sin_a[0] -> sin_verify_prep[0];
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sin_d, sin_a;
 if(sin_verify_prep[0] == 1) reset sin_d[0];
 if(sin_verify_prep[0] == 1) reset sin_d[1];
 if(sin_verify_prep[0] == 1) reset sin_d[2];
@@ -944,7 +944,7 @@ if(sin_verify_prep[0] == 1) reset sin_d[4];
 if(sin_verify_prep[0] == 1) reset sin_d[5];
 if(sin_verify_prep[0] == 1) reset sin_d[6];
 if(sin_verify_prep[0] == 1) reset sin_a[0];
-barrier sin_d;
+barrier sin_d, sin_a;
 if(sin_verify_prep[0] == 1) h sin_d[0];
 if(sin_verify_prep[0] == 1) h sin_d[4];
 if(sin_verify_prep[0] == 1) h sin_d[6];
@@ -956,7 +956,7 @@ if(sin_verify_prep[0] == 1) cx sin_d[6], sin_d[5];
 if(sin_verify_prep[0] == 1) cx sin_d[0], sin_d[3];
 if(sin_verify_prep[0] == 1) cx sin_d[4], sin_d[1];
 if(sin_verify_prep[0] == 1) cx sin_d[3], sin_d[2];
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sin_a, sin_d;
 // verification step
 if(sin_verify_prep[0] == 1) cx sin_d[5], sin_a[0];
 if(sin_verify_prep[0] == 1) cx sin_d[1], sin_a[0];
@@ -982,9 +982,9 @@ cz sin_a[1], sin_d[5];
 // 6 -> 6
 cz sin_a[2], sin_d[2];
 // 7 -> 3
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sin_a;
 cz sin_a[0], sin_a[1];
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sin_a;
 cx sin_a[0], sin_d[0];
 // 1 -> 1
 cz sin_a[1], sin_d[4];
@@ -997,9 +997,9 @@ cz sin_a[1], sin_d[2];
 // 7 -> 3
 cz sin_a[2], sin_d[6];
 // 4 -> 7
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sin_a;
 cz sin_a[0], sin_a[2];
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sin_a;
 cx sin_a[0], sin_d[2];
 // 7 -> 3
 cz sin_a[1], sin_d[1];
@@ -1024,60 +1024,60 @@ if(sin_flags == 0) reset sin_a[2];
 if(sin_flags == 0) h sin_a[0];
 if(sin_flags == 0) h sin_a[1];
 if(sin_flags == 0) h sin_a[2];
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sin_a, sin_d;
 if(sin_flags == 0) cz sin_a[0], sin_d[3];
 // 5 -> 4
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sin_a, sin_d;
+barrier sin_a, sin_d;
 if(sin_flags == 0) cx sin_a[1], sin_d[5];
 // 6 -> 6
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sin_a, sin_d;
+barrier sin_a, sin_d;
 if(sin_flags == 0) cx sin_a[2], sin_d[2];
 // 7 -> 3
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sin_a, sin_d;
+barrier sin_a, sin_d;
 if(sin_flags == 0) cz sin_a[1], sin_a[0];
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sin_a, sin_d;
+barrier sin_a, sin_d;
 if(sin_flags == 0) cz sin_a[0], sin_d[0];
 // 1 -> 1
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sin_a, sin_d;
+barrier sin_a, sin_d;
 if(sin_flags == 0) cx sin_a[1], sin_d[4];
 // 2 -> 5
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sin_a, sin_d;
+barrier sin_a, sin_d;
 if(sin_flags == 0) cx sin_a[2], sin_d[3];
 // 5 -> 4
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sin_a, sin_d;
+barrier sin_a, sin_d;
 if(sin_flags == 0) cz sin_a[0], sin_d[1];
 // 3 -> 2
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sin_a, sin_d;
+barrier sin_a, sin_d;
 if(sin_flags == 0) cx sin_a[1], sin_d[2];
 // 7 -> 3
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sin_a, sin_d;
+barrier sin_a, sin_d;
 if(sin_flags == 0) cx sin_a[2], sin_d[6];
 // 4 -> 7
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sin_a, sin_d;
+barrier sin_a, sin_d;
 if(sin_flags == 0) cz sin_a[2], sin_a[0];
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sin_a, sin_d;
+barrier sin_a, sin_d;
 if(sin_flags == 0) cz sin_a[0], sin_d[2];
 // 7 -> 3
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sin_a, sin_d;
+barrier sin_a, sin_d;
 if(sin_flags == 0) cx sin_a[1], sin_d[1];
 // 3 -> 2
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sin_a, sin_d;
+barrier sin_a, sin_d;
 if(sin_flags == 0) cx sin_a[2], sin_d[5];
 // 6 -> 6
-barrier sin_d, sin_a, smid_d, smid_a, sout_d, sout_a;
+barrier sin_a, sin_d;
 if(sin_flags == 0) h sin_a[0];
 if(sin_flags == 0) h sin_a[1];
 if(sin_flags == 0) h sin_a[2];

@@ -14,7 +14,7 @@ from pecos.qec.helix.gadgets import (
     syndrome_round_gadgets,
     weight8_check_steps,
 )
-from pecos.qec.helix.logic import logic_circuit, logic_conjugates, logic_gadgets
+from pecos.qec.helix.logic import logic_circuit, logic_conjugates, logic_definitions, logic_gadgets
 from pecos.qec.helix.logical import (
     LogicalGate,
     c4_helix_gates,
@@ -44,6 +44,7 @@ __all__ = [
     "helix_result_refs",
     "logic_circuit",
     "logic_conjugates",
+    "logic_definitions",
     "logic_gadgets",
     "logical_action",
     "logical_gate_steps",

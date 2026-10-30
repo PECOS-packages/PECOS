@@ -104,6 +104,10 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   also returns `MeasurementWork`, the refactor and decouple work that
   measurement executed, for benchmarking.
 
+- Python: C4-Helix logic words render to certified Guppy programs with reusable
+  gate gadgets and data relabels. `logic_definitions` supplies typed detectors
+  and signed observable references for `build_dem_from_guppy`.
+
 - Python: C4-Helix logical gate gadgets flag all seven physical CZs and compile
   signed two-qubit Cliffords with minimal S0S1 count. Logic circuits discover
   detectors using pulled-back logical conjugates. Distance tests pin the

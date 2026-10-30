@@ -377,6 +377,12 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Python additions
 
+- `pecos.analysis.circuit_parallelism` measures how densely selected operations
+  of an existing `QuantumCircuit` pack into layers that preserve per-qubit and
+  condition order, and reports mean operations, active qubits and density for
+  all selected layers and for unconditional layers only. Unselected and
+  zero-qubit operations are barriers unless explicitly projected out.
+
 - Decode APIs and `build_decoder` accept a `DetectorErrorModel` object as standard
   text plus labels. Graph specs accept the `irreducible` keyword, and results
   expose a `ProjectionReport` via `.projection` when preparation shares a projection.

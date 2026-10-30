@@ -6,6 +6,10 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- The PECOS QASM parser accepts a `//` line comment that ends at end of input
+  without a newline (#1518). Before, such a program failed with a syntax error,
+  which included SLR-generated QASM ending in a `Comment`.
+
 - `derive_seed` hashes its purpose string with a fixed SipHash-1-3 instead of
   `std`'s `DefaultHasher`, whose algorithm is unspecified across Rust releases
   (#1496). Every derived seed keeps its current value, so seeded results do not

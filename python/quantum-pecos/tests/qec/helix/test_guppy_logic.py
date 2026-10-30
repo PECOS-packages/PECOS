@@ -25,6 +25,7 @@ from pecos.qec.helix import (
     logic_circuit,
     logic_definitions,
     logic_gadgets,
+    logical_gate_steps,
     lower_steps,
 )
 from pecos.qec.helix import logic as logic_module
@@ -112,9 +113,12 @@ def test_nonzero_reference_rejected(monkeypatch, builder):
         builder("Z", ("SWAP",))
 
 
-@pytest.mark.parametrize(("basis", "word"), [("X", ("S0S1",)), ("Z", ("unknown",))])
-def test_render_rejects_invalid_word(basis, word):
-    with pytest.raises(ValueError, match=r"Random readout|Invalid logical gate token"):
+@pytest.mark.parametrize(
+    ("basis", "word", "message"),
+    [("X", ("S0S1",), "Random readout"), ("Z", ("unknown",), "Invalid logical gate token 'unknown'")],
+)
+def test_render_rejects_invalid_word(basis, word, message):
+    with pytest.raises(ValueError, match=message):
         render_helix_logic_source(basis, word)
 
 
@@ -160,6 +164,7 @@ def _symptoms(dem):
     for line in dem.to_string().splitlines():
         if line.startswith("error("):
             targets = line.split(")", 1)[1].split()
+            assert all(t[0] in "DL" for t in targets), line
             symptoms.add((frozenset(t for t in targets if t[0] == "D"), frozenset(t for t in targets if t[0] == "L")))
     return symptoms
 
@@ -244,7 +249,7 @@ def test_drop_relabel_mutation(monkeypatch, basis, word, kind):
         source = render_helix_logic_source(basis, word)
         # Keep the now empty gate function syntactically valid, without any swaps.
         source, count = re.subn(r"    mem_swap\(code.data\[\d+\], code.data\[\d+\]\)", "    pass", source)
-        assert count > 0
+        assert count == sum(step.op_type == OpType.RELABEL for step in logical_gate_steps("SWAP"))
         return source
 
     monkeypatch.setattr(renderer, "render_helix_logic_source", mutated)

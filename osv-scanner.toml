@@ -124,24 +124,27 @@ reason = "Transitive via hugr-core and tket; no swap_columns call exists in PECO
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0367"
 # zip@2.4.2 -- SUID/SGID bits preserved by extract().
-# Chain: relay-bp 0.2.2 -> ndarray-npy 0.9.1 -> zip ^2 (opt-in relay-bp feature;
-# pecos-rslib enables it for the Python RelayBpDecoder).
+# Chain: relay-bp 0.2.2 -> ndarray-npy 0.9.1 -> zip ^2, reached through
+# pecos-relay-bp: the relay-bp feature of pecos-decoders (pecos-rslib enables it
+# for the Python RelayBpDecoder), exp/pecos-phase-poly, and pecos-bp's parity tests.
 # Upstream owners: https://github.com/trmue/relay and https://github.com/jturner314/ndarray-npy.
 reason = "Transitive via relay-bp/ndarray-npy, which read .npz entries by name and never call ZipArchive::extract or ZipStreamReader::extract, the affected APIs."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0368"
 # zip@2.4.2 -- extract() creates symlinks with attacker-chosen targets.
-# Chain: relay-bp 0.2.2 -> ndarray-npy 0.9.1 -> zip ^2 (opt-in relay-bp feature;
-# pecos-rslib enables it for the Python RelayBpDecoder).
+# Chain: relay-bp 0.2.2 -> ndarray-npy 0.9.1 -> zip ^2, reached through
+# pecos-relay-bp: the relay-bp feature of pecos-decoders (pecos-rslib enables it
+# for the Python RelayBpDecoder), exp/pecos-phase-poly, and pecos-bp's parity tests.
 # Upstream owners: https://github.com/trmue/relay and https://github.com/jturner314/ndarray-npy.
 reason = "Transitive via relay-bp/ndarray-npy, which read .npz entries by name and never call ZipArchive::extract or ZipStreamReader::extract, the affected APIs."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0369"
 # zip@2.4.2 -- extract() applies permissions through symlinks.
-# Chain: relay-bp 0.2.2 -> ndarray-npy 0.9.1 -> zip ^2 (opt-in relay-bp feature;
-# pecos-rslib enables it for the Python RelayBpDecoder).
+# Chain: relay-bp 0.2.2 -> ndarray-npy 0.9.1 -> zip ^2, reached through
+# pecos-relay-bp: the relay-bp feature of pecos-decoders (pecos-rslib enables it
+# for the Python RelayBpDecoder), exp/pecos-phase-poly, and pecos-bp's parity tests.
 # Upstream owners: https://github.com/trmue/relay and https://github.com/jturner314/ndarray-npy.
 reason = "Transitive via relay-bp/ndarray-npy, which read .npz entries by name and never call ZipArchive::extract or ZipStreamReader::extract, the affected APIs."
 
@@ -167,12 +170,12 @@ reason = "Transitive via relay-bp/ndarray-npy, which build zip without the aes-c
 
 [[IgnoredVulns]]
 id = "GHSA-q7v9-x93c-xqv3"
-# zip@2.4.2 -- extract() sizes a symlink-target buffer from the declared size and can
-# abort on allocation. Fixed in 9.0.0.
+# zip@2.4.2 -- ZipArchive::extract() and extract_unwrapped_root_dir() size a
+# symlink-target buffer from the declared size and can abort on allocation. Fixed in 9.0.0.
 # Chain: relay-bp 0.2.2 -> ndarray-npy 0.9.1 -> zip ^2 (same chain as
 # RUSTSEC-2026-0367..0369). The workspace requires zip >= 9.0.5.
 # Upstream owners: https://github.com/trmue/relay and https://github.com/jturner314/ndarray-npy.
-reason = "Transitive via relay-bp/ndarray-npy, which read .npz entries by name and never call ZipArchive::extract or ZipStreamReader::extract, the affected APIs."
+reason = "Transitive via relay-bp/ndarray-npy, which read .npz entries only through ZipArchive::by_name and by_index and never call ZipArchive::extract or extract_unwrapped_root_dir, the paths that reach the affected symlink branch."
 
 [[IgnoredVulns]]
 id = "GHSA-qwgh-2vcv-g2f7"

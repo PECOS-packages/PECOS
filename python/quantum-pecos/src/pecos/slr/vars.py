@@ -21,7 +21,7 @@ IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 # TODO: Make it a VarDef
 
 
-class LoopVar:
+class LoopVar(PyCOp):
     """Represents a loop iteration variable for symbolic indexing.
 
     Used with For loops to enable indexing registers with the loop variable:
@@ -33,7 +33,14 @@ class LoopVar:
 
     The symbolic element is resolved to concrete indices during code generation
     when the loop is unrolled.
+
+    Comparisons and arithmetic build SLR expressions, so `If(i == 0)` keeps
+    the loop variable instead of evaluating to a Python bool.
     """
+
+    # PyCOp's expression-building __eq__ would otherwise make LoopVar unhashable;
+    # a loop variable is identified by the object itself.
+    __hash__ = object.__hash__
 
     def __init__(self, name: str) -> None:
         """Create a loop variable.

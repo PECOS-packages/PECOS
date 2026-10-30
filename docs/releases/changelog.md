@@ -6,6 +6,14 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Breaking:** SLR `LoopVar` comparisons and arithmetic (`i == 0`, `i < n`,
+  `i + 1`, ...) build SLR expressions (#1517). Before, `i == 0` was a plain
+  Python `False`, so `If(i == 0)` inside `For(i, ...)` became a branch that
+  never ran in every backend, with no error. Guppy now emits the comparison in
+  its `for` loop. QASM and QIR raise `NotImplementedError` for a loop variable
+  used as a classical value, since their unrolling does not bind it; QIR used
+  to report it as an undeclared register. `LoopVar` stays hashable by identity.
+
 - **Breaking:** SLR code generation rejects constructs it previously silently
   dropped (#1189): QASM `While`, dynamic or non-integer `For` bounds, zero steps,
   `Print`, and unsupported `Permute` shapes; QIR non-integer

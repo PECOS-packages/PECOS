@@ -156,6 +156,25 @@ id = "GHSA-m665-v7pm-7grj"
 reason = "Transitive via relay-bp/ndarray-npy, which reads .npz entries only through ZipArchive and never uses ZipStreamReader, so no second parser sees the archive."
 
 [[IgnoredVulns]]
+id = "GHSA-8hxf-qr8p-62x4"
+# zip@2.4.2 -- an AES entry's HMAC is skipped when the entry ends early. Fixed in 9.0.0.
+# Chain: relay-bp 0.2.2 -> ndarray-npy 0.9.1 -> zip ^2 (same chain as
+# RUSTSEC-2026-0367..0369). ndarray-npy depends on zip with default-features = false
+# and nothing enables aes-crypto, so src/aes.rs is not compiled; Cargo.lock shows
+# zip 2.4.2 without aes, hmac or pbkdf2. The workspace requires zip >= 9.0.5.
+# Upstream owners: https://github.com/trmue/relay and https://github.com/jturner314/ndarray-npy.
+reason = "Transitive via relay-bp/ndarray-npy, which build zip without the aes-crypto feature, so the AES reader is not compiled, and never pass a password."
+
+[[IgnoredVulns]]
+id = "GHSA-q7v9-x93c-xqv3"
+# zip@2.4.2 -- extract() sizes a symlink-target buffer from the declared size and can
+# abort on allocation. Fixed in 9.0.0.
+# Chain: relay-bp 0.2.2 -> ndarray-npy 0.9.1 -> zip ^2 (same chain as
+# RUSTSEC-2026-0367..0369). The workspace requires zip >= 9.0.5.
+# Upstream owners: https://github.com/trmue/relay and https://github.com/jturner314/ndarray-npy.
+reason = "Transitive via relay-bp/ndarray-npy, which read .npz entries by name and never call ZipArchive::extract or ZipStreamReader::extract, the affected APIs."
+
+[[IgnoredVulns]]
 id = "GHSA-qwgh-2vcv-g2f7"
 # block-buffer@0.10.4 -- the advisory covers buffers that keep their cursor inside the
 # block bytes (EagerBuffer, ReadBuffer), where an unwinding callback can leave it out

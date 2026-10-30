@@ -110,6 +110,19 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   also returns `MeasurementWork`, the refactor and decouple work that
   measurement executed, for benchmarking.
 
+- `SparseStab` has an opt-in batch measurement order,
+  `with_measurement_batch_order(MeasurementBatchOrder::BitReversed)`. It measures
+  batch positions in bit-reversed order and returns results in caller order.
+  The outcome distribution is unchanged, but seeded outcomes change. On the
+  6.6.6 color code with the refactor rule, touches per gate grow as sqrt(n)
+  instead of linearly: at d = 511, 117.6 with bit-reversed order versus 1,134.9
+  in caller order (2,856 with the default rule in caller order). On the surface
+  code at d = 511, the refactor rule uses 59.3 touches per gate with bit-reversed
+  order versus 82.3 in caller order. On the typical small-code workloads
+  (surface, color, bivariate bicycle, hypergraph product and tricycle codes),
+  refactor plus bit-reversed order is 1.18x slower than the default (geomean),
+  so it stays opt-in.
+
 - Python: `pecos.guppy_gen.helix` renders certified C4-Helix memory programs
   with scalar, round-free result tags and `mem_swap` swap-out gadgets.
   `pecos.qec.helix.memory_definitions` supplies typed detectors and observables

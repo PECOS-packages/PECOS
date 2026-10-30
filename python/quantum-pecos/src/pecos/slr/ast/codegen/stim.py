@@ -684,8 +684,8 @@ class AstToStim:
         sizes = {**self.context.creg_sizes, **self.context.qreg_sizes}
         if name not in sizes:
             msg = (
-                f"Stim codegen: unknown Permute reference {ref!r}; block-local registers are not declared "
-                f"by the AST converter (#1511). Declare register {name!r} at Main scope."
+                f"Stim codegen: unknown Permute reference {ref!r}; "
+                f"declare register {name!r} in Main or in an ordinary Block."
             )
             raise NotImplementedError(msg)
         if parsed is not None:

@@ -265,6 +265,8 @@ class GuppyContext:
     root_allocators: dict[str, int] = field(default_factory=dict)
     child_allocators: set[str] = field(default_factory=set)
     registers: dict[str, RegisterDecl] = field(default_factory=dict)
+    block_name: str | None = None
+    loop_variables: set[str] = field(default_factory=set)
     linearity: GuppyLinearityState | None = None
     temp_counter: int = 0
     # Single namespace-wide slot -> Guppy-local table. Populated
@@ -462,7 +464,7 @@ class AstToGuppy:
         Future iters add qubit/bit bundles and PRODUCED/DROPPED effects.
         """
         saved_context = self.context
-        self.context = GuppyContext()
+        self.context = GuppyContext(block_name=decl.name)
         # Categorize each input. `_validate_block_decl` guarantees the type_expr
         # is one of: bare qubit, array[qubit, N], or bare bit. `size` is the
         # qubit-array length (1 for single qubit, unused for bit).
@@ -796,6 +798,7 @@ class AstToGuppy:
             msg = f"Unsupported Guppy return value {value!r}"
             raise GuppyCodegenError(msg)
 
+        self._render_expression(value)
         if isinstance(value, BitExpr):
             return "bool"
         if isinstance(value, LiteralExpr) and isinstance(value.value, bool):
@@ -1126,6 +1129,8 @@ class AstToGuppy:
         raise GuppyCodegenError(msg)
 
     def _emit_gate(self, node: GateOp) -> list[str]:
+        for param in node.params:
+            self._render_expression(param)
         if node.gate in PARAMETERIZED_FUNCTIONAL_GATES:
             return self._emit_parameterized_gate(node)
 
@@ -1298,7 +1303,11 @@ class AstToGuppy:
 
     def _emit_assign(self, node: AssignOp) -> list[str]:
         is_bit_target = isinstance(node.target, BitRef)
-        target = self._render_bit_ref(node.target) if is_bit_target else str(node.target)
+        target = (
+            self._render_bit_ref(node.target)
+            if is_bit_target
+            else self._render_classical_reference(node.target, assignment=True)
+        )
         value = self._render_expression(node.value, bool_context=is_bit_target)
         return [f"{self.context.indent()}{target} = {value}"]
 
@@ -1369,7 +1378,12 @@ class AstToGuppy:
         before = linearity.snapshot()
         lines = [f"{self.context.indent()}{header}"]
         self.context.push_indent()
-        body_lines = self._emit_block(node.body)
+        outer_variables = self.context.loop_variables
+        self.context.loop_variables = outer_variables | {node.variable}
+        try:
+            body_lines = self._emit_block(node.body)
+        finally:
+            self.context.loop_variables = outer_variables
         lines.extend(self._suite(body_lines))
         self.context.pop_indent()
 
@@ -1936,7 +1950,7 @@ class AstToGuppy:
         if isinstance(expr, LiteralExpr):
             return self._render_literal(expr, bool_context=bool_context)
         if isinstance(expr, VarExpr):
-            return expr.name
+            return self._render_classical_reference(expr.name)
         if isinstance(expr, BitExpr):
             return self._render_bit_ref(expr.ref)
         if isinstance(expr, BinaryExpr):
@@ -1944,6 +1958,30 @@ class AstToGuppy:
         if isinstance(expr, UnaryExpr):
             return self._render_unary(expr, bool_context=bool_context)
         msg = f"Unsupported Guppy expression {expr!r}"
+        raise GuppyCodegenError(msg)
+
+    def _render_classical_reference(self, reference: str, *, assignment: bool = False) -> str:
+        """Resolve a register or enclosing loop variable in the current function."""
+        match = re.fullmatch(r"([A-Za-z_]\w*)(?:\[(-?\d+|[A-Za-z_]\w*)\])?", reference)
+        if match is not None:
+            name, index = match.groups()
+            if index is None:
+                if name in self.context.registers or (not assignment and name in self.context.loop_variables):
+                    return reference
+            elif name in self.context.registers and (
+                re.fullmatch(r"-?\d+", index) is not None or index in self.context.loop_variables
+            ):
+                return reference
+        if self.context.block_name is not None:
+            msg = (
+                f"Unresolved classical reference {reference!r} in block {self.context.block_name!r}; "
+                "Guppy block functions cannot capture outer registers or loop variables."
+            )
+        else:
+            msg = (
+                f"Unresolved classical reference {reference!r} in main; "
+                "it names no declared register or enclosing loop variable."
+            )
         raise GuppyCodegenError(msg)
 
     def _render_literal(self, expr: LiteralExpr, *, bool_context: bool = False) -> str:

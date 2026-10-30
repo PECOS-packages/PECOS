@@ -10,16 +10,14 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! High-performance random number generator for bulk generation.
+//! Xoshiro256++-based random number generator for bulk generation.
 //!
-//! [`PecosRng`], the default RNG for PECOS simulations.
-//! It is optimized for bulk random number generation, making it ideal for
-//! Monte Carlo simulations and measurement sampling.
+//! [`PecosQualityRng`] runs 4 parallel Xoshiro256++ streams and has the same
+//! interface as the default [`PecosRng`](crate::PecosRng), which is backed by
+//! `RapidRng` instead. Choose it when you want the longer-studied Xoshiro
+//! generator; the default `PecosRng` is the faster of the two.
 //!
 //! # Usage
-//!
-//! For most use cases, use [`PecosRng`] which is a type alias for the current
-//! best-performing RNG implementation:
 //!
 //! ```
 //! use pecos_random::quality_rng::PecosQualityRng;
@@ -34,17 +32,10 @@
 //! rng.fill_u64(&mut buffer);
 //! ```
 //!
-//! # Performance
-//!
-//! `PecosRng` is approximately:
-//! - 35% faster than scalar Xoshiro256++
-//! - 17% faster than `RapidRng`
-//!
 //! # Implementation
 //!
-//! Currently backed by [`SimdXoshiro256PlusPlus`], which maintains 4 parallel
-//! Xoshiro256++ generators. This may change in future versions if a faster
-//! implementation becomes available.
+//! Backed by [`SimdXoshiro256PlusPlus`], which maintains 4 parallel
+//! Xoshiro256++ generators.
 
 use core::convert::Infallible;
 use rand_core::{SeedableRng, TryRng};
@@ -146,8 +137,8 @@ const BUFFER_SIZE: usize = BUFFER_CHUNKS * 4; // 16 elements
 /// # Optimized Methods
 ///
 /// For high-frequency scalar operations, use these optimized methods:
-/// - [`next_bool_fast`]: Extracts 64 bools from a single u64 (2x faster than `random_bool(0.5)`)
-/// - [`check_probability`]: Fixed-point probability check (avoids f64 conversion)
+/// - [`next_bool_fast`](Self::next_bool_fast): Extracts 64 bools from a single u64 (2x faster than `random_bool(0.5)`)
+/// - [`check_probability`](Self::check_probability): Fixed-point probability check (avoids f64 conversion)
 #[derive(Clone, Debug)]
 pub struct SimdXoshiro256PlusPlus {
     /// State: 4 parallel Xoshiro256++ generators stored in SIMD layout.
@@ -359,7 +350,7 @@ impl SimdXoshiro256PlusPlus {
     // Fixed-point probability methods (avoid f64 conversion)
     // ========================================================================
 
-    /// Convert a probability to a u64 threshold for use with [`check_probability`].
+    /// Convert a probability to a u64 threshold for use with [`check_probability`](Self::check_probability).
     ///
     /// This allows precomputing the threshold once and reusing it for many
     /// probability checks, avoiding f64 conversion on each check.
@@ -396,7 +387,7 @@ impl SimdXoshiro256PlusPlus {
     ///
     /// This is faster than `random_bool(p)` for fixed probabilities because it
     /// avoids the f64 conversion on each call. The threshold should be computed
-    /// once using [`probability_threshold`].
+    /// once using [`probability_threshold`](Self::probability_threshold).
     ///
     /// # Example
     ///

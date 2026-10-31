@@ -19,12 +19,12 @@ Detector bytes retain the [existing contract](runtime-decoding.md): binary,
 dense, at most 1,048,576 bytes. The context is 1–65,536 bytes, copied before
 suspension. A nonempty buffer needs a valid readable pointer. Native transport
 checks lengths and UTF-8; the standard Python provider additionally parses and
-validates the v1 contract below. The QIS host/FFI data ABI is now **6**; rebuild
+validates the v1 contract below. The QIS host/FFI data ABI is now **7**; rebuild
 both artifacts together. The intrinsic's v1 is the JSON contract version, not
 the host/FFI data ABI version.
 
 The original `pecos_runtime_decode` import remains supported for unbound windows.
-Both imports share the same shot-local contiguous instance counter and failure
+All decode imports share the same shot-local contiguous instance counter and failure
 latch. Rust `RuntimeDecoderSession::decode_v1` defaults to an error. Custom Python
 sessions must retain a callable `decode(window_id, instance_id, syndrome)`
 method because the factory validates that existing protocol on creation. To
@@ -59,8 +59,8 @@ It does not authorize references across independently decoded boundaries.
 This declaration differs from `dem_spec.result_ref`, which resolves named
 `result()` outputs against a captured trace. No second circuit, DEM, composer or
 decoder is introduced; models still come from the existing APIs. A future
-instrumented frontend must supply and verify the bridge between these semantic
-reads and actual runtime measurement provenance.
+instrumented frontend must supply source expectations. The optional observed-read
+path below verifies executed native reads against those expectations.
 
 The schema's `schema_id` is lowercase SHA-256 of canonical ASCII JSON:
 `{"version":1,"detectors":...,"frame_ids":...}`. Serialize with sorted object
@@ -90,6 +90,80 @@ identities must match exactly. A bound window rejects a legacy call; an unbound
 window rejects a versioned call. Wrong identities, malformed contexts and decoder
 failures abort the shot before a frame is returned. Factories, counters and
 provider state reset for the next shot and remain isolated across workers.
+
+## Observed native reads (opt-in)
+
+```llvm
+declare i1 @pecos_runtime_read_bool_v1(ptr, i64, i64)
+; UTF-8 semantic name, name byte count, native future handle.
+declare i64 @pecos_runtime_decode_observed_v1(i64, i64, ptr, i64, ptr, i64)
+; Same arguments and v1 JSON context as decode_v1 above.
+```
+
+The read wrapper delegates to the selected runtime's existing Boolean getter,
+including its existing lazy-force behavior. It records the returned bit and the
+QIS FFI's shot-local measurement occurrence ID. This ID is assigned at source
+measurement creation, before runtime scheduling; it is neither a native future
+handle nor a simulator-private fault/logical-truth value. Handle reuse replaces
+the handle association without changing already captured observations. Opaque
+custom calls invalidate source associations: subsequent checked reads with
+unknown provenance fail. Already captured reads remain usable.
+
+Each label's read occurrence starts at zero after **every decode call**, including
+legacy and declared-only calls. Those older calls discard their observed-read
+interval. Shot reset clears both completed and interrupted reads. Observations
+are separate from caller JSON and named `result()` output bookkeeping; printing
+a named result does not consume decoder observations.
+
+Opt in with `RuntimeDecodeWindow(binding=..., read_sources=...)`. Each immutable
+`RuntimeReadSource(record=RuntimeRecordRef(name="readout", occurrence=0),
+source_id=0)` supplies one expected source measurement occurrence. The mapping
+must cover exactly the unique schema read terms; repeated reads have distinct
+occurrences even when they read the same source. All named reads in the interval
+must participate in that schema, with occurrences contiguous from zero per name.
+For this restricted checked subset, use ordinary getters for reads unrelated to
+detector terms. An empty tuple enables checked constant-reference detectors;
+`None` retains declared-only/legacy behavior. The observed import rejects windows
+without `read_sources`, and checked windows reject the other decode imports.
+
+Before constructing the existing model decoder, the standard session checks:
+
+1. The v1 binding and the complete, exact set of observed named occurrences.
+2. Each observed source ID against its expected `RuntimeReadSource`.
+3. Each **program-order** detector byte against the XOR of the observed values
+   and its declared reference sign. Only then is `detector_order` applied.
+
+A wrong source is rejected even if it returns the same bit. Missing/extra reads,
+wrong occurrence numbers, wrong reference parities and wrong source mappings
+abort the shot before feedback. A supplied provider can select a concrete source
+mapping per instance using its existing request, but receives no observation
+array, syndrome, future handle or private simulator state. Deriving source IDs
+by arithmetic is valid only for a separately established fixed schedule, such as
+the synthetic integration fixture; adaptive paths require their own sound
+source mapping, not guesses based on a realized trace.
+
+Read names contain 1–256 UTF-8 bytes without control characters below U+0020.
+An interval permits at most 65,536 reads and 1,048,576 total name bytes. Bounds
+are checked before entering the getter. The runtime owns all pending allocations
+so cancellation can safely clear an interrupted read. This wrapper currently
+requires dynamic execution with the native Selene protocol; unsupported paths
+are rejected. Decoder calls themselves add no forcing, barriers or physical work.
+
+Custom Python sessions implement
+`decode_observed_v1(window_id, instance_id, syndrome, context, observations)`;
+observations arrive as a list of `(name, occurrence, source_id, bool)` tuples in
+read order. The existing callable `decode` method is still required. Rust's
+`RuntimeDecoderSession::decode_observed_v1` rejects by default. Neither bridge
+falls back to a weaker method. Custom sessions are trusted extensions; directly
+calling a Python session with fabricated observations is not an authenticated
+execution path.
+
+These checks verify executed getter/source/parity consistency against supplied
+expectations. Semantic names, compiler/source-site identity, branch predicates,
+loop/input declarations and the DEM's physical meaning remain caller assertions.
+Equal parities cannot prove the program's full classical data flow. These checks
+also do not certify a single adaptive branch as a sound DEM, establish window
+independence or generate JIT fragments.
 
 ## Context v1
 
@@ -138,9 +212,10 @@ noise/support topology, geometry, schema, horizon and supported boundary state.
 Apply supported instance relabelings separately with `DemSliceInstance`.
 Neither the schema digest nor the entire Boolean history is sufficient alone.
 
-Checked declarations still cannot detect a program that sends the right schema
-ID with values computed from the wrong reads. They cannot establish that branch
-records are complete or true, prove fault ownership or discharge independence.
+Declared-only calls cannot detect a program that sends the right schema ID with
+values computed from the wrong reads. Observed calls check source identities and
+parities, but cannot establish that semantic labels or branch records are complete
+or true, prove fault ownership or discharge independence.
 No admission rule has been weakened:
 
 - A fault changing a branch requires a proved closed/invariant gadget or a

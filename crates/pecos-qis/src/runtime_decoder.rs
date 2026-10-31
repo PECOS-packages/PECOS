@@ -1,5 +1,6 @@
 //! Shot-local host decoding, separate from physical runtime scheduling.
 use pecos_core::errors::PecosError;
+pub use pecos_qis_ffi_types::RuntimeObservedRead;
 use std::sync::Arc;
 
 /// A fresh session is created on first use in each shot, on its host worker.
@@ -34,6 +35,23 @@ pub trait RuntimeDecoderSession: Send + Sync {
             "decoder session does not support context v1".into(),
         ))
     }
+
+    /// Check observed read sources and parities before decoding. No fallback.
+    ///
+    /// # Errors
+    /// The default rejects sessions without observed-read support.
+    fn decode_observed_v1(
+        &mut self,
+        _window_id: u64,
+        _instance_id: u64,
+        _syndrome: &[u8],
+        _context: &[u8],
+        _reads: &[RuntimeObservedRead],
+    ) -> Result<u64, PecosError> {
+        Err(PecosError::Input(
+            "decoder session does not support observed reads".into(),
+        ))
+    }
 }
 
 pub(crate) struct PendingDecode {
@@ -41,6 +59,7 @@ pub(crate) struct PendingDecode {
     pub instance: u64,
     pub syndrome: Vec<u8>,
     pub context: Option<Vec<u8>>,
+    pub observed_reads: Option<Vec<RuntimeObservedRead>>,
 }
 
 /// Immutable factory configuration may be shared by workers; sessions may not.

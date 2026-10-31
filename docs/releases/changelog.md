@@ -458,6 +458,15 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Python additions
 
+- **Non-breaking:** `pecos.simulators.prepare_circuit(state, circuit)` validates
+  and decodes a circuit once. `pecos.HybridEngine.run` accepts the result and
+  skips per-shot decoding and validation of ideal ticks; raw circuits behave as
+  before and error circuits stay checked. Preparation rejects malformed gates
+  even under `skip` or false `cond` conditions. Without an error model, 50
+  H/CX/S/CX layers plus measurement ran 2.23x faster per shot on 100-qubit
+  SparseStabPy (410 ms raw, 184 ms prepared). Error models such as
+  `DepolarizingErrorModel` still decode every tick per shot.
+
 - `pecos.analysis.circuit_parallelism` measures how densely selected operations
   of an existing `QuantumCircuit` pack into layers that preserve per-qubit and
   condition order, and reports mean operations, active qubits and density for

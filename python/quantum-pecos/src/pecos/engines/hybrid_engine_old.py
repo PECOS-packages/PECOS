@@ -29,10 +29,10 @@ from pecos.engines.cvm.semantics import DefaultClassicalSemantics
 from pecos.engines.cvm.wasm import eval_cfunc, get_ccop
 from pecos.exceptions import NotSupportedGateError
 from pecos.noise.fake_error_model import FakeErrorModel
-from pecos.simulators.batch_validation import replayable_locations, validate_batch
+from pecos.simulators.batch_validation import PreparedCircuit, replayable_locations, validate_batch
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Iterable, Mapping
     from typing import Any, Protocol
 
     from pecos.circuits import QuantumCircuit
@@ -108,7 +108,7 @@ class HybridEngine:
     def run(
         self,
         state: SimulatorProtocol,
-        circuit: QuantumCircuit,
+        circuit: QuantumCircuit | PreparedCircuit,
         shot_id: int,
         error_gen: ParentErrorModel | None = None,
         error_params: dict[str, float | dict[str, float]] | None = None,
@@ -118,6 +118,10 @@ class HybridEngine:
         circ_inspector: CircuitInspector | OperationEventInspector | None = None,
     ) -> tuple[dict, dict]:
         """Run a quantum circuit with optional error modeling.
+
+        Prepared ideal ticks dispatch without run_circuit or run_gate, so
+        subclasses overriding either must pass the raw circuit. Error circuits
+        and raw circuits use the public, checked methods.
 
         Args:
             state: Quantum simulator state.
@@ -133,6 +137,22 @@ class HybridEngine:
         Returns:
             Tuple of final simulator state and output dictionary.
         """
+        if isinstance(circuit, PreparedCircuit):
+            for method in ("run_circuit", "run_gate"):
+                if method in vars(self) or getattr(type(self), method) is not getattr(HybridEngine, method):
+                    msg = (
+                        f"{type(self).__name__} overrides {method}, which prepared circuits bypass; "
+                        "pass the raw circuit instead"
+                    )
+                    raise TypeError(msg)
+            capacity = getattr(state, "gate_capacity", None)
+            if type(state) is not circuit.state_type or capacity != circuit.gate_capacity:
+                msg = (
+                    f"prepared circuit was validated for {circuit.state_type.__name__} "
+                    f"with gate_capacity={circuit.gate_capacity}; got {type(state).__name__} "
+                    f"with gate_capacity={capacity}; re-run prepare_circuit for this state"
+                )
+                raise ValueError(msg)
         operation_analyzer = None
         engine_manages_inspector = False
         finish_run = None
@@ -191,7 +211,7 @@ class HybridEngine:
     def _run(
         self,
         state: SimulatorProtocol,
-        circuit: QuantumCircuit,
+        circuit: QuantumCircuit | PreparedCircuit,
         shot_id: int,
         error_gen: ParentErrorModel | None = None,
         error_params: dict[str, float | dict[str, float]] | None = None,
@@ -202,6 +222,9 @@ class HybridEngine:
         operation_analyzer: OperationAnalyzer | None = None,
     ) -> tuple[dict, dict]:
         """Execute one circuit after inspector lifecycle setup."""
+        prepared = circuit if isinstance(circuit, PreparedCircuit) else None
+        if prepared is not None:
+            circuit = prepared.source
         output = self.classical_semantics.set_output(state, circuit, output_spec, output)
         output["JOB_shotnum"] = shot_id
         output_export = {}
@@ -222,7 +245,12 @@ class HybridEngine:
 
         # run through the circuits...
         # ---------------------------
-        for tick_circuit, time, params in circuit.iter_ticks():
+        ticks = prepared.ticks if prepared is not None else circuit.iter_ticks()
+        for tick in ticks:
+            if prepared is not None:
+                tick_circuit, time, params = tick.tick, tick.time, tick.params
+            else:
+                tick_circuit, time, params = tick
             # ---------------
             # GENERATE ERRORS
             # ---------------
@@ -259,14 +287,25 @@ class HybridEngine:
             # ------------------
             self._operation_analyzer = operation_analyzer
             try:
-                self.run_circuit(
-                    state,
-                    output,
-                    output_export,
-                    tick_circuit,
-                    error_gen,
-                    removed_locations=removed,
-                )
+                if prepared is not None:
+                    self._run_items(
+                        state,
+                        output,
+                        output_export,
+                        tick.items,
+                        error_gen,
+                        removed,
+                        self._dispatch_gate,
+                    )
+                else:
+                    self.run_circuit(
+                        state,
+                        output,
+                        output_export,
+                        tick_circuit,
+                        error_gen,
+                        removed_locations=removed,
+                    )
             finally:
                 self._operation_analyzer = None
 
@@ -307,11 +346,32 @@ class HybridEngine:
         from what a ``circuit_runner`` will return for the same method named ``run_circuit``.
 
         """
+        self._run_items(
+            state,
+            output,
+            output_export,
+            circuit.items(),
+            error_gen,
+            removed_locations,
+            self.run_gate,
+        )
+
+    def _run_items(
+        self,
+        state: SimulatorProtocol,
+        output: dict[str, BitInt],
+        output_export: dict[str, BitInt],
+        items: Iterable[tuple[str, set[Location], GateParams]],
+        error_gen: ParentErrorModel,
+        removed_locations: set[int] | None,
+        dispatch: Callable,
+    ) -> None:
+        """Execute decoded items with the selected gate dispatch boundary."""
         self.state = state
         if removed_locations is None:
             removed_locations = set()
 
-        for symbol, locations, params in circuit.items():
+        for symbol, locations, params in items:
             if params.get("skip"):
                 continue
 
@@ -391,7 +451,7 @@ class HybridEngine:
                     pass
 
                 else:  # quantum operation
-                    self.run_gate(
+                    dispatch(
                         state,
                         output,
                         symbol,
@@ -435,6 +495,17 @@ class HybridEngine:
             # growable PauliProp; num_qubits is never used as a fallback.
             validate_batch(symbol, locations, getattr(state, "gate_capacity", None))
 
+        HybridEngine._dispatch_gate(state, output, symbol, locations, **params)
+
+    @staticmethod
+    def _dispatch_gate(
+        state: SimulatorProtocol,
+        output: dict[str, BitInt],
+        symbol: str,
+        locations: set[int],
+        **params: GateParams,
+    ) -> None:
+        """Dispatch a validated batch and collect its results."""
         if params.get("simulate_gate", True):
             for location in locations:
                 if params.get("angles") and len(params["angles"]) == 1:

@@ -6,6 +6,18 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Breaking:** the PECOS QASM parser rejects a reference to an undeclared
+  classical register, or to a bit beyond a declared register's size, anywhere a
+  classical value is read or written: conditions, assignments, operands,
+  function arguments and measurement targets. Before, the engine evaluated an
+  undeclared name as 0, so `if(i == 0) x q[0];` with no `creg i` ran the gate.
+  The error names the identifier and says to declare it with `creg`. A gate body
+  referencing a name that is not one of its declared parameters is also rejected,
+  even if the gate is unused or a classical register has that name. Gate and
+  opaque formal parameters are unaffected. `pecos_qasm::bitvec_expression::evaluate_expression_bitvec`
+  drops its unused width argument, and `pecos_qasm::dag_bridge::QasmBridgeError`
+  gains an `InvalidProgram` variant.
+
 - The PECOS QASM parser accepts a `//` line comment that ends at end of input
   without a newline (#1518). Before, such a program failed with a syntax error,
   which included SLR-generated QASM ending in a `Comment`.

@@ -151,7 +151,7 @@ def test_nested_child_allocator_offsets() -> None:
     program = Main(root, first, Block(child, Block(grandchild)))
     ast = slr_to_ast(program)
     assert ast.declarations == (
-        AllocatorDecl(name="root", capacity=5, offset=0),
+        AllocatorDecl(name="root", capacity=5),
         AllocatorDecl(name="first", capacity=2, parent="root", offset=0),
         AllocatorDecl(name="child", capacity=3, parent="root", offset=2),
         AllocatorDecl(name="grandchild", capacity=2, parent="child", offset=0),
@@ -395,7 +395,7 @@ def test_round2_root_block_inputs_is_inline() -> None:
             self.q = q
 
     ast = slr_to_ast(Root())
-    assert ast.declarations == (AllocatorDecl(name="q", capacity=1, offset=0), RegisterDecl(name="c", size=1))
+    assert ast.declarations == (AllocatorDecl(name="q", capacity=1), RegisterDecl(name="c", size=1))
     assert not ast.block_decls
     assert "creg c[1];" in SlrConverter(Root()).qasm()
 
@@ -413,7 +413,7 @@ def test_round2_function_vars_may_repeat_inputs(ordinary) -> None:
 
     parts = {"before": (Block(q), Inner()), "after": (Inner(), Block(q)), "bound_only": (Inner(),)}
     program = Main(*parts[ordinary])
-    assert slr_to_ast(program).declarations == (AllocatorDecl(name="q", capacity=1, offset=0),)
+    assert slr_to_ast(program).declarations == (AllocatorDecl(name="q", capacity=1),)
     assert SlrConverter(program).hugr() is not None
 
 
@@ -533,7 +533,7 @@ def test_round2_placement_survives_ast_consumers() -> None:
     flattened = flatten_block_calls(optimized)
     assert flattened.declarations == ast.declarations
     assert {decl.name: decl.offset for decl in flattened.declarations if isinstance(decl, AllocatorDecl)} == {
-        "root": 0,
+        "root": None,
         "first": 0,
         "target": 0,
         "mid": 1,
@@ -895,3 +895,13 @@ def test_round4_released_child_slots_can_be_reused() -> None:
     assert "x root[1];" in code
     root.release()
     assert second.is_released
+
+
+def test_root_allocator_offset_has_one_spelling() -> None:
+    assert slr_to_ast(Main(QReg("q", 2))).declarations[0] == AllocatorDecl(name="q", capacity=2)
+    assert slr_to_ast(Main(QAlloc(2, name="b"))).declarations[0] == AllocatorDecl(name="b", capacity=2)
+
+
+def test_qalloc_parent_must_be_a_qalloc() -> None:
+    with pytest.raises(TypeError, match=r"QAlloc parent must be a QAlloc, got QReg.*parent\.child"):
+        QAlloc(1, name="x", parent=QReg("r", 2))

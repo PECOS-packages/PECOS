@@ -850,16 +850,39 @@ fn result_created_names_are_hoisted() {
 }
 
 #[test]
-fn no_exports_report_all_classical_storage() {
-    check_classical(
-        vec![
+fn no_exports_preserve_runner_selection() {
+    for with_result in [false, true] {
+        let mut ops = vec![
             json!({"data":"qvar_define","variable":"q","size":1}),
             json!({"data":"cvar_define","variable":"measurement_user","data_type":"u32","size":2}),
             json!({"data":"cvar_define","variable":"a","data_type":"u32","size":2}),
-            json!({"cop":"Result","args":["a"],"returns":["copy"]}),
-        ],
-        &[("a", 0, 2), ("measurement_user", 0, 2), ("copy", 0, 2)],
-    );
+        ];
+        let mut all = vec![("a", 0, 2), ("measurement_user", 0, 2)];
+        if with_result {
+            ops.push(json!({"cop":"Result","args":["a"],"returns":["copy"]}));
+            all.push(("copy", 0, 2));
+        }
+        let selected = if with_result {
+            vec![("copy", 0, 2)]
+        } else {
+            all.clone()
+        };
+        let source = program(ops);
+        let mut native = PhirJsonEngine::from_json(&source).unwrap();
+        assert_native(&run(&mut native), &selected);
+        let mut interpreter = PhirClassicalInterpreter::new();
+        interpreter.init(&source, None).unwrap();
+        interpreter.execute_program().unwrap();
+        assert_interpreter(&interpreter, &all);
+        let mut converted = PhirEngine::new(phir_json_to_module(&source).unwrap()).unwrap();
+        let (values, widths) = expected(&selected);
+        assert_eq!(normalize(&run(&mut converted), &widths), values);
+        let ast = PHIRProgram::from_json(&source).unwrap();
+        assert_eq!(
+            BlockExecutor::new().execute_program(&ast.ops).unwrap(),
+            values
+        );
+    }
     check_classical(
         vec![json!({"data":"qvar_define","variable":"q","size":1})],
         &[],

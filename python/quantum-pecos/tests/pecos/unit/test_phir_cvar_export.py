@@ -546,7 +546,8 @@ def test_result_widths_are_static_maxima(runner, reverse):
 
 @pytest.mark.parametrize("runner", ["default", "python", "native"])
 @pytest.mark.parametrize(
-    ("a_type", "a_size", "b_size"), [("u32", 8, 1), ("u32", 2, 3), ("u32", 1, 1), ("u32", 1, 2), ("i32", 2, 3)],
+    ("a_type", "a_size", "b_size"),
+    [("u32", 8, 1), ("u32", 2, 3), ("u32", 1, 1), ("u32", 1, 2), ("i32", 2, 3)],
 )
 def test_declared_results_accept_all_source_types(runner, a_type, a_size, b_size):
     source = program(
@@ -588,19 +589,21 @@ def test_result_created_names_are_hoisted(runner):
 
 
 @pytest.mark.parametrize("runner", ["default", "python", "native"])
-def test_no_exports_report_all_classical_storage(runner):
-    source = program(
-        [
-            {"data": "qvar_define", "variable": "q", "size": 1},
-            {"data": "cvar_define", "variable": "measurement_user", "data_type": "u32", "size": 2},
-            {"data": "cvar_define", "variable": "a", "data_type": "u32", "size": 2},
-            {"cop": "Result", "args": ["a"], "returns": ["copy"]},
-        ],
-    )
-    assert_output(
-        run(source, runner), {"a": 0, "copy": 0, "measurement_user": 0}, {"a": 2, "copy": 2, "measurement_user": 2},
-    )
-    assert run(program(source["ops"][:1]), runner) == {}
+@pytest.mark.parametrize("with_result", [False, True])
+def test_no_exports_preserve_runner_selection(runner, with_result):
+    ops = [
+        {"data": "qvar_define", "variable": "q", "size": 1},
+        {"data": "cvar_define", "variable": "measurement_user", "data_type": "u32", "size": 2},
+        {"data": "cvar_define", "variable": "a", "data_type": "u32", "size": 2},
+    ]
+    expected = {"a": 0, "measurement_user": 0}
+    if with_result:
+        ops.append({"cop": "Result", "args": ["a"], "returns": ["copy"]})
+        expected["copy"] = 0
+        if runner == "native":
+            expected = {"copy": 0}
+    assert_output(run(program(ops), runner), expected, dict.fromkeys(expected, 2))
+    assert run(program(ops[:1]), runner) == {}
 
 
 @pytest.mark.parametrize("runner", ["default", "python", "native"])

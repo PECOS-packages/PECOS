@@ -694,3 +694,75 @@ def test_indexed_results_reserve_unexecuted_writes(runner):
         {"out": 41, "bit": 1},
         bitstrings=runner != "native",
     )
+
+
+@pytest.mark.parametrize("runner", ["default", "python", "native"])
+def test_whole_results_preserve_source_scalar_types(runner):
+    source = program(
+        [
+            {"data": "cvar_define", "variable": "b", "data_type": "bool", "size": 1},
+            {"data": "cvar_define", "variable": "s", "data_type": "i8", "size": 4},
+            {"data": "cvar_define", "variable": "u", "data_type": "u32", "size": 3},
+            {"cop": "=", "args": [1], "returns": ["b"]},
+            {"cop": "=", "args": [-3], "returns": ["s"]},
+            {"cop": "=", "args": [5], "returns": ["u"]},
+            {"cop": "Result", "args": ["b", "s", "u"], "returns": ["ob", "os", "ou"]},
+            {"cop": "=", "args": [200], "returns": ["os"]},
+        ],
+    )
+    result = run(source, runner)
+    assert normalize({name: result[name] for name in ("ob", "os", "ou")}, {"ob": 1, "os": 5, "ou": 3}) == {
+        "ob": [1, 1],
+        "os": [8, 8],
+        "ou": [5, 5],
+    }
+    if runner != "native":
+        for name, dtype in [("ob", bool), ("os", pc.i8), ("ou", pc.u32)]:
+            assert all(type(value) is dtype for value in result[name])
+
+
+@pytest.mark.parametrize("runner", ["default", "python", "native"])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_whole_result_types_resolve_chains_and_mixed_sources(runner, reverse):
+    copies = [
+        {"cop": "Result", "args": ["a", "b"], "returns": ["same", "same"]},
+        {"cop": "Result", "args": ["a", "c"], "returns": ["mixed", "mixed"]},
+        {"cop": "Result", "args": ["same", "mixed"], "returns": ["chain", "wide_chain"]},
+        {"cop": "Result", "args": ["a"], "returns": [["indexed", 0]]},
+    ]
+    source = program(
+        [
+            {"data": "cvar_define", "variable": "a", "data_type": "u32", "size": 3},
+            {"data": "cvar_define", "variable": "b", "data_type": "u32", "size": 5},
+            {"data": "cvar_define", "variable": "c", "data_type": "u8", "size": 2},
+            export(),
+            *(reversed(copies) if reverse else copies),
+        ],
+    )
+    result = run(source, runner)
+    widths = {"same": 5, "mixed": 3, "chain": 5, "wide_chain": 3, "indexed": 32}
+    assert_output(result, dict.fromkeys(widths, 0), widths)
+    if runner != "native":
+        for name in widths:
+            dtype = pc.u32 if name in {"same", "chain"} else pc.u64
+            assert all(type(value) is dtype for value in result[name])
+
+
+@pytest.mark.parametrize("runner", ["default", "python", "native"])
+def test_result_cycles_propagate_unsigned_defaults(runner):
+    source = program(
+        [
+            {"data": "cvar_define", "variable": "bit", "data_type": "bool", "size": 1},
+            {"data": "cvar_define", "variable": "root", "data_type": "u32", "size": 4},
+            export(),
+            {"cop": "Result", "args": [["bit", 0]], "returns": ["a"]},
+            {"cop": "Result", "args": ["a", "b"], "returns": ["b", "a"]},
+            {"cop": "Result", "args": ["root", "a"], "returns": ["out", "out"]},
+            {"cop": "Result", "args": ["out"], "returns": ["chain"]},
+        ],
+    )
+    result = run(source, runner)
+    widths = {"a": 1, "b": 1, "out": 4, "chain": 4}
+    assert_output(result, dict.fromkeys(widths, 0), widths)
+    if runner != "native":
+        assert all(type(value) is pc.u64 for values in result.values() for value in values)

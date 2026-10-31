@@ -944,3 +944,138 @@ fn indexed_results_reserve_unexecuted_writes() {
         &[("out", 1, 41), ("bit", 1, 1)],
     );
 }
+
+#[test]
+fn whole_results_preserve_source_scalar_types() {
+    let source = program(vec![
+        json!({"data":"cvar_define","variable":"b","data_type":"bool","size":1}),
+        json!({"data":"cvar_define","variable":"s","data_type":"i8","size":4}),
+        json!({"data":"cvar_define","variable":"u","data_type":"u32","size":3}),
+        json!({"cop":"=","args":[1],"returns":["b"]}),
+        json!({"cop":"=","args":[-3],"returns":["s"]}),
+        json!({"cop":"=","args":[5],"returns":["u"]}),
+        json!({"cop":"Result","args":["b","s","u"],"returns":["ob","os","ou"]}),
+        json!({"cop":"=","args":[200],"returns":["os"]}),
+    ]);
+    let mut native = PhirJsonEngine::from_json(&source).unwrap();
+    assert_native(
+        &run(&mut native),
+        &[("ob", 1, 1), ("os", 8, 5), ("ou", 5, 3)],
+    );
+    let mut interpreter = PhirClassicalInterpreter::new();
+    interpreter.init(&source, None).unwrap();
+    interpreter.execute_program().unwrap();
+    let result = interpreter.results(true).unwrap();
+    for (name, dtype) in [("ob", "bool"), ("os", "i8"), ("ou", "u32")] {
+        match &result[name] {
+            ResultValue::Int(_, actual) | ResultValue::UInt(_, actual) => assert_eq!(actual, dtype),
+            other @ ResultValue::BitString(_) => panic!("unexpected scalar {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn whole_result_types_resolve_chains_and_mixed_sources() {
+    for reverse in [false, true] {
+        let mut copies = vec![
+            json!({"cop":"Result","args":["a","b"],"returns":["same","same"]}),
+            json!({"cop":"Result","args":["a","c"],"returns":["mixed","mixed"]}),
+            json!({"cop":"Result","args":["same","mixed"],"returns":["chain","wide_chain"]}),
+            json!({"cop":"Result","args":["a"],"returns":[["indexed",0]]}),
+        ];
+        if reverse {
+            copies.reverse();
+        }
+        let mut ops = vec![
+            json!({"data":"cvar_define","variable":"a","data_type":"u32","size":3}),
+            json!({"data":"cvar_define","variable":"b","data_type":"u32","size":5}),
+            json!({"data":"cvar_define","variable":"c","data_type":"u8","size":2}),
+            export(&[]),
+        ];
+        ops.extend(copies);
+        let source = program(ops);
+        let mut interpreter = PhirClassicalInterpreter::new();
+        interpreter.init(&source, None).unwrap();
+        let results = interpreter.results(true).unwrap();
+        for (name, dtype) in [
+            ("same", "u32"),
+            ("chain", "u32"),
+            ("mixed", "u64"),
+            ("wide_chain", "u64"),
+            ("indexed", "u64"),
+        ] {
+            assert!(
+                matches!(&results[name],ResultValue::UInt(0, actual) if actual==dtype),
+                "{name}: {:?}",
+                results[name]
+            );
+        }
+        phir_json_to_module(&source).unwrap();
+    }
+}
+
+#[test]
+fn direct_measure_checks_flattened_counts() {
+    use pecos_phir_json::v0_1::ast::QubitArg;
+    let mut interpreter = PhirClassicalInterpreter::new();
+    interpreter
+        .init(
+            &program(vec![json!({"data":"qvar_define","variable":"q","size":2})]),
+            None,
+        )
+        .unwrap();
+    let args = [QubitArg::MultipleQubits(vec![
+        ("q".into(), 0),
+        ("q".into(), 1),
+    ])];
+    let returns = [("m".into(), 0), ("m".into(), 1)];
+    interpreter
+        .make_qop("Measure", &None, &args, &returns, &None)
+        .unwrap();
+    for count in [0, 1] {
+        let error = interpreter
+            .make_qop("Measure", &None, &args, &returns[..count], &None)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("Measure") && error.contains("give each measured qubit a destination"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn whole_boolean_result_converts() {
+    let source = program(vec![
+        json!({"data":"qvar_define","variable":"q","size":1}),
+        json!({"data":"cvar_define","variable":"b","data_type":"bool","size":1}),
+        json!({"qop":"X","args":[["q",0]]}),
+        json!({"qop":"Measure","args":[["q",0]],"returns":[["b",0]]}),
+        json!({"cop":"Result","args":["b"],"returns":["copy"]}),
+    ]);
+    let mut converted = PhirEngine::new(phir_json_to_module(&source).unwrap()).unwrap();
+    assert_eq!(integer(&run(&mut converted).data["copy"]), 1);
+}
+
+#[test]
+fn result_cycles_propagate_unsigned_defaults() {
+    let source = program(vec![
+        json!({"data":"cvar_define","variable":"bit","data_type":"bool","size":1}),
+        json!({"data":"cvar_define","variable":"root","data_type":"u32","size":4}),
+        export(&[]),
+        json!({"cop":"Result","args":[["bit",0]],"returns":["a"]}),
+        json!({"cop":"Result","args":["a","b"],"returns":["b","a"]}),
+        json!({"cop":"Result","args":["root","a"],"returns":["out","out"]}),
+        json!({"cop":"Result","args":["out"],"returns":["chain"]}),
+    ]);
+    let mut interpreter = PhirClassicalInterpreter::new();
+    interpreter.init(&source, None).unwrap();
+    let results = interpreter.results(true).unwrap();
+    for name in ["a", "b", "out", "chain"] {
+        assert!(
+            matches!(&results[name],ResultValue::UInt(0,dtype) if dtype=="u64"),
+            "{name}: {:?}",
+            results[name]
+        );
+    }
+}

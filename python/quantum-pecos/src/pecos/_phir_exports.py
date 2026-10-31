@@ -124,6 +124,7 @@ def collect_result_types(operations: list[dict]) -> dict[str, tuple[str, int]]:
                 for source, dest in zip(args, returns, strict=True)
             )
     widths = {name: size for name, (_, size) in types.items()}
+    data_types = {name: dtype for name, (dtype, _) in types.items()}
     # Signedness is a bit set: 1 for unsigned sources, 2 for signed sources.
     signs = {name: 2 if dtype.startswith("i") else 1 for name, (dtype, _) in types.items()}
     indexed = {dest for _, (dest, index) in pairs if index is not None}
@@ -146,12 +147,15 @@ def collect_result_types(operations: list[dict]) -> dict[str, tuple[str, int]]:
             widths[dest] = max(widths.get(dest, 0), 1)
         if dest in indexed or dest not in whole:
             signs[dest] = 1
-    _propagate_result_types(pairs, declared, indexed, widths, signs)
-    # Cycles with no whole-source signedness have unsigned bit contributions only.
+            data_types[dest] = "u64"
+    _propagate_result_types(pairs, declared, indexed, widths, signs, data_types)
+    # Default unanchored cycles only after resolving anchored types, then propagate
+    # again so those defaults can widen downstream mixed-type copies.
     for _, (dest, _) in pairs:
         if not signs.get(dest):
             signs[dest] = 1
-    _propagate_result_types(pairs, declared, indexed, widths, signs)
+        data_types.setdefault(dest, "i64" if signs[dest] == 2 else "u64")
+    _propagate_result_types(pairs, declared, indexed, widths, signs, data_types)
     for (source, _), _ in pairs:
         if source not in widths:
             msg = (
@@ -173,7 +177,14 @@ def collect_result_types(operations: list[dict]) -> dict[str, tuple[str, int]]:
                 "declare the destination or use whole-register sources with the same signedness"
             )
             raise ValueError(msg)
-        types[dest] = ("i64" if dest not in indexed and signed is not None else "u64", widths[dest])
+        width = widths.get(dest)
+        if width is None:
+            msg = (
+                f"Result width invariant broken for destination {dest!r}: every source has a width "
+                "after unknown-source validation, so every destination must have a propagated width"
+            )
+            raise RuntimeError(msg)
+        types[dest] = (data_types[dest], width)
     for pair in pairs:
         for name, index in pair:
             _validate_result_index(name, index, types[name][1])
@@ -186,6 +197,7 @@ def _propagate_result_types(
     indexed: set[str],
     widths: dict[str, int],
     signs: dict[str, int],
+    data_types: dict[str, str],
 ) -> None:
     while True:
         changed = False
@@ -201,6 +213,12 @@ def _propagate_result_types(
                 previous = signs.get(dest, 0)
                 changed |= previous | sign != previous
                 signs[dest] = previous | sign
+                if source in data_types:
+                    dtype = data_types[source]
+                    if dest in data_types and data_types[dest] != dtype:
+                        dtype = "i64" if signs[dest] == 2 else "u64"
+                    changed |= data_types.get(dest) != dtype
+                    data_types[dest] = dtype
         if not changed:
             return
 

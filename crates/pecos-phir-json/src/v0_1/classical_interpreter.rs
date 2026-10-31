@@ -447,7 +447,7 @@ impl PhirClassicalInterpreter {
         }
 
         if qop_name == "Measure" {
-            super::classical_validation::validate_measure_args(args, returns)?;
+            super::operations::validate_measurement_counts(flat_args.len(), returns.len())?;
         }
 
         // Build var_output for measurement compatibility

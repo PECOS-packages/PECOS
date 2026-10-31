@@ -317,6 +317,7 @@ fn infer_result_types(
 ) -> Result<(), PecosError> {
     use super::environment::DataType;
     let mut widths = BTreeMap::new();
+    let mut data_types = BTreeMap::new();
     // Signedness is a bit set: 1 for unsigned sources, 2 for signed sources.
     let mut signs = BTreeMap::new();
     let indexed: BTreeSet<_> = pairs
@@ -332,6 +333,7 @@ fn infer_result_types(
     for name in declared {
         let info = types.classical_info(name)?;
         widths.insert(name.clone(), info.size);
+        data_types.insert(name.clone(), info.data_type.clone());
         signs.insert(
             name.clone(),
             if info.data_type.is_signed() { 2u8 } else { 1u8 },
@@ -357,15 +359,39 @@ fn infer_result_types(
         }
         if indexed.contains(&dest.name) || !whole.contains(&dest.name) {
             signs.insert(dest.name.clone(), 1);
+            data_types.insert(dest.name.clone(), DataType::U64);
         }
     }
-    propagate_result_types(pairs, declared, &indexed, &mut widths, &mut signs);
+    propagate_result_types(
+        pairs,
+        declared,
+        &indexed,
+        &mut widths,
+        &mut signs,
+        &mut data_types,
+    );
+    // Resolve anchored types first, then default unanchored cycles. Propagate
+    // again so those defaults can widen downstream mixed-type copies.
     for (_, dest) in pairs {
         if signs.get(&dest.name).copied().unwrap_or(0) == 0 {
             signs.insert(dest.name.clone(), 1);
         }
+        data_types.entry(dest.name.clone()).or_insert_with(|| {
+            if signs.get(&dest.name) == Some(&2) {
+                DataType::I64
+            } else {
+                DataType::U64
+            }
+        });
     }
-    propagate_result_types(pairs, declared, &indexed, &mut widths, &mut signs);
+    propagate_result_types(
+        pairs,
+        declared,
+        &indexed,
+        &mut widths,
+        &mut signs,
+        &mut data_types,
+    );
     for (source, _) in pairs {
         if !widths.contains_key(&source.name) {
             types.classical_info(&source.name)?;
@@ -392,12 +418,13 @@ fn infer_result_types(
                 dest.name
             )));
         }
-        let dtype = if !indexed.contains(&dest.name) && signed.is_some() {
-            DataType::I64
-        } else {
-            DataType::U64
-        };
-        types.ensure_classical_variable(&dest.name, dtype, widths[&dest.name])?;
+        let dtype = data_types.get(&dest.name).expect(
+            "Result type invariant: every destination has a type after propagation and defaults",
+        );
+        let width = widths.get(&dest.name).expect(
+            "Result width invariant: every source has a width after unknown-source validation, so every destination has a propagated width",
+        );
+        types.ensure_classical_variable(&dest.name, dtype.clone(), *width)?;
     }
     Ok(())
 }
@@ -411,6 +438,7 @@ fn propagate_result_types(
     indexed: &BTreeSet<String>,
     widths: &mut BTreeMap<String, usize>,
     signs: &mut BTreeMap<String, u8>,
+    data_types: &mut BTreeMap<String, super::environment::DataType>,
 ) {
     loop {
         let mut changed = false;
@@ -429,6 +457,20 @@ fn propagate_result_types(
                 let previous = signs.entry(dest.name.clone()).or_insert(0);
                 changed |= *previous | sign != *previous;
                 *previous |= sign;
+                if let Some(mut dtype) = data_types.get(&source.name).cloned() {
+                    if data_types
+                        .get(&dest.name)
+                        .is_some_and(|previous| *previous != dtype)
+                    {
+                        dtype = if *previous == 2 {
+                            super::environment::DataType::I64
+                        } else {
+                            super::environment::DataType::U64
+                        };
+                    }
+                    changed |= data_types.get(&dest.name) != Some(&dtype);
+                    data_types.insert(dest.name.clone(), dtype);
+                }
             }
         }
         if !changed {

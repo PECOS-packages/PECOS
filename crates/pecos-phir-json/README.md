@@ -303,7 +303,9 @@ shots where its Result does not execute. Its value is the destination's final va
 all classical storage starts each shot at zero. Declared destinations retain their
 width and signedness regardless of source types. For a new destination, whole-register
 sources contribute their size and signedness and indexed sources contribute one bit.
-Its size is the largest contribution across the entire program. Any indexed write to
+Its size is the largest contribution across the entire program. Whole-register
+copies retain their common source data type; differing whole-source data types
+use `u64` or `i64` storage according to signedness. Any indexed write to
 an undeclared destination uses unsigned 64-bit storage, with size at least
 `max(32, largest destination index + 1)`. Only conflicting signedness between
 whole-register sources of an undeclared destination is a load-time error; declare

@@ -36,6 +36,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use super::builder::MonteCarloEngineBuilder;
+use super::worker_scope::{DirectWorkerScope, WorkerScope, execute_scoped};
 
 /// Orchestrates parallel Monte Carlo simulations of quantum programs with noise
 ///
@@ -315,6 +316,27 @@ impl MonteCarloEngine {
         Ok(shots)
     }
 
+    /// Run with a lexical scope around each logical worker's owned shot loop.
+    ///
+    /// Engine clones and initial worker seeding happen on the caller before scope
+    /// entry. Per-shot seeding, reset, execution, and worker-engine destruction
+    /// happen inside the scope. No scope is entered for an empty worker.
+    ///
+    /// # Errors
+    /// Returns an error if scope entry, scope execution, or a shot fails.
+    /// # Panics
+    /// Panics if either count is zero, as does [`Self::run_with_workers`].
+    pub fn run_with_workers_in_scope(
+        &mut self,
+        num_shots: usize,
+        num_workers: usize,
+        scope: &dyn WorkerScope,
+    ) -> Result<ShotVec, PecosError> {
+        let (shots, _) =
+            self.run_with_workers_report_seeds_in_scope(num_shots, num_workers, scope)?;
+        Ok(shots)
+    }
+
     /// Runs a Monte Carlo simulation and returns its run seed and worker shot ranges.
     ///
     /// The seed report records the engine root seed, the base seed drawn for the run,
@@ -340,6 +362,21 @@ impl MonteCarloEngine {
         &mut self,
         num_shots: usize,
         num_workers: usize,
+    ) -> Result<(ShotVec, SeedReport), PecosError> {
+        self.run_with_workers_report_seeds_in_scope(num_shots, num_workers, &DirectWorkerScope)
+    }
+
+    /// Scoped counterpart of [`Self::run_with_workers_report_seeds`].
+    ///
+    /// # Errors
+    /// Returns scope or simulation errors.
+    /// # Panics
+    /// Panics if either count is zero.
+    pub fn run_with_workers_report_seeds_in_scope(
+        &mut self,
+        num_shots: usize,
+        num_workers: usize,
+        scope: &dyn WorkerScope,
     ) -> Result<(ShotVec, SeedReport), PecosError> {
         assert!(num_shots > 0, "num_shots cannot be zero");
         assert!(num_workers > 0, "num_workers cannot be zero");
@@ -369,7 +406,7 @@ impl MonteCarloEngine {
                 .collect(),
         };
 
-        let shotvec = self.run_with_workers_from_seed_report(&seed_report)?;
+        let shotvec = self.run_with_workers_from_seed_report_in_scope(&seed_report, scope)?;
         Ok((shotvec, seed_report))
     }
 
@@ -399,6 +436,21 @@ impl MonteCarloEngine {
     pub fn run_with_workers_from_seed_report(
         &self,
         seed_report: &SeedReport,
+    ) -> Result<ShotVec, PecosError> {
+        self.run_with_workers_from_seed_report_in_scope(seed_report, &DirectWorkerScope)
+    }
+
+    /// Replay with a lexical scope for each nonempty logical worker.
+    ///
+    /// See [`Self::run_with_workers_in_scope`] for scope ownership and lifetime.
+    /// # Errors
+    /// Returns invalid-report, scope, or simulation errors.
+    /// # Panics
+    /// Panics if the results mutex is poisoned.
+    pub fn run_with_workers_from_seed_report_in_scope(
+        &self,
+        seed_report: &SeedReport,
+        scope: &dyn WorkerScope,
     ) -> Result<ShotVec, PecosError> {
         seed_report.validate()?;
         let run = if self
@@ -457,43 +509,48 @@ impl MonteCarloEngine {
                         return Ok(());
                     }
 
-                    // Process all shots for this worker
-                    debug!("Worker {worker_idx} running {shots_this_worker} shots");
+                    let results_vec = &results_vec;
+                    execute_scoped(scope, move || {
+                        // Process all shots for this worker
+                        debug!("Worker {worker_idx} running {shots_this_worker} shots");
 
-                    for shot_idx in 0..shots_this_worker {
-                        let shot_seed =
-                            nth_derived_seed(seed_report.base_seed, (first_shot + shot_idx) as u64);
-                        engine.set_seed(shot_seed);
-                        engine.reset()?;
-                        engine.classical_engine.set_program_shot(
-                            u64::try_from(first_shot + shot_idx).map_err(|_| {
-                                PecosError::Input("program shot index exceeds u64".into())
-                            })?,
-                        );
+                        for shot_idx in 0..shots_this_worker {
+                            let shot_seed = nth_derived_seed(
+                                seed_report.base_seed,
+                                (first_shot + shot_idx) as u64,
+                            );
+                            engine.set_seed(shot_seed);
+                            engine.reset()?;
+                            engine.classical_engine.set_program_shot(
+                                u64::try_from(first_shot + shot_idx).map_err(|_| {
+                                    PecosError::Input("program shot index exceeds u64".into())
+                                })?,
+                            );
 
-                        // Catch panics during shot execution and convert to PecosError
-                        let shot_result =
-                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                if let Some(run) = run {
-                                    engine.run_shot_with_context(
-                                        crate::runtime_frame::ShotContext {
-                                            run,
-                                            worker: worker_idx,
-                                            shot: shot_idx,
-                                        },
-                                    )
-                                } else {
-                                    engine.run_shot()
-                                }
-                            }));
+                            // Catch panics during shot execution and convert to PecosError
+                            let shot_result =
+                                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                    if let Some(run) = run {
+                                        engine.run_shot_with_context(
+                                            crate::runtime_frame::ShotContext {
+                                                run,
+                                                worker: worker_idx,
+                                                shot: shot_idx,
+                                            },
+                                        )
+                                    } else {
+                                        engine.run_shot()
+                                    }
+                                }));
 
-                        let shot_result = match shot_result {
-                            Ok(Ok(result)) => result,
-                            Ok(Err(e)) => return Err(e),
-                            Err(panic_payload) => {
-                                // Convert panic to PecosError
-                                let panic_msg =
-                                    if let Some(s) = panic_payload.downcast_ref::<String>() {
+                            let shot_result = match shot_result {
+                                Ok(Ok(result)) => result,
+                                Ok(Err(e)) => return Err(e),
+                                Err(panic_payload) => {
+                                    // Convert panic to PecosError
+                                    let panic_msg = if let Some(s) =
+                                        panic_payload.downcast_ref::<String>()
+                                    {
                                         s.clone()
                                     } else if let Some(s) = panic_payload.downcast_ref::<&str>() {
                                         (*s).to_string()
@@ -501,31 +558,32 @@ impl MonteCarloEngine {
                                         "Unknown panic occurred during shot execution".to_string()
                                     };
 
-                                return Err(PecosError::Processing(format!(
-                                    "Shot execution failed: {panic_msg}"
-                                )));
-                            }
-                        };
+                                    return Err(PecosError::Processing(format!(
+                                        "Shot execution failed: {panic_msg}"
+                                    )));
+                                }
+                            };
 
-                        // Store with worker/shot indices for deterministic ordering
-                        results_vec.lock().expect("results mutex poisoned").push((
-                            worker_idx,
-                            shot_idx,
-                            shot_result,
-                        ));
-                    }
+                            // Store with worker/shot indices for deterministic ordering
+                            results_vec.lock().expect("results mutex poisoned").push((
+                                worker_idx,
+                                shot_idx,
+                                shot_result,
+                            ));
+                        }
 
-                    Ok(())
+                        Ok(())
+                    })
                 })
-                .collect::<Result<Vec<()>, PecosError>>()
+                // Join every logical job, including errors, before returning.
+                .collect::<Vec<Result<(), PecosError>>>()
         });
 
         // Handle the parallel execution result
-        parallel_result?;
-
         // CRITICAL: Explicitly drop the thread pool to ensure clean shutdown
         // This helps prevent TLS issues during test cleanup
         drop(thread_pool);
+        parallel_result.into_iter().collect::<Result<Vec<_>, _>>()?;
 
         // Ensure deterministic ordering of results
         let mut results = results_vec.lock().expect("results mutex poisoned");

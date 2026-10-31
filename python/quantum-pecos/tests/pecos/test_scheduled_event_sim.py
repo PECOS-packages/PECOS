@@ -93,7 +93,8 @@ def test_built_simulation_repeated_runs(event_runtime):
 
 
 @pytest.mark.parametrize("stage", ["factory", "validate", "translate"])
-def test_callback_errors_are_reported(event_runtime, stage):
+@pytest.mark.parametrize("worker_context", [False, True])
+def test_callback_errors_are_reported(event_runtime, stage, worker_context):
     class Failing(PhaseAdapter):
         def validate(self, batch):
             if stage == "validate":
@@ -114,7 +115,7 @@ def test_callback_errors_are_reported(event_runtime, stage):
         return Failing()
 
     with pytest.raises(RuntimeError, match=f"scheduled adapter {stage}:"):
-        simulation(event_runtime, factory).run(1)
+        simulation(event_runtime, factory).python_worker_context(worker_context).run(1)
 
 
 @pytest.mark.parametrize(
@@ -215,7 +216,8 @@ runtime = (Path({str(library)!r}), {program!r})
 
 @pytest.mark.parametrize("method", ["run", "run_with_workers", "reset"])
 @pytest.mark.parametrize("stage", ["factory", "validate", "translate"])
-def test_callback_reentry_rejects_without_deadlock(event_runtime, method, stage):
+@pytest.mark.parametrize("worker_context", [False, True])
+def test_callback_reentry_rejects_without_deadlock(event_runtime, method, stage, worker_context):
     run_isolated(
         event_runtime,
         f"""
@@ -234,17 +236,18 @@ class Adapter(PhaseAdapter):
 def factory(_):
     if {stage!r} == 'factory': reenter()
     return Adapter()
-holder['built'] = simulation(runtime, factory).build()
+holder['built'] = simulation(runtime, factory).python_worker_context({worker_context!r}).build()
 assert holder['built'].run(1).to_dict()['measurement_0'] == [1]
 holder.clear()
 """,
     )
 
 
-def test_concurrent_reset_waits_without_holding_gil(event_runtime):
+@pytest.mark.parametrize("worker_context", [False, True])
+def test_concurrent_reset_waits_without_holding_gil(event_runtime, worker_context):
     run_isolated(
         event_runtime,
-        """
+        f"""
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event, Timer
 entered, release, reset_started = Event(), Event(), Event()
@@ -252,7 +255,7 @@ def factory(_):
     entered.set()
     assert release.wait(10)
     return PhaseAdapter()
-built = simulation(runtime, factory).build()
+built = simulation(runtime, factory).python_worker_context({worker_context!r}).build()
 def reset():
     reset_started.set()
     return built.reset()
@@ -320,7 +323,8 @@ done:
     assert result["measurement_1"] == [0] * 4
 
 
-def test_failed_run_does_not_reuse_adapter_state(event_runtime):
+@pytest.mark.parametrize("worker_context", [False, True])
+def test_failed_run_does_not_reuse_adapter_state(event_runtime, worker_context):
     fail = [True]
     instances = []
 
@@ -337,7 +341,7 @@ def test_failed_run_does_not_reuse_adapter_state(event_runtime):
         instances.append(obj)
         return obj
 
-    built = simulation(event_runtime, factory).build()
+    built = simulation(event_runtime, factory).python_worker_context(worker_context).build()
     with pytest.raises(RuntimeError, match="translation failed after state advanced"):
         built.run_with_workers(1, 1)
     assert instances[0].next_batch > 0
@@ -631,3 +635,91 @@ def test_guppy_feedback_after_spectator_measurement(event_runtime, probability, 
     )
     assert values["first"] == [int(probability)] * 4
     assert values["feedback"] == [int(probability)] * 4
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.parametrize("built", [False, True])
+@pytest.mark.parametrize("workers", [1, 2])
+def test_python_worker_context_live_callbacks(event_runtime, enabled, built, workers):
+    """Observe the opt-in at actual runtime callback boundaries, across shots/runs."""
+    import threading
+    from contextvars import ContextVar
+
+    local = threading.local()
+    variable = ContextVar("worker_count", default=0)
+    records = []
+    finalized = []
+
+    class Marker:
+        def __del__(self):
+            finalized.append(True)
+
+    class Adapter(PhaseAdapter):
+        def __init__(self, worker):
+            super().__init__()
+            self.worker = worker
+
+        def observe(self):
+            local.count = getattr(local, "count", 0) + 1
+            if not hasattr(local, "marker"):
+                local.marker = Marker()
+            variable.set(variable.get() + 1)
+            records.append((self.worker, local.count, variable.get()))
+
+        def validate(self, batch):
+            self.observe()
+            super().validate(batch)
+
+        def translate(self, batch):
+            self.observe()
+            return super().translate(batch)
+
+    builder = (
+        simulation(event_runtime, lambda context: Adapter(context[1])).python_worker_context(enabled).workers(workers)
+    )
+    runner = builder.build() if built else builder
+    for _ in range(2):
+        records.clear()
+        finalized.clear()
+        assert runner.run(4).to_dict()["measurement_0"] == [1] * 4
+        for worker in range(workers):
+            observed = [(count, value) for key, count, value in records if key == worker]
+            assert len(observed) > 1
+            counts = range(1, len(observed) + 1) if enabled else [1] * len(observed)
+            assert observed == [(count, count) for count in counts]
+        assert len(finalized) == (workers if enabled else len(records))
+        assert variable.get() == 0
+
+
+def test_python_worker_context_rejects_unsupported_routes():
+    import pecos
+
+    with pytest.raises(ValueError, match="only for QIS"):
+        pecos.sim(pecos.Qasm("OPENQASM 2.0; qreg q[1];")).python_worker_context()
+
+
+@pytest.mark.parametrize("method", ["run", "run_with_workers", "reset"])
+def test_python_worker_context_finalizer_reentry_rejects(event_runtime, method):
+    run_isolated(
+        event_runtime,
+        f"""
+from threading import local
+state = local()
+holder = {{}}
+rejected = []
+class Marker:
+    def __del__(self):
+        args = {{'run': (1,), 'run_with_workers': (1, 1), 'reset': ()}}[{method!r}]
+        try:
+            getattr(holder['built'], {method!r})(*args)
+        except RuntimeError as error:
+            rejected.append(str(error))
+def factory(_):
+    state.marker = Marker()
+    return PhaseAdapter()
+holder['built'] = simulation(runtime, factory).python_worker_context().workers(1).build()
+assert holder['built'].run(1).to_dict()['measurement_0'] == [1]
+assert len(rejected) == 1 and 'callback' in rejected[0]
+holder.clear()
+""",
+    )

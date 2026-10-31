@@ -182,12 +182,12 @@ class PauliProp(PauliPropagation):
             # Only apply gates if there are faults to act on
             return super().run_circuit(circuit, removed_locations)
         # Identity frames skip dispatch, but still reject malformed known gates.
-        for symbol, locations, _params in circuit.items():
+        for symbol, locations, params in circuit.items():
             gate_locations = locations
             if removed_locations is not None:
                 gate_locations = set(locations) - removed_locations
             if not is_empty_batch(gate_locations):
-                self.validate_gate_batch(symbol, gate_locations)
+                self.validate_gate_batch(symbol, gate_locations, **params)
         return None
 
         # need to return output?

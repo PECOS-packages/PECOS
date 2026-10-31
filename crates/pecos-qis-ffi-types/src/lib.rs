@@ -6,7 +6,12 @@
 //! The actual FFI implementation (with `#[no_mangle]` functions) is in `pecos-qis-ffi`.
 
 mod named_results;
+mod observed_reads;
 mod operations;
+pub use observed_reads::{
+    MAX_RUNTIME_READ_NAME_BYTES, MAX_RUNTIME_READ_TOTAL_NAME_BYTES, MAX_RUNTIME_READS,
+    RuntimeObservedRead, validate_observed_reads,
+};
 
 pub use named_results::{NamedResult, ProgramError};
 
@@ -18,7 +23,7 @@ pub use operations::{
 /// Version of the ownership-transferring Rust data interface between the host
 /// and dynamically loaded QIS FFI library. Bump when shared types or exported
 /// function contracts change incompatibly; both artifacts must be rebuilt.
-pub const QIS_FFI_ABI_VERSION: u64 = 6;
+pub const QIS_FFI_ABI_VERSION: u64 = 7;
 
 /// Maximum copied detector bytes in one embedded decoder request.
 pub const MAX_RUNTIME_DETECTORS: usize = 1 << 20;

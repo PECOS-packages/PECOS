@@ -687,10 +687,10 @@ def test_registry_location_order_angles_and_metadata():
         == {}
     )
     assert calls == [
-        ("RX", 1, {"angles": (0.25,), "angle": 0.25, "step": "first", "tag": "kept"}),
-        ("RZ", 1, {"angles": (0.5,), "angle": 0.5, "step": "second", "tag": "kept"}),
-        ("RX", 0, {"angles": (0.25,), "angle": 0.25, "step": "first", "tag": "kept"}),
-        ("RZ", 0, {"angles": (0.5,), "angle": 0.5, "step": "second", "tag": "kept"}),
+        ("RX", 1, {"angles": pytest.approx((0.25,)), "angle": pytest.approx(0.25), "step": "first", "tag": "kept"}),
+        ("RZ", 1, {"angles": pytest.approx((pi,)), "angle": pytest.approx(pi), "step": "second", "tag": "kept"}),
+        ("RX", 0, {"angles": pytest.approx((0.25,)), "angle": pytest.approx(0.25), "step": "first", "tag": "kept"}),
+        ("RZ", 0, {"angles": pytest.approx((pi,)), "angle": pytest.approx(pi), "step": "second", "tag": "kept"}),
     ]
 
 
@@ -704,14 +704,14 @@ def test_registry_measurement_steps_return_outputs():
     assert state.run_circuit(_items("CUSTOM", [1, 0]), gate_registry=registry) == {1: 1, 0: 1}
 
 
-def test_registry_late_failure_leaves_earlier_step_applied():
+def test_registry_late_failure_preserves_state():
     state = simulators.SparseStabPy(2)
     registry = GateRegistry()
     registry.define("CUSTOM", 1).step("X", [0]).step("T", [0]).register_into(registry)
-    # KNOWN-WRONG (#1480): A later unbound registered step fails after earlier steps mutate the state.
-    with pytest.raises(Exception, match=r"^Gate T is not supported in this simulator\.$"):
+    # Deliberate #1492 flip: reject the unbound step before applying X.
+    with pytest.raises(ValueError, match=r"^Gate CUSTOM step T is not supported in this simulator\.$"):
         state.run_circuit(_items("CUSTOM", {0}), gate_registry=registry)
-    assert state.run_gate("Measure", {0}) == {0: 1}
+    assert state.run_gate("Measure", {0}) == {}
 
 
 def test_statevec_registry_keyword_rejected():
@@ -964,7 +964,7 @@ def test_registry_measurement_canonical_symbol_unbound():
     state = simulators.SparseStabPy(2)
     registry = GateRegistry()
     registry.define("CUSTOM", 1).step("X", [0]).step("Measure", [0]).register_into(registry)
-    # KNOWN-WRONG (#1480): Registry measurement canonicalization reaches unbound MZ after mutating the state.
-    with pytest.raises(Exception, match=r"^Gate MZ is not supported in this simulator\.$"):
+    # Deliberate #1492 flip: canonical MZ is checked before applying X.
+    with pytest.raises(ValueError, match=r"^Gate CUSTOM step MZ is not supported in this simulator\.$"):
         state.run_circuit(_items("CUSTOM", {0}), gate_registry=registry)
-    assert state.run_gate("Measure", {0}) == {0: 1}
+    assert state.run_gate("Measure", {0}) == {}

@@ -19,10 +19,86 @@
 //! grid layout and character rendering to
 //! [`pecos_core::circuit_diagram::CircuitDiagram`].
 
-use pecos_core::circuit_diagram::{AngleUnit, CellColor, CircuitDiagram, DiagramCell, GateFamily};
+use pecos_core::circuit_diagram::{
+    AngleUnit, CellColor, CircuitDiagram, DiagramCell, DiagramStyle, GateFamily,
+};
 use pecos_core::gate_type::GateType;
 use pecos_core::{Gate, QubitId};
+use std::borrow::Cow;
 use std::collections::BTreeSet;
+
+/// An invalid half-open tick or dependency-layer range for diagram rendering.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DiagramRangeError {
+    /// Requested inclusive start index.
+    pub start: usize,
+    /// Requested exclusive end index.
+    pub end: usize,
+    /// Number of ticks or dependency layers in the source circuit.
+    pub length: usize,
+}
+
+impl std::fmt::Display for DiagramRangeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "invalid diagram range {}..{}: expected start <= end <= {}",
+            self.start, self.end, self.length
+        )
+    }
+}
+
+impl std::error::Error for DiagramRangeError {}
+
+pub(crate) fn validate_diagram_range(
+    range: &std::ops::Range<usize>,
+    length: usize,
+) -> Result<(), DiagramRangeError> {
+    if range.start > range.end || range.end > length {
+        return Err(DiagramRangeError {
+            start: range.start,
+            end: range.end,
+            length,
+        });
+    }
+    Ok(())
+}
+
+/// Borrowed operation and display metadata, independent of circuit storage.
+#[derive(Clone, Copy)]
+pub(crate) struct DiagramGate<'a> {
+    gate: &'a Gate,
+    symbol: Option<&'a str>,
+    operation_id: Option<&'a str>,
+}
+
+impl<'a> DiagramGate<'a> {
+    pub(crate) fn new(gate: &'a Gate, symbol: Option<&'a crate::Attribute>) -> Self {
+        Self {
+            gate,
+            symbol: match symbol {
+                Some(crate::Attribute::String(name)) if gate.gate_type == GateType::Custom => {
+                    Some(name)
+                }
+                _ => None,
+            },
+            operation_id: None,
+        }
+    }
+
+    pub(crate) fn with_operation_id(mut self, value: Option<&'a crate::Attribute>) -> Self {
+        if let Some(crate::Attribute::String(id)) = value {
+            self.operation_id = Some(id);
+        }
+        self
+    }
+}
+
+/// These commands describe one operation over their entire support, rather
+/// than a batch of one-qubit operations despite their type-level arity of one.
+fn has_dynamic_support(gate: &Gate) -> bool {
+    matches!(gate.gate_type, GateType::Custom | GateType::Channel)
+}
 
 // ==================== Gate symbols ====================
 
@@ -71,7 +147,7 @@ fn gate_symbol(gate_type: GateType) -> &'static str {
         GateType::CSdg => "CSdg",
         GateType::MX => "MX",
         GateType::MZ => "MZ",
-        GateType::MeasureLeaked => "ML",
+        GateType::MeasureLeaked => "MZ_L",
         GateType::MeasureFree => "MF",
         GateType::MPZ => "MPZ",
         GateType::PX => "PX",
@@ -79,7 +155,8 @@ fn gate_symbol(gate_type: GateType) -> &'static str {
         GateType::QAlloc => "QA",
         GateType::QFree => "QF",
         GateType::I | GateType::Idle => "I",
-        GateType::MeasCrosstalkGlobalPayload | GateType::MeasCrosstalkLocalPayload => "XT",
+        GateType::MeasCrosstalkGlobalPayload => "XT-excl",
+        GateType::MeasCrosstalkLocalPayload => "XT-local",
         GateType::Channel => "Ch",
         GateType::Custom => "?",
         GateType::TrackedPauliMeta => "TP",
@@ -116,6 +193,15 @@ fn format_angle_radians(angle: pecos_core::Angle64) -> String {
     // Only use pi notation if the fraction is "nice".
     if q == 0 || q > 128 || p > 512 {
         let radians = angle.to_radians();
+        if radians < 0.00005 {
+            return format!("{radians:.4e}");
+        }
+        if std::f64::consts::TAU - radians < 0.00005 {
+            // Negate in fixed point first: subtracting two f64 values close
+            // to TAU can erase the smallest representable nonzero angles.
+            let residual = -(-angle).to_radians();
+            return format!("{residual:.4e}");
+        }
         return format!("{radians:.4}");
     }
 
@@ -149,8 +235,14 @@ fn format_angle_turns(angle: pecos_core::Angle64) -> String {
 
     if q == 0 || q > 128 || p > 512 {
         // Fall back to decimal
-        let turns = angle.to_radians() / std::f64::consts::TAU;
-        let turns = turns.rem_euclid(1.0);
+        let turns = angle.to_turns();
+        if turns < 5e-7 {
+            return format!("{turns:.6e}");
+        }
+        if 1.0 - turns < 5e-7 {
+            let residual = -(-angle).to_turns();
+            return format!("{residual:.6e}");
+        }
         return format!("{turns:.6}")
             .trim_end_matches('0')
             .trim_end_matches('.')
@@ -166,8 +258,11 @@ fn format_angle_turns(angle: pecos_core::Angle64) -> String {
 }
 
 /// Build the full symbol string for a gate, including angles if parameterized.
-fn full_gate_symbol(gate: &Gate, unit: AngleUnit) -> String {
-    let base = gate_symbol(gate.gate_type);
+fn full_gate_symbol(gate: &Gate, unit: AngleUnit, symbol: Option<&str>) -> String {
+    if gate.gate_type == GateType::Idle {
+        return format!("Idle({})", gate.idle_duration());
+    }
+    let base = symbol.unwrap_or_else(|| gate_symbol(gate.gate_type));
     if gate.angles.is_empty() {
         return base.to_string();
     }
@@ -273,7 +368,7 @@ fn compute_visual_range(
         return BTreeSet::new();
     }
     let arity = gate.gate_type.quantum_arity();
-    if arity <= 1 {
+    if arity <= 1 && !has_dynamic_support(gate) {
         rows.into_iter().collect()
     } else {
         let min = *rows.iter().min().expect("rows is non-empty");
@@ -291,17 +386,17 @@ fn compute_visual_range(
 /// minimum number of sublayers (equal to the maximum clique size). Without the
 /// sort, insertion order can produce unnecessary extra sublayers.
 fn split_layer_into_sublayers<'a>(
-    layer: &[&'a Gate],
+    layer: &[DiagramGate<'a>],
     qubit_to_row: &std::collections::BTreeMap<QubitId, usize>,
-) -> Vec<Vec<&'a Gate>> {
+) -> Vec<Vec<DiagramGate<'a>>> {
     // Compute visual ranges and sort by minimum row for optimal coloring.
-    let mut gates_with_range: Vec<(&'a Gate, BTreeSet<usize>)> = layer
+    let mut gates_with_range: Vec<(DiagramGate<'a>, BTreeSet<usize>)> = layer
         .iter()
-        .map(|&gate| (gate, compute_visual_range(gate, qubit_to_row)))
+        .map(|&gate| (gate, compute_visual_range(gate.gate, qubit_to_row)))
         .collect();
     gates_with_range.sort_by_key(|(_, range)| range.iter().next().copied().unwrap_or(0));
 
-    let mut sublayers: Vec<(BTreeSet<usize>, Vec<&'a Gate>)> = Vec::new();
+    let mut sublayers: Vec<(BTreeSet<usize>, Vec<DiagramGate<'a>>)> = Vec::new();
 
     for (gate, visual_range) in gates_with_range {
         let mut placed = false;
@@ -325,13 +420,14 @@ fn split_layer_into_sublayers<'a>(
 
 /// Place a single gate's decomposed cells and connectors into a diagram.
 fn place_gate(
-    gate: &Gate,
+    gate: DiagramGate<'_>,
     diagram: &mut CircuitDiagram,
     qubit_to_row: &std::collections::BTreeMap<QubitId, usize>,
     num_rows: usize,
-    angle_unit: AngleUnit,
+    style: &DiagramStyle,
 ) {
-    let decomposed = decompose_gate(gate, qubit_to_row, num_rows, angle_unit);
+    diagram.set_operation_id(gate.operation_id);
+    let decomposed = decompose_gate(gate.gate, qubit_to_row, num_rows, style, gate.symbol);
     for (row, cell, color) in decomposed.cells {
         if row < num_rows {
             diagram.set_cell(row, cell, color);
@@ -344,6 +440,7 @@ fn place_gate(
             diagram.add_connector(top, bottom);
         }
     }
+    diagram.set_operation_id(None);
 }
 
 /// Result of decomposing a gate: cells and optional connector span.
@@ -360,8 +457,10 @@ fn decompose_gate(
     gate: &Gate,
     qubit_to_row: &std::collections::BTreeMap<QubitId, usize>,
     num_rows: usize,
-    angle_unit: AngleUnit,
+    style: &DiagramStyle,
+    symbol: Option<&str>,
 ) -> DecomposedGate {
+    let angle_unit = style.angle_unit;
     let arity = gate.gate_type.quantum_arity();
     let qubits = &gate.qubits;
     let mut cells = Vec::new();
@@ -370,16 +469,58 @@ fn decompose_gate(
     let mut connector = None;
     let mut connector_label = None;
 
-    if arity == 1 {
-        let sym = full_gate_symbol(gate, angle_unit);
+    if (has_dynamic_support(gate) && qubits.len() > 1) || gate.gate_type == GateType::U2q {
+        let sym = full_gate_symbol(gate, angle_unit, symbol);
+        let rows: Vec<_> = qubits
+            .iter()
+            .enumerate()
+            .filter_map(|(operand, q)| qubit_to_row.get(q).map(|&row| (operand, row)))
+            .collect();
+        for &(operand, row) in &rows {
+            cells.push((
+                row,
+                DiagramCell::Gate(format!("{sym}[{operand}]"), gate_family(gate.gate_type)),
+                color,
+            ));
+        }
+        if let (Some(top), Some(bottom)) = (
+            rows.iter().map(|&(_, row)| row).min(),
+            rows.iter().map(|&(_, row)| row).max(),
+        ) {
+            connector = Some((top, bottom));
+            let gate_rows: BTreeSet<_> = rows.iter().map(|&(_, row)| row).collect();
+            for row in (top + 1)..bottom {
+                if !gate_rows.contains(&row) && row < num_rows {
+                    cells.push((row, DiagramCell::Crossing, CellColor::None));
+                }
+            }
+        }
+    } else if arity == 1 {
+        let sym = full_gate_symbol(gate, angle_unit, symbol);
         let family = gate_family(gate.gate_type);
-        for &q in qubits {
+        // MZ_L returns 0/1/2 through runtime engines even though the current
+        // circuit record allocator does not include it in its predicate.
+        let show_id = style.show_measurement_ids
+            && (gate.gate_type.consumes_measurement_record()
+                || gate.gate_type == GateType::MeasureLeaked);
+        for (position, &q) in qubits.iter().enumerate() {
             if let Some(&row) = qubit_to_row.get(&q) {
-                cells.push((row, DiagramCell::Gate(sym.clone(), family), color));
+                let label = if show_id {
+                    // Match operand order before sorting rows. A malformed batch
+                    // cannot establish a reliable association even for its prefix.
+                    let id = gate
+                        .meas_ids
+                        .get(position)
+                        .filter(|_| gate.meas_ids.len() == qubits.len());
+                    id.map_or_else(|| format!("{sym}[m?]"), |id| format!("{sym}[{id}]"))
+                } else {
+                    sym.clone()
+                };
+                cells.push((row, DiagramCell::Gate(label, family), color));
             }
         }
     } else if arity == 2 {
-        let sym = full_gate_symbol(gate, angle_unit);
+        let sym = full_gate_symbol(gate, angle_unit, symbol);
         for pair in qubits.chunks(2) {
             if pair.len() < 2 {
                 continue;
@@ -533,11 +674,15 @@ fn decompose_gate(
 /// Build a `CircuitDiagram` from gate layers.
 ///
 /// Returns `None` when `layers` contain no qubits.
-fn build_diagram(layers: &[Vec<&Gate>], angle_unit: AngleUnit) -> Option<CircuitDiagram> {
+fn build_diagram(
+    layers: &[Vec<DiagramGate<'_>>],
+    style: &DiagramStyle,
+    prefix: &str,
+) -> Option<CircuitDiagram> {
     let mut qubit_set = BTreeSet::new();
     for layer in layers {
         for gate in layer {
-            for &q in &gate.qubits {
+            for &q in &gate.gate.qubits {
                 qubit_set.insert(q);
             }
         }
@@ -545,6 +690,24 @@ fn build_diagram(layers: &[Vec<&Gate>], angle_unit: AngleUnit) -> Option<Circuit
     let qubits: Vec<QubitId> = qubit_set.into_iter().collect();
     if qubits.is_empty() {
         return None;
+    }
+
+    Some(build_diagram_with_context(
+        layers, &qubits, style, prefix, 0, false,
+    ))
+}
+
+/// Build selected layers using the source circuit's qubit rows and axis indices.
+pub(crate) fn build_diagram_with_context(
+    layers: &[Vec<DiagramGate<'_>>],
+    qubits: &[QubitId],
+    style: &DiagramStyle,
+    prefix: &str,
+    offset: usize,
+    label_all: bool,
+) -> CircuitDiagram {
+    if layers.is_empty() || qubits.is_empty() {
+        return CircuitDiagram::new(0);
     }
 
     let qubit_to_row: std::collections::BTreeMap<QubitId, usize> =
@@ -555,14 +718,59 @@ fn build_diagram(layers: &[Vec<&Gate>], angle_unit: AngleUnit) -> Option<Circuit
     let mut diagram = CircuitDiagram::with_labels(labels);
 
     for (layer_idx, layer) in layers.iter().enumerate() {
+        let original_idx = offset + layer_idx;
         if layer.is_empty() {
             if layer_idx > 0 {
                 diagram.advance();
             }
+            let col = diagram.current_col();
+            diagram.add_column_group(format!("{prefix}{original_idx}"), col, col);
             continue;
         }
 
-        let sublayers = split_layer_into_sublayers(layer, &qubit_to_row);
+        // Each multi-qubit instance needs its own connector and visual range.
+        // Keep batching as a storage detail, not a diagram primitive.
+        let gates: Vec<(Cow<'_, Gate>, Option<&str>, Option<&str>)> = layer
+            .iter()
+            .flat_map(|display_gate| {
+                let gate = display_gate.gate;
+                let arity = gate.gate_type.quantum_arity();
+                if has_dynamic_support(gate) || arity <= 1 || gate.qubits.len() <= arity {
+                    vec![(
+                        Cow::Borrowed(gate),
+                        display_gate.symbol,
+                        display_gate.operation_id,
+                    )]
+                } else {
+                    gate.qubits
+                        .chunks(arity)
+                        .map(|qubits| {
+                            (
+                                Cow::Owned(Gate {
+                                    gate_type: gate.gate_type,
+                                    angles: gate.angles.clone(),
+                                    params: gate.params.clone(),
+                                    qubits: qubits.iter().copied().collect(),
+                                    meas_ids: gate.meas_ids.clone(),
+                                    channel: gate.channel.clone(),
+                                }),
+                                display_gate.symbol,
+                                display_gate.operation_id,
+                            )
+                        })
+                        .collect()
+                }
+            })
+            .collect();
+        let gate_refs: Vec<_> = gates
+            .iter()
+            .map(|(gate, symbol, operation_id)| DiagramGate {
+                gate: gate.as_ref(),
+                symbol: *symbol,
+                operation_id: *operation_id,
+            })
+            .collect();
+        let sublayers = split_layer_into_sublayers(&gate_refs, &qubit_to_row);
         let is_split = sublayers.len() > 1;
         let mut start_col = 0;
 
@@ -570,36 +778,354 @@ fn build_diagram(layers: &[Vec<&Gate>], angle_unit: AngleUnit) -> Option<Circuit
             if layer_idx > 0 || sub_idx > 0 {
                 diagram.advance();
             }
-            if sub_idx == 0 && is_split {
+            if sub_idx == 0 {
                 start_col = diagram.current_col();
             }
             for gate in sublayer {
-                place_gate(gate, &mut diagram, &qubit_to_row, num_rows, angle_unit);
+                place_gate(*gate, &mut diagram, &qubit_to_row, num_rows, style);
             }
         }
 
-        if is_split {
+        if is_split || label_all {
             let end_col = diagram.current_col();
-            diagram.add_column_group(format!("t{layer_idx}"), start_col, end_col);
+            diagram.add_column_group(format!("{prefix}{original_idx}"), start_col, end_col);
         }
     }
 
-    Some(diagram)
+    diagram
 }
 
 /// Build a `CircuitDiagram` from layers, returning an empty 0-qubit diagram if
 /// there are no qubits. Used by `render_with` on `TickCircuit`/`DagCircuit`.
 pub(crate) fn build_diagram_or_empty(
-    layers: &[Vec<&Gate>],
-    angle_unit: AngleUnit,
+    layers: &[Vec<DiagramGate<'_>>],
+    style: &DiagramStyle,
+    prefix: &str,
 ) -> CircuitDiagram {
-    build_diagram(layers, angle_unit).unwrap_or_else(|| CircuitDiagram::new(0))
+    build_diagram(layers, style, prefix).unwrap_or_else(|| CircuitDiagram::new(0))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use pecos_core::Angle64;
+
+    #[test]
+    fn measurement_labels_follow_operand_ids_across_ranges_and_dag_conversion() {
+        let style = DiagramStyle::builder().show_measurement_ids(true).build();
+        let mut circuit = crate::TickCircuit::new();
+        circuit.tick().h(&[2, 8]);
+        let mut gate = Gate::mz(&[8, 2]);
+        gate.meas_ids = vec![
+            pecos_core::MeasId::from_raw(42),
+            pecos_core::MeasId::from_raw(7),
+        ]
+        .into();
+        circuit.tick().try_add_gate(gate).unwrap();
+        let dag = crate::DagCircuit::try_from(&circuit).unwrap();
+        let before = format!("{circuit:?}");
+        for renderer in [
+            circuit.render_with(&style),
+            dag.render_with(&style),
+            circuit.render_range(1..2, &style).unwrap(),
+            dag.render_range(1..2, &style).unwrap(),
+        ] {
+            let ascii = renderer.ascii();
+            for (qubit, id) in [(2, 7), (8, 42)] {
+                let row = ascii
+                    .lines()
+                    .find(|line| line.starts_with(&format!("q{qubit}:")))
+                    .unwrap();
+                assert!(row.contains(&format!("MZ[m{id}]")), "{ascii}");
+            }
+            for output in [
+                renderer.svg(),
+                renderer.tikz(),
+                renderer.dot(),
+                renderer.unicode(),
+            ] {
+                assert!(output.contains("MZ[m42]"), "{output}");
+                assert!(output.contains("MZ[m7]"), "{output}");
+            }
+        }
+        assert_eq!(format!("{circuit:?}"), before);
+        let hidden = DiagramStyle::builder().show_measurement_ids(false).build();
+        assert_eq!(circuit.render_with(&hidden).svg(), circuit.to_svg());
+        assert!(!circuit.to_ascii().contains("[m"));
+    }
+
+    #[test]
+    fn measurement_labels_cover_ordinary_and_leakage_aware_measurements() {
+        let style = DiagramStyle::builder().show_measurement_ids(true).build();
+        for (gt, name) in [
+            (GateType::MX, "MX"),
+            (GateType::MZ, "MZ"),
+            (GateType::MPZ, "MPZ"),
+            (GateType::MeasureFree, "MF"),
+            (GateType::MeasureLeaked, "MZ_L"),
+        ] {
+            let mut circuit = crate::TickCircuit::new();
+            let mut gate = Gate::simple(gt, vec![QubitId(8), QubitId(2)]);
+            gate.meas_ids = vec![
+                pecos_core::MeasId::from_raw(0),
+                pecos_core::MeasId::from_raw(9000),
+            ]
+            .into();
+            circuit.tick().try_add_gate(gate).unwrap();
+            let dag = crate::DagCircuit::try_from(&circuit).unwrap();
+            for output in [
+                circuit.render_with(&style).ascii(),
+                dag.render_with(&style).ascii(),
+            ] {
+                assert!(output.contains(&format!("{name}[m0]")), "{output}");
+                assert!(output.contains(&format!("{name}[m9000]")), "{output}");
+            }
+        }
+    }
+
+    #[test]
+    fn measurement_labels_do_not_invent_ids_for_missing_or_malformed_batches() {
+        let style = DiagramStyle::builder().show_measurement_ids(true).build();
+        for gt in [
+            GateType::MX,
+            GateType::MZ,
+            GateType::MPZ,
+            GateType::MeasureFree,
+            GateType::MeasureLeaked,
+        ] {
+            for ids in [vec![], vec![7], vec![7, 9, 11]] {
+                let mut gate = Gate::simple(gt, vec![QubitId(8), QubitId(2)]);
+                gate.meas_ids = ids
+                    .iter()
+                    .copied()
+                    .map(pecos_core::MeasId::from_raw)
+                    .collect();
+                let before = gate.clone();
+                // Malformed payloads cannot pass public insertion validation;
+                // exercise the renderer directly to prevent plausible false IDs.
+                let layers = vec![vec![DiagramGate::new(&gate, None)]];
+                let output = build_diagram_or_empty(&layers, &style, "t").render_text("", &style);
+                let expected = 2;
+                assert_eq!(output.matches("[m?]").count(), expected, "{output}");
+                assert!(!output.contains("[m7]"));
+                assert_eq!(gate, before);
+            }
+        }
+        let mut circuit = crate::TickCircuit::new();
+        circuit.tick().try_add_gate(Gate::mz(&[2, 8])).unwrap();
+        let before = format!("{circuit:?}");
+        assert_eq!(
+            circuit.render_with(&style).ascii().matches("[m?]").count(),
+            2
+        );
+        assert_eq!(format!("{circuit:?}"), before);
+        circuit.tick().custom_gate("MY", &[2], &[]).unwrap();
+        assert!(circuit.render_with(&style).ascii().contains("[MY]"));
+        assert!(!circuit.render_with(&style).ascii().contains("MY[m"));
+    }
+
+    #[test]
+    fn measurement_labels_preserve_duplicate_id_evidence() {
+        let style = DiagramStyle::builder().show_measurement_ids(true).build();
+        let mut circuit = crate::TickCircuit::new();
+        for qubit in [0, 1] {
+            let mut gate = Gate::mz(&[qubit]);
+            gate.meas_ids = [pecos_core::MeasId::from_raw(42)].into();
+            circuit.tick().try_add_gate(gate).unwrap();
+        }
+        assert_eq!(
+            circuit
+                .render_with(&style)
+                .ascii()
+                .matches("MZ[m42]")
+                .count(),
+            2
+        );
+        assert!(crate::DagCircuit::try_from(&circuit).is_err());
+    }
+
+    #[test]
+    fn diagram_ranges_check_bounds_without_clamping() {
+        let style = crate::DiagramStyle::default();
+        let mut tick = crate::TickCircuit::new();
+        tick.tick().h(&[0]);
+        tick.tick().x(&[0]);
+        let dag = crate::DagCircuit::try_from(&tick).unwrap();
+        for (start, end) in [(2, 1), (0, 3), (3, 3), (usize::MAX, usize::MAX)] {
+            let range = start..end;
+            for result in [
+                tick.render_range(range.clone(), &style),
+                dag.render_range(range.clone(), &style),
+            ] {
+                let error = result.err().expect("invalid range must fail");
+                assert_eq!(error.start, range.start);
+                assert_eq!(error.end, range.end);
+                assert_eq!(error.length, 2);
+                assert!(error.to_string().contains("start <= end <= 2"));
+            }
+        }
+        for range in [0..0, 0..2, 1..2, 2..2] {
+            assert!(tick.render_range(range.clone(), &style).is_ok());
+            assert!(dag.render_range(range, &style).is_ok());
+        }
+    }
+
+    #[test]
+    fn empty_diagram_ranges_render_only_the_selected_header() {
+        let style = crate::DiagramStyle::default();
+        let mut tick = crate::TickCircuit::new();
+        tick.tick().h(&[8]);
+        let dag = crate::DagCircuit::try_from(&tick).unwrap();
+        assert_eq!(
+            tick.render_range(1..1, &style).unwrap().ascii(),
+            "TickCircuit: 1 qubit, ticks 1..1 of 1\n"
+        );
+        assert_eq!(
+            dag.render_range(0..0, &style).unwrap().ascii(),
+            "DagCircuit: 1 qubit, layers 0..0 of 1\n"
+        );
+        for renderer in [
+            crate::TickCircuit::new()
+                .render_range(0..0, &style)
+                .unwrap(),
+            crate::DagCircuit::new().render_range(0..0, &style).unwrap(),
+        ] {
+            assert!(renderer.ascii().contains("0 qubits"));
+            assert!(renderer.svg().contains("<svg"));
+        }
+    }
+
+    #[test]
+    fn range_rendering_retains_idle_sparse_qubits_and_original_indices() {
+        let style = crate::DiagramStyle::default();
+        let mut tick = crate::TickCircuit::new();
+        tick.tick().h(&[3, 50]);
+        tick.tick().x(&[3]);
+        tick.tick().z(&[3]);
+        let dag = crate::DagCircuit::try_from(&tick).unwrap();
+        for (renderer, prefix) in [
+            (tick.render_range(1..3, &style).unwrap(), "t"),
+            (dag.render_range(1..3, &style).unwrap(), "l"),
+        ] {
+            for output in [
+                renderer.ascii(),
+                renderer.svg(),
+                renderer.tikz(),
+                renderer.dot(),
+            ] {
+                assert!(output.contains("q3"), "{output}");
+                assert!(output.contains("q50"), "{output}");
+                assert!(output.contains(&format!("{prefix}1")), "{output}");
+                assert!(output.contains(&format!("{prefix}2")), "{output}");
+                assert!(!output.contains(&format!("{prefix}0")), "{output}");
+            }
+            assert!(!renderer.ascii().contains("[H]"));
+            assert!(renderer.ascii().contains("[X]"));
+            assert!(renderer.ascii().contains("[Z]"));
+        }
+    }
+
+    #[test]
+    fn range_rendering_keeps_selected_empty_ticks() {
+        let style = crate::DiagramStyle::default();
+        let mut tick = crate::TickCircuit::new();
+        tick.tick().h(&[4]);
+        tick.tick();
+        tick.tick();
+        let renderer = tick.render_range(1..3, &style).unwrap();
+        for output in [
+            renderer.ascii(),
+            renderer.svg(),
+            renderer.tikz(),
+            renderer.dot(),
+        ] {
+            assert!(output.contains("q4"), "{output}");
+            assert!(output.contains("t1"), "{output}");
+            assert!(output.contains("t2"), "{output}");
+        }
+        let mut no_qubits = crate::TickCircuit::new();
+        no_qubits.tick();
+        assert_eq!(
+            no_qubits.render_range(0..1, &style).unwrap().ascii(),
+            "TickCircuit: 0 qubits, ticks 0..1 of 1\n"
+        );
+    }
+
+    #[test]
+    fn range_rendering_keeps_crossing_subcolumns_without_a_leading_gap() {
+        let gates = [Gate::cx(&[(0, 2)]), Gate::cx(&[(1, 3)])];
+        let layers = vec![
+            gates
+                .iter()
+                .map(|gate| DiagramGate::new(gate, None))
+                .collect(),
+        ];
+        let diagram = build_diagram_with_context(
+            &layers,
+            &[QubitId(0), QubitId(1), QubitId(2), QubitId(3)],
+            &DiagramStyle::default(),
+            "t",
+            7,
+            true,
+        );
+        assert_eq!(diagram.current_col(), 1, "exactly two visual columns");
+        let style = crate::DiagramStyle::default();
+        let mut tick = crate::TickCircuit::new();
+        tick.tick().h(&[0, 1, 2, 3]);
+        tick.tick().cx(&[(0, 2), (1, 3)]);
+        let dag = crate::DagCircuit::try_from(&tick).unwrap();
+        for (renderer, label) in [
+            (tick.render_range(1..2, &style).unwrap(), "t1"),
+            (dag.render_range(1..2, &style).unwrap(), "l1"),
+        ] {
+            assert_eq!(renderer.ascii().matches("[X]").count(), 2);
+            assert_eq!(renderer.svg().matches("<circle").count(), 2);
+            assert!(renderer.svg().contains(&format!(">{label}</text>")));
+        }
+    }
+
+    #[test]
+    fn range_rendering_does_not_mutate_circuits_or_metadata() {
+        let style = crate::DiagramStyle::default();
+        let mut tick = crate::TickCircuit::new();
+        tick.tick().meta("round", crate::Attribute::Int(4)).h(&[0]);
+        tick.tick().mz(&[0]);
+        let dag = crate::DagCircuit::try_from(&tick).unwrap();
+        let tick_before = format!("{tick:?}");
+        let dag_before = format!("{dag:?}");
+        let _ = tick.render_range(1..2, &style).unwrap().svg();
+        let _ = dag.render_range(1..2, &style).unwrap().svg();
+        assert_eq!(format!("{tick:?}"), tick_before);
+        assert_eq!(format!("{dag:?}"), dag_before);
+    }
+
+    #[test]
+    fn full_diagram_range_keeps_the_same_gate_layout() {
+        let style = crate::DiagramStyle::default();
+        let mut tick = crate::TickCircuit::new();
+        tick.tick().h(&[0, 1, 2, 3]);
+        tick.tick().cx(&[(0, 2), (1, 3)]);
+        tick.tick().mz(&[0]);
+        let dag = crate::DagCircuit::try_from(&tick).unwrap();
+        for (full, selected) in [
+            (
+                tick.to_ascii(),
+                tick.render_range(0..3, &style).unwrap().ascii(),
+            ),
+            (
+                dag.to_ascii(),
+                dag.render_range(0..3, &style).unwrap().ascii(),
+            ),
+        ] {
+            let rows = |text: &str| {
+                text.lines()
+                    .filter(|line| line.starts_with('q'))
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(rows(&full), rows(&selected));
+        }
+    }
 
     fn render_tick(build: impl FnOnce(&mut crate::TickCircuit)) -> String {
         let mut tc = crate::TickCircuit::new();
@@ -614,6 +1140,126 @@ mod tests {
     }
 
     #[test]
+    fn custom_names_and_operand_order_survive_tick_and_dag_rendering() {
+        let mut circuit = crate::TickCircuit::new();
+        circuit
+            .tick()
+            .custom_gate("Entangle", &[5, 0, 9, 2], &[])
+            .unwrap();
+        circuit.get_tick_mut(0).unwrap().add_gate(Gate::h(&[4]));
+        circuit.tick().custom_gate("Phase", &[0], &[]).unwrap();
+        let dag = crate::DagCircuit::try_from(&circuit).unwrap();
+        for text in [circuit.to_ascii(), dag.to_ascii()] {
+            for (qubit, operand) in [(5, 0), (0, 1), (9, 2), (2, 3)] {
+                let row = text
+                    .lines()
+                    .find(|line| line.starts_with(&format!("q{qubit}:")))
+                    .unwrap();
+                assert!(row.contains(&format!("Entangle[{operand}]")), "{text}");
+            }
+            assert!(text.contains("[Phase]"), "{text}");
+            assert!(
+                text.contains("[H]"),
+                "the crossing must not erase H: {text}"
+            );
+            assert!(!text.contains('?'), "{text}");
+        }
+        assert!(circuit.to_svg().contains(">t0</text>"));
+        assert!(dag.to_svg().contains(">l0</text>"));
+        assert_eq!(circuit.to_svg().matches("<line ").count(), 6);
+    }
+
+    #[test]
+    fn correlated_channels_keep_a_connector_and_singletons_remain_single() {
+        let mut circuit = crate::TickCircuit::new();
+        circuit
+            .tick()
+            .channel(pecos_core::channel::Depolarizing2(0.1, 0, 2));
+        circuit.get_tick_mut(0).unwrap().add_gate(Gate::h(&[1]));
+        circuit
+            .tick()
+            .channel(pecos_core::channel::Depolarizing(0.1, 0));
+        let dag = crate::DagCircuit::try_from(&circuit).unwrap();
+        for text in [circuit.to_ascii(), dag.to_ascii()] {
+            assert!(text.contains("[Ch[0]]"), "{text}");
+            assert!(text.contains("[Ch[1]]"), "{text}");
+            assert!(text.contains("[Ch]"), "{text}");
+            assert!(text.contains("[H]"), "{text}");
+        }
+        for svg in [circuit.to_svg(), dag.to_svg()] {
+            assert_eq!(
+                svg.matches("<line ").count(),
+                4,
+                "three wires and one joint channel"
+            );
+        }
+        assert!(circuit.to_svg().contains(">t0</text>"));
+        assert!(dag.to_svg().contains(">l0</text>"));
+    }
+
+    #[test]
+    fn u2q_preserves_operand_order_and_resets_indices_for_each_batch_instance() {
+        let angles = [
+            [Angle64::try_from_radians(0.1).unwrap(); 3],
+            [Angle64::try_from_radians(0.2).unwrap(); 3],
+        ];
+        let gate = |pairs: &[(usize, usize)]| Gate::u2q(angles, angles[0], angles, pairs);
+        let render = |gate| {
+            let mut circuit = crate::TickCircuit::new();
+            circuit.tick();
+            circuit.get_tick_mut(0).unwrap().add_gate(gate);
+            circuit.to_ascii()
+        };
+        let forward = render(gate(&[(0, 2)]));
+        let reverse = render(gate(&[(2, 0)]));
+        assert_ne!(forward, reverse);
+        assert!(
+            forward
+                .lines()
+                .find(|line| line.starts_with("q0:"))
+                .unwrap()
+                .contains(")[0]")
+        );
+        assert!(
+            reverse
+                .lines()
+                .find(|line| line.starts_with("q0:"))
+                .unwrap()
+                .contains(")[1]")
+        );
+        let batched = render(gate(&[(0, 2), (1, 3)]));
+        assert_eq!(batched.matches(")[0]").count(), 2);
+        assert_eq!(batched.matches(")[1]").count(), 2);
+        assert!(!batched.contains(")[2]"));
+    }
+
+    #[test]
+    fn tiny_nonzero_angles_do_not_round_to_zero_or_a_full_turn() {
+        for angle in [Angle64::try_from_radians(1e-7).unwrap(), Angle64::new(1)] {
+            for unit in [AngleUnit::Radians, AngleUnit::Turns] {
+                let positive = format_angle(angle, unit);
+                let negative = format_angle(-angle, unit);
+                assert!(positive.contains('e'), "{positive}");
+                assert!(
+                    negative.starts_with('-') && negative.contains('e'),
+                    "{negative}"
+                );
+                assert!(positive.parse::<f64>().unwrap() > 0.0);
+                assert!(negative.parse::<f64>().unwrap() < 0.0);
+                assert_eq!(format_angle(Angle64::ZERO, unit), "0");
+            }
+        }
+        assert_eq!(
+            format_angle_radians(Angle64::try_from_radians(0.123_456).unwrap()),
+            "0.1235"
+        );
+        assert_eq!(
+            format_angle_turns(Angle64::try_from_turns(0.123_456).unwrap()),
+            "0.123456"
+        );
+    }
+
+    #[test]
     fn diagonal_gate_layout_covers_every_operand() {
         for gt in [GateType::CS, GateType::CSdg, GateType::CCZ] {
             let qubits: Vec<_> = (0..gt.quantum_arity()).map(|q| QubitId(q * 2)).collect();
@@ -623,7 +1269,7 @@ mod tests {
                 .map(|(row, &q)| (q, row * 2))
                 .collect();
             let gate = Gate::simple(gt, qubits.clone());
-            let layout = decompose_gate(&gate, &rows, 5, AngleUnit::Radians);
+            let layout = decompose_gate(&gate, &rows, 5, &DiagramStyle::default(), None);
             for row in (0..gt.quantum_arity()).map(|q| q * 2) {
                 assert!(
                     layout
@@ -836,6 +1482,70 @@ mod tests {
         assert!(q0_line.contains("[H]"));
         assert!(q1_line.contains("[H]"));
         assert!(q2_line.contains("[H]"));
+    }
+
+    #[test]
+    fn batched_two_qubit_gates_keep_every_connector_and_target() {
+        for pairs in [&[(0, 1), (2, 3)][..], &[(0, 2), (1, 3)][..]] {
+            let mut circuit = crate::TickCircuit::new();
+            circuit.tick().cx(pairs);
+            let svg = circuit.to_svg();
+            assert_eq!(
+                svg.matches("<line ").count(),
+                6,
+                "four wires and two connectors"
+            );
+            assert_eq!(
+                svg.matches(">X</text>").count(),
+                2,
+                "both targets must survive"
+            );
+            let text = circuit.to_ascii();
+            assert_eq!(text.matches("[X]").count(), 2);
+        }
+    }
+
+    #[test]
+    fn batched_three_qubit_gates_keep_every_connector() {
+        let mut circuit = crate::TickCircuit::new();
+        circuit.tick().ccx(&[(0, 1, 2), (3, 4, 5)]);
+        assert_eq!(circuit.to_svg().matches("<line ").count(), 8);
+    }
+
+    #[test]
+    fn empty_ticks_keep_their_positions_in_every_wire_format() {
+        let mut circuit = crate::TickCircuit::new();
+        circuit.tick();
+        circuit.tick().h(&[0]);
+        circuit.tick();
+        circuit.tick();
+        for output in [circuit.to_ascii(), circuit.to_svg(), circuit.to_tikz()] {
+            for label in ["t0", "t2", "t3"] {
+                assert!(output.contains(label), "missing {label} in {output}");
+            }
+        }
+    }
+
+    #[test]
+    fn dag_split_groups_are_dependency_layers() {
+        let mut circuit = crate::TickCircuit::new();
+        circuit.tick().cx(&[(0, 2), (1, 3)]);
+        let dag = crate::DagCircuit::try_from(&circuit).unwrap();
+        assert!(dag.to_svg().contains(">l0</text>"));
+    }
+
+    #[test]
+    fn idle_duration_is_distinct_from_identity() {
+        let mut circuit = crate::TickCircuit::new();
+        circuit.tick();
+        circuit
+            .get_tick_mut(0)
+            .unwrap()
+            .add_gate(Gate::simple(GateType::I, vec![QubitId(0)]));
+        circuit.tick().idle(20u64, &[0]);
+        let text = circuit.to_ascii();
+        assert!(text.contains("[I]"));
+        assert!(text.contains("[Idle(20)]"));
     }
 
     #[test]

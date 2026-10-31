@@ -277,6 +277,8 @@ schedule checks than these general tracing APIs.
 
 ## Next Steps
 
+- **[Circuit Visualization](circuit-visualization.md)** - Render a saved trace or
+  circuit in a notebook, terminal, or file
 - **[HUGR & Guppy Simulation](hugr-simulation.md)** - Build and run programs
   accepted by the tracing entry points
 - **[Circuit Representation](circuit-representation.md)** - Work with the

@@ -13,6 +13,9 @@ fn main() {
 
 PECOS provides several ways to represent and work with quantum circuits, from high-level program formats to low-level data structures.
 
+To display these structures in notebooks, terminals, or files, see
+[Circuit Visualization](circuit-visualization.md).
+
 ## Quick Guide: What Should I Use?
 
 | I want to... | Use this |

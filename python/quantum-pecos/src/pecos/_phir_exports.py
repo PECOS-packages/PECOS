@@ -5,6 +5,8 @@
 
 """Static cvar_export validation and output-to-source selection."""
 
+import json
+
 
 def all_operations(operations: list[dict]) -> list[dict]:
     """Collect operations in every block and both branches, in source order."""
@@ -93,9 +95,9 @@ def validate_declaration_placement(operations: list[dict]) -> None:
         for field in ("ops", "true_branch", "false_branch"):
             for child in all_operations(node.get(field) or []):
                 if child.get("data") in ("cvar_define", "qvar_define"):
+                    name = json.dumps(child.get("variable"))
                     msg = (
-                        f"Nested declaration {child['data']} {child.get('variable')!r}: declarations inside blocks "
-                        "are only supported in programs that use cvar_export; move the declaration to the top level "
-                        "or add cvar_export"
+                        f"Nested declaration {child['data']} {name}: move the declaration to the top level; "
+                        "declarations inside blocks are only supported in programs that use cvar_export"
                     )
                     raise ValueError(msg)

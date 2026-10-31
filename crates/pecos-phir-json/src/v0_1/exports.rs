@@ -100,7 +100,7 @@ impl Collector {
         if !self.present {
             if let Some((data, name)) = self.nested_declaration {
                 return Err(PecosError::Input(format!(
-                    "Nested declaration {data} {name:?}: declarations inside blocks are only supported in programs that use cvar_export; move the declaration to the top level or add cvar_export"
+                    "Nested declaration {data} {name:?}: move the declaration to the top level; declarations inside blocks are only supported in programs that use cvar_export"
                 )));
             }
             return Ok(None);

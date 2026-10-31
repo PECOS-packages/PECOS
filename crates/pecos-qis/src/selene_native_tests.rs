@@ -2474,7 +2474,10 @@ fn pecos_runtime_targeted_forcing_retains_unrelated_work_on_every_route() {
             QuantumOp::X(1).into(),
             QuantumOp::Measure(1, 8).into(),
         ];
-        assert!(route.lower_raw(&mut runtime, &operations).is_empty());
+        assert_eq!(
+            route.lower_raw(&mut runtime, &operations),
+            Vec::<QuantumOp>::new()
+        );
         assert!(runtime.force_result(7).unwrap());
         let first = route.lower_raw(&mut runtime, &[]);
         assert!(
@@ -2490,7 +2493,7 @@ fn pecos_runtime_targeted_forcing_retains_unrelated_work_on_every_route() {
         runtime.provide_measurement_outcomes(vec![(7, 2)]).unwrap();
         assert_eq!(runtime.read_result(7).unwrap(), Some(2));
         assert!(runtime.force_result(7).unwrap());
-        assert!(route.lower_raw(&mut runtime, &[]).is_empty());
+        assert_eq!(route.lower_raw(&mut runtime, &[]), Vec::<QuantumOp>::new());
         assert!(runtime.force_result(8).unwrap());
         assert!(
             route
@@ -2515,7 +2518,7 @@ fn pecos_runtime_reused_slot_reads_the_latest_native_future() {
             QuantumOp::X(0).into(),
             QuantumOp::Measure(0, 3).into(),
         ];
-        assert!(route.lower_raw(&mut runtime, &ops).is_empty());
+        assert_eq!(route.lower_raw(&mut runtime, &ops), Vec::<QuantumOp>::new());
         runtime.force_result(3).unwrap();
         for value in [0, 1] {
             assert_eq!(runtime.read_result(3).unwrap(), None);
@@ -2533,7 +2536,7 @@ fn pecos_runtime_reused_slot_reads_the_latest_native_future() {
         }
         assert_eq!(runtime.read_result(3).unwrap(), Some(1));
         runtime.force_result(3).unwrap();
-        assert!(route.lower_raw(&mut runtime, &[]).is_empty());
+        assert_eq!(route.lower_raw(&mut runtime, &[]), Vec::<QuantumOp>::new());
     }
 }
 

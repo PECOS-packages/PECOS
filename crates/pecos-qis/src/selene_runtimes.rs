@@ -450,6 +450,14 @@ pub fn selene_runtime_auto(lib_name: &str) -> Result<SeleneRuntime, RuntimeFetch
 }
 
 #[cfg(test)]
+pub(crate) fn pecos_test_runtime(args: &[&str]) -> SeleneRuntime {
+    let path = find_built_selene_runtime("pecos_selene_runtime_plugin")
+        .expect("Cargo must build the PECOS runtime plugin dev dependency");
+    SeleneRuntime::with_plugin_config(path, args.iter().map(ToString::to_string).collect(), vec![])
+        .with_native_gate_set(RuntimeNativeGateSet::RXY_RZ_RZZ)
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::test_env::{ENV_MUTEX, EnvVarGuard, run_test_in_child};
@@ -542,12 +550,4 @@ mod tests {
             Some(newer_path)
         );
     }
-}
-
-#[cfg(test)]
-pub(crate) fn pecos_test_runtime(args: &[&str]) -> SeleneRuntime {
-    let path = find_built_selene_runtime("pecos_selene_runtime_plugin")
-        .expect("Cargo must build the PECOS runtime plugin dev dependency");
-    SeleneRuntime::with_plugin_config(path, args.iter().map(ToString::to_string).collect(), vec![])
-        .with_native_gate_set(RuntimeNativeGateSet::RXY_RZ_RZZ)
 }

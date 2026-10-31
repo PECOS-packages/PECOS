@@ -149,7 +149,7 @@ def test_barrier_qubits_widen_in_first_appearance_order(allocator) -> None:
 
 def test_qasm_global_barrier_uses_only_declared_roots() -> None:
     base = QAlloc(5, name="base")
-    child = QAlloc(2, name="data", parent=base)
+    child = base.child(2, name="data")
     code = SlrConverter(Main(base, child, Barrier())).qasm()
     assert "barrier base;" in code
     sim(Qasm.from_string(code)).quantum(state_vector()).run(1)
@@ -161,7 +161,7 @@ def test_qasm_barrier_follows_permutation_like_qir(child, whole) -> None:
     """Project both backends' barrier operands to physical qubit indices."""
     if child:
         base = QAlloc(4, name="base")
-        x, y = QAlloc(2, name="x", parent=base), QAlloc(2, name="y", parent=base)
+        x, y = base.child(2, name="x"), base.child(2, name="y")
         declarations = (base, x, y)
         offsets = {"base": 0}
     else:

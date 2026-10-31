@@ -193,6 +193,22 @@ class QAlloc:
         return self._parent
 
     @property
+    def parent_indices(self) -> tuple[int, ...]:
+        """Reserved slots in the parent, in this allocator's slot order."""
+        return tuple(self._parent_indices)
+
+    @property
+    def parent_offset(self) -> int:
+        """First reserved parent slot, rejecting placements a contiguous AST cannot represent."""
+        if self._parent is None:
+            return 0
+        offset = self._parent_indices[0] if self._parent_indices else 0
+        if self._parent_indices != list(range(offset, offset + self.capacity)):
+            msg = f"Allocator {self.name!r} must have contiguous parent indices for all {self.capacity} slots."
+            raise ValueError(msg)
+        return offset
+
+    @property
     def is_base(self) -> bool:
         """Whether this is a base (root) allocator."""
         return self._parent is None

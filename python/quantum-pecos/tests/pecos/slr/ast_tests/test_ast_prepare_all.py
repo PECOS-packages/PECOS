@@ -28,7 +28,7 @@ def prepared_program(request, child_allocator):
     if child_allocator:
         declarations += (
             AllocatorDecl(name="padding", capacity=1, parent="q"),
-            AllocatorDecl(name="child", capacity=2, parent="q"),
+            AllocatorDecl(name="child", capacity=2, parent="q", offset=1),
         )
         name, size = "child", 2
     targets = tuple(SlotRef(allocator=name, index=i) for i in range(size))

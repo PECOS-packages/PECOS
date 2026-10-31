@@ -15,11 +15,13 @@ from typing import TYPE_CHECKING
 from pecos_rslib.qec import DetectorErrorModel
 
 from pecos.qec.runtime_decode_context import RuntimeDecodeBinding, RuntimeDecodeContext
+from pecos.qec.runtime_observed_reads import check_observed_reads, validate_read_sources
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
     from pecos.decoders import DecoderSpec
+    from pecos.qec.runtime_observed_reads import RuntimeReadSource
 
 
 @dataclass(frozen=True)
@@ -48,6 +50,9 @@ class RuntimeDecodeWindow:
     be empty. Internal overlap within a single supplied model remains available
     through the existing windowed decoder specifications. Optional ``binding``
     requires the v1 intrinsic and checks declared schema/program identity.
+    Optional ``read_sources`` requires the observed intrinsic and checks native
+    measurement occurrences and detector parities; an empty tuple is distinct
+    from None. Semantic labels and physical independence remain declarations.
     """
 
     window_id: int
@@ -63,12 +68,15 @@ class RuntimeDecodeWindow:
     buffer: tuple[str, ...] = ()
     boundary_state: tuple[str, ...] = ()
     binding: RuntimeDecodeBinding | None = None
+    read_sources: tuple[RuntimeReadSource, ...] | None = None
 
     def __post_init__(self) -> None:
         """Freeze sequences and reject unsupported or inconsistent contracts."""
         for name in ("detector_ids", "output_ids", "detector_order", "fault_ids", "commit", "buffer", "boundary_state"):
             object.__setattr__(self, name, tuple(getattr(self, name)))
         object.__setattr__(self, "output_map", tuple(tuple(row) for row in self.output_map))
+        if self.read_sources is not None:
+            object.__setattr__(self, "read_sources", tuple(self.read_sources))
         self.validate()
 
     def validate(self) -> None:
@@ -123,6 +131,9 @@ class RuntimeDecodeWindow:
             if any(bit >= len(schema.frame_ids) for row in self.output_map for bit in row):
                 msg = "output_map targets an undeclared schema frame bit"
                 raise ValueError(msg)
+
+        if self.read_sources is not None:
+            validate_read_sources(self.binding, self.read_sources)
 
 
 class RuntimeDecoder:
@@ -188,12 +199,32 @@ class _Session:
         self._failed = False
         return self._decode(window_id, instance_id, syndrome, parsed)
 
+    def decode_observed_v1(
+        self,
+        window_id: int,
+        instance_id: int,
+        syndrome: list[int] | bytes,
+        context: bytes,
+        observations: list[tuple[str, int, int, bool]],
+    ) -> int:
+        if self._failed:
+            msg = "decoder session failed; start a fresh shot"
+            raise RuntimeError(msg)
+        self._failed = True
+        if type(observations) is not list:
+            msg = "observations must be a bounded list of native read tuples"
+            raise ValueError(msg)
+        parsed = RuntimeDecodeContext.from_json(context)
+        self._failed = False
+        return self._decode(window_id, instance_id, syndrome, parsed, observations)
+
     def _decode(
         self,
         window_id: int,
         instance_id: int,
         syndrome: list[int] | bytes,
         context: RuntimeDecodeContext | None,
+        observations: list[tuple[str, int, int, bool]] | None = None,
     ) -> int:
         if self._failed:
             msg = "decoder session failed; start a fresh shot"
@@ -228,6 +259,11 @@ class _Session:
         ):
             msg = "syndrome must supply exactly one observed bit per declared detector"
             raise ValueError(msg)
+        if (window.read_sources is None) != (observations is None):
+            msg = "observed decode calls require read_sources; checked windows require observed decode calls"
+            raise ValueError(msg)
+        if observations is not None:
+            check_observed_reads(window.binding, window.read_sources, syndrome, observations)
         # PyStructuredDemDecoder is thread-bound. Construct, use and release it
         # here; no live decoder moves between workers or survives into a new shot.
         decoder = window.model.build_decoder(window.decoder)

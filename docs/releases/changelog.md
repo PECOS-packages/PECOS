@@ -17,6 +17,40 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   `For` loop that binds it raises `ValueError` during conversion. `LoopVar`
   stays hashable by identity.
 
+- **Breaking:** Python simulator wrappers and the public `pecos.HybridEngine`
+  validate whole known-gate batches per `run_gate` call and per circuit item
+  before changing state, including when `simulate_gate=False`. Registered-gate
+  decomposition is still validated per step until a later PR. Malformed locations,
+  repeated operands within a location, and out-of-range qubits raise gate-named
+  `ValueError`s; some errors previously raised `TypeError`.
+  StateVec, CuStateVec, MPS and CudaStateVec require scalar one-qubit locations.
+  SparseStabPy accepts singleton sequences for RX, RY, RZ, RXY1Q, R1XY and U1q;
+  its other one-qubit gates require scalars. PauliProp/PauliFaultProp accept
+  singleton tuples/lists, and DefaultSimulator accepts singleton sized, indexable
+  sequences. `I` is a single-qubit gate and follows the same per-state rule as
+  `X`; a pair location for `I` is rejected (use `II`), except by CoinToss, whose
+  gates stay no-ops. Integer-like scalars are classified before sequences, and
+  unhashable qubit indices are rejected up front, including inside locations.
+  Zero-dimensional arrays used as qubit indices inside a batch (including
+  operands inside a location) are now rejected, even where Rust-backed bindings
+  and SparseStabPy accepted them for non-measuring gates. A bare `np.array(0)`
+  batch still skips dispatch in the wrappers. Multi-qubit locations must be ordered:
+  set/frozenset pairs are rejected, including in SparseStabPy and CudaStateVec
+  where they previously ran. Batches may still repeat or overlap qubits and
+  execute sequentially.
+  Native SparseStab, Stabilizer, StateVec, StabVec, CoinToss and PauliProp expose
+  a read-only `gate_capacity` property; PauliProp returns `None` and remains
+  growable. CoinToss's own no-op `run_gate` and its `run_circuit` are unchanged.
+  Through HybridEngine, every CoinToss measurement binding (including MX/MY/MZ)
+  is validated for every iterable batch container; other CoinToss gates remain
+  no-ops.
+
+- `derive_seed` hashes its purpose string with a fixed SipHash-1-3 instead of
+  `std`'s `DefaultHasher`, whose algorithm is unspecified across Rust releases
+  (#1496). Every derived seed keeps its current value, so seeded results do not
+  change. Component seeds in `MonteCarloEngine` and `HybridEngine`, and so the
+  replay of a recorded `SeedReport`, no longer depend on the Rust release.
+
 - **Breaking:** SLR code generation rejects constructs it previously silently
   dropped (#1189): QASM `While`, dynamic or non-integer `For` bounds, zero steps,
   `Print`, and unsupported `Permute` shapes; QIR non-integer
@@ -114,6 +148,19 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   measurement path. `SparseStabGeneric::mz_with_work` measures one qubit and
   also returns `MeasurementWork`, the refactor and decouple work that
   measurement executed, for benchmarking.
+
+- `SparseStab` has an opt-in batch measurement order,
+  `with_measurement_batch_order(MeasurementBatchOrder::BitReversed)`. It measures
+  batch positions in bit-reversed order and returns results in caller order.
+  The outcome distribution is unchanged, but seeded outcomes change. On the
+  6.6.6 color code with the refactor rule, touches per gate grow as sqrt(n)
+  instead of linearly: at d = 511, 117.6 with bit-reversed order versus 1,134.9
+  in caller order (2,856 with the default rule in caller order). On the surface
+  code at d = 511, the refactor rule uses 59.3 touches per gate with bit-reversed
+  order versus 82.3 in caller order. On the typical small-code workloads
+  (surface, color, bivariate bicycle, hypergraph product and tricycle codes),
+  refactor plus bit-reversed order is 1.18x slower than the default (geomean),
+  so it stays opt-in.
 
 - Python: `pecos.guppy_gen.helix` renders certified C4-Helix memory programs
   with scalar, round-free result tags and `mem_swap` swap-out gadgets.
@@ -368,6 +415,12 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 
 ### Python additions
+
+- `pecos.analysis.circuit_parallelism` measures how densely selected operations
+  of an existing `QuantumCircuit` pack into layers that preserve per-qubit and
+  condition order, and reports mean operations, active qubits and density for
+  all selected layers and for unconditional layers only. Unselected and
+  zero-qubit operations are barriers unless explicitly projected out.
 
 - Decode APIs and `build_decoder` accept a `DetectorErrorModel` object as standard
   text plus labels. Graph specs accept the `irreducible` keyword, and results
@@ -779,9 +832,7 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   is reseeded from the run seed and its global index before resetting the engine.
 - `WorkerSeedRecord.seed` is replaced by `first_shot`, the worker's first global
   shot index. `SeedReport.base_seed` now drives replay; `root_seed` is provenance
-  only. Old serialized reports must be regenerated. Shot-seed derivation is stable,
-  but component derivation uses `DefaultHasher`, so seeded samples are not promised
-  stable across Rust releases.
+  only. Old serialized reports must be regenerated. Shot-seed derivation is stable.
 
 - Removed `DemBuilder::with_measurement_order`,
   `DemSamplerBuilder::with_measurement_order`, `MemBuilder::with_measurement_order`, `DemStabSimBuilder::measurement_order`,

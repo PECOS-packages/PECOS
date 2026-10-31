@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+from operator import index
 from typing import TYPE_CHECKING
 
 from pecos_rslib import lower_clifford_rotation
@@ -45,7 +46,10 @@ def _rotation_binding(
                 raise ValueError(msg)
             angles = (params["angle"],)
 
-        operands = (location,) if isinstance(location, int) else tuple(location)
+        try:
+            operands = (index(location),)
+        except TypeError:
+            operands = tuple(location)
         for named, positions in lower_clifford_rotation(symbol, angles):
             named_operands = tuple(operands[position] for position in positions)
             named_location = named_operands[0] if len(named_operands) == 1 else named_operands

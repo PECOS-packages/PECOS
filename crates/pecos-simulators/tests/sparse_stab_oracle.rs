@@ -4,9 +4,11 @@
 use pecos_core::{AdaptiveIndexSet, BitSet, IndexSet, PauliBitmask, QubitId, SortedVecSet, VecSet};
 use pecos_random::PecosRng;
 use pecos_simulators::{
-    CliffordGateable, GensGeneric, MeasurementRule, SparseStabGeneric, SparseStabVecSet,
+    CliffordGateable, GensGeneric, MeasurementBatchOrder, MeasurementRule, SparseStabGeneric,
+    SparseStabVecSet,
 };
 use rand::RngExt;
+use rand::seq::SliceRandom;
 
 #[derive(Clone, Copy, Debug)]
 struct SignedPauli {
@@ -1244,4 +1246,271 @@ fn general_weight_one_partner_matches_signed_basis_product() {
             (4, 0, false, false),
         ],
     );
+}
+
+// Batch oracle: the AG reference remains AsGiven and receives single-qubit
+// measurements in the independently replayed order, with the same coin stream.
+struct BatchHarness<S: IndexSet> {
+    candidate: SparseStabGeneric<S>,
+    reference: SparseStabVecSet,
+    // Same rule as the candidate, measured one qubit at a time in the replayed
+    // order: its tableau must match the candidate's exactly under either rule.
+    same_rule: SparseStabVecSet,
+    context: String,
+}
+
+impl<S: IndexSet> BatchHarness<S> {
+    fn new(n: usize, seed: u64, rule: MeasurementRule, tracking: bool) -> Self {
+        Self {
+            candidate: simulator(n, seed, tracking)
+                .with_measurement_rule(rule)
+                .with_measurement_batch_order(MeasurementBatchOrder::BitReversed),
+            reference: simulator(n, seed, tracking),
+            same_rule: simulator(n, seed, tracking).with_measurement_rule(rule),
+            context: format!(
+                "{} seed={seed} rule={rule:?} order=BitReversed tracking={tracking}",
+                std::any::type_name::<S>()
+            ),
+        }
+    }
+
+    fn gate(&mut self, op: Op) {
+        let expected = apply(&mut self.reference, op);
+        assert_eq!(apply(&mut self.candidate, op), expected);
+        assert_eq!(apply(&mut self.same_rule, op), expected);
+    }
+
+    fn batch(&mut self, qubits: &[QubitId], prepare: bool) {
+        let distinct = qubits
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+            == qubits.len();
+        let order = if distinct {
+            self.candidate.measurement_batch_order()
+        } else {
+            MeasurementBatchOrder::AsGiven
+        };
+        let positions = order.permutation(qubits.len());
+        let mut expected = vec![(false, false); qubits.len()];
+        for i in positions {
+            let r = self.reference.mz(&qubits[i..=i]).remove(0);
+            let same = self.same_rule.mz(&qubits[i..=i]).remove(0);
+            assert_eq!(
+                (same.outcome, same.is_deterministic),
+                (r.outcome, r.is_deterministic),
+                "(a) same-rule reference outcome: {}",
+                self.context
+            );
+            expected[i] = (r.outcome, r.is_deterministic);
+        }
+        let actual = if prepare {
+            // Observe PZ's measurement outcomes on a clone; exercise the actual
+            // default PZ path on the candidate, including caller-order corrections.
+            let results = self.candidate.clone().mz(qubits);
+            self.candidate.pz(qubits);
+            let corrections: Vec<_> = qubits
+                .iter()
+                .zip(&expected)
+                .filter_map(|(&q, &(outcome, _))| outcome.then_some(q))
+                .collect();
+            self.reference.x(&corrections);
+            self.same_rule.x(&corrections);
+            results
+        } else {
+            self.candidate.mz(qubits)
+        };
+        let actual: Vec<_> = actual
+            .into_iter()
+            .map(|r| (r.outcome, r.is_deterministic))
+            .collect();
+        assert_eq!(
+            actual, expected,
+            "(a) batch outcomes: {}; prepare={prepare}, qubits={qubits:?}",
+            self.context
+        );
+        assert!(
+            valid_structure(&self.candidate),
+            "(c) candidate: {}",
+            self.context
+        );
+        assert!(
+            valid_structure(&self.reference),
+            "(c) reference: {}",
+            self.context
+        );
+        assert!(
+            same_group(&rows(self.candidate.stabs()), &rows(self.reference.stabs())),
+            "(d) batch signed group: {}",
+            self.context
+        );
+        assert_hermitian(&self.candidate, &self.context);
+        // Same rule, same single-qubit sequence: the tableaux, including any
+        // tracked destabilizer signs, must agree exactly.
+        assert!(
+            same_tableau(&self.candidate, &self.same_rule),
+            "(b) batch tableau: {}",
+            self.context
+        );
+    }
+}
+
+fn batch_workloads<S: IndexSet>() {
+    for rule in [
+        MeasurementRule::AaronsonGottesman,
+        MeasurementRule::RefactorDecouple,
+    ] {
+        for tracking in [false, true] {
+            for seed in 0..12 {
+                let mut rng = PecosRng::seed_from_u64(seed);
+                let n = rng.random_range(3..=10);
+                let mut h = BatchHarness::<S>::new(n, seed, rule, tracking);
+                for _ in 0..40 {
+                    for _ in 0..8 {
+                        let q = rng.random_range(0..n);
+                        let other = (q + rng.random_range(1..n)) % n;
+                        h.gate(match rng.random_range(0..5) {
+                            0 => Op::H(q),
+                            1 => Op::Sz(q),
+                            2 => Op::Cx(q, other),
+                            3 => Op::Cz(q, other),
+                            _ => Op::X(q),
+                        });
+                    }
+                    let mut qubits: Vec<_> = (0..n).map(QubitId).collect();
+                    qubits.shuffle(&mut rng);
+                    qubits.truncate(rng.random_range(0..=n));
+                    if !qubits.is_empty() && rng.random_bool(0.2) {
+                        qubits.push(qubits[0]);
+                    }
+                    h.batch(&qubits, rng.random());
+                }
+                let checks = surface_checks();
+                let ancillas: Vec<_> = checks.iter().map(|c| QubitId(c.ancilla)).collect();
+                let mut h = BatchHarness::<S>::new(49, seed, rule, tracking);
+                for round in 0..4 {
+                    h.gate(Op::X(round));
+                    h.gate(Op::Z(round + 1));
+                    for check in checks.iter().filter(|c| c.x_type) {
+                        h.gate(Op::H(check.ancilla));
+                    }
+                    for layer in 0..4 {
+                        for check in &checks {
+                            if let Some(&q) = check.corners.get(layer) {
+                                h.gate(if check.x_type {
+                                    Op::Cx(check.ancilla, q)
+                                } else {
+                                    Op::Cx(q, check.ancilla)
+                                });
+                            }
+                        }
+                    }
+                    for check in checks.iter().filter(|c| c.x_type) {
+                        h.gate(Op::H(check.ancilla));
+                    }
+                    h.batch(&ancillas, false);
+                    h.batch(&ancillas, true);
+                    // PZ also sees fresh nondeterministic batches.
+                    h.gate(Op::H(round));
+                    h.batch(
+                        &[QubitId(round), QubitId(round + 1), QubitId(round + 2)],
+                        true,
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn batch_measurement_oracle() {
+    batch_workloads::<AdaptiveIndexSet>();
+    batch_workloads::<BitSet>();
+    batch_workloads::<SortedVecSet>();
+    batch_workloads::<VecSet<usize>>();
+}
+
+#[test]
+fn batch_permutations_and_setting_lifecycle() {
+    for (len, expected) in [
+        (0, vec![]),
+        (1, vec![0]),
+        (2, vec![0, 1]),
+        (5, vec![0, 4, 2, 1, 3]),
+        (8, vec![0, 4, 2, 6, 1, 5, 3, 7]),
+    ] {
+        assert_eq!(
+            MeasurementBatchOrder::BitReversed.permutation(len),
+            expected
+        );
+    }
+    for len in 0..100 {
+        assert_eq!(
+            MeasurementBatchOrder::AsGiven.permutation(len),
+            (0..len).collect::<Vec<_>>()
+        );
+        let mut positions = MeasurementBatchOrder::BitReversed.permutation(len);
+        positions.sort_unstable();
+        assert_eq!(positions, (0..len).collect::<Vec<_>>());
+    }
+    let qubits: Vec<_> = (0..9).map(QubitId).collect();
+    let mut sim = SparseStabVecSet::with_seed(9, 7);
+    assert_eq!(
+        sim.measurement_batch_order(),
+        MeasurementBatchOrder::AsGiven
+    );
+    sim = sim.with_measurement_batch_order(MeasurementBatchOrder::BitReversed);
+    let expected = MeasurementBatchOrder::BitReversed.permutation(qubits.len());
+    assert_eq!(sim.measurement_batch_permutation(&qubits), expected);
+    let mut cloned = sim.clone();
+    cloned.reset();
+    assert_eq!(
+        cloned.measurement_batch_order(),
+        MeasurementBatchOrder::BitReversed
+    );
+    assert_eq!(cloned.measurement_batch_permutation(&qubits), expected);
+    assert_eq!(
+        sim.measurement_batch_permutation(&[QubitId(8), QubitId(0), QubitId(8)]),
+        [0, 1, 2]
+    );
+    // A batch with a duplicate does not change the order of later batches.
+    assert_eq!(sim.measurement_batch_permutation(&qubits), expected);
+    assert_eq!(sim.measurement_batch_permutation(&[]), Vec::<usize>::new());
+    assert_eq!(sim.measurement_batch_permutation(&[QubitId(8)]), [0]);
+}
+
+#[test]
+fn batch_bell_correlations_and_marginals() {
+    for rule in [
+        MeasurementRule::AaronsonGottesman,
+        MeasurementRule::RefactorDecouple,
+    ] {
+        for order in [
+            MeasurementBatchOrder::AsGiven,
+            MeasurementBatchOrder::BitReversed,
+        ] {
+            let mut ones = 0;
+            for seed in 0..256 {
+                let mut sim = SparseStabVecSet::with_seed(3, seed)
+                    .with_measurement_rule(rule)
+                    .with_measurement_batch_order(order);
+                sim.h(&[QubitId(0)]).cx(&[(QubitId(0), QubitId(1))]);
+                // Three positions give order [0, 2, 1], reversing which Bell
+                // qubit is measured first while the spectator stays deterministic.
+                let batch = [QubitId(2), QubitId(1), QubitId(0)];
+                let results = sim.mz(&batch);
+                assert!(!results[0].outcome && results[0].is_deterministic);
+                assert_eq!(results[1].outcome, results[2].outcome);
+                assert_ne!(results[1].is_deterministic, results[2].is_deterministic);
+                ones += usize::from(results[1].outcome);
+                let mut given = SparseStabVecSet::with_seed(3, seed).with_measurement_rule(rule);
+                given.h(&[QubitId(0)]).cx(&[(QubitId(0), QubitId(1))]);
+                assert_eq!(results[1].outcome, given.mz(&batch)[1].outcome);
+            }
+            assert!(
+                (80..176).contains(&ones),
+                "both Bell marginals should be balanced: {ones}"
+            );
+        }
+    }
 }

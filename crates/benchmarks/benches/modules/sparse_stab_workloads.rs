@@ -14,7 +14,8 @@ use pecos_qec::{
 use pecos_quantum::{AnnotationKind, GateType, TickCircuit};
 use pecos_random::PecosRng;
 use pecos_simulators::{
-    CircuitExecutor, CliffordGateable, MeasurementRule, SparseStabGeneric, SparseStabSet,
+    CircuitExecutor, CliffordGateable, MeasurementBatchOrder, MeasurementRule, SparseStabGeneric,
+    SparseStabSet,
 };
 use rand::seq::SliceRandom;
 use std::{hint::black_box, ops::Range, time::Duration};
@@ -294,16 +295,23 @@ fn reset_arm(work: &Workload) -> TickCircuit {
     circuit
 }
 
-fn simulator<S: IndexSet>(n: usize, rule: MeasurementRule) -> SparseStabGeneric<S> {
-    SparseStabGeneric::<S>::with_rng(n, PecosRng::seed_from_u64(SEED)).with_measurement_rule(rule)
+fn simulator<S: IndexSet>(
+    n: usize,
+    rule: MeasurementRule,
+    order: MeasurementBatchOrder,
+) -> SparseStabGeneric<S> {
+    SparseStabGeneric::<S>::with_rng(n, PecosRng::seed_from_u64(SEED))
+        .with_measurement_rule(rule)
+        .with_measurement_batch_order(order)
 }
 
 fn outcomes<S: IndexSet>(
     circuit: &TickCircuit,
     n: usize,
     rule: MeasurementRule,
+    order: MeasurementBatchOrder,
 ) -> Vec<(bool, bool)> {
-    let mut sim = simulator::<S>(n, rule);
+    let mut sim = simulator::<S>(n, rule, order);
     CircuitExecutor::new(circuit)
         .run(&mut sim)
         .expect("supported workload circuit")
@@ -364,13 +372,14 @@ fn bench_set<S: IndexSet>(
     arm: &str,
     set: &str,
     rule: MeasurementRule,
+    order: MeasurementBatchOrder,
 ) {
     let mut group = c.benchmark_group(format!("SparseStab Workloads/{}", work.family));
     group
         .sample_size(10)
         .measurement_time(Duration::from_secs(2))
         .warm_up_time(Duration::from_millis(500));
-    let mut sim = simulator::<S>(work.n, rule);
+    let mut sim = simulator::<S>(work.n, rule, order);
     let executor = CircuitExecutor::new(circuit);
     group.bench_function(
         BenchmarkId::new(&work.instance, format!("f={arm}/{set}")),
@@ -388,7 +397,7 @@ fn bench_set<S: IndexSet>(
     if (work.family == "surface" && work.instance == "d3")
         || (work.family == "bb" && work.instance == "n144")
     {
-        let mut direct = simulator::<S>(work.n, rule);
+        let mut direct = simulator::<S>(work.n, rule, order);
         group.bench_function(
             BenchmarkId::new(&work.instance, format!("f={arm}/{set}/direct")),
             |b| {
@@ -407,9 +416,10 @@ fn validate<S: IndexSet>(
     circuit: &TickCircuit,
     expected: &[(bool, bool)],
     rule: MeasurementRule,
+    order: MeasurementBatchOrder,
 ) {
     assert_eq!(
-        outcomes::<S>(circuit, work.n, rule),
+        outcomes::<S>(circuit, work.n, rule, order),
         expected,
         "{}/{}: outcomes differ",
         work.family,
@@ -418,7 +428,7 @@ fn validate<S: IndexSet>(
     if (work.family == "surface" && work.instance == "d3")
         || (work.family == "bb" && work.instance == "n144")
     {
-        let mut direct = simulator::<S>(work.n, rule);
+        let mut direct = simulator::<S>(work.n, rule, order);
         assert_eq!(replay(&mut direct, circuit), expected);
     }
 }
@@ -428,28 +438,39 @@ pub fn benchmarks(c: &mut Criterion) {
     let workloads = corpus();
     let mut prepared = Vec::new();
     for work in &workloads {
-        let clean = outcomes::<BitSet>(&work.circuit, work.n, MeasurementRule::AaronsonGottesman);
-        for annotation in work.circuit.annotations() {
-            if let AnnotationKind::Detector {
-                measurement_ids, ..
-            } = &annotation.kind
-            {
-                assert!(
-                    !measurement_ids
-                        .iter()
-                        .fold(false, |p, id| p ^ clean[id.index()].0),
-                    "{}/{} detector",
-                    work.family,
-                    work.instance
-                );
+        let ag = MeasurementRule::AaronsonGottesman;
+        let refactor = MeasurementRule::RefactorDecouple;
+        let given = MeasurementBatchOrder::AsGiven;
+        let bitrev = MeasurementBatchOrder::BitReversed;
+        for (rule, order) in [(ag, given), (refactor, bitrev)] {
+            let clean = outcomes::<BitSet>(&work.circuit, work.n, rule, order);
+            for annotation in work.circuit.annotations() {
+                if let AnnotationKind::Detector {
+                    measurement_ids, ..
+                } = &annotation.kind
+                {
+                    assert!(
+                        !measurement_ids
+                            .iter()
+                            .fold(false, |p, id| p ^ clean[id.index()].0),
+                        "{}/{} {rule:?}/{order:?} detector",
+                        work.family,
+                        work.instance
+                    );
+                }
             }
         }
         for (arm, circuit) in [("0", work.circuit.clone()), ("0.01", reset_arm(work))] {
-            let ag = MeasurementRule::AaronsonGottesman;
-            let expected = outcomes::<BitSet>(&circuit, work.n, ag);
-            validate::<BitSet>(work, &circuit, &expected, ag);
-            validate::<SparseStabSet>(work, &circuit, &expected, ag);
-            validate::<SparseStabSet>(work, &circuit, &expected, MeasurementRule::RefactorDecouple);
+            let expected = outcomes::<BitSet>(&circuit, work.n, ag, given);
+            validate::<BitSet>(work, &circuit, &expected, ag, given);
+            validate::<SparseStabSet>(work, &circuit, &expected, ag, given);
+            validate::<SparseStabSet>(work, &circuit, &expected, refactor, given);
+            // Reordering measurements changes which qubits consume RNG draws.
+            // Compare both backends and repeatability within the new order,
+            // including deterministic flags, rather than raw outcomes with AG.
+            let reordered = outcomes::<BitSet>(&circuit, work.n, refactor, bitrev);
+            validate::<BitSet>(work, &circuit, &reordered, refactor, bitrev);
+            validate::<SparseStabSet>(work, &circuit, &reordered, refactor, bitrev);
             prepared.push((work, arm, circuit));
         }
     }
@@ -459,8 +480,24 @@ pub fn benchmarks(c: &mut Criterion) {
     );
     for (work, arm, circuit) in prepared {
         let ag = MeasurementRule::AaronsonGottesman;
-        bench_set::<BitSet>(c, work, &circuit, arm, "bitset", ag);
-        bench_set::<SparseStabSet>(c, work, &circuit, arm, "adaptive", ag);
+        bench_set::<BitSet>(
+            c,
+            work,
+            &circuit,
+            arm,
+            "bitset",
+            ag,
+            MeasurementBatchOrder::AsGiven,
+        );
+        bench_set::<SparseStabSet>(
+            c,
+            work,
+            &circuit,
+            arm,
+            "adaptive",
+            ag,
+            MeasurementBatchOrder::AsGiven,
+        );
         bench_set::<SparseStabSet>(
             c,
             work,
@@ -468,6 +505,16 @@ pub fn benchmarks(c: &mut Criterion) {
             arm,
             "adaptive+refactor",
             MeasurementRule::RefactorDecouple,
+            MeasurementBatchOrder::AsGiven,
+        );
+        bench_set::<SparseStabSet>(
+            c,
+            work,
+            &circuit,
+            arm,
+            "adaptive+refactor+bitrev",
+            MeasurementRule::RefactorDecouple,
+            MeasurementBatchOrder::BitReversed,
         );
     }
     eprintln!(

@@ -20,6 +20,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from pecos.simulators.batch_validation import is_empty_batch, replayable_locations, validate_batch
+
 if TYPE_CHECKING:
     from pecos_rslib import GateRegistry
 
@@ -36,12 +38,29 @@ class DefaultSimulator:
     behavior, or implement the SimulatorProtocol directly for custom behavior.
     """
 
+    gate_capacity: int | None = None
+    # Generic user bindings accept sized, indexable locations except strings and
+    # mappings. Concrete wrappers restrict this policy to match their dispatch.
+    _allow_singletons = True
+    _singleton_symbols = frozenset()
+    _allow_sequence_locations = True
+
     def __init__(self) -> None:
         """Initialize the DefaultSimulator.
 
         Creates an empty bindings dictionary to store gate operation mappings.
         """
         self.bindings = {}
+
+    def validate_gate_batch(self, symbol: str, locations: object) -> None:
+        """Validate a batch using this state's capacity and binding location policy."""
+        validate_batch(
+            symbol,
+            locations,
+            self.gate_capacity,
+            allow_singletons=self._allow_singletons or symbol in self._singleton_symbols,
+            allow_sequences=self._allow_sequence_locations,
+        )
 
     def run_gate(
         self,
@@ -60,7 +79,12 @@ class DefaultSimulator:
         """
         output = {}
 
-        if params.get("simulate_gate", True) and locations:
+        if is_empty_batch(locations):
+            return output
+        locations = replayable_locations(locations)
+        self.validate_gate_batch(symbol, locations)
+
+        if params.get("simulate_gate", True):
             for location in locations:
                 if params.get("angles") and len(params["angles"]) == 1:
                     params.update({"angle": params["angles"][0]})

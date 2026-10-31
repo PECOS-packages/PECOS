@@ -1,0 +1,21 @@
+[project]
+name = "pecos-selene-runtime-plugin"
+version = "0.11.0.dev0"
+requires-python = ">=3.12"
+description = "PECOS lazy virtual-Z runtime plugin for Selene"
+readme = "README.md"
+license = "Apache-2.0"
+dependencies = ["selene-core~=0.3.0"]
+
+[project.optional-dependencies]
+test = ["pytest>=9.0", "selene-sim~=0.3.0", "guppylang~=1.0.1"]
+
+[build-system]
+requires = ["hatchling", "packaging"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["python/pecos_selene_runtime_plugin"]
+
+[tool.hatch.build.hooks.custom]
+path = "hatch_build.py"

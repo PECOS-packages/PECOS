@@ -72,6 +72,7 @@ jobs:
             crates/pecos-engines/src/noise/ \
             crates/pecos-selene-general-noise-adapter/ \
             crates/pecos-qis/ \
+            crates/pecos-selene-runtime/ \
             .github/workflows/selene-plugins.yml \
             scripts/ci/smoke_selene_wheel.py \
             Cargo.toml Cargo.lock uv.lock)"

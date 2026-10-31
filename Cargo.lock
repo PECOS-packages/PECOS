@@ -4676,6 +4676,7 @@ dependencies = [
  "pecos-qis-ffi-types",
  "pecos-qis-test-runtime",
  "pecos-random",
+ "pecos-selene-runtime-plugin",
  "pecos-simulators",
  "rand 0.10.2",
  "selene-core",
@@ -4892,6 +4893,23 @@ dependencies = [
  "pecos-core",
  "pecos-simulators",
  "pecos-stab-tn",
+ "selene-core",
+]
+
+[[package]]
+name = "pecos-selene-runtime"
+version = "0.2.0-dev.0"
+dependencies = [
+ "anyhow",
+ "clap 4.6.1",
+ "selene-core",
+]
+
+[[package]]
+name = "pecos-selene-runtime-plugin"
+version = "0.2.0-dev.0"
+dependencies = [
+ "pecos-selene-runtime",
  "selene-core",
 ]
 

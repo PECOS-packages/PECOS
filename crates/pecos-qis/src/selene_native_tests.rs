@@ -2490,3 +2490,104 @@ fn invalid_source_delays_fail_before_native_submission() {
         assert_eq!(seconds_to_nanoseconds(seconds).unwrap(), nanos);
     }
 }
+
+#[test]
+fn pecos_runtime_targeted_forcing_retains_unrelated_work_on_every_route() {
+    for route in Route::ALL {
+        let mut runtime = start(crate::selene_runtimes::pecos_test_runtime(&[]), 2);
+        let operations = [
+            QuantumOp::X(0).into(),
+            QuantumOp::MeasureLeaked(0, 7).into(),
+            QuantumOp::X(1).into(),
+            QuantumOp::Measure(1, 8).into(),
+        ];
+        assert_eq!(
+            route.lower_raw(&mut runtime, &operations),
+            Vec::<QuantumOp>::new()
+        );
+        assert!(runtime.force_result(7).unwrap());
+        let first = route.lower_raw(&mut runtime, &[]);
+        assert!(
+            first
+                .iter()
+                .any(|op| matches!(op, QuantumOp::MeasureLeaked(0, 7)))
+        );
+        assert!(
+            !first
+                .iter()
+                .any(|op| matches!(op, QuantumOp::Measure(1, 8)))
+        );
+        runtime.provide_measurement_outcomes(vec![(7, 2)]).unwrap();
+        assert_eq!(runtime.read_result(7).unwrap(), Some(2));
+        assert!(runtime.force_result(7).unwrap());
+        assert_eq!(route.lower_raw(&mut runtime, &[]), Vec::<QuantumOp>::new());
+        assert!(runtime.force_result(8).unwrap());
+        assert!(
+            route
+                .lower_raw(&mut runtime, &[])
+                .iter()
+                .any(|op| matches!(op, QuantumOp::Measure(1, 8)))
+        );
+        runtime.provide_measurement_outcomes(vec![(8, 1)]).unwrap();
+        if matches!(route, Route::Scheduled) {
+            runtime.drain_pending_scheduled_operations().unwrap();
+        }
+        runtime.shot_end().unwrap();
+    }
+}
+
+#[test]
+fn pecos_runtime_reused_slot_reads_the_latest_native_future() {
+    for route in Route::ALL {
+        let mut runtime = start(crate::selene_runtimes::pecos_test_runtime(&[]), 2);
+        let ops = [
+            QuantumOp::Measure(0, 3).into(),
+            QuantumOp::X(0).into(),
+            QuantumOp::Measure(0, 3).into(),
+        ];
+        assert_eq!(route.lower_raw(&mut runtime, &ops), Vec::<QuantumOp>::new());
+        runtime.force_result(3).unwrap();
+        for value in [0, 1] {
+            assert_eq!(runtime.read_result(3).unwrap(), None);
+            let emitted = route.lower_raw(&mut runtime, &[]);
+            assert_eq!(
+                emitted
+                    .iter()
+                    .filter(|op| matches!(op, QuantumOp::Measure(_, 3)))
+                    .count(),
+                1
+            );
+            runtime
+                .provide_measurement_outcomes(vec![(3, value)])
+                .unwrap();
+        }
+        assert_eq!(runtime.read_result(3).unwrap(), Some(1));
+        runtime.force_result(3).unwrap();
+        assert_eq!(route.lower_raw(&mut runtime, &[]), Vec::<QuantumOp>::new());
+    }
+}
+
+#[test]
+fn pecos_runtime_pressure_drains_between_decomposed_native_gates() {
+    for route in Route::ALL {
+        let mut runtime = start(
+            crate::selene_runtimes::pecos_test_runtime(&["--max-queued-batches=1"]),
+            2,
+        );
+        let emitted = route.lower_raw(
+            &mut runtime,
+            &[
+                QuantumOp::H(0).into(),
+                QuantumOp::CX(0, 1).into(),
+                QuantumOp::Measure(1, 0).into(),
+            ],
+        );
+        assert!(
+            emitted
+                .iter()
+                .any(|op| matches!(op, QuantumOp::Measure(_, 0)))
+        );
+        runtime.provide_measurement_outcomes(vec![(0, 0)]).unwrap();
+        assert_eq!(runtime.read_result(0).unwrap(), Some(0));
+    }
+}

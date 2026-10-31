@@ -223,6 +223,16 @@ class QisEngineBuilder:
         self._builder = self._builder.interface(builder)
         return self
 
+    def scheduled_batches(self, *, enabled: bool = True) -> Self:
+        """Select scheduled transport, paired with a scheduled noise profile."""
+        self._builder = self._builder.scheduled_batches(enabled)
+        return self
+
+    def scheduled_event_batches(self, *, enabled: bool = True) -> Self:
+        """Select scheduled event transport, paired with an event noise profile."""
+        self._builder = self._builder.scheduled_event_batches(enabled)
+        return self
+
     def to_sim(self) -> prs.SimBuilder:
         """Convert to simulation builder.
 

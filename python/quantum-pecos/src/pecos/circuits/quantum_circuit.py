@@ -664,6 +664,27 @@ class QuantumCircuit(MutableSequence):
             meta["var_output"] = {int(k): tuple(v) for k, v in meta["var_output"].items()}
         return meta
 
+    @staticmethod
+    def _fix_json_qvars(qvars: object) -> dict[int, tuple]:
+        """Restore the integer qubit ids and (register, index) pairs that JSON turns into strings and lists."""
+        if not isinstance(qvars, dict):
+            msg = f"Invalid QuantumCircuit qvars: {qvars!r}; expected a mapping"
+            raise TypeError(msg)
+        fixed = {}
+        for key, value in qvars.items():
+            if not (key.isascii() and key.isdecimal()):
+                msg = f"Invalid qvars qubit id {key!r}; use a decimal integer string"
+                raise ValueError(msg)
+            qubit_id = int(key)
+            if qubit_id in fixed:
+                msg = f"Duplicate qvars qubit id {key!r}; use only one key for qubit id {qubit_id}"
+                raise ValueError(msg)
+            if not isinstance(value, list) or len(value) != 2:
+                msg = f"Invalid qvars entry {key!r}: {value!r}; use a [register, index] pair"
+                raise ValueError(msg)
+            fixed[qubit_id] = tuple(value)
+        return fixed
+
     @classmethod
     def from_json_str(cls, qc_json: str) -> QuantumCircuit:
         """Converts a json str that represents a QuantumCircuit back into a QuantumCircuit object."""
@@ -671,8 +692,7 @@ class QuantumCircuit(MutableSequence):
 
         qc_meta = qc_dict["prog_metadata"]
         if "qvars" in qc_meta:
-            # JSON turns the integer qubit ids into strings and the (register, index) pairs into lists.
-            qc_meta["qvars"] = {int(k): tuple(v) for k, v in qc_meta["qvars"].items()}
+            qc_meta["qvars"] = cls._fix_json_qvars(qc_meta["qvars"])
         qc = QuantumCircuit(**qc_meta)
 
         for gate_dict in qc_dict["gates"]:

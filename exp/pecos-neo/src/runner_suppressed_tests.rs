@@ -139,6 +139,21 @@ fn suppressed_real_gate_error_channels() {
             )
             .with_filter(CompositeEventFilter::TwoQubitGate),
         ),
+        Box::new(
+            CompositeChannel::new(
+                "wrapped gate error",
+                channel_action(
+                    GateDependentChannel::new().with_gate(
+                        GateType::CX,
+                        GateNoiseConfig::new(1.0)
+                            .unwrap()
+                            .with_pauli_weights(crate::noise::PauliWeights::x_only())
+                            .unwrap(),
+                    ),
+                ),
+            )
+            .with_filter(CompositeEventFilter::TwoQubitGate),
+        ),
     ];
     let mut failures = Vec::new();
     for channel in channels {
@@ -569,4 +584,49 @@ fn noise_marks_notify_once_with_handlers() {
             .context()
             .is_leaked(QubitId(3))
     );
+}
+
+#[test]
+fn suppressed_adapter_seepage() {
+    use crate::noise::composite::prelude::*;
+    for adapted in [false, true] {
+        let channel = CompositeChannel::new(
+            "wrapped seepage",
+            channel_action(
+                TwoQubitChannel::depolarizing(1.0)
+                    .unwrap()
+                    .with_leakage(1.0)
+                    .unwrap()
+                    .with_seepage(1.0)
+                    .unwrap(),
+            ),
+        )
+        .with_filter(CompositeEventFilter::TwoQubitGate);
+        let mut noise = ComposableNoiseModel::new()
+            .add_channel(Fixture {
+                skip: vec![QubitId(0)],
+                ..Default::default()
+            })
+            .add_channel(channel);
+        noise.context_mut().mark_leaked(QubitId(0));
+        let mut runner = CircuitRunner::new().with_noise(noise);
+        let mut sim = SparseStab::with_seed(2, 7);
+        execute(
+            &mut runner,
+            &mut sim,
+            adapted,
+            GateType::CX,
+            &[QubitId(0), QubitId(1)],
+            &[],
+        );
+        assert!(
+            !runner
+                .noise
+                .as_ref()
+                .unwrap()
+                .context()
+                .is_leaked(QubitId(0))
+        );
+        assert!(!sim.mz(&[QubitId(1)])[0].outcome);
+    }
 }

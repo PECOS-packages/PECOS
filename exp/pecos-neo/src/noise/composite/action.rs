@@ -2605,9 +2605,17 @@ pub mod actions {
             let event = NoiseEvent::AfterGate {
                 gate_type,
                 gate_id: Some(gate_type.to_gate_id()),
-                qubits: &qubits,
+                qubits: if ctx.is_current_gate_suppressed() {
+                    &[]
+                } else {
+                    &qubits
+                },
                 angles: &angles,
-                leaked_suppressed: &[],
+                leaked_suppressed: if ctx.is_current_gate_suppressed() {
+                    &qubits
+                } else {
+                    &[]
+                },
                 group_size: std::num::NonZeroUsize::new(
                     gate_info.map_or(qubits.len(), |g| g.num_qubits),
                 )

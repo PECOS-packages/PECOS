@@ -21,7 +21,7 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 - **Breaking:** pecos-neo `NoiseEvent::AfterGate` gains `leaked_suppressed` and
   `group_size`; `BeforeGate` gains `group_size`. `AfterGate.qubits` now contains
   executed groups only. Group size is `NonZeroUsize`, shared by every event producer.
-  `NoiseContext::set_current_gate` explicitly rejects zero arity.
+  `NoiseContext::set_current_gate` also takes `NonZeroUsize`.
 
 - **Breaking:** pecos-neo `DispatchContext` gains `leaked_suppressed`. Queue
   after-gate handlers receive the same split as noise channels, can receive empty
@@ -37,6 +37,9 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   rules now fire on batched commands (#1443), including registered custom gates.
   Every processing path supplies group-local partner context. Suppressed groups
   run primitives only on currently leaked members, not healthy partners.
+  Two-stage primitives now run both stages in geometric and batch processing,
+  shifting seeded results for `BatchCompositeChannel` and geometric
+  `CompositeChannel` models using them.
 
 - **Breaking:** Two-qubit and composite seepage now use the marginal rate
   `p * emission_ratio * seepage`, including angle scaling and excluding leakage

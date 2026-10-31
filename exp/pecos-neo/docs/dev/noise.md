@@ -303,7 +303,7 @@ there are no suppressed groups.
 the gate type arity; adapted commands use the registered arity. A positive
 arity that divides non-empty operands is used directly; otherwise the size
 is the whole operand count, or one for empty operands.
-`NoiseContext::set_current_gate` rejects zero group sizes with an explicit panic.
+`NoiseContext::set_current_gate` also takes a `NonZeroUsize`.
 Composite filters classify by this size, including custom gates represented as
 `GateType::I`. Primitives see only their own group for partner/leakage conditions.
 On suppressed groups, primitives run only on currently leaked members.

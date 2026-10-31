@@ -249,6 +249,8 @@ pub struct NoiseContext {
     /// Current gate information for dynamic noise parameters.
     /// Set temporarily during gate noise processing.
     current_gate: Option<GateInfo>,
+    /// Whether the current operand group was suppressed at the skip decision.
+    current_gate_suppressed: bool,
     /// Current idle information for time-dependent noise parameters.
     /// Set temporarily during idle noise processing.
     current_idle: Option<IdleInfo>,
@@ -300,6 +302,7 @@ impl NoiseContext {
             noiseless_gates: BTreeSet::new(),
             current_outcome: None,
             current_gate: None,
+            current_gate_suppressed: false,
             current_idle: None,
             current_qubit_index: 0,
             sampled_correlation: None,
@@ -395,6 +398,7 @@ impl NoiseContext {
         angles: &[Angle64],
         group_size: std::num::NonZeroUsize,
     ) {
+        self.current_gate_suppressed = false;
         self.current_gate = Some(GateInfo::new(
             gate_type,
             angles.iter().copied().collect(),
@@ -402,9 +406,21 @@ impl NoiseContext {
         ));
     }
 
-    /// Clear the current gate information.
+    /// Clear the current gate information and its operand/correlation context.
     pub fn clear_current_gate(&mut self) {
         self.current_gate = None;
+        self.current_gate_suppressed = false;
+        self.clear_correlation();
+    }
+
+    /// Whether the current operand group was suppressed at the skip decision.
+    #[must_use]
+    pub fn is_current_gate_suppressed(&self) -> bool {
+        self.current_gate_suppressed
+    }
+
+    pub(crate) fn set_current_gate_suppressed(&mut self, suppressed: bool) {
+        self.current_gate_suppressed = suppressed;
     }
 
     /// Get the current gate information.
@@ -732,9 +748,8 @@ impl NoiseContext {
         self.active_count = 0;
         self.leaked_count = 0;
         self.current_outcome = None;
-        self.current_gate = None;
+        self.clear_current_gate();
         self.current_idle = None;
-        self.fired_flags = [false; 4];
         // Note: noiseless_gates and gate_definitions are configuration, not per-shot state
     }
 

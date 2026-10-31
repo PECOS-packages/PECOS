@@ -104,7 +104,7 @@ struct OperandSelection<'a> {
 }
 
 impl OperandSelection<'_> {
-    fn prepare(self, index: usize, ctx: &mut NoiseContext, non_gate_context: bool) -> bool {
+    fn prepare(self, index: usize, ctx: &mut NoiseContext) -> bool {
         if self.suppressed && !ctx.is_leaked(self.qubits[index]) {
             return false;
         }
@@ -113,18 +113,23 @@ impl OperandSelection<'_> {
             let start = index / size * size;
             let end = (start + size).min(self.qubits.len());
             ctx.set_current_qubit_index(index - start, &self.qubits[start..end]);
-        } else if non_gate_context {
-            ctx.set_current_qubit_index(index, self.qubits);
+            ctx.set_current_gate_suppressed(self.suppressed);
         }
         true
+    }
+
+    fn prepare_non_gate_context(self, index: usize, ctx: &mut NoiseContext) {
+        if ctx.current_gate().is_none() {
+            ctx.set_current_qubit_index(index, self.qubits);
+        }
     }
 }
 
 /// Complete both stages within each group so local fired flags cannot cross groups.
-fn apply_sampled_stages(
+fn apply_two_pass(
     primitive: &impl Primitive,
     operands: OperandSelection<'_>,
-    indices: &[usize],
+    mut select_stage1: impl FnMut(usize, &mut PecosRng) -> bool,
     outcomes: Option<&[bool]>,
     ctx: &mut NoiseContext,
     rng: &mut PecosRng,
@@ -140,15 +145,17 @@ fn apply_sampled_stages(
             qubits: group,
             suppressed: operands.suppressed,
         };
+        // Stage 2 is arbitrary work and runs even when stage 1 selected no members.
         for stage in [1, 2] {
             for (i, &q) in group.iter().enumerate() {
                 let index = group_start + i;
-                if stage == 1 && indices.binary_search(&index).is_err() {
+                if stage == 1 && !select_stage1(index, rng) {
                     continue;
                 }
-                if !selection.prepare(i, ctx, false) {
+                if !selection.prepare(i, ctx) {
                     continue;
                 }
+                selection.prepare_non_gate_context(i, ctx);
                 if let Some(outcomes) = outcomes
                     && index < outcomes.len()
                 {
@@ -324,7 +331,14 @@ impl<P: Primitive> CompositeChannel<P> {
                 NoiseEvent::AfterMeasurement { outcomes, .. } => Some(*outcomes),
                 _ => None,
             };
-            return apply_sampled_stages(&self.primitive, operands, &indices, outcomes, ctx, rng);
+            return apply_two_pass(
+                &self.primitive,
+                operands,
+                |index, _| indices.binary_search(&index).is_ok(),
+                outcomes,
+                ctx,
+                rng,
+            );
         }
         if indices.is_empty() {
             return NoiseResponse::None;
@@ -340,7 +354,7 @@ impl<P: Primitive> CompositeChannel<P> {
         let mut combined = NoiseResponse::None;
         for idx in indices {
             let qubit = qubits[idx];
-            if !operands.prepare(idx, ctx, false) {
+            if !operands.prepare(idx, ctx) {
                 continue;
             }
 
@@ -388,7 +402,14 @@ impl<P: Primitive> CompositeChannel<P> {
 
         // Check if this primitive needs two-pass processing
         if self.primitive.needs_two_pass() {
-            return self.apply_two_pass(operands, outcomes, threshold, ctx, rng);
+            return apply_two_pass(
+                &self.primitive,
+                operands,
+                |_, rng| threshold.is_none_or(|threshold| rng.next_u64() < threshold),
+                outcomes,
+                ctx,
+                rng,
+            );
         }
 
         // Single-pass processing (standard)
@@ -402,9 +423,10 @@ impl<P: Primitive> CompositeChannel<P> {
             }
 
             // Set qubit index for correlated actions
-            if !operands.prepare(i, ctx, true) {
+            if !operands.prepare(i, ctx) {
                 continue;
             }
+            operands.prepare_non_gate_context(i, ctx);
 
             // Only set outcome context for measurement events
             if let Some(outcomes) = outcomes
@@ -422,84 +444,6 @@ impl<P: Primitive> CompositeChannel<P> {
             }
         }
 
-        combined
-    }
-
-    /// Apply using two-pass processing for `TwoStage` primitives.
-    ///
-    /// Pass 1: Run `apply_stage1` on all qubits (sampling phase)
-    /// Pass 2: Run `apply_stage2` on all qubits (effect phase)
-    #[inline]
-    fn apply_two_pass(
-        &self,
-        operands: OperandSelection<'_>,
-        outcomes: Option<&[bool]>,
-        threshold: Option<u64>,
-        ctx: &mut NoiseContext,
-        rng: &mut PecosRng,
-    ) -> NoiseResponse {
-        let mut combined = NoiseResponse::None;
-        let size = ctx
-            .current_gate()
-            .map_or(operands.qubits.len(), |g| g.num_qubits);
-        for group in operands.qubits.chunks(size) {
-            ctx.clear_fired_flags();
-            let operands = OperandSelection {
-                qubits: group,
-                suppressed: operands.suppressed,
-            };
-            let qubits = group;
-
-            // === Pass 1: Stage 1 on all qubits ===
-            for (i, &qubit) in qubits.iter().enumerate() {
-                // If probability is set, do threshold check
-                // Note: For two-stage, the probability is typically in stage1
-                if let Some(thresh) = threshold
-                    && rng.next_u64() >= thresh
-                {
-                    continue;
-                }
-
-                if !operands.prepare(i, ctx, true) {
-                    continue;
-                }
-
-                if let Some(outcomes) = outcomes
-                    && i < outcomes.len()
-                {
-                    ctx.set_current_outcome(outcomes[i]);
-                }
-
-                let composite_response = self.primitive.apply_stage1(qubit, ctx, rng);
-                let noise_response = composite_to_noise_response(composite_response, qubit);
-                combined = combined.combine(noise_response);
-
-                if outcomes.is_some() {
-                    ctx.clear_current_outcome();
-                }
-            }
-
-            // === Pass 2: Stage 2 on all qubits ===
-            for (i, &qubit) in qubits.iter().enumerate() {
-                if !operands.prepare(i, ctx, true) {
-                    continue;
-                }
-
-                if let Some(outcomes) = outcomes
-                    && i < outcomes.len()
-                {
-                    ctx.set_current_outcome(outcomes[i]);
-                }
-
-                let composite_response = self.primitive.apply_stage2(qubit, ctx, rng);
-                let noise_response = composite_to_noise_response(composite_response, qubit);
-                combined = combined.combine(noise_response);
-
-                if outcomes.is_some() {
-                    ctx.clear_current_outcome();
-                }
-            }
-        }
         combined
     }
 }
@@ -574,7 +518,6 @@ impl<P: Primitive + Clone + 'static> NoiseChannel for CompositeChannel<P> {
         // Clear context after processing
         ctx.clear_current_gate();
         ctx.clear_current_idle();
-        ctx.clear_correlation();
 
         result
     }
@@ -934,23 +877,6 @@ impl<P: Primitive> BatchCompositeChannel<P> {
             && num_qubits >= self.min_qubits_for_geometric
     }
 
-    fn process_two_pass(
-        &self,
-        operands: OperandSelection<'_>,
-        ctx: &mut NoiseContext,
-        rng: &mut PecosRng,
-    ) -> NoiseResponse {
-        ctx.clear_fired_flags();
-        let indices = if self.use_geometric(operands.qubits.len()) {
-            self.sampler.sample_range(0, operands.qubits.len(), rng)
-        } else {
-            (0..operands.qubits.len())
-                .filter(|_| self.sampler.check_single(rng))
-                .collect()
-        };
-        apply_sampled_stages(&self.primitive, operands, &indices, None, ctx, rng)
-    }
-
     /// Process qubits using geometric sampling, inline without Vec allocation.
     ///
     /// This is the fast path for low-probability, high-qubit-count scenarios.
@@ -962,13 +888,20 @@ impl<P: Primitive> BatchCompositeChannel<P> {
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> NoiseResponse {
-        if self.primitive.needs_two_pass() {
-            return self.process_two_pass(operands, ctx, rng);
-        }
         let qubits = operands.qubits;
         // Sample indices using geometric distribution (O(n*p))
         let indices = self.sampler.sample_range(0, qubits.len(), rng);
 
+        if self.primitive.needs_two_pass() {
+            return apply_two_pass(
+                &self.primitive,
+                operands,
+                |index, _| indices.binary_search(&index).is_ok(),
+                None,
+                ctx,
+                rng,
+            );
+        }
         if indices.is_empty() {
             return NoiseResponse::None;
         }
@@ -977,7 +910,7 @@ impl<P: Primitive> BatchCompositeChannel<P> {
         let mut combined = NoiseResponse::None;
         for idx in indices {
             let qubit = qubits[idx];
-            if !operands.prepare(idx, ctx, false) {
+            if !operands.prepare(idx, ctx) {
                 continue;
             }
             let composite_response = self.primitive.apply(qubit, ctx, rng);
@@ -999,13 +932,21 @@ impl<P: Primitive> BatchCompositeChannel<P> {
         rng: &mut PecosRng,
     ) -> NoiseResponse {
         if self.primitive.needs_two_pass() {
-            return self.process_two_pass(operands, ctx, rng);
+            return apply_two_pass(
+                &self.primitive,
+                operands,
+                |_, rng| self.sampler.check_single(rng),
+                None,
+                ctx,
+                rng,
+            );
         }
         let qubits = operands.qubits;
         let mut combined = NoiseResponse::None;
         for (i, &qubit) in qubits.iter().enumerate() {
             // Use u64 threshold comparison for speed
-            if self.sampler.check_single(rng) && operands.prepare(i, ctx, false) {
+            if self.sampler.check_single(rng) && operands.prepare(i, ctx) {
+                operands.prepare_non_gate_context(i, ctx);
                 let composite_response = self.primitive.apply(qubit, ctx, rng);
                 if !composite_response.is_none() {
                     let noise_response = composite_to_noise_response(composite_response, qubit);
@@ -1087,7 +1028,6 @@ impl<P: Primitive + Clone + 'static> NoiseChannel for BatchCompositeChannel<P> {
 
         ctx.clear_current_gate();
         ctx.clear_current_idle();
-        ctx.clear_correlation();
 
         result
     }

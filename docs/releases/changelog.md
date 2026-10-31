@@ -13,17 +13,27 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   declared, and the QASM swap temporary could take a nested register's name.
   `Vars(a, b)` keeps its arguments; it used to discard them. The parallel
   optimizer keeps the declarations of the regions it regroups.
-  **Breaking:** two nested declarations with the same name must be the same
-  storage (same size and, for child allocators, the same parent), or
-  conversion raises `ValueError`. A block with `block_inputs` may not declare
-  registers in its body; conversion raises `ValueError` naming the block and
-  register.
+  Child allocator declarations carry their actual offset within the parent;
+  QASM, Stim, QIR and QuantumCircuit resolve parent chains independently of
+  declaration order. Noncontiguous child placements raise `ValueError`.
+  **Breaking:** every declaration, including declarations in Main, must use
+  the same storage for a duplicate name (same size and, for child allocators,
+  the same parent and offset), or conversion raises `ValueError`.
+  Nested `block_inputs` functions cannot introduce registers that exist only
+  inside their bodies. They may repeat ordinary-scope declarations or their
+  own bound inputs; a root block with `block_inputs` is inlined normally.
+  In complete programs (`Main`), QASM rejects undeclared register and allocator
+  references, including inline measurement outputs that could collide with swap
+  temporaries. Stim, QIR and QuantumCircuit also reject undeclared quantum
+  allocators and measurement outputs in complete programs. Fragments may reference
+  caller-owned registers: quantum references use root storage at offset zero,
+  and QASM, Stim and QuantumCircuit accept caller-owned measurement outputs.
+  QIR continues to require declared classical storage, including in fragments.
 - Guppy code generation raises `GuppyCodegenError` for a classical reference it
   cannot resolve in the current function (#1525). Before, a `block_inputs`
   block that used an outer register with a loop-variable index, such as
   `c[x].set(e[x])`, produced Guppy source with undefined names that failed
   only at HUGR compilation.
-
 - **Breaking:** SLR code generation rejects constructs it previously silently
   dropped (#1189): QASM `While`, dynamic or non-integer `For` bounds, zero steps,
   `Print`, and unsupported `Permute` shapes; QIR non-integer
@@ -56,8 +66,8 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   Stim invalidates the whole register's measurement provenance after a symbolic
   bit assignment, so later conditions cannot read stale measurement records.
   QASM, Stim, QIR and QuantumCircuit report actionable errors for symbolic
-  `Permute` indices. Stim's undeclared `Permute` diagnostic explains the
-  block-local register limitation (#1511) and directs callers to Main scope.
+  `Permute` indices. Stim's undeclared `Permute` diagnostic names the missing
+  register and directs callers to declare it in Main or an ordinary Block.
   Deprecated `QIRGenerator` now
   rejects `For` and `While` instead of executing their bodies once and directs
   callers to `SlrConverter(...).qir()`. Barrier conversion widens individual

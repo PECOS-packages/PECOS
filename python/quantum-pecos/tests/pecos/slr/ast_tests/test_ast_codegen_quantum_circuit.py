@@ -803,7 +803,7 @@ def test_qubit_metadata_resolves_child_allocators() -> None:
         declarations=(
             AllocatorDecl(name="data", capacity=4),
             AllocatorDecl(name="padding", capacity=1, parent="data"),
-            AllocatorDecl(name="child", capacity=2, parent="data"),
+            AllocatorDecl(name="child", capacity=2, parent="data", offset=1),
         ),
         body=(GateOp(gate=GateKind.X, targets=(SlotRef(allocator="child", index=1),)),),
     )
@@ -827,8 +827,7 @@ def test_block_local_classical_permute_is_rejected(whole_register) -> None:
             permutation = Permute(c, c) if whole_register else Permute([c[0], c[1]], [c[1], c[0]])
             super().__init__(qb.Measure(q[0]) > c[0], permutation)
 
-    ref = "local" if whole_register else r"local\[0\]"
-    with pytest.raises(NotImplementedError, match=rf"Permute.*{ref}.*declare.*qubit"):
+    with pytest.raises(NotImplementedError, match=r"undeclared classical register 'local'.*declare"):
         SlrConverter(Main(q, LocalBits())).quantum_circuit()
 
 

@@ -163,8 +163,7 @@ class ParallelOptimizer:
                 new_ops.append(Parallel(*group))
 
         # Keep storage in its original block order even when executable ops
-        # are flattened and regrouped. In particular, child allocator offsets
-        # depend on declaration order, not the optimized gate order.
+        # are flattened and regrouped. QAllocs are declarations, not gates.
         declarations = self._declaration_block(parallel)
         return Block(*([declarations] if declarations is not None else []), *new_ops)
 
@@ -224,16 +223,7 @@ class ParallelOptimizer:
 
     def _collect_operations(self, parallel: Parallel) -> list[Node]:
         """Recursively collect all operations from a Parallel block."""
-        operations = []
-
-        for op in parallel.ops:
-            if isinstance(op, Block):
-                # Recursively collect from nested blocks
-                operations.extend(self._collect_from_block(op))
-            else:
-                operations.append(op)
-
-        return operations
+        return self._collect_from_block(parallel)
 
     def _collect_from_block(self, block: Block) -> list[Node]:
         """Recursively collect all operations from a Block."""
@@ -242,7 +232,7 @@ class ParallelOptimizer:
         for op in block.ops:
             if isinstance(op, Block):
                 operations.extend(self._collect_from_block(op))
-            else:
+            elif type(op).__name__ != "QAlloc":
                 operations.append(op)
 
         return operations

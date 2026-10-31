@@ -32,6 +32,7 @@ import re
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
+from pecos.slr.ast.codegen._allocator_layout import allocator_offsets
 from pecos.slr.ast.codegen._block_flatten import flatten_block_calls
 from pecos.slr.ast.codegen._loop_bounds import static_for_range
 from pecos.slr.ast.codegen._permutation import parse_permute_ref, reject_permute_in_region
@@ -183,11 +184,16 @@ class QasmContext:
         current = name
         while self.allocator_parents.get(current) is not None:
             current = self.allocator_parents[current]
+        if current not in self.allocator_parents and not self.is_fragment:
+            msg = f"Undeclared allocator {current!r}; declare it before generating code."
+            raise ValueError(msg)
         return current
 
     def get_absolute_index(self, allocator: str, index: int) -> int:
         """Get the absolute index in the root allocator."""
-        offset = self.allocator_offsets.get(allocator, 0)
+        if self.is_fragment and allocator not in self.allocator_offsets:
+            return index
+        offset = self.allocator_offsets[allocator]
         return offset + index
 
     def apply_permutation(self, allocator: str, index: int) -> tuple[str, int]:
@@ -282,7 +288,7 @@ class AstToQasm(BaseVisitor[list[str]]):
             self.context.allocator_parents[node.allocator.name] = node.allocator.parent
 
         # Calculate offsets for child allocators
-        self._calculate_allocator_offsets(node)
+        self.context.allocator_offsets = allocator_offsets(node)
 
         # Output declarations (only root allocators, not children)
         for decl in node.declarations:
@@ -301,29 +307,6 @@ class AstToQasm(BaseVisitor[list[str]]):
             lines.extend(self.visit(stmt))
 
         return lines
-
-    def _calculate_allocator_offsets(self, node: Program) -> None:
-        """Calculate the offset of each child allocator within its parent."""
-        parent_next_offset: dict[str, int] = {}
-
-        # Root allocators have offset 0
-        for decl in node.declarations:
-            if isinstance(decl, AllocatorDecl) and decl.parent is None:
-                self.context.allocator_offsets[decl.name] = 0
-
-        if node.allocator and node.allocator.parent is None:
-            self.context.allocator_offsets[node.allocator.name] = 0
-
-        # Process child allocators in declaration order
-        for decl in node.declarations:
-            if isinstance(decl, AllocatorDecl) and decl.parent is not None:
-                parent = decl.parent
-                if parent not in parent_next_offset:
-                    parent_next_offset[parent] = 0
-
-                parent_offset = self.context.allocator_offsets.get(parent, 0)
-                self.context.allocator_offsets[decl.name] = parent_offset + parent_next_offset[parent]
-                parent_next_offset[parent] += decl.capacity
 
     # === Declarations ===
 
@@ -471,7 +454,7 @@ class AstToQasm(BaseVisitor[list[str]]):
 
             if i < len(node.results):
                 result = node.results[i]
-                result_ref = f"{result.register}[{result.index}]"
+                result_ref = self._render_bit_ref(result)
                 lines.append(
                     self._maybe_conditional(
                         f"measure {target_ref} -> {result_ref};",
@@ -489,10 +472,10 @@ class AstToQasm(BaseVisitor[list[str]]):
     def visit_assign(self, node: AssignOp) -> list[str]:
         """Generate assignment operation."""
         if isinstance(node.target, BitRef):
-            target = f"{node.target.register}[{node.target.index}]"
+            target = self._render_bit_ref(node.target)
             writes = (node.target.register, node.target.index)
         else:
-            target = str(node.target)
+            target = self._render_classical_name(node.target)
             writes = (target, None)
 
         value = self._render_expression(node.value)
@@ -512,11 +495,13 @@ class AstToQasm(BaseVisitor[list[str]]):
         seen: set[str] = set()
         for name in allocators:
             if name not in self.context.allocators:
-                # Externally declared whole registers in Block fragments.
-                if name not in seen:
-                    refs.append(name)
-                    seen.add(name)
-                continue
+                if self.context.is_fragment:
+                    if name not in seen:
+                        refs.append(name)
+                        seen.add(name)
+                    continue
+                msg = f"QASM codegen: undeclared allocator {name!r}; declare it before using Barrier."
+                raise NotImplementedError(msg)
             physical = list(
                 dict.fromkeys(
                     self._render_slot_ref(SlotRef(allocator=name, index=i))
@@ -596,11 +581,16 @@ class AstToQasm(BaseVisitor[list[str]]):
         if not node.sources:
             return lines
         parsed = [parse_ref(ref) for ref in node.sources]
+        sizes = {**self.context.allocators, **self.context.registers}
+        for reference, slot in zip(node.sources, parsed, strict=True):
+            name = reference if slot is None else slot[0]
+            if name not in sizes and not self.context.is_fragment:
+                msg = f"QASM codegen: undeclared register {name!r}; declare it before using Permute."
+                raise NotImplementedError(msg)
         if any(ref is None for ref in parsed):
             if not all(ref is None for ref in parsed) or len(node.sources) != 2:
                 msg = "QASM codegen: Permute supports either indexed refs or a swap of two whole registers."
                 raise NotImplementedError(msg)
-            sizes = {**self.context.allocators, **self.context.registers}
             a, b = node.sources
             if a not in sizes or b not in sizes or sizes[a] != sizes[b]:
                 msg = "QASM codegen: Permute requires known whole registers of equal size."
@@ -881,7 +871,7 @@ class AstToQasm(BaseVisitor[list[str]]):
 
     def visit_bit_ref(self, node: BitRef) -> list[str]:
         """Bit refs are rendered inline."""
-        return [f"{node.register}[{node.index}]"]
+        return [self._render_bit_ref(node)]
 
     # === Expressions ===
 
@@ -891,11 +881,11 @@ class AstToQasm(BaseVisitor[list[str]]):
 
     def visit_var(self, node: VarExpr) -> list[str]:
         """Variables are rendered inline."""
-        return [node.name]
+        return [self._render_classical_name(node.name)]
 
     def visit_bit_expr(self, node: BitExpr) -> list[str]:
         """Bit expressions are rendered inline."""
-        return [f"{node.ref.register}[{node.ref.index}]"]
+        return [self._render_bit_ref(node.ref)]
 
     def visit_binary(self, node: BinaryExpr) -> list[str]:
         """Binary expressions are rendered inline."""
@@ -968,8 +958,9 @@ class AstToQasm(BaseVisitor[list[str]]):
         if isinstance(expr, LiteralExpr):
             return self._render_literal(expr)
         if isinstance(expr, VarExpr):
-            return expr.name
+            return self._render_classical_name(expr.name)
         if isinstance(expr, BitExpr):
+            self._require_register(expr.ref.register)
             # Apply permutation to bit references (for mixed qubit/classical permutations)
             reg, idx = self.context.apply_permutation(expr.ref.register, expr.ref.index)
             return f"{reg}[{idx}]"
@@ -978,6 +969,25 @@ class AstToQasm(BaseVisitor[list[str]]):
         if isinstance(expr, UnaryExpr):
             return self._render_unary(expr)
         return str(expr)
+
+    def _require_register(self, name: str) -> None:
+        if name not in self.context.registers and not self.context.is_fragment:
+            msg = f"QASM codegen: undeclared classical register {name!r}; declare it before use."
+            raise NotImplementedError(msg)
+
+    def _render_bit_ref(self, ref: BitRef) -> str:
+        self._require_register(ref.register)
+        return f"{ref.register}[{ref.index}]"
+
+    def _render_classical_name(self, reference: str) -> str:
+        # Exact declared names take precedence over indexed-reference syntax.
+        name = reference
+        if name not in self.context.registers:
+            match = re.fullmatch(r"([A-Za-z_]\w*)\[.*\]", reference)
+            if match is not None:
+                name = match[1]
+        self._require_register(name)
+        return reference
 
     def _render_literal(self, node: LiteralExpr) -> str:
         """Render a literal value."""

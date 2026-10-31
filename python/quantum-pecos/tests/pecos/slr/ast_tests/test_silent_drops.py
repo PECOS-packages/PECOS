@@ -130,7 +130,7 @@ def test_qir_child_allocator_barrier() -> None:
         declarations=(
             *program.declarations,
             AllocatorDecl(name="padding", capacity=1, parent="q"),
-            AllocatorDecl(name="child", capacity=2, parent="q"),
+            AllocatorDecl(name="child", capacity=2, parent="q", offset=1),
         ),
         body=(BarrierOp(allocators=("child",)),),
     )

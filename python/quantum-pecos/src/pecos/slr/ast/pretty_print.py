@@ -167,7 +167,8 @@ class AstPrettyPrinter(BaseVisitor[str]):
                 if decl.parent:
                     lines.append(
                         self._indented(
-                            f'{decl.name} := QReg("{decl.name}", {decl.capacity}, parent={decl.parent}),',
+                            f'{decl.name} := QReg("{decl.name}", {decl.capacity}, '
+                            f"parent={decl.parent}, offset={decl.offset}),",
                         ),
                     )
                 else:
@@ -191,7 +192,7 @@ class AstPrettyPrinter(BaseVisitor[str]):
     def visit_allocator_decl(self, node: AllocatorDecl) -> str:
         """Visit allocator declaration."""
         if node.parent:
-            return f'{node.name} := QReg("{node.name}", {node.capacity}, parent={node.parent})'
+            return f'{node.name} := QReg("{node.name}", {node.capacity}, parent={node.parent}, offset={node.offset})'
         return f'{node.name} := QReg("{node.name}", {node.capacity})'
 
     def visit_register_decl(self, node: RegisterDecl) -> str:

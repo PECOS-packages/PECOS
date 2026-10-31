@@ -6,6 +6,23 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Breaking:** PHIR `cvar_export` selects the reported classical variables in
+  every PECOS runner (#1323): the native PHIR-JSON engine (`sim(PhirJson(...))`),
+  the Rust and Python classical interpreters behind `HybridEngine`, and
+  `phir_json_to_module`, which used to reject it. Before, every runner ignored it
+  and reported all classical variables. The export set is the union of every
+  `cvar_export` in the program, including unexecuted branches; values are read at
+  the end of the shot; `to` renames positionally. Programs with exports no longer
+  report unexported variables, and an explicitly exported `measurement_*`
+  register is reported. Load-time errors name an undeclared exported variable, a
+  malformed `to`, an output name used by two sources, an output that equals
+  another declared variable or a `Result` destination (exporting a `Result`
+  destination under its own name is allowed), and the reserved `_width_`
+  prefix. A `cvar_define` or `qvar_define` inside a block is supported only in
+  programs that use `cvar_export`; elsewhere it is a load-time error. `qc2phir`
+  drops exports of size-0 registers it does not declare. Programs without
+  `cvar_export` report what they did before.
+
 - The PECOS QASM parser accepts a `//` line comment that ends at end of input
   without a newline (#1518). Before, such a program failed with a syntax error,
   which included SLR-generated QASM ending in a `Comment`.

@@ -138,6 +138,7 @@ pub fn validate_classical_inputs(program: &Value) -> Result<(), PecosError> {
     }
     if let Some(ops) = program.get("ops").and_then(Value::as_array) {
         visit(ops)?;
+        super::exports::collect_json(ops)?;
     }
     Ok(())
 }

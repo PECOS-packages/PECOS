@@ -265,11 +265,13 @@ def to_phir_dict(qc: pecos.QuantumCircuit) -> dict:
         }
         ops.append(declaration)
 
+    omitted_cvars = set()
     for sym, size in qc.metadata.get("cvar_spec", {}).items():
         if size is None:
             msg = f"cvar_spec[{sym!r}] has invalid size None; use an integer width from 0 to 64 (0 omits the register)"
             raise ValueError(msg)
         if size == 0:
+            omitted_cvars.add(sym)
             continue
         ops.append(
             {
@@ -280,6 +282,11 @@ def to_phir_dict(qc: pecos.QuantumCircuit) -> dict:
             },
         )
 
+    # An empty export still selects no results if every requested register was omitted.
+    has_nonempty_exports = bool(omitted_cvars) and any(
+        sym == "cop" and meta.get("cop_type") == "ExportCVar" and meta["export"] not in omitted_cvars
+        for sym, _, meta in qc.items()
+    )
     ops_buffer = []
     current_cond = None
 
@@ -304,9 +311,12 @@ def to_phir_dict(qc: pecos.QuantumCircuit) -> dict:
                 if "duration" in metadata:
                     del metadata["duration"]
 
+                name = metadata["export"]
+                if name in omitted_cvars and has_nonempty_exports:
+                    continue
                 op = {
                     "data": "cvar_export",
-                    "variables": [metadata["export"]],
+                    "variables": [] if name in omitted_cvars else [name],
                 }
                 del metadata["export"]
 

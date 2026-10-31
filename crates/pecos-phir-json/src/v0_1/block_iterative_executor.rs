@@ -62,19 +62,23 @@ impl<'a> BlockIterativeExecutor<'a> {
     /// Returns an error if any operation fails to process.
     pub fn process(&mut self) -> Result<(), PecosError> {
         let mut declarations = super::declarations::Declarations::default();
+        let mut operations = Vec::new();
         for op in &self.operation_stack {
             match op {
                 FlattenedOperation::Operation(op) => {
                     declarations.validate_operations(std::slice::from_ref(op))?;
+                    operations.push(*op);
                 }
                 FlattenedOperation::Buffer(ops) => {
                     for op in ops {
                         declarations.validate_operations(std::slice::from_ref(op))?;
+                        operations.push(*op);
                     }
                 }
                 FlattenedOperation::EndBlock => {}
             }
         }
+        self.executor.prepare_exports(operations)?;
         while let Some(flattened_op) = self.operation_stack.pop_front() {
             match flattened_op {
                 FlattenedOperation::Operation(op) => {
@@ -141,7 +145,9 @@ impl<'a> BlockIterativeExecutor<'a> {
                         // Verify all operations are quantum operations or meta instructions
                         for op in ops {
                             match op {
-                                Operation::QuantumOp { .. } | Operation::MetaInstruction { .. } => {
+                                Operation::QuantumOp { .. }
+                                | Operation::MetaInstruction { .. }
+                                | Operation::DataExport { .. } => {
                                     // These are allowed in qparallel
                                 }
                                 _ => {

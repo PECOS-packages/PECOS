@@ -145,12 +145,15 @@ impl BlockExecutor {
                 size,
             } => {
                 debug!("Processing variable definition: {data_type} {variable}");
-                self.processor.handle_variable_definition(
-                    data,
-                    data_type,
-                    variable,
-                    super::ast::declaration_size(data, data_type, variable, *size)?,
-                )?;
+                // Explicit exports hoisted these declarations in prepare_exports.
+                if self.processor.environment.exports.is_none() {
+                    self.processor.handle_variable_definition(
+                        data,
+                        data_type,
+                        variable,
+                        super::ast::declaration_size(data, data_type, variable, *size)?,
+                    )?;
+                }
             }
             Operation::QuantumOp {
                 qop, angles, args, ..
@@ -321,7 +324,9 @@ impl BlockExecutor {
         // Verify all operations are quantum operations or meta instructions
         for op in operations {
             match op {
-                Operation::QuantumOp { .. } | Operation::MetaInstruction { .. } => {
+                Operation::QuantumOp { .. }
+                | Operation::MetaInstruction { .. }
+                | Operation::DataExport { .. } => {
                     // These are allowed in qparallel
                 }
                 _ => {
@@ -491,6 +496,34 @@ impl BlockExecutor {
         self.processor.process_export_mappings()
     }
 
+    /// Prepare static directives once at the whole-program boundary.
+    pub(crate) fn prepare_exports<'a>(
+        &mut self,
+        program: impl IntoIterator<Item = &'a Operation>,
+    ) -> Result<(), PecosError> {
+        let operations: Vec<_> = program.into_iter().collect();
+        self.processor.environment.exports = super::exports::collect(operations.iter().copied())?;
+        if self.processor.environment.exports.is_some() {
+            for op in super::exports::declarations(operations.iter().copied(), true) {
+                if let Operation::VariableDefinition {
+                    data,
+                    data_type,
+                    variable,
+                    size,
+                } = op
+                {
+                    self.processor.handle_variable_definition(
+                        data,
+                        data_type,
+                        variable,
+                        super::ast::declaration_size(data, data_type, variable, *size)?,
+                    )?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Execute a complete PHIR program
     ///
     /// # Errors
@@ -504,6 +537,7 @@ impl BlockExecutor {
 
         // Reset state before execution
         self.reset();
+        self.prepare_exports(program)?;
 
         // Initialize a new builder if none exists
         if self.builder.is_none() {

@@ -196,10 +196,14 @@ impl ImprovedConverter {
             .map_err(|_| PecosError::Input("Too many qubits for PHIR SSA IDs".to_string()))?;
 
         let mut instructions = Vec::new();
+        let exports = super::exports::collect_json(ops)?;
         let mut export_names = Vec::new();
 
         // Convert operations in source order, flushing measurements before Result copies.
         for op in ops {
+            if op.get("data").and_then(Value::as_str) == Some("cvar_export") {
+                continue;
+            }
             if let Some(cop) = op
                 .as_object()
                 .and_then(|o| o.get("cop"))
@@ -239,7 +243,7 @@ impl ImprovedConverter {
         }
 
         self.combine_pending_measurements(&mut instructions)?;
-        if export_names.is_empty() {
+        if exports.is_none() && export_names.is_empty() {
             export_names.extend(
                 self.environment
                     .get_all_variables()
@@ -248,13 +252,19 @@ impl ImprovedConverter {
                     .map(|info| info.name.clone()),
             );
         }
-        for name in export_names {
-            let source = self.classical_value(&name)?;
-            let width = if Self::register_width(self.environment.classical_info(&name)?) <= 32 {
-                IntWidth::I32
-            } else {
-                IntWidth::I64
-            };
+        let mut outputs: std::collections::BTreeMap<String, String> = export_names
+            .into_iter()
+            .map(|name| (name.clone(), name))
+            .collect();
+        outputs.extend(exports.unwrap_or_default());
+        for (name, source_name) in outputs {
+            let source = self.classical_value(&source_name)?;
+            let width =
+                if Self::register_width(self.environment.classical_info(&source_name)?) <= 32 {
+                    IntWidth::I32
+                } else {
+                    IntWidth::I64
+                };
             let source = self.append_classical(
                 ClassicalOp::Bitcast,
                 vec![source],

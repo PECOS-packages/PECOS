@@ -14,6 +14,7 @@ pub mod block_executor;
 pub mod block_iterative_executor;
 pub mod enhanced_results;
 pub mod environment;
+pub(crate) mod exports;
 pub mod expression;
 
 // The following modules have been removed as their functionality

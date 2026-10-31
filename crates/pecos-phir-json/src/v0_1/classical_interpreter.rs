@@ -135,9 +135,12 @@ impl PhirClassicalInterpreter {
 
         self.foreign_object = foreign_object;
         self.environment = Environment::new();
+        self.environment.exports = super::exports::collect(&program.ops)?;
 
         // Process variable definitions from the ops
-        for op in &program.ops {
+        let definitions =
+            super::exports::declarations(&program.ops, self.environment.exports.is_some());
+        for op in definitions {
             if let Operation::VariableDefinition {
                 data,
                 data_type,
@@ -299,57 +302,67 @@ impl PhirClassicalInterpreter {
         result
     }
 
-    /// Return all classical variable values.
+    /// Return the selected final classical variable values.
     ///
     /// If `return_int` is true, returns integer values.
     /// If false, returns zero-padded binary strings.
-    #[must_use]
-    pub fn results(&self, return_int: bool) -> BTreeMap<String, ResultValue> {
+    ///
+    /// # Errors
+    /// Reports a broken result-source invariant instead of omitting an output.
+    pub fn results(&self, return_int: bool) -> Result<BTreeMap<String, ResultValue>, PecosError> {
         let mut result = BTreeMap::new();
-        for info in self.environment.get_all_variables() {
-            if info.data_type == DataType::Qubits {
-                continue;
-            }
-            if let Some(val) = self.environment.get(&info.name) {
-                if return_int {
-                    let dtype_name = info.data_type.to_string();
-                    if info.data_type.is_signed() {
-                        result.insert(
-                            info.name.clone(),
-                            ResultValue::Int(val.as_i64(), dtype_name),
-                        );
-                    } else {
-                        result.insert(
-                            info.name.clone(),
-                            ResultValue::UInt(val.as_u64(), dtype_name),
-                        );
-                    }
+        let outputs = self.environment.selected_outputs().unwrap_or_else(|| {
+            self.environment
+                .get_all_variables()
+                .iter()
+                .filter(|info| info.data_type != DataType::Qubits)
+                .map(|info| (info.name.clone(), info.name.clone()))
+                .collect()
+        });
+        for (output, source) in outputs {
+            let broken_source = || {
+                PecosError::Input(format!(
+                    "Result source invariant broken: output {output:?} requires classical source {source:?} registered at load time; reload the program before retrieving results"
+                ))
+            };
+            let info = self
+                .environment
+                .get_variable_info_opt(&source)
+                .filter(|info| info.data_type != DataType::Qubits)
+                .ok_or_else(broken_source)?;
+            let val = self.environment.get(&source).ok_or_else(broken_source)?;
+            if return_int {
+                let dtype_name = info.data_type.to_string();
+                if info.data_type.is_signed() {
+                    result.insert(output.clone(), ResultValue::Int(val.as_i64(), dtype_name));
                 } else {
-                    // A signed size-S register is an i(S+1) integer, so it
-                    // prints S+1 bits (S data bits + a sign bit); an unsigned
-                    // size-S register prints S bits. Register widths are
-                    // validated to fit the backing type at definition time.
-                    let width = if info.data_type.is_signed() {
-                        info.size + 1
-                    } else {
-                        info.size
-                    };
-                    // Render the raw two's-complement bit pattern rather than
-                    // sign-and-magnitude (which prints a leading "-" for
-                    // negative values). `as_u64()` already holds the value
-                    // sign-extended, so reinterpreting it at `width` bits makes
-                    // the sign bit print as a "1"/"0" like every other bit.
-                    let mask = if width >= 64 {
-                        u64::MAX
-                    } else {
-                        (1u64 << width) - 1
-                    };
-                    let bits = format!("{:0>width$b}", val.as_u64() & mask, width = width);
-                    result.insert(info.name.clone(), ResultValue::BitString(bits));
+                    result.insert(output.clone(), ResultValue::UInt(val.as_u64(), dtype_name));
                 }
+            } else {
+                // A signed size-S register is an i(S+1) integer, so it
+                // prints S+1 bits (S data bits + a sign bit); an unsigned
+                // size-S register prints S bits. Register widths are
+                // validated to fit the backing type at definition time.
+                let width = if info.data_type.is_signed() {
+                    info.size + 1
+                } else {
+                    info.size
+                };
+                // Render the raw two's-complement bit pattern rather than
+                // sign-and-magnitude (which prints a leading "-" for
+                // negative values). `as_u64()` already holds the value
+                // sign-extended, so reinterpreting it at `width` bits makes
+                // the sign bit print as a "1"/"0" like every other bit.
+                let mask = if width >= 64 {
+                    u64::MAX
+                } else {
+                    (1u64 << width) - 1
+                };
+                let bits = format!("{:0>width$b}", val.as_u64() & mask, width = width);
+                result.insert(output.clone(), ResultValue::BitString(bits));
             }
         }
-        result
+        Ok(result)
     }
 
     /// Get the number of qubits.
@@ -866,7 +879,7 @@ mod tests {
         meas.insert(MeasKey::Bit("m".to_string(), 1), 0i64);
         interp.receive_results(&[meas]).unwrap();
 
-        let results = interp.results(true);
+        let results = interp.results(true).unwrap();
         let m_val = results.get("m").unwrap();
         match m_val {
             ResultValue::Int(v, _) => assert_eq!(*v, 1), // bit 0 = 1, bit 1 = 0 -> value = 1
@@ -894,7 +907,7 @@ mod tests {
         interp.environment.set("n", 5).unwrap();
         interp.environment.set("narrow", 0xFFFF_FFFF).unwrap();
 
-        let results = interp.results(false);
+        let results = interp.results(false).unwrap();
         match results.get("w").unwrap() {
             ResultValue::BitString(s) => {
                 assert_eq!(s, &"1".repeat(32));
@@ -915,7 +928,7 @@ mod tests {
         }
 
         // The integer view sees the correct signed values.
-        let ints = interp.results(true);
+        let ints = interp.results(true).unwrap();
         match ints.get("w").unwrap() {
             ResultValue::Int(v, _) => assert_eq!(*v, -1),
             other => panic!("Expected Int, got {other:?}"),
@@ -963,5 +976,30 @@ mod tests {
         // Should include m but NOT __q0__
         assert!(bits.contains_key(&("m".to_string(), 0)));
         assert!(!bits.contains_key(&("__q0__".to_string(), 0)));
+    }
+}
+
+#[cfg(test)]
+mod result_invariant_tests {
+    use super::PhirClassicalInterpreter;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn missing_result_source_reports_broken_invariant() {
+        let mut interpreter = PhirClassicalInterpreter::new();
+        // Simulate corrupt internal selection; valid program loading cannot produce it.
+        interpreter.environment.exports = Some(BTreeMap::from([("out".into(), "missing".into())]));
+        for return_int in [false, true] {
+            let diagnostic = format!("{:?}", interpreter.results(return_int));
+            assert!(diagnostic.starts_with("Err("), "{diagnostic}");
+            assert!(
+                diagnostic.contains("Result source invariant broken"),
+                "{diagnostic}"
+            );
+            assert!(
+                diagnostic.contains("missing") && diagnostic.contains("out"),
+                "{diagnostic}"
+            );
+        }
     }
 }

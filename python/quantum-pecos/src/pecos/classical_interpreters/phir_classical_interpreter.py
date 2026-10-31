@@ -97,6 +97,8 @@ class PhirClassicalInterpreter:
         self.csym2id = None
         self.cvar_meta = None
         self._result_references = {}
+        self._result_destinations = set()
+        self._exports = None
 
         self.phir_validate = True
 
@@ -111,6 +113,8 @@ class PhirClassicalInterpreter:
         self.program = None
         self.foreign_obj = None
         self._result_references = {}
+        self._result_destinations = set()
+        self._exports = None
         self._reset_env()
 
     def init(
@@ -157,6 +161,8 @@ class PhirClassicalInterpreter:
 
         self.check_ffc(self.program.foreign_func_calls, self.foreign_obj)
 
+        self._exports = self.program.export_selection()
+        self._result_destinations = set()
         self.csym2id = dict(self.program.csym2id)
         self.cvar_meta = list(self.program.cvar_meta)
         self._result_references = {}
@@ -193,6 +199,7 @@ class PhirClassicalInterpreter:
 
     def shot_reinit(self) -> None:
         """Run all code needed at the beginning of each shot, e.g., resetting state."""
+        self._result_destinations.clear()
         self.initialize_cenv()
 
     @staticmethod
@@ -281,6 +288,9 @@ class PhirClassicalInterpreter:
 
             elif isinstance(op, pt.opt.MOp):
                 op_buffer.append(op)
+
+            elif isinstance(op, pt.data.ExportVar):
+                continue
 
             elif op is None:
                 # TODO: Make it so None ops are not included
@@ -565,6 +575,7 @@ class PhirClassicalInterpreter:
                 self._check_result_index(destination, destination_index)
                 target = destination if destination_index is None else (destination, destination_index)
                 self.assign_int(target, value)
+                self._result_destinations.add(destination)
 
         elif isinstance(op, pt.opt.FFCall):
             args = []
@@ -652,7 +663,14 @@ class PhirClassicalInterpreter:
     def results(self, *, return_int: bool = True) -> dict:
         """Dumps program final results."""
         result = {}
-        for csym, cid in self.csym2id.items():
+        outputs = (
+            {name: name for name in self.csym2id}
+            if self._exports is None
+            else self._exports | {name: name for name in self._result_destinations}
+        )
+        # Preserve declaration/storage order; aliases of one source retain directive order.
+        for csym, source in sorted(outputs.items(), key=lambda item: self.csym2id[item[1]]):
+            cid = self.csym2id[source]
             cval = self.cenv[cid]
             if not return_int:
                 meta = self.cvar_meta[cid]

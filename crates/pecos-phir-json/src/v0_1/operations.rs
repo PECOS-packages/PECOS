@@ -534,7 +534,9 @@ impl OperationProcessor {
         // First validate that all operations are quantum operations
         for op in operations {
             match op {
-                Operation::QuantumOp { .. } | Operation::MetaInstruction { .. } => {
+                Operation::QuantumOp { .. }
+                | Operation::MetaInstruction { .. }
+                | Operation::DataExport { .. } => {
                     // Quantum operations and meta instructions are allowed
                 }
                 _ => {
@@ -1699,6 +1701,16 @@ impl OperationProcessor {
     /// and provides a clean, simple approach to gathering exported values.
     #[must_use]
     pub fn process_export_mappings(&self) -> BTreeMap<String, u64> {
+        if let Some(outputs) = self.environment.selected_outputs() {
+            return outputs
+                .into_iter()
+                .filter_map(|(output, source)| {
+                    self.environment
+                        .get(&source)
+                        .map(|value| (output, value.as_u64()))
+                })
+                .collect();
+        }
         let mut exported_values = BTreeMap::new();
         log::debug!("Processing export mappings using environment as source of truth");
 

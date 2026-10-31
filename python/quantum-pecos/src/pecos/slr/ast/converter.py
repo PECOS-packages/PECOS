@@ -78,7 +78,7 @@ from pecos.slr.ast.nodes import (
     WhileStmt,
 )
 from pecos.slr.main import Main
-from pecos.slr.vars import SymbolicBit
+from pecos.slr.vars import LoopVar, SymbolicBit
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -197,6 +197,8 @@ class SlrToAst:
         # position/count (a single final root ReturnOp can come from a qeclib
         # block, e.g. `Main(q, EncodingCircuit(q))`).
         self._in_flattened_block = False
+        # LoopVars of the For loops being converted; one used elsewhere is unbound.
+        self._loop_vars: list[LoopVar] = []
 
     def convert(self, block: Main | Block) -> Program:
         """Convert an SLR Main/Block to an AST Program.
@@ -684,6 +686,7 @@ class SlrToAst:
         # `_decl_counter` so nested converted Blocks get globally-unique names.
         sub = SlrToAst()
         sub._decl_counter = self._decl_counter  # type: ignore[attr-defined]
+        sub._loop_vars = list(self._loop_vars)
         sub_body = sub._convert_statements(block.ops, remap)  # type: ignore[attr-defined]
         self._decl_counter = sub._decl_counter  # type: ignore[attr-defined]
         rewritten_body = tuple(sub_body)
@@ -874,7 +877,11 @@ class SlrToAst:
             stop = self._convert_expression(op.stop)
             step = self._convert_expression(op.step) if op.step is not None and op.step != 1 else None
 
-        body = tuple(self._convert_statements(op.ops, remap))
+        self._loop_vars.append(op.var)
+        try:
+            body = tuple(self._convert_statements(op.ops, remap))
+        finally:
+            self._loop_vars.pop()
 
         return ForStmt(variable=variable, start=start, stop=stop, step=step, body=body)
 
@@ -1062,6 +1069,15 @@ class SlrToAst:
             return LiteralExpr(value=int(expr))
         if isinstance(expr, Real):
             return LiteralExpr(value=float(expr))
+
+        if isinstance(expr, LoopVar):
+            if not any(var is expr for var in self._loop_vars):
+                msg = (
+                    f"LoopVar {expr.name!r} is used outside the For loop that binds it; "
+                    "use it only inside that loop's body, and pass this LoopVar object to For(...) to bind it."
+                )
+                raise ValueError(msg)
+            return VarExpr(name=expr.name)
 
         expr_class = expr.__class__.__name__
 

@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 
 from pecos_rslib.simulators import StateVec as StateVecRs
 
+from pecos.simulators.batch_validation import is_empty_batch, replayable_locations, validate_batch
 from pecos.simulators.statevec.bindings import get_bindings
 
 if TYPE_CHECKING:
@@ -45,6 +46,7 @@ class StateVec:
             seed (int | None): Optional seed for the random number generator.
         """
         self.backend = StateVecRs(num_qubits, seed)
+        self.gate_capacity = num_qubits
         self.num_qubits = num_qubits
         self.bindings = get_bindings(self)
 
@@ -82,6 +84,10 @@ class StateVec:
         self.backend.reset()
         return self
 
+    def validate_gate_batch(self, symbol: str, locations: object, **_params: object) -> None:
+        """Validate scalar one-qubit and tuple/list multi-qubit locations."""
+        validate_batch(symbol, locations, self.gate_capacity, allow_singletons=False)
+
     def run_gate(
         self,
         symbol: str,
@@ -100,7 +106,12 @@ class StateVec:
         """
         output = {}
 
-        if params.get("simulate_gate", True) and locations:
+        if is_empty_batch(locations):
+            return output
+        locations = replayable_locations(locations)
+        self.validate_gate_batch(symbol, locations, **params)
+
+        if params.get("simulate_gate", True):
             for location in locations:
                 if params.get("angles") and len(params["angles"]) == 1:
                     params.update({"angle": params["angles"][0]})

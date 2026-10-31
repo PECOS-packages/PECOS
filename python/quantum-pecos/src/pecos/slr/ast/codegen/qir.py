@@ -299,6 +299,8 @@ class QirCodeGenContext:
     # the (reg, index) whose storage it should resolve to. Consulted
     # at every qubit-ref and classical-bit-ref lowering.
     permutation_map: dict[tuple[str, int], tuple[str, int]] = field(default_factory=dict)
+    # Variables of the For loops being unrolled; unrolling does not bind them.
+    loop_variables: list[str] = field(default_factory=list)
 
     def get_root_allocator(self, name: str) -> str:
         """Get the root allocator for a given allocator name."""
@@ -996,17 +998,19 @@ class AstToQir:
             # scalar (e.g. `If(m == 0)`, `o.set(m + n)`, Steane
             # `smid_flag_x`). SLR has no scalar-integer classical type
             # (verified: `pecos.slr.vars` exposes only Reg/CReg/Bit/
-            # SymbolicElem/LoopVar). A `LoopVar` used as a symbolic index
-            # is resolved by `For` unrolling; a `LoopVar` appearing as a
-            # bare classical scalar (e.g. `If(i == 0)`) is NOT substituted
-            # by `_process_for` and reaches here as `VarExpr(name="i")`,
-            # where `_require_creg` fails it loud (no CReg named `i`) --
-            # never silent-0. The lowering
+            # SymbolicElem/LoopVar). A `LoopVar` used as a classical
+            # value (e.g. `If(i == 0)`) is NOT substituted by
+            # `_process_for` and reaches here as `VarExpr(name="i")`,
+            # where it fails loud -- never silent-0. The lowering
             # is the existing i64 pack (`OR_i (zext c[i] << i)`)
             # factored out of `_generate_results` as `_pack_creg`. A
             # `VarExpr` whose name is not a declared Main-scope CReg
             # fails LOUD via `_require_creg`, preserving the
             # anti-silent-0 guarantee.
+            # A string-label For may share a declared register's name (as in QASM).
+            if expr.name in self.context.loop_variables and expr.name not in self.context.creg_map:
+                msg = f"QIR codegen: For body references loop variable {expr.name!r}; binding it is not supported."
+                raise NotImplementedError(msg)
             self._require_creg(expr.name)
             return self._pack_creg(expr.name)
 
@@ -1076,9 +1080,11 @@ class AstToQir:
 
     def _process_for(self, node: ForStmt) -> None:
         """Unroll a static fixed-bound For."""
+        self.context.loop_variables.append(node.variable)
         for _ in static_for_range(node, "QIR"):
             for stmt in node.body:
                 self._process_statement(stmt)
+        self.context.loop_variables.pop()
 
     def _process_repeat(self, node: RepeatStmt) -> None:
         """Process a repeat loop by unrolling."""

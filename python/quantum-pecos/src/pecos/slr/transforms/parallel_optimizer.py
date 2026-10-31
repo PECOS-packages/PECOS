@@ -81,12 +81,13 @@ class ParallelOptimizer:
             if new_ops:
                 new_block.block(*new_ops)
         elif isinstance(block, For):
-            # Create new For block preserving loop variable and iteration
-            variable = block.var.name if block.var_is_string else block.var
+            # Create new For block preserving the loop variable object (the body
+            # refers to it by identity), its string-label flag, and iteration
             if block.iterable is not None:
-                new_block = For(variable, block.iterable)
+                new_block = For(block.var, block.iterable)
             else:
-                new_block = For(variable, block.start, block.stop, block.step)
+                new_block = For(block.var, block.start, block.stop, block.step)
+            new_block.var_is_string = block.var_is_string
             if new_ops:
                 new_block.Do(*new_ops)
         # Only reconstruct certain block types

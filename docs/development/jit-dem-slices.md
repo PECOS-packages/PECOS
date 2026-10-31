@@ -449,3 +449,8 @@ independently closed windows and returns mapped frame bits before the program
 continues. The same document specifies the separate JIT batch/provenance design,
 including cross-window carry, faulty branches and persistent leakage that remain
 outside this first supported contract.
+
+The [versioned contract](runtime-decoder-contract.md#observed-native-reads-opt-in)
+also offers an opt-in native read/source check: supplied measurement occurrence
+expectations and detector parities are checked against actual getter results.
+This does not certify branch declarations or adaptive DEM soundness.

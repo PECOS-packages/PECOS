@@ -286,6 +286,7 @@ impl PyQisEngineBuilder {
     fn to_sim(&self) -> PyResult<PySimBuilder> {
         Ok(PySimBuilder {
             inner: SimBuilderInner::QisControl(PyQisControlSimBuilder {
+                python_worker_context: false,
                 engine_builder: Arc::new(Mutex::new(Some(self.inner.clone()))),
                 seed: None,
                 workers: None,
@@ -451,6 +452,7 @@ impl PyPhirJsonSimulation {
 
 /// Internal QIS Engine simulation builder state
 pub struct PyQisControlSimBuilder {
+    pub(crate) python_worker_context: bool,
     pub(crate) engine_builder: Arc<Mutex<Option<RustQisEngineBuilder>>>,
     pub(crate) seed: Option<u64>,
     pub(crate) workers: Option<usize>,
@@ -529,6 +531,7 @@ impl PyQisControlSimBuilder {
 /// Python wrapper for built QIS control simulation
 #[pyclass(name = "QisControlSimulation")]
 pub struct PyQisControlSimulation {
+    pub(crate) python_worker_context: bool,
     pub(crate) inner: Arc<Mutex<MonteCarloEngine>>,
     /// Path to temp directory containing intermediate files (if `keep_intermediate_files` was true)
     pub(crate) temp_dir: Option<String>,
@@ -546,10 +549,15 @@ impl PyQisControlSimulation {
                 .inner
                 .lock()
                 .map_err(|_| PyRuntimeError::new_err("Simulation mutex is poisoned"))?;
-            engine
-                .run(shots)
-                .map(PyShotVec::new)
-                .map_err(|e| crate::errors::simulation_error(e, "Simulation failed"))
+            let workers = engine.default_workers;
+            crate::python_worker_context::run(
+                &mut engine,
+                shots,
+                workers,
+                self.python_worker_context,
+            )
+            .map(PyShotVec::new)
+            .map_err(|e| crate::errors::simulation_error(e, "Simulation failed"))
         })
     }
 
@@ -566,10 +574,14 @@ impl PyQisControlSimulation {
                 .inner
                 .lock()
                 .map_err(|_| PyRuntimeError::new_err("Simulation mutex is poisoned"))?;
-            engine
-                .run_with_workers(shots, workers)
-                .map(PyShotVec::new)
-                .map_err(|e| crate::errors::simulation_error(e, "Simulation failed"))
+            crate::python_worker_context::run(
+                &mut engine,
+                shots,
+                workers,
+                self.python_worker_context,
+            )
+            .map(PyShotVec::new)
+            .map_err(|e| crate::errors::simulation_error(e, "Simulation failed"))
         })
     }
 

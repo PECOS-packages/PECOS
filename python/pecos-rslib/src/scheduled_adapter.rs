@@ -88,11 +88,12 @@ impl Drop for CallbackScope {
     }
 }
 /// Waiting for an engine from one of its callbacks would create a worker cycle.
-/// Reject built simulation operations from callbacks; external threads may wait.
+/// Reject built simulation operations from callbacks and worker-context teardown;
+/// external threads may wait.
 pub(crate) fn reject_callback_reentry() -> PyResult<()> {
     if IN_CALLBACK.get() {
         Err(pyo3::exceptions::PyRuntimeError::new_err(
-            "Built simulation run/reset cannot be called from a scheduled adapter callback",
+            "Built simulation run/reset cannot be called from a scheduled adapter callback or Python worker context",
         ))
     } else {
         Ok(())

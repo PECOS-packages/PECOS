@@ -1162,7 +1162,9 @@ class PhirJsonEngineBuilder:
 class SimBuilder:
     """General simulation builder."""
 
-    ...
+    def python_worker_context(self, enabled: bool = True) -> SimBuilder:
+        """Opt into Python context persistence across a QIS worker's callbacks/shots."""
+        ...
 
 class StateVectorEngineBuilder:
     """Builder for state vector engines."""

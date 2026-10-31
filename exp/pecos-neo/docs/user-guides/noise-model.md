@@ -97,3 +97,15 @@ sim_neo(circuit).auto().noise(noise).sampling(monte_carlo(10000).workers(4)).run
 For implementing custom `NoiseChannel` and `NoisePlugin` traits, the
 `NoiseContext` API, and the `EventHandler`/`ContextObserver` system, see the
 [developer noise guide](../dev/noise.md).
+
+Gate-event `qubits` contains executed groups only after a gate. Custom channels
+that model seepage, partner noise or idle effects on suppressed groups must read
+`leaked_suppressed` explicitly; `gated_qubits()` includes both sets. Composite
+filters classify by `group_size` and now also fire on batched commands, with
+partner conditions evaluated within each group. Suppressed groups run primitives
+only on currently leaked members.
+
+The seepage parameter is conditional on an emission fault: its marginal rate is
+`p * emission_ratio * seepage`, where `p` includes angle scaling. Leakage scale
+does not scale seepage. Two-qubit channels share the outer fault and emission
+draws per pair; composite builders preserve the per-qubit marginal rate.

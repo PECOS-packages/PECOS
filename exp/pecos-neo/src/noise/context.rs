@@ -161,7 +161,7 @@ pub struct GateInfo {
     pub gate_type: GateType,
     /// Angle parameters (if any).
     pub angles: SmallVec<[Angle64; 2]>,
-    /// Number of qubits involved.
+    /// Operand-group size, rather than the number of operands in a batch.
     pub num_qubits: usize,
 }
 
@@ -388,11 +388,17 @@ impl NoiseContext {
     ///
     /// This is used by the composite noise system to pass gate information
     /// to primitives that need dynamic parameters (e.g., angle-dependent error rates).
-    pub fn set_current_gate(&mut self, gate_type: GateType, angles: &[Angle64], num_qubits: usize) {
+    /// `group_size` is the operand-group size, not the batch's operand count.
+    pub fn set_current_gate(
+        &mut self,
+        gate_type: GateType,
+        angles: &[Angle64],
+        group_size: std::num::NonZeroUsize,
+    ) {
         self.current_gate = Some(GateInfo::new(
             gate_type,
             angles.iter().copied().collect(),
-            num_qubits,
+            group_size.get(),
         ));
     }
 
@@ -440,6 +446,10 @@ impl NoiseContext {
     /// allowing actions to know which qubit they're processing and access
     /// the other qubits involved.
     pub fn set_current_qubit_index(&mut self, index: usize, gate_qubits: &[QubitId]) {
+        if self.current_gate.is_some() && self.current_gate_qubits.as_slice() != gate_qubits {
+            self.sampled_correlation = None;
+            self.clear_fired_flags();
+        }
         self.current_qubit_index = index;
         self.current_gate_qubits = gate_qubits.iter().copied().collect();
     }

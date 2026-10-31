@@ -120,9 +120,9 @@ impl NoiseChannel for LeakageChannel {
             NoiseEvent::BeforeGate {
                 gate_type, qubits, ..
             } => Self::handle_before_gate(*gate_type, qubits, ctx),
-            NoiseEvent::AfterGate {
-                gate_type, qubits, ..
-            } => Self::handle_after_gate(*gate_type, qubits, ctx, rng),
+            NoiseEvent::AfterGate { gate_type, .. } => {
+                Self::handle_after_gate(*gate_type, &event.gated_qubits(), ctx, rng)
+            }
             NoiseEvent::BeforeMeasurement { qubits } => Self::handle_measurement(qubits, ctx, rng),
             _ => NoiseResponse::None,
         }
@@ -295,6 +295,7 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::H.quantum_arity(), qubits.len()),
         };
 
         let mut ctx = NoiseContext::new();
@@ -317,6 +318,7 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::CX.quantum_arity(), qubits.len()),
         };
 
         let mut ctx = NoiseContext::new();
@@ -340,6 +342,7 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::H.quantum_arity(), qubits.len()),
         };
 
         let mut ctx = NoiseContext::new();
@@ -360,6 +363,7 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::MZ.quantum_arity(), qubits.len()),
         };
 
         let mut ctx = NoiseContext::new();
@@ -409,6 +413,8 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::CX.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         let mut ctx = NoiseContext::new();
@@ -437,6 +443,8 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::H.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         let mut ctx = NoiseContext::new();

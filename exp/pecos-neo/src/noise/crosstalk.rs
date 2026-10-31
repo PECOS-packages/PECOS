@@ -285,18 +285,18 @@ impl NoiseChannel for CrosstalkChannel {
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> NoiseResponse {
-        let gated_qubits = event.qubits();
+        let gated_qubits = event.gated_qubits();
 
         let mut responses: Vec<NoiseResponse> = Vec::new();
         let mut leaked: SmallVec<[QubitId; 4]> = SmallVec::new();
         let mut gates: SmallVec<[GateCommand; 4]> = SmallVec::new();
 
         // Get neighbors for local crosstalk
-        let neighbors = self.get_neighbors(gated_qubits);
+        let neighbors = self.get_neighbors(&gated_qubits);
 
         // Apply local crosstalk to neighbor qubits
         if self.local_rate > 0.0 {
-            let local_targets = ctx.local_crosstalk_targets(gated_qubits, &neighbors);
+            let local_targets = ctx.local_crosstalk_targets(&gated_qubits, &neighbors);
             for target in local_targets {
                 if rng.random::<f64>() < self.local_rate {
                     match self.apply_crosstalk_to_qubit(target, None, rng) {

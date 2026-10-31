@@ -206,10 +206,11 @@ impl CompositeNoiseModelBuilder {
         Ok(self)
     }
 
-    /// Set the seepage probability for leaked qubits during single-qubit gates.
+    /// Set seepage probability conditional on an emission fault on a leaked qubit.
     ///
-    /// When a leaked qubit undergoes a single-qubit gate, with probability `p`
-    /// it seeps back to the computational basis (with a random Pauli applied).
+    /// The per-qubit marginal rate is `p1 * emission_ratio * seepage`, with
+    /// angle scaling included in `p1` where configured. Leakage scale does not
+    /// enter this product.
     ///
     /// # Errors
     /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
@@ -293,7 +294,11 @@ impl CompositeNoiseModelBuilder {
         Ok(self)
     }
 
-    /// Set the seepage probability for leaked qubits during two-qubit gates.
+    /// Set seepage probability conditional on an emission fault on a leaked qubit.
+    ///
+    /// The per-qubit marginal rate is `p2 * emission_ratio * seepage`, with
+    /// angle scaling included in `p2` where configured. Leakage scale does not
+    /// enter this product.
     ///
     /// # Errors
     /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
@@ -715,7 +720,7 @@ impl CompositeNoiseModelBuilder {
     /// Set leakage and seepage probabilities for all gate types.
     ///
     /// - `p_leak`: Fraction of errors that cause leakage
-    /// - `p_seep`: Probability of seepage when a leaked qubit is gated
+    /// - `p_seep`: Seepage probability conditional on an emission fault on a leaked qubit
     ///
     /// # Errors
     /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
@@ -1073,7 +1078,7 @@ impl CompositeNoiseModelBuilder {
                 self.p1,
                 when_leaked(
                     // Leaked qubit: seepage with probability
-                    prob(self.p1_seepage, seep())?,
+                    prob(self.p1_emission_ratio * self.p1_seepage, seep())?,
                     // Not leaked: emission (scaled) or pauli
                     if effective_leak > 0.0 {
                         sample![
@@ -1177,7 +1182,7 @@ impl CompositeNoiseModelBuilder {
             seq![prob(
                 self.p2,
                 when_leaked(
-                    prob(self.p2_seepage, seep())?,
+                    prob(self.p2_emission_ratio * self.p2_seepage, seep())?,
                     if effective_leak > 0.0 {
                         sample![
                             (effective_leak, emission_action),
@@ -1263,10 +1268,10 @@ impl CompositeNoiseModelBuilder {
     {
         let base_p2 = self.p2;
         scaling.validate_for_probability(base_p2)?;
-        let seepage = self.p2_seepage;
+        let seepage = self.p2_emission_ratio * self.p2_seepage;
 
         // Different code paths based on whether we have leakage/seepage
-        Ok(if seepage > 0.0 || effective_leak > 0.0 {
+        Ok(if self.p2_seepage > 0.0 || effective_leak > 0.0 {
             // With leakage/seepage: use complex inner structure
             seq![prob_fn(
                 move |gate| {
@@ -1652,6 +1657,8 @@ mod tests {
             qubits: &qubits,
             angles: &[],
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::CX.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
         let gates = collect_gates(model.emit(&event, &mut PecosRng::seed_from_u64(73)));
 
@@ -1676,6 +1683,8 @@ mod tests {
             qubits: &qubits,
             angles: &[],
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::CX.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
         let gates = collect_gates(model.emit(&event, &mut PecosRng::seed_from_u64(79)));
 

@@ -18,6 +18,37 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   so the scratch is never reported, and bare results no longer appear in native
   results.
 
+- **Breaking:** pecos-neo `NoiseEvent::AfterGate` gains `leaked_suppressed` and
+  `group_size`; `BeforeGate` gains `group_size`. `AfterGate.qubits` now contains
+  executed groups only. Group size is `NonZeroUsize`, shared by every event producer.
+  `NoiseContext::set_current_gate` explicitly rejects zero arity.
+
+- **Breaking:** pecos-neo `DispatchContext` gains `leaked_suppressed`. Queue
+  after-gate handlers receive the same split as noise channels, can receive empty
+  `qubits`, and do not run for adapted execution.
+
+- **Breaking:** pecos-neo groups skipped while leaked retain seepage, partner noise,
+  healthy-member idle noise and crosstalk source/exclusion effects, but receive
+  no gate error. Membership is fixed after before-gate dispatch. All-suppressed
+  commands emit; all-dropped non-empty commands do not. Custom channels must opt
+  in to suppressed groups. Coherent idle noise now excludes leaked members.
+
+- **Breaking:** pecos-neo composite filters classify by operand-group size and
+  rules now fire on batched commands (#1443), including registered custom gates.
+  Every processing path supplies group-local partner context. Suppressed groups
+  run primitives only on currently leaked members, not healthy partners.
+
+- **Breaking:** Two-qubit and composite seepage now use the marginal rate
+  `p * emission_ratio * seepage`, including angle scaling and excluding leakage
+  scale. Two-qubit outer draws are shared per pair; composite draws remain per
+  qubit. Seeded results shift.
+
+- **Breaking:** All seven pecos-neo user-handler sites apply leakage marks and
+  notify observers once per mark. Before-gate marks are visible to noise channels
+  in the same dispatch. Without a noise model, marks return the new
+  `ExecutionError::HandlerLeakageWithoutNoise` variant; exhaustive error matches
+  must handle it.
+
 - **Breaking:** PHIR `cvar_export` selects the reported classical variables in
   every PECOS runner (#1323): the native PHIR-JSON engine (`sim(PhirJson(...))`),
   the Rust and Python classical interpreters behind `HybridEngine`, and
@@ -1134,15 +1165,6 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 - pecos-neo gate suppression applies per operand group in batched commands,
   including adapted circuits and importance sampling. `LeakageChannel` injects
   partner Pauli noise only within pairs containing exactly one leaked qubit.
-
-- pecos-neo suppressed operand groups without a leaked qubit receive no
-  after-gate noise (including idle-after-two-qubit-gate noise and acting as a
-  crosstalk source); their qubits can now be crosstalk targets of the groups
-  that ran. The after-gate event, and user after-gate handlers on the
-  queue path, carry executed groups plus groups suppressed while containing a
-  leaked qubit at the skip decision, in original operand order. A non-empty
-  command whose groups were all suppressed without leakage emits no after-gate
-  event; commands with no operands are unchanged.
 
 - Gate commands with more than 255 qubits no longer panic. PHIR-JSON broadcasts
   use one command per operation, retaining individual preparation/measurement

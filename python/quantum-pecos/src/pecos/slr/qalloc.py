@@ -134,24 +134,23 @@ class QAlloc:
         *,
         name: str | None = None,
         parent: QAlloc | None = None,
-        _parent_indices: list[int] | None = None,
     ) -> None:
         """Create a qubit allocator.
 
         Args:
             capacity: Number of qubit slots in this allocator.
             name: Optional name for this allocator (for debugging/codegen).
-            parent: Parent allocator (None for base allocator).
-            _parent_indices: Internal - indices reserved from parent.
+            parent: Parent allocator to reserve slots from, as with parent.child().
+                None creates a base allocator.
         """
-        if capacity < 0:
+        if parent is None and capacity < 0:
             msg = f"Capacity must be non-negative, got {capacity}"
             raise ValueError(msg)
 
         self._capacity = capacity
         self._name = name
         self._parent = parent
-        self._parent_indices = _parent_indices or []
+        self._parent_indices = parent.reserve_slots(capacity) if parent is not None else []
 
         # Slot states - all start unprepared
         self._slot_states: list[SlotState] = [SlotState.UNPREPARED] * capacity
@@ -164,6 +163,8 @@ class QAlloc:
 
         # Track if this allocator has been released
         self._released = False
+        if parent is not None:
+            parent.register_child(self)
 
     # --- Properties ---
 
@@ -242,6 +243,13 @@ class QAlloc:
             ValueError: If insufficient capacity available.
             RuntimeError: If this allocator has been released.
         """
+        return QAlloc(capacity=size, name=name, parent=self)
+
+    def reserve_slots(self, size: int) -> list[int]:
+        """Validate and reserve parent slots for child construction.
+
+        Called by child allocators. Not intended for external use.
+        """
         self._check_not_released()
 
         if size < 0:
@@ -259,16 +267,7 @@ class QAlloc:
         # Mark as reserved
         self._reserved.update(indices_to_reserve)
 
-        # Create child
-        child_alloc = QAlloc(
-            capacity=size,
-            name=name,
-            parent=self,
-            _parent_indices=indices_to_reserve,
-        )
-        self._children.append(child_alloc)
-
-        return child_alloc
+        return indices_to_reserve
 
     # --- Lifecycle Operations ---
 
@@ -443,6 +442,13 @@ class QAlloc:
         self._released = True
 
     # --- Parent/Child Coordination ---
+
+    def register_child(self, child: QAlloc) -> None:
+        """Track a child allocator for cascading release.
+
+        Called by child allocators. Not intended for external use.
+        """
+        self._children.append(child)
 
     def unreserve_slots(self, indices: list[int]) -> None:
         """Release the given slot indices back to the available pool.

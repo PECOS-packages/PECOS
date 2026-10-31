@@ -151,10 +151,10 @@ def test_nested_child_allocator_offsets() -> None:
     program = Main(root, first, Block(child, Block(grandchild)))
     ast = slr_to_ast(program)
     assert ast.declarations == (
-        AllocatorDecl(name="root", capacity=5),
-        AllocatorDecl(name="first", capacity=2, parent="root"),
+        AllocatorDecl(name="root", capacity=5, offset=0),
+        AllocatorDecl(name="first", capacity=2, parent="root", offset=0),
         AllocatorDecl(name="child", capacity=3, parent="root", offset=2),
-        AllocatorDecl(name="grandchild", capacity=2, parent="child"),
+        AllocatorDecl(name="grandchild", capacity=2, parent="child", offset=0),
     )
     # Inspect the backend's computed physical mapping even without prepared slots.
     generator = AstToQasm()
@@ -395,7 +395,7 @@ def test_round2_root_block_inputs_is_inline() -> None:
             self.q = q
 
     ast = slr_to_ast(Root())
-    assert ast.declarations == (AllocatorDecl(name="q", capacity=1), RegisterDecl(name="c", size=1))
+    assert ast.declarations == (AllocatorDecl(name="q", capacity=1, offset=0), RegisterDecl(name="c", size=1))
     assert not ast.block_decls
     assert "creg c[1];" in SlrConverter(Root()).qasm()
 
@@ -413,7 +413,7 @@ def test_round2_function_vars_may_repeat_inputs(ordinary) -> None:
 
     parts = {"before": (Block(q), Inner()), "after": (Inner(), Block(q)), "bound_only": (Inner(),)}
     program = Main(*parts[ordinary])
-    assert slr_to_ast(program).declarations == (AllocatorDecl(name="q", capacity=1),)
+    assert slr_to_ast(program).declarations == (AllocatorDecl(name="q", capacity=1, offset=0),)
     assert SlrConverter(program).hugr() is not None
 
 
@@ -453,7 +453,7 @@ def test_round2_undeclared_quantum_reference(backend, child) -> None:
     missing = root.child(1, name="missing") if child else QReg("missing", 1)
     c = CReg("c", 1)
     program = Main(root, c, qb.H(missing[0]), qb.Measure(missing[0]) > c[0])
-    with pytest.raises((ValueError, NotImplementedError), match=r"missing.*declare"):
+    with pytest.raises(ValueError, match=r"missing.*declare"):
         getattr(SlrConverter(program), backend)()
 
 
@@ -471,21 +471,21 @@ def test_round2_qasm_undeclared_classical_reference(use) -> None:
         "register_value": c.set(missing),
         "condition": If(missing == 0).Then(qb.X(q[0])),
     }
-    with pytest.raises(NotImplementedError, match=r"missing.*declare"):
+    with pytest.raises(ValueError, match=r"missing.*declare"):
         SlrConverter(Main(q, c, ops[use])).qasm()
 
 
 def test_round2_qasm_inline_bitswap_is_rejected() -> None:
     q, c, inline = QReg("q", 1), CReg("c", 2), CReg("bitswap", 1)
     program = Main(q, c, c.set(1), Permute([c[0], c[1]], [c[1], c[0]]), qb.Measure(q[0]) > inline[0])
-    with pytest.raises(NotImplementedError, match=r"bitswap.*declare"):
+    with pytest.raises(ValueError, match=r"bitswap.*declare"):
         SlrConverter(program).qasm()
 
 
-@pytest.mark.parametrize("backend", ["qasm", "qir", "stim", "quantum_circuit"])
+@pytest.mark.parametrize("backend", ["qasm", "qir"])
 def test_round2_undeclared_measurement_output(backend) -> None:
     q, missing = QReg("q", 1), CReg("missing", 1)
-    with pytest.raises(NotImplementedError, match=r"missing.*declare"):
+    with pytest.raises(ValueError, match=r"missing.*declare"):
         getattr(SlrConverter(Main(q, qb.Measure(q[0]) > missing[0])), backend)()
 
 
@@ -564,7 +564,7 @@ def test_round2_same_parent_different_offsets_conflict() -> None:
 def test_round2_qasm_undeclared_permute_diagnostic(whole) -> None:
     c, missing = CReg("c", 1), CReg("missing", 1)
     refs = [c, missing] if whole else [c[0], missing[0]]
-    with pytest.raises(NotImplementedError, match=r"missing.*declare it"):
+    with pytest.raises(ValueError, match=r"missing.*declare it"):
         SlrConverter(Main(c, Permute(refs, refs[::-1]))).qasm()
 
 
@@ -675,7 +675,7 @@ def test_round3_qasm_caller_owned_barrier(fragment) -> None:
     if fragment:
         assert SlrConverter(program).qasm().splitlines()[2:] == ["barrier q, other;", "h q[0];"]
     else:
-        with pytest.raises(NotImplementedError, match=r"undeclared allocator 'q'.*declare it before using Barrier"):
+        with pytest.raises(ValueError, match=r"undeclared allocator 'q'.*declare it before using Barrier"):
             SlrConverter(program).qasm()
 
 
@@ -716,7 +716,7 @@ def test_round3_fragment_declared_child_placement(backend, declare_root) -> None
 
 def test_compat_fragment_qir_requires_classical_storage() -> None:
     q, missing = QReg("q", 1), CReg("missing", 1)
-    with pytest.raises(NotImplementedError, match=r"missing.*no QIR storage"):
+    with pytest.raises(ValueError, match=r"missing.*no QIR storage"):
         SlrConverter(Block(q, qb.Measure(q[0]) > missing[0])).qir()
 
 
@@ -725,7 +725,7 @@ def test_compat_fragment_qasm_permute_requires_sizes(whole) -> None:
     c, missing = CReg("c", 1), CReg("missing", 1)
     refs = [c, missing] if whole else [c[0], missing[0]]
     message = "known whole registers of equal size" if whole else r"missing\[0\] is not a declared slot"
-    with pytest.raises(NotImplementedError, match=message):
+    with pytest.raises(ValueError, match=message):
         SlrConverter(Block(c, Permute(refs, refs[::-1]))).qasm()
 
 
@@ -753,3 +753,145 @@ def test_compat_fragment_declaration_rules_remain_strict(rule) -> None:
         message = r"Inner.*local.*cannot declare registers"
     with pytest.raises(ValueError, match=message):
         slr_to_ast(fragment)
+
+
+@pytest.mark.parametrize("backend", ["qasm", "qir", "stim", "quantum_circuit"])
+@pytest.mark.parametrize("legacy_json", [False, True])
+def test_round4_child_offsets_must_be_explicit(backend, legacy_json) -> None:
+    import json
+
+    from pecos.slr.ast.codegen.qir import AstToQir
+    from pecos.slr.ast.codegen.quantum_circuit import AstToQuantumCircuit
+    from pecos.slr.ast.codegen.stim import AstToStim
+    from pecos.slr.ast.serialize import ast_to_json, json_to_ast
+
+    declarations = (
+        AllocatorDecl(name="q", capacity=3),
+        AllocatorDecl(name="padding", capacity=1, parent="q", **({"offset": 0} if legacy_json else {})),
+        AllocatorDecl(name="child", capacity=2, parent="q", **({"offset": 1} if legacy_json else {})),
+    )
+    program = Program(
+        name="main",
+        declarations=declarations,
+        body=tuple(
+            GateOp(gate=GateKind.X, targets=(SlotRef(allocator=name, index=0),)) for name in ("padding", "child")
+        ),
+    )
+    if legacy_json:
+        data = json.loads(ast_to_json(program))
+        for decl in data["declarations"]:
+            decl.pop("offset")
+        program = json_to_ast(json.dumps(data))
+    assert program.declarations[1].offset is None
+    generator = {"qasm": AstToQasm, "qir": AstToQir, "stim": AstToStim, "quantum_circuit": AstToQuantumCircuit}[
+        backend
+    ]()
+    with pytest.raises(ValueError, match=r"padding.*set offset=.*parent.child"):
+        generator.generate(program)
+
+
+@pytest.mark.parametrize("bad", ["past_parent", "negative", "root_offset", "cycle", "missing_offset"])
+def test_round4_allocator_layout_guards(bad) -> None:
+    from pecos.slr.ast.codegen._allocator_layout import allocator_offsets
+
+    root = AllocatorDecl(name="q", capacity=3)
+    cases = {
+        "past_parent": ((root, AllocatorDecl(name="child", capacity=2, parent="q", offset=2)), "child.*outside"),
+        "negative": ((root, AllocatorDecl(name="child", capacity=1, parent="q", offset=-1)), "child.*outside"),
+        "root_offset": ((AllocatorDecl(name="q", capacity=3, offset=1),), "q.*offset zero"),
+        "cycle": (
+            (
+                AllocatorDecl(name="a", capacity=1, parent="b", offset=0),
+                AllocatorDecl(name="b", capacity=1, parent="a", offset=0),
+            ),
+            "a.*cyclic",
+        ),
+        "missing_offset": ((root, AllocatorDecl(name="child", capacity=1, parent="q")), "child.*set offset="),
+    }
+    declarations, message = cases[bad]
+    with pytest.raises(ValueError, match=message):
+        allocator_offsets(Program(name="main", declarations=declarations))
+
+
+@pytest.mark.parametrize("backend", ["stim", "quantum_circuit"])
+def test_round4_inline_measurement_outputs(backend) -> None:
+    q, m = QReg("q", 2), CReg("m", 2)
+    ops = (qb.X(q[0]), qb.Measure(q) > m)
+    inline, declared = SlrConverter(Main(q, *ops)), SlrConverter(Main(q, m, *ops))
+    if backend == "stim":
+        actual, records = inline.stim_with_records()
+        expected, declared_records = declared.stim_with_records()
+        assert actual == inline.stim() == expected
+        assert records == declared_records == (("m", 0), ("m", 1))
+        assert actual.compile_sampler().sample(shots=4).tolist() == [[True, False]] * 4
+    else:
+        actual, expected = inline.quantum_circuit(), declared.quantum_circuit()
+        assert list(actual.items()) == list(expected.items())
+        assert [params["var_output"] for gate, _, params in actual.items() if gate == "Measure"] == [
+            {0: ("m", 0)},
+            {1: ("m", 1)},
+        ]
+        assert actual.metadata["qvars"] == expected.metadata["qvars"]
+
+
+def test_round4_qasm_inline_measurement_diagnostic() -> None:
+    q = QReg("q", 2)
+    with pytest.raises(ValueError, match=r"'m'.*QASM needs every classical register declared.*declare it in Main"):
+        SlrConverter(Main(q, qb.X(q[0]), qb.Measure(q) > CReg("m", 2))).qasm()
+
+
+@pytest.mark.parametrize("backend", ["qasm", "qir", "stim", "quantum_circuit"])
+def test_round4_direct_child_constructor_placement(backend) -> None:
+    def build(direct):
+        root = QAlloc(4, name="root")
+        first = QAlloc(1, parent=root, name="first") if direct else root.child(1, name="first")
+        child = QAlloc(3, parent=root, name="child") if direct else root.child(3, name="child")
+        leaf = QAlloc(1, parent=child, name="leaf") if direct else child.child(1, name="leaf")
+        assert root.available == 0
+        assert child.available == 2
+        return Main(root, first, child, leaf, qb.X(first[0]), qb.X(leaf[0])), (first, child, leaf)
+
+    direct, direct_children = build(True)
+    method, method_children = build(False)
+    assert [child.parent_indices for child in direct_children] == [child.parent_indices for child in method_children]
+    assert [child.parent_indices for child in direct_children] == [(0,), (1, 2, 3), (0,)]
+    actual, expected = getattr(SlrConverter(direct), backend)(), getattr(SlrConverter(method), backend)()
+    if backend == "quantum_circuit":
+        assert list(actual.items()) == list(expected.items())
+        assert [locations for gate, locations, _ in actual.items() if gate == "X"] == [{0}, {1}]
+    else:
+        assert str(actual) == str(expected)
+    assert "x root[1];" in SlrConverter(direct).qasm()
+
+
+@pytest.mark.parametrize("bad", ["negative", "full", "released"])
+def test_round4_direct_child_constructor_validation(bad) -> None:
+    def construct(direct):
+        root = QAlloc(2, name="root")
+        size = -1 if bad == "negative" else 1
+        if bad == "full":
+            root.child(2)
+        elif bad == "released":
+            root.release()
+        with pytest.raises((ValueError, RuntimeError)) as error:
+            QAlloc(size, parent=root) if direct else root.child(size)
+        assert root.available == (0 if bad == "full" else 2)
+        return type(error.value), str(error.value)
+
+    assert construct(True) == construct(False)
+
+
+def test_round4_released_child_slots_can_be_reused() -> None:
+    root = QAlloc(2, name="root")
+    first = QAlloc(2, parent=root, name="first")
+    gate = qb.X(first[0])
+    first.release()
+    assert root.available == 2
+    second = QAlloc(2, parent=root, name="second")
+    assert second.parent_indices == first.parent_indices == (0, 1)
+    program = Main(root, first, gate, second, qb.X(second[1]))
+    code = SlrConverter(program).qasm()
+    assert "x root[0];" in code
+    assert "x root[1];" in code
+    root.release()
+    assert second.is_released

@@ -397,8 +397,8 @@ class TestPrettyPrintHierarchicalAllocators:
     def test_hierarchical_allocators(self) -> None:
         """Hierarchical allocators show parent relationship."""
         all_qubits = QAlloc(4, name="all")
-        data = all_qubits.child(2, name="data")
-        ancilla = all_qubits.child(2, name="ancilla")
+        data = QAlloc(2, name="data", parent=all_qubits)
+        ancilla = QAlloc(2, name="ancilla", parent=all_qubits)
 
         prog = Main(
             all_qubits,

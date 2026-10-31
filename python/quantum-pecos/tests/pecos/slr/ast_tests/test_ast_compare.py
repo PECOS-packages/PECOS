@@ -535,10 +535,10 @@ class TestComplexComparisons:
     def test_hierarchical_allocators(self) -> None:
         """Hierarchical allocators compare correctly."""
         all1 = QAlloc(4, name="all")
-        data1 = all1.child(2, name="data")
+        data1 = QAlloc(2, name="data", parent=all1)
 
         all2 = QAlloc(4, name="all")
-        data2 = all2.child(2, name="data")
+        data2 = QAlloc(2, name="data", parent=all2)
 
         prog1 = Main(all1, data1, qb.H(data1[0]))
         prog2 = Main(all2, data2, qb.H(data2[0]))

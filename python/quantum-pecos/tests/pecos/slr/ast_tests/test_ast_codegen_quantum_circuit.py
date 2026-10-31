@@ -605,7 +605,7 @@ def test_aliased_parallel_targets_stay_sequential() -> None:
 
     program = Program(
         name="aliased_parallel",
-        declarations=(AllocatorDecl(name="q", capacity=2), AllocatorDecl(name="a", capacity=1, parent="q")),
+        declarations=(AllocatorDecl(name="q", capacity=2), AllocatorDecl(name="a", capacity=1, parent="q", offset=0)),
         body=(
             ParallelBlock(
                 body=tuple(GateOp(gate=GateKind.H, targets=(SlotRef(allocator=name, index=0),)) for name in ("q", "a")),
@@ -802,7 +802,7 @@ def test_qubit_metadata_resolves_child_allocators() -> None:
         name="children",
         declarations=(
             AllocatorDecl(name="data", capacity=4),
-            AllocatorDecl(name="padding", capacity=1, parent="data"),
+            AllocatorDecl(name="padding", capacity=1, parent="data", offset=0),
             AllocatorDecl(name="child", capacity=2, parent="data", offset=1),
         ),
         body=(GateOp(gate=GateKind.X, targets=(SlotRef(allocator="child", index=1),)),),
@@ -827,7 +827,8 @@ def test_block_local_classical_permute_is_rejected(whole_register) -> None:
             permutation = Permute(c, c) if whole_register else Permute([c[0], c[1]], [c[1], c[0]])
             super().__init__(qb.Measure(q[0]) > c[0], permutation)
 
-    with pytest.raises(NotImplementedError, match=r"undeclared classical register 'local'.*declare"):
+    ref = "local" if whole_register else r"local\[0\]"
+    with pytest.raises(ValueError, match=rf"Permute.*{ref}.*declare.*qubit"):
         SlrConverter(Main(q, LocalBits())).quantum_circuit()
 
 
@@ -836,5 +837,5 @@ def test_prepare_all_requires_declared_allocator() -> None:
     from pecos.slr.ast.nodes import PrepareOp, Program
 
     program = Program(name="missing_allocator", body=(PrepareOp(allocator="missing"),))
-    with pytest.raises(NotImplementedError, match=r"prepare_all.*missing.*declare.*allocator"):
+    with pytest.raises(ValueError, match=r"prepare_all.*missing.*declare.*allocator"):
         ast_to_quantum_circuit(program)

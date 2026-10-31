@@ -166,6 +166,7 @@ impl PhirClassicalInterpreter {
             }
         }
 
+        super::exports::prepare_results(&program.ops, &mut self.environment)?;
         self.program = Some(program);
         Ok(self.num_qubits())
     }
@@ -277,10 +278,10 @@ impl PhirClassicalInterpreter {
         Ok(())
     }
 
-    /// Extract specific bits from classical state, filtering private vars.
+    /// Extract specific bits from classical state for measurement transfer.
     ///
     /// Returns `{(name, bit_idx): bit_value}` for each measurement bit,
-    /// excluding variables that start with `__`.
+    /// including user variables that start with `__`.
     #[must_use]
     pub fn result_bits(
         &self,
@@ -290,10 +291,6 @@ impl PhirClassicalInterpreter {
         for meas_dict in measurements {
             for key in meas_dict.keys() {
                 let (name, idx) = key;
-                // Filter private vars
-                if name.starts_with("__") {
-                    continue;
-                }
                 if let Ok(bit) = self.environment.get_bit(name, *idx) {
                     result.insert((name.clone(), *idx), i64::from(bool::from(bit)));
                 }
@@ -449,6 +446,10 @@ impl PhirClassicalInterpreter {
             }
         }
 
+        if qop_name == "Measure" {
+            super::operations::validate_measurement_counts(flat_args.len(), returns.len())?;
+        }
+
         // Build var_output for measurement compatibility
         if !returns.is_empty() {
             let mut var_output = serde_json::Map::new();
@@ -472,7 +473,11 @@ impl PhirClassicalInterpreter {
         Ok(YieldedQOp {
             name: qop_name.to_string(),
             sim_name,
-            args: resolved_args,
+            args: if qop_name == "Measure" {
+                QOpArgs::Single(flat_args)
+            } else {
+                resolved_args
+            },
             returns: ret,
             metadata: meta,
             angles: angles.clone(),
@@ -957,7 +962,7 @@ mod tests {
     }
 
     #[test]
-    fn test_result_bits_filters_private() {
+    fn test_result_bits_includes_private() {
         let mut interp = PhirClassicalInterpreter::new();
         interp.init(SIMPLE_PROGRAM, None).unwrap();
 
@@ -973,9 +978,9 @@ mod tests {
         meas.insert(("__q0__".to_string(), 0usize), 1i64);
 
         let bits = interp.result_bits(&[meas]);
-        // Should include m but NOT __q0__
+        // Measurement transfer includes every requested destination.
         assert!(bits.contains_key(&("m".to_string(), 0)));
-        assert!(!bits.contains_key(&("__q0__".to_string(), 0)));
+        assert!(bits.contains_key(&("__q0__".to_string(), 0)));
     }
 }
 

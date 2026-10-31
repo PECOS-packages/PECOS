@@ -1,14 +1,12 @@
 use crate::v0_1::ast::{Operation, PHIRProgram, infer_size};
-use crate::v0_1::environment::DataType;
 use crate::v0_1::foreign_objects::ForeignObject;
 use crate::v0_1::operations::OperationProcessor;
 use log::debug;
 use pecos_core::errors::PecosError;
 use pecos_engines::byte_message::{ByteMessage, builder::ByteMessageBuilder};
-use pecos_engines::shot_results::{Data, Shot};
+use pecos_engines::shot_results::Shot;
 use pecos_engines::{ClassicalEngine, ControlEngine, Engine, EngineStage};
 use std::any::Any;
-use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 /// A frame of the execution stack: a slice of operations and the index of the
@@ -182,6 +180,7 @@ impl PhirJsonEngine {
             }
         }
 
+        super::exports::prepare_results(&program.ops, &mut processor.environment)?;
         Ok(Self {
             exec_stack: Self::initial_stack(Some(&program)),
             program: Some(program),
@@ -534,181 +533,19 @@ impl ClassicalEngine for PhirJsonEngine {
             .handle_measurements(&measurement_outcomes, &ops)
     }
 
-    #[allow(clippy::too_many_lines)]
     fn get_results(&self) -> Result<Shot, PecosError> {
         let mut results = Shot::default();
-        if let Some(outputs) = self.processor.environment.selected_outputs() {
-            for (output, source) in outputs {
-                let info = self.processor.environment.get_variable_info(&source)?;
-                let value = self.processor.environment.get(&source).ok_or_else(|| {
-                    PecosError::Input(format!(
-                        "cvar_export: source {source:?} has no value; declare it with cvar_define"
-                    ))
-                })?;
-                let width = if info.data_type.is_signed() {
-                    info.size + 1
-                } else {
-                    info.size
-                };
-                results.add_register_u64(&output, value.as_u64(), width);
-            }
-            return Ok(results);
+        let environment = &self.processor.environment;
+        for (output, source) in environment.output_sources() {
+            let info = environment.classical_info(&source)?;
+            let value = environment.get(&source).ok_or_else(|| {
+                PecosError::Input(format!(
+                    "Result source {source:?} has no value; declare it with cvar_define"
+                ))
+            })?;
+            let width = info.size + usize::from(info.data_type.is_signed());
+            results.add_register_u64(&output, value.as_u64(), width);
         }
-
-        // First process all export mappings to get properly processed values
-        let mut exported_values = self.processor.process_export_mappings();
-
-        // Determine which registers to include in the results based on environment mappings
-        let mappings = self.processor.environment.get_mappings();
-        if mappings.is_empty() {
-            // No explicit export mappings - include all environment variables
-            log::debug!(
-                "PHIR: No explicit export mappings - adding all variables from environment"
-            );
-
-            for info in self.processor.environment.get_all_variables() {
-                // Skip quantum variables and internal measurement variables
-                if info.data_type == DataType::Qubits {
-                    continue;
-                }
-                if info.name.starts_with("measurement_") {
-                    continue;
-                }
-                if let Some(value) = self.processor.environment.get(&info.name) {
-                    exported_values
-                        .entry(info.name.clone())
-                        .or_insert(value.as_u64());
-                }
-            }
-        } else {
-            log::debug!("PHIR: Using environment mappings to determine which registers to include");
-
-            // Keep only the registers that are explicitly mapped as destinations
-            // This provides a general approach that works for all tests including Bell state tests
-            let destination_registers: BTreeSet<String> =
-                mappings.iter().map(|(_, dest)| dest.clone()).collect();
-
-            // Keep only the explicitly mapped destination registers if we have any
-            if !destination_registers.is_empty() {
-                let mut filtered_values = BTreeMap::new();
-
-                for dest in destination_registers {
-                    if exported_values.contains_key(&dest) {
-                        let value = exported_values[&dest];
-                        log::debug!("PHIR: Keeping explicitly mapped register: {dest} = {value}");
-                        filtered_values.insert(dest, value);
-                    }
-                }
-
-                // Replace with filtered values
-                exported_values = filtered_values;
-            }
-        }
-
-        // Add the processed values to the results
-        log::debug!(
-            "PHIR: Adding {} exported values to results",
-            exported_values.len()
-        );
-
-        for (key, value) in &exported_values {
-            // Use add_register with proper width from variable metadata. A
-            // signed size-S register is an i(S+1) integer, so it renders S+1
-            // bits (the extra sign bit); unsigned registers render S bits.
-            let width = self
-                .processor
-                .environment
-                .get_variable_info_opt(key)
-                .map_or(32, |info| {
-                    if info.data_type.is_signed() {
-                        info.size + 1
-                    } else {
-                        info.size
-                    }
-                });
-            results.add_register_u64(key, *value, width);
-            log::debug!("PHIR: Adding mapped register {key} = {value} (width={width})");
-        }
-
-        // If nothing has been exported so far, use all available variables
-        // This general approach works for all types of programs
-        if results.data.is_empty() {
-            log::debug!("PHIR: No exported values found - using all available variables");
-
-            // Add all variables from environment with proper widths
-            for info in self.processor.environment.get_all_variables() {
-                if let Some(value) = self.processor.environment.get(&info.name) {
-                    log::debug!("PHIR: Adding variable {} = {} to results", info.name, value);
-                    let width = if info.data_type.is_signed() {
-                        info.size + 1
-                    } else {
-                        info.size
-                    };
-                    results.add_register_u64(&info.name, value.as_u64(), width);
-                }
-            }
-
-            // Process all mappings from environment for any variables not previously handled
-            for (source, dest) in self.processor.environment.get_mappings() {
-                // Skip if this destination is already in the results
-                if results.data.contains_key(dest) {
-                    continue;
-                }
-
-                // Try to get the value from the environment
-                if let Some(value) = self.processor.environment.get(source) {
-                    log::debug!("PHIR: Exporting {source} -> {dest} = {value}");
-                    results.data.insert(dest.clone(), Data::U64(value.as_u64()));
-                } else {
-                    // If not found in environment, try the exported_values directly
-                    // Try to get the value directly from environment if not already found
-                    if let Some(value) = self.processor.environment.get(source) {
-                        log::debug!(
-                            "PHIR: Exporting from environment {source} -> {dest} = {value}"
-                        );
-                        results.data.insert(dest.clone(), Data::U64(value.as_u64()));
-                    }
-                    // Note: We no longer fall back to measurement_results as primary source
-                }
-            }
-
-            // If there are no registers in the results, add all variables from environment
-            if results.data.is_empty() {
-                for info in self.processor.environment.get_all_variables() {
-                    if let Some(value) = self.processor.environment.get(&info.name) {
-                        log::debug!("PHIR: Adding all variables: {} = {}", info.name, value);
-                        results
-                            .data
-                            .insert(info.name.clone(), Data::U64(value.as_u64()));
-                    }
-                }
-            }
-
-            // No legacy fallback needed anymore since the environment is the single source of truth
-            if results.data.is_empty() {
-                log::debug!(
-                    "PHIR: No register values found in environment, returning empty results"
-                );
-            }
-        }
-
-        // Since the environment is now the single source of truth for all variable data,
-        // we don't need to maintain consistency between bit-indexed variables and composite variables.
-        // All variables should already have the correct values directly from the environment.
-        //
-        // We're removing the complex bit variable reconstruction code since:
-        // 1. We no longer create or manage separate bit-indexed variables
-        // 2. All bit values are stored directly in integer variables
-        // 3. The environment handles all bit operations transparently
-
-        // Just log the final state of the registers for debugging
-        log::debug!("PHIR: Final register values from environment - no reconstruction needed");
-        for (key, value) in &results.data {
-            log::debug!("PHIR: Register {key} = {value:?}");
-        }
-
-        log::debug!("PHIR: Exported {} registers", results.data.len());
-        log::debug!("PHIR: Final registers: {:?}", results.data);
         Ok(results)
     }
 

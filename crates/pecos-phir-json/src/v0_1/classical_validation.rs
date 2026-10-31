@@ -91,6 +91,38 @@ pub(crate) fn result_field(op: &Value, field: &str) -> Result<Vec<ArgItem>, Peco
         .collect()
 }
 
+/// Validate Measure before serde/schema decoding so malformed fields retain op context.
+pub(crate) fn validate_measure_json(op: &Value) -> Result<(), PecosError> {
+    let args = op.get("args").unwrap_or(&Value::Null);
+    let returns = op.get("returns").unwrap_or(&Value::Null);
+    let error = || {
+        PecosError::Input(format!(
+            "Measure args {args}: invalid args or returns {returns}; supply arrays and give each measured qubit a destination"
+        ))
+    };
+    let args: Vec<super::ast::QubitArg> =
+        serde_json::from_value(args.clone()).map_err(|_| error())?;
+    let returns = returns.as_array().ok_or_else(error)?;
+    let count: usize = args
+        .iter()
+        .map(|arg| match arg {
+            super::ast::QubitArg::SingleQubit(_) => 1,
+            super::ast::QubitArg::MultipleQubits(qubits) => qubits.len(),
+        })
+        .sum();
+    if count == 0 || count != returns.len() {
+        return Err(error());
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_measure_args(
+    args: &[super::ast::QubitArg],
+    returns: &[(String, usize)],
+) -> Result<(), PecosError> {
+    validate_measure_json(&serde_json::json!({"args":args,"returns":returns}))
+}
+
 /// Validate Result syntax, declaration size fields and bool widths before AST/schema decoding.
 ///
 /// # Errors
@@ -98,6 +130,9 @@ pub(crate) fn result_field(op: &Value, field: &str) -> Result<Vec<ArgItem>, Peco
 pub fn validate_classical_inputs(program: &Value) -> Result<(), PecosError> {
     fn visit(ops: &[Value]) -> Result<(), PecosError> {
         for op in ops {
+            if op.get("qop").and_then(Value::as_str) == Some("Measure") {
+                validate_measure_json(op)?;
+            }
             if op.get("cop").and_then(Value::as_str) == Some("Result") {
                 result_field(op, "args")?;
                 result_field(op, "returns")?;

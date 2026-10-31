@@ -168,11 +168,13 @@ class HybridEngine:
             self.op_processor.attach_error_model(self.error_model)
 
         self.results = {}
+        self._accumulated_shots = 0
         self.multisim_process_info = {}
 
     def init(self) -> None:
         """Reset the state of `Engine` before a simulation run."""
         self.results = {}
+        self._accumulated_shots = 0
         self.multisim_process_info = {}
 
     def reset_all(self) -> None:
@@ -247,8 +249,19 @@ class HybridEngine:
 
     def results_accumulator(self, shot_results: dict) -> None:
         """Combines the results of individual runs together."""
+        if self._accumulated_shots:
+            missing = self.results.keys() - shot_results.keys()
+            extra = shot_results.keys() - self.results.keys()
+            if missing or extra:
+                msg = (
+                    f"Shot {self._accumulated_shots + 1} has different result keys: "
+                    f"missing {sorted(missing)!r}, unexpected {sorted(extra)!r}; "
+                    "report the same keys in every shot"
+                )
+                raise ValueError(msg)
         for k, v in shot_results.items():
             self.results.setdefault(k, []).append(v)
+        self._accumulated_shots += 1
 
     def run(
         self,
@@ -296,6 +309,7 @@ class HybridEngine:
             # Execute the classical program till quantum sim is needed
             for buffered_ops in self.cinterp.execute(self.cinterp.program.ops):
                 # Process ops, e.g., use `machine` and `error_model` to generate noisy qops & cops
+                destinations = {tuple(ref) for op in buffered_ops if op.name == "Measure" for ref in op.returns}
                 noisy_buffered_ops = self.op_processor.process(buffered_ops)
 
                 # Process noisy operations
@@ -304,7 +318,12 @@ class HybridEngine:
                     temp_meas = self.qsim.run(noisy_qops)
                     self._internal_cinterp.receive_results(temp_meas)
                     measurements.extend(temp_meas)
-                transmit_meas = self._internal_cinterp.result_bits(measurements)
+                # Transfer the program's destinations, including user names beginning
+                # with __. Noise-only measurements belong to the internal interpreter.
+                program_measurements = [
+                    {key: value for key, value in meas.items() if key in destinations} for meas in measurements
+                ]
+                transmit_meas = self._internal_cinterp.result_bits(program_measurements)
                 self.cinterp.receive_results([transmit_meas])
 
             self.results_accumulator(self.cinterp.results(return_int=return_int))

@@ -14,10 +14,17 @@ fn source(name: &str, arity: usize, angles: &[f64], unit: &str) -> String {
     if !angles.is_empty() {
         op["angles"] = json!([angles, unit]);
     }
-    json!({"format":"PHIR/JSON","version":"0.1.0","ops":[
-        {"data":"qvar_define","data_type":"qubits","variable":"q","size":4}, op
-    ]})
-    .to_string()
+    if name == "Measure" {
+        op["returns"] = json!([["m", 0], ["m", 1]]);
+    }
+    let mut ops = vec![
+        json!({"data":"qvar_define","data_type":"qubits","variable":"q","size":4}),
+        op,
+    ];
+    if name == "Measure" {
+        ops.push(json!({"data":"cvar_define","data_type":"u32","variable":"m","size":2}));
+    }
+    json!({"format":"PHIR/JSON","version":"0.1.0","ops":ops}).to_string()
 }
 
 fn individual_gates(message: &ByteMessage) -> Vec<Gate> {
@@ -320,6 +327,10 @@ fn large_broadcasts_preserve_all_targets_in_both_paths() {
         } else {
             json!(qubits.chunks_exact(arity).collect::<Vec<_>>())
         };
+        if name == "Measure" {
+            source["ops"][1]["returns"] =
+                json!((0..300).map(|_| json!(["m", 0])).collect::<Vec<_>>());
+        }
         let source = source.to_string();
         let native = drain_commands(&mut PhirJsonEngine::from_json(&source).unwrap());
         let converted =

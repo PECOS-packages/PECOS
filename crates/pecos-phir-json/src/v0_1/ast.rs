@@ -225,6 +225,10 @@ impl<'de> Deserialize<'de> for Operation {
                 .as_str()
                 .ok_or_else(|| D::Error::custom("qop must be a string"))?
                 .to_string();
+            if qop == "Measure" {
+                super::classical_validation::validate_measure_json(&val)
+                    .map_err(D::Error::custom)?;
+            }
             let angles = obj
                 .get("angles")
                 .map_or(Ok(None), convert_angles)
@@ -441,7 +445,7 @@ impl<'de> Deserialize<'de> for Operation {
 }
 
 /// Represents an argument to a quantum operation
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(untagged)]
 pub enum QubitArg {
     /// Single qubit (var, idx)
@@ -477,9 +481,6 @@ pub enum Expression {
     /// Integer literal
     Integer(i64),
 }
-
-// Constants for internal register naming
-pub const MEASUREMENT_PREFIX: &str = "measurement_";
 
 /// Validate a v0.1 quantum declaration: the type is optional and size must be positive.
 /// Declaration registration enforces the program-wide unique-name rule separately.

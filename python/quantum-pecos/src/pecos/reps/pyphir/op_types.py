@@ -17,6 +17,7 @@ quantum operations, classical operations, and machine operations for quantum cir
 
 from __future__ import annotations
 
+from pecos._phir_exports import flatten_measure_args, validate_measure_returns
 from pecos.reps.pyphir.instr_type import Instr
 
 
@@ -83,6 +84,9 @@ class QOp(Op):
             angles: Optional tuple of rotation angles.
             sim_name: Optional simulator-specific name. If not provided, uses name.
         """
+        validate_measure_returns(name, args, returns)
+        if name == "Measure":
+            args = flatten_measure_args(args)
         super().__init__(
             name=name,
             args=args,

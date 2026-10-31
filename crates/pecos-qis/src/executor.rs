@@ -183,14 +183,40 @@ struct SharedLibrary {
 unsafe impl Sync for SharedLibrary {}
 unsafe impl Send for SharedLibrary {}
 
+#[cfg(test)]
+static SYMBOL_LOOKUPS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 impl SharedLibrary {
     /// Get a symbol from the library
     ///
     /// # Safety
     /// Same safety requirements as `Library::get`
     unsafe fn get<T>(&self, symbol: &[u8]) -> Result<Symbol<'_, T>, libloading::Error> {
+        #[cfg(test)]
+        SYMBOL_LOOKUPS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         // SAFETY: We're inside an unsafe fn, caller is responsible for safety
         unsafe { self.lib.get(symbol) }
+    }
+
+    /// Resolve a callback from a process-lifetime library on first successful use.
+    /// Failed lookups remain retryable, just like uncached `get` calls. Racing
+    /// first callers may both resolve the symbol; they publish the same address.
+    ///
+    /// # Safety
+    /// `T` must match the symbol's ABI. The cache must be dedicated to this
+    /// library/symbol pair. The static library reference keeps copied function
+    /// pointers valid for the entire lifetime of their cache.
+    unsafe fn get_cached<T: Copy>(
+        &'static self,
+        cache: &OnceLock<T>,
+        symbol: &[u8],
+    ) -> Result<T, libloading::Error> {
+        if let Some(value) = cache.get() {
+            return Ok(*value);
+        }
+        // SAFETY: The caller supplies the matching symbol type and dedicated cache.
+        let value = *unsafe { self.get::<T>(symbol)? };
+        Ok(*cache.get_or_init(|| value))
     }
 
     /// Get a reference to the inner Library for legacy code
@@ -265,9 +291,13 @@ impl HeliosSyncHandle {
 
 impl DynamicSyncHandle for HeliosSyncHandle {
     fn wait_for_need_result(&self, timeout_ms: u64) -> Option<u64> {
+        static WAIT: OnceLock<WaitForNeedResultFn> = OnceLock::new();
         let lib = Self::get_lib().ok()?;
-        let wait_fn: Symbol<WaitForNeedResultFn> =
-            unsafe { lib.get(b"pecos_wait_for_need_result_with_context\0").ok()? };
+        // SAFETY: This cache belongs to this symbol in the pinned FFI singleton.
+        let wait_fn = unsafe {
+            lib.get_cached(&WAIT, b"pecos_wait_for_need_result_with_context\0")
+                .ok()?
+        };
         let mut result_id = u64::MAX;
         let status = unsafe { wait_fn(self.execution_context.0, timeout_ms, &raw mut result_id) };
         check_context_status(status, "wait for result").ok()?;
@@ -279,9 +309,11 @@ impl DynamicSyncHandle for HeliosSyncHandle {
     }
 
     fn set_measurement_result(&self, result_id: u64, value: bool) -> Result<(), InterfaceError> {
+        static CALLBACK: OnceLock<SetMeasurementResultFn> = OnceLock::new();
         let lib = Self::get_lib()?;
-        let set_fn: Symbol<SetMeasurementResultFn> = unsafe {
-            lib.get(b"pecos_set_measurement_result_with_context\0")
+        // SAFETY: This cache belongs to this symbol in the pinned FFI singleton.
+        let set_fn = unsafe {
+            lib.get_cached(&CALLBACK, b"pecos_set_measurement_result_with_context\0")
                 .map_err(|e| {
                     InterfaceError::ExecutionError(format!(
                         "Failed to find pecos_set_measurement_result: {e}"
@@ -297,9 +329,11 @@ impl DynamicSyncHandle for HeliosSyncHandle {
     }
 
     fn set_measurement_outcome(&self, result_id: u64, value: u64) -> Result<(), InterfaceError> {
+        static CALLBACK: OnceLock<SetMeasurementOutcomeFn> = OnceLock::new();
         let lib = Self::get_lib()?;
-        let set_fn: Symbol<SetMeasurementOutcomeFn> = unsafe {
-            lib.get(b"pecos_set_measurement_outcome_with_context\0")
+        // SAFETY: This cache belongs to this symbol in the pinned FFI singleton.
+        let set_fn = unsafe {
+            lib.get_cached(&CALLBACK, b"pecos_set_measurement_outcome_with_context\0")
                 .map_err(|e| {
                     InterfaceError::ExecutionError(format!(
                         "Failed to find pecos_set_measurement_outcome: {e}"
@@ -315,9 +349,11 @@ impl DynamicSyncHandle for HeliosSyncHandle {
     }
 
     fn signal_result_ready(&self) -> Result<(), InterfaceError> {
+        static CALLBACK: OnceLock<SignalResultReadyFn> = OnceLock::new();
         let lib = Self::get_lib()?;
-        let signal_fn: Symbol<SignalResultReadyFn> = unsafe {
-            lib.get(b"pecos_signal_result_ready_with_context\0")
+        // SAFETY: This cache belongs to this symbol in the pinned FFI singleton.
+        let signal_fn = unsafe {
+            lib.get_cached(&CALLBACK, b"pecos_signal_result_ready_with_context\0")
                 .map_err(|e| {
                     InterfaceError::ExecutionError(format!(
                         "Failed to find pecos_signal_result_ready: {e}"
@@ -335,10 +371,12 @@ impl DynamicSyncHandle for HeliosSyncHandle {
     fn get_pending_operations(
         &self,
     ) -> Result<Vec<pecos_qis_ffi_types::Operation>, InterfaceError> {
+        static CALLBACK: OnceLock<GetPendingOperationsFn> = OnceLock::new();
         let lib = Self::get_lib()?;
         // Read the owned context queue through pecos_get_pending_operations_with_context.
-        let get_ops_fn: Symbol<GetPendingOperationsFn> = unsafe {
-            lib.get(b"pecos_get_pending_operations_with_context\0")
+        // SAFETY: This cache belongs to this symbol in the pinned FFI singleton.
+        let get_ops_fn = unsafe {
+            lib.get_cached(&CALLBACK, b"pecos_get_pending_operations_with_context\0")
                 .map_err(|e| {
                     InterfaceError::ExecutionError(format!(
                         "Failed to find pecos_get_pending_operations_with_context: {e}"
@@ -3549,6 +3587,98 @@ attributes #0 = { "EntryPoint" }
             assert!(message.contains("pecos_test_missing_import"), "{message}");
             assert!(message.contains("exit code 1120"), "{message}");
         }
+    }
+
+    #[test]
+    fn missing_cached_symbol_remains_retryable() {
+        const CHILD: &str = "PECOS_TEST_MISSING_SYNC_SYMBOL";
+        if std::env::var_os(CHILD).is_none() {
+            crate::test_env::run_test_in_child(
+                "executor::tests::missing_cached_symbol_remains_retryable",
+                &[(CHILD, "1".as_ref())],
+            );
+            return;
+        }
+        let lib = QisHeliosInterface::get_qis_ffi_lib_singleton().unwrap();
+        let cache = OnceLock::<WaitForNeedResultFn>::new();
+        // Compare the platform loader diagnostic, which need not include the name.
+        let original =
+            unsafe { lib.get::<WaitForNeedResultFn>(b"pecos_test_absent_wait_callback\0") }
+                .unwrap_err()
+                .to_string();
+        let before = SYMBOL_LOOKUPS.load(std::sync::atomic::Ordering::SeqCst);
+        for _ in 0..2 {
+            // SAFETY: The deliberately absent symbol has its own typed cache.
+            let error = unsafe { lib.get_cached(&cache, b"pecos_test_absent_wait_callback\0") }
+                .unwrap_err();
+            assert_eq!(error.to_string(), original);
+            assert!(cache.get().is_none());
+        }
+        assert_eq!(
+            SYMBOL_LOOKUPS.load(std::sync::atomic::Ordering::SeqCst) - before,
+            2
+        );
+    }
+
+    #[test]
+    fn sync_callbacks_reuse_symbols_across_contexts_and_threads() {
+        use std::sync::atomic::Ordering;
+        unsafe extern "C" fn no_destroy(_: *mut ExecutionContext) {}
+        const CHILD: &str = "PECOS_TEST_SYNC_SYMBOL_CACHE";
+        if std::env::var_os(CHILD).is_none() {
+            crate::test_env::run_test_in_child(
+                "executor::tests::sync_callbacks_reuse_symbols_across_contexts_and_threads",
+                &[(CHILD, "1".as_ref())],
+            );
+            return;
+        }
+        let lib = QisHeliosInterface::get_qis_ffi_lib_singleton().unwrap();
+        let handles: Vec<_> = (0..2)
+            .map(|_| HeliosSyncHandle {
+                execution_context: Arc::new(
+                    QisHeliosInterface::create_execution_context(lib.inner()).unwrap(),
+                ),
+            })
+            .collect();
+        let call = |handle: &HeliosSyncHandle| {
+            assert_eq!(handle.wait_for_need_result(0), None);
+            handle.set_measurement_result(0, true).unwrap();
+            handle.set_measurement_outcome(1, 2).unwrap();
+            handle.signal_result_ready().unwrap();
+            assert_eq!(handle.get_pending_operations().unwrap(), []);
+        };
+        let before = SYMBOL_LOOKUPS.load(Ordering::SeqCst);
+        call(&handles[0]);
+        let warm = SYMBOL_LOOKUPS.load(Ordering::SeqCst);
+        assert_eq!(warm - before, 5, "resolve the five callbacks lazily");
+        std::thread::scope(|scope| {
+            for handle in &handles {
+                scope.spawn(move || {
+                    for _ in 0..32 {
+                        call(handle);
+                    }
+                });
+            }
+        });
+        assert_eq!(SYMBOL_LOOKUPS.load(Ordering::SeqCst), warm);
+
+        // A warm function pointer must still report errors for this call's context.
+        let null = HeliosSyncHandle {
+            execution_context: Arc::new(ExecutionContextPtr(std::ptr::null_mut(), no_destroy)),
+        };
+        assert_eq!(null.wait_for_need_result(0), None);
+        for error in [
+            null.set_measurement_result(0, true).unwrap_err(),
+            null.set_measurement_outcome(0, 2).unwrap_err(),
+            null.signal_result_ready().unwrap_err(),
+            null.get_pending_operations().unwrap_err(),
+        ] {
+            assert!(
+                error.to_string().contains("null execution context"),
+                "{error}"
+            );
+        }
+        assert_eq!(SYMBOL_LOOKUPS.load(Ordering::SeqCst), warm);
     }
 
     #[test]

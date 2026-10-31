@@ -3,9 +3,10 @@ yanked = "deny"
 unmaintained = "none"
 unsound = "none"
 ignore = [
-    # zip@2.4.2 is reachable only through the opt-in relay-bp feature
-    # (`relay-bp` on pecos-decoders and pecos; pecos-rslib enables it for the
-    # Python RelayBpDecoder): relay-bp 0.2.2 (the latest) reads .npz files
+    # zip@2.4.2 is reachable only through pecos-relay-bp: the `relay-bp`
+    # feature on pecos-decoders and pecos (pecos-rslib enables it for the Python
+    # RelayBpDecoder), exp/pecos-phase-poly, which depends on it directly, and
+    # pecos-bp's parity tests. relay-bp 0.2.2 (the latest) reads .npz files
     # through ndarray-npy 0.9, which requires zip ^2. That zip has advisories
     # against ZipArchive::extract and ZipStreamReader::extract only;
     # ndarray-npy reads .npz entries by name and relay-bp never extracts

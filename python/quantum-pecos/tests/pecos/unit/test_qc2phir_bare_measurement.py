@@ -81,3 +81,44 @@ def test_programs_without_bare_measurements_are_unchanged() -> None:
     ops = json.loads(qc.to_phir_json())["ops"]
     assert not any(op.get("data") == "cvar_export" for op in ops)
     assert not any("__pecos_scratch" in json.dumps(op) for op in ops)
+
+
+@pytest.mark.parametrize("runner", ["default", "python", "native"])
+def test_export_inside_a_conditional_counts_as_an_existing_export(runner) -> None:
+    qc = pc.QuantumCircuit(cvar_spec={"c": 1, "d": 1})
+    qc.append("X", {0})
+    qc.append("measure Z", {0}, var=("c", 0))
+    qc.append("measure Z", {1})
+    qc.append("cop", {}, cop_type="ExportCVar", export="d", cond={"a": ("c", 0), "op": "==", "b": 1})
+    assert _run(qc.to_phir_json(), runner) == {"d": [0, 0, 0]}
+
+
+@pytest.mark.parametrize("runner", ["default", "python", "native"])
+def test_size_zero_registers_are_not_exported(runner) -> None:
+    qc = pc.QuantumCircuit(cvar_spec={"z": 0, "c": 1})
+    qc.append("X", {0})
+    qc.append("measure Z", {0}, var=("c", 0))
+    qc.append("measure Z", {1})
+    assert _run(qc.to_phir_json(), runner) == {"c": [1, 1, 1]}
+
+
+def test_scratch_name_avoids_measurement_destinations() -> None:
+    # A destination register outside cvar_spec must not be merged with the scratch.
+    qc = pc.QuantumCircuit(cvar_spec={"c": 1})
+    qc.append("X", {0})
+    qc.append("measure Z", {0}, var=("__pecos_scratch", 0))
+    qc.append("measure Z", {1})
+    returns = [
+        ret for op in json.loads(qc.to_phir_json())["ops"] if op.get("qop") == "Measure" for ret in op["returns"]
+    ]
+    assert ["__pecos_scratch", 0] in returns
+    assert ["__pecos_scratch_", 0] in returns
+
+
+def test_native_bare_measurement_no_longer_writes_a_user_register_m() -> None:
+    # The native engine used to accept a returnless Measure and write its result into a register named m.
+    qc = pc.QuantumCircuit(cvar_spec={"m": 2})
+    qc.append("X", {0})
+    qc.append("measure Z", {0})
+    qc.append("measure Z", {1}, var=("m", 1))
+    assert _run(qc.to_phir_json(), "native") == {"m": [0, 0, 0]}

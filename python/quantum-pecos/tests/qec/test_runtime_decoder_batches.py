@@ -12,18 +12,20 @@ from qec.test_runtime_decode_context import context
 from qec.test_runtime_observed_reads import checked_window, observed_program
 
 
-def build(provider, *, runtime="selene_simple_runtime", source=None, workers=1):
+def build(provider, *, runtime="selene_simple_runtime", source=None, workers=1, worker_context=False):
     return (
         sim(Qis(observed_program() if source is None else source))
         .classical(selene_engine(runtime).runtime_decoder(provider, capture_batches=True))
         .qubits(1)
         .workers(workers)
+        .python_worker_context(worker_context)
         .build()
     )
 
 
 @pytest.mark.parametrize("runtime", ["selene_simple_runtime", "selene_soft_rz_runtime"])
-def test_live_batches_select_supplied_sources_and_feedback_with_worker_reuse(runtime):
+@pytest.mark.parametrize("worker_context", [False, True])
+def test_live_batches_select_supplied_sources_and_feedback_with_worker_reuse(runtime, worker_context):
     sessions = []
 
     def factory():
@@ -58,7 +60,7 @@ def test_live_batches_select_supplied_sources_and_feedback_with_worker_reuse(run
 
         return provide
 
-    runner = build(RuntimeDecoder(provider_factory=factory), runtime=runtime, workers=2)
+    runner = build(RuntimeDecoder(provider_factory=factory), runtime=runtime, workers=2, worker_context=worker_context)
     for _ in range(2):
         assert runner.run(4).to_dict()["after"] == [[0, 1, 0]] * 4
     assert len(sessions) == 8

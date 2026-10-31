@@ -4678,6 +4678,7 @@ dependencies = [
  "pecos-random",
  "pecos-simulators",
  "rand 0.10.2",
+ "regex",
  "selene-core",
  "selene-simple-runtime",
  "selene-soft-rz-runtime",

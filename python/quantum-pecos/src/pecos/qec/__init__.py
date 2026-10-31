@@ -143,6 +143,13 @@ from pecos.qec.protocols import (
     OuterCodeGeometry,
     create_msd_protocol,
 )
+from pecos.qec.runtime_control import (
+    RuntimeControlEvent,
+    RuntimeControlLoop,
+    RuntimeControlManifest,
+    RuntimeControlSite,
+    RuntimeControlSnapshot,
+)
 from pecos.qec.runtime_decode_context import (
     RuntimeBranchRecord,
     RuntimeClassicalInput,
@@ -156,6 +163,7 @@ from pecos.qec.runtime_decode_context import (
 )
 from pecos.qec.runtime_decoder import (
     RuntimeDecodeBatchRequest,
+    RuntimeDecodeControlRequest,
     RuntimeDecoder,
     RuntimeDecodeRequest,
     RuntimeDecodeWindow,
@@ -194,6 +202,12 @@ __all__ = [
     "RuntimeDecodeContext",
     "RuntimeDecodeRequest",
     "RuntimeDecodeBatchRequest",
+    "RuntimeDecodeControlRequest",
+    "RuntimeControlSnapshot",
+    "RuntimeControlManifest",
+    "RuntimeControlSite",
+    "RuntimeControlEvent",
+    "RuntimeControlLoop",
     "RuntimeDecodeBatch",
     "RuntimeDecodeBatchPrefix",
     "RuntimeDecodeOperation",

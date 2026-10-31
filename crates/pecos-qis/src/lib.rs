@@ -76,6 +76,7 @@ pub mod prelude;
 // Core interface and runtime traits
 // ============================================================================
 
+pub mod control_provenance;
 pub mod decoder_batches;
 pub mod qis_interface;
 pub mod runtime;

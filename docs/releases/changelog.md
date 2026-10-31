@@ -6,6 +6,45 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- SLR registers and allocators declared in a nested `Block` (at any depth,
+  including `If`, `For`, `While`, `Repeat` and `Parallel` bodies) are now
+  declared in the generated program (#1511). Before, only the outermost
+  block's declarations were kept, so QASM wrote to registers it never
+  declared, and the QASM swap temporary could take a nested register's name.
+  `Vars(a, b)` keeps its arguments; it used to discard them. The parallel
+  optimizer keeps the declarations of the regions it regroups.
+  Child allocator declarations carry their actual offset within the parent;
+  QASM, Stim, QIR and QuantumCircuit resolve parent chains independently of
+  declaration order. Noncontiguous child placements raise `ValueError`.
+  Hand-built AST child allocators must specify `offset`; older JSON without a
+  child offset raises `ValueError` instead of silently aliasing sibling storage.
+  **Breaking:** `QAlloc(n, parent=p)` now reserves slots exactly like
+  `p.child(n)`, so the parent slots it covers can no longer be used directly
+  (it used to reserve nothing). Every declaration, including declarations in Main, must use
+  the same storage for a duplicate name (same size and, for child allocators,
+  the same parent and offset), or conversion raises `ValueError`.
+  Nested `block_inputs` functions cannot introduce registers that exist only
+  inside their bodies. They may repeat ordinary-scope declarations or their
+  own bound inputs; a root block with `block_inputs` is inlined normally.
+  In complete programs (`Main`), QASM rejects undeclared register and allocator
+  references, including inline measurement outputs that could collide with swap
+  temporaries. Stim, QIR and QuantumCircuit also reject undeclared quantum
+  allocators in complete programs. These undeclared-reference errors, and the
+  existing ones for QIR undeclared classical storage, unknown `Permute`
+  references and unknown `prepare_all` allocators, raise `ValueError` instead
+  of `NotImplementedError`. Of the backends that accepted inline measurement outputs on dev,
+  only QASM rejects them: every classical register must be declared in the program.
+  Stim and QuantumCircuit continue to accept inline outputs and preserve their
+  measurement mappings. QIR continues to require declared classical storage;
+  Guppy's existing inline-output support is unchanged. Fragments may reference
+  caller-owned registers: undeclared quantum names denote root storage at offset
+  zero, and QASM, Stim and QuantumCircuit accept caller-owned measurement outputs.
+- Guppy code generation raises `GuppyCodegenError` for a classical reference it
+  cannot resolve in the current function (#1525). Before, a `block_inputs`
+  block that used an outer register with a loop-variable index, such as
+  `c[x].set(e[x])`, produced Guppy source with undefined names that failed
+  only at HUGR compilation.
+
 - The PECOS QASM parser accepts a `//` line comment that ends at end of input
   without a newline (#1518). Before, such a program failed with a syntax error,
   which included SLR-generated QASM ending in a `Comment`.
@@ -108,8 +147,8 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   Stim invalidates the whole register's measurement provenance after a symbolic
   bit assignment, so later conditions cannot read stale measurement records.
   QASM, Stim, QIR and QuantumCircuit report actionable errors for symbolic
-  `Permute` indices. Stim's undeclared `Permute` diagnostic explains the
-  block-local register limitation (#1511) and directs callers to Main scope.
+  `Permute` indices. Stim's undeclared `Permute` diagnostic names the missing
+  register and directs callers to declare it in Main or an ordinary Block.
   Deprecated `QIRGenerator` now
   rejects `For` and `While` instead of executing their bodies once and directs
   callers to `SlrConverter(...).qir()`. Barrier conversion widens individual

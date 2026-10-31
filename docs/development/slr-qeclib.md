@@ -431,6 +431,7 @@ def surface_code_syndrome(d: int):
         data := QReg("data", num_data),
         ancilla := QReg("anc", num_ancilla),
         syn := CReg("syn", num_ancilla),
+        final := CReg("final", num_data),
         # Initialize data qubits
         Block(*[qb.PZ(data[i]) for i in range(num_data)]),
         # X stabilizer measurement (simplified)
@@ -449,7 +450,7 @@ def surface_code_syndrome(d: int):
             qb.Measure(ancilla[1]) > syn[1],
         ),
         # Final measurement
-        qb.Measure(data) > CReg("final", num_data),
+        qb.Measure(data) > final,
     )
 
     return prog

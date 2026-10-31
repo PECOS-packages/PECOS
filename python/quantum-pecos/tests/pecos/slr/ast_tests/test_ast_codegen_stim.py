@@ -916,8 +916,8 @@ def aliased_record_program():
         name="aliased",
         declarations=(
             AllocatorDecl(name="q", capacity=2),
-            AllocatorDecl(name="child", capacity=2, parent="q"),
-            AllocatorDecl(name="nested", capacity=2, parent="child"),
+            AllocatorDecl(name="child", capacity=2, parent="q", offset=0),
+            AllocatorDecl(name="nested", capacity=2, parent="child", offset=0),
             RegisterDecl(name="c", size=2),
         ),
         block_decls=(inner, outer),

@@ -93,7 +93,7 @@ def test_qasm_rejects_mixed_element_collections(classical_first) -> None:
 def test_permute_rejects_undeclared_slots(backend, ref) -> None:
     """Indexed permutation refs must resolve to existing storage."""
     program = replace(slr_to_ast(Main(QReg("q", 2))), body=(PermuteOp(sources=(ref,), targets=(ref,)),))
-    with pytest.raises(NotImplementedError, match="Permute"):
+    with pytest.raises(ValueError, match="Permute"):
         generate(program, backend)
 
 

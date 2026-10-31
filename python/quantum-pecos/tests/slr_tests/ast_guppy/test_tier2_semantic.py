@@ -430,7 +430,7 @@ def test_varexpr_raises_loud() -> None:
     otherwise. The stray-name path still fails loud, just with the
     `_require_creg` "not declared at Main scope" message (the
     anti-silent-0 invariant is preserved)."""
-    with pytest.raises(NotImplementedError, match=r"classical register 'x'.*not.*declared at Main scope"):
+    with pytest.raises(ValueError, match=r"classical register 'x'.*not.*declared at Main scope"):
         AstToQir()._eval_expression(VarExpr(name="x"))  # noqa: SLF001
 
 
@@ -442,10 +442,10 @@ def test_inline_returned_creg_raises_loud() -> None:
     skipped and the explicit returned value vanished from the QIS
     records (the `docs.inline_measure_creg` defect surfaced --
     QIS recorded `[]` for an explicit `Return(final)`). Mirrors the
-    fail-loud doctrine: silent miscompile -> loud NotImplementedError."""
+    fail-loud doctrine: silent miscompile -> loud ValueError."""
     final = CReg("final", 2)
     prog = Main(q := QReg("q", 2), Measure(q) > final, Return(final))
-    with pytest.raises(NotImplementedError, match=r"classical register 'final'.*not.*declared at Main scope"):
+    with pytest.raises(ValueError, match=r"classical register 'final'.*not.*declared at Main scope"):
         SlrConverter(prog).qir_bc()
 
 
@@ -493,7 +493,7 @@ def test_return_only_inline_creg_raises_loud() -> None:
     it)."""
     ret_only = CReg("ret_only", 1)
     prog = Main(q := QReg("q", 1), Return(ret_only))
-    with pytest.raises(NotImplementedError, match=r"classical register 'ret_only'.*not.*declared at Main scope"):
+    with pytest.raises(ValueError, match=r"classical register 'ret_only'.*not.*declared at Main scope"):
         SlrConverter(prog).qir_bc()
 
     # A declared CReg returned (no other use) is fine; a bare qubit
@@ -510,7 +510,7 @@ def test_return_only_inline_creg_raises_loud() -> None:
     # Provenance from `_convert_return` (real QReg/CReg object) now
     # disambiguates -> the inline CReg still fails loud.
     collide = Main(q := QReg("q", 1), Return(CReg("q", 1)))
-    with pytest.raises(NotImplementedError, match=r"classical register 'q'.*not.*declared at Main scope"):
+    with pytest.raises(ValueError, match=r"classical register 'q'.*not.*declared at Main scope"):
         SlrConverter(collide).qir_bc()
 
 

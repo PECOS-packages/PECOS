@@ -118,7 +118,7 @@ def test_qir_barrier_in_for(named) -> None:
 def test_qir_unknown_barrier_rejected() -> None:
     """A misspelled barrier allocator must not disappear."""
     program = replace(slr_to_ast(Main(QReg("q", 1))), body=(BarrierOp(allocators=("missing",)),))
-    with pytest.raises(NotImplementedError, match=r"Barrier.*missing"):
+    with pytest.raises(ValueError, match=r"Barrier.*missing"):
         generate(program, "qir")
 
 
@@ -129,8 +129,8 @@ def test_qir_child_allocator_barrier() -> None:
         program,
         declarations=(
             *program.declarations,
-            AllocatorDecl(name="padding", capacity=1, parent="q"),
-            AllocatorDecl(name="child", capacity=2, parent="q"),
+            AllocatorDecl(name="padding", capacity=1, parent="q", offset=0),
+            AllocatorDecl(name="child", capacity=2, parent="q", offset=1),
         ),
         body=(BarrierOp(allocators=("child",)),),
     )

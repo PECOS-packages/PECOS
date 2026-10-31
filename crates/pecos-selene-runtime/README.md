@@ -41,6 +41,10 @@ interface.
 - Independent operations of the same kind can share a batch up to
   `max_batch_size`. Measurement emissions retain source order, including across
   ordinary and leakage measurements. This preserves reused PECOS result slots.
+  Alternating measurement kinds can therefore produce more batches and longer
+  modeled schedules than SoftRZ, which can move later measurements ahead of
+  earlier ones. The two runtimes need not produce identical timing-dependent
+  noise results.
 - Measurements return unique futures. Submission does not force them. Forcing
   either measurement kind releases a queue prefix through that measurement;
   unrelated later work can remain queued. An empty drain means no work is ready,
@@ -57,8 +61,12 @@ interface.
   silently read as a Boolean.
 - Futures start with one reference. Retired futures cannot be read or forced;
   a discarded, unfinished future remains internally until feedback arrives.
-  `max_live_results` bounds retained futures. Hosts forward reference-count
-  changes from the program; feedback alone does not retire a referenced future.
+  `max_live_results` optionally bounds retained futures; it defaults to no cap.
+  Hosts forward reference-count changes from the program; feedback alone does
+  not retire a referenced future. PECOS releases the temporary future after an
+  eager measurement. The pinned Selene host does not, so an explicit result cap
+  there also limits the number of eager measurements per shot. The default
+  preserves compatibility without evicting still-readable lazy futures.
 - Qubit release seals its earlier work; reallocation resets its virtual phase.
   Measurement itself does not free a qubit. Reset retains the software frame,
   matching SoftRZ's frame convention.

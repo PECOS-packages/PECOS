@@ -136,3 +136,36 @@ def test_leakage_value_drives_reset_with_real_noise(
         assert results["measurement_0"] == [2 if faulted else 1] * shots
         assert results["measurement_1"] == [0 if faulted else 1] * shots
         assert results["measurement_2"] == [0 if faulted else 1] * shots
+
+
+@pytest.mark.parametrize("transport", ["flat", "scheduled", "events"])
+def test_eager_measurements_retire_only_their_temporary_futures(
+    runtime: PecosRuntimePlugin,
+    transport: str,
+) -> None:
+    """A retained lazy future survives eager reads under a two-result cap."""
+    source = Path(__file__).resolve().parents[4] / "crates/pecos-selene-runtime/tests/fixtures/eager_feedback.ll"
+    classical = pecos.selene_engine(runtime=replace(runtime, max_live_results=2)).interface(pr.qis_helios_interface())
+    profile = None
+    if transport == "scheduled":
+        classical.scheduled_batches()
+        profile = pr.scheduled_idle_z(1)
+    elif transport == "events":
+        classical.scheduled_event_batches()
+        profile = pr.scheduled_event_idle_z(1, lambda _: PassThrough())
+    simulation = (
+        pecos.sim(pecos.Qis(source.read_text()))
+        .classical(classical)
+        .quantum(pr.state_vector())
+        .qubits(1)
+        .workers(2)
+        .seed(42)
+    )
+    if profile is not None:
+        simulation = simulation.noise(profile)
+    built = simulation.build()
+    for shots in (2, 3):
+        results = built.run(shots).to_dict()
+        assert results["measurement_0"] == [0] * shots
+        for index in range(1, 9):
+            assert results[f"measurement_{index}"] == [index % 2] * shots

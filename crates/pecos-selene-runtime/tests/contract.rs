@@ -134,7 +134,7 @@ fn local_sleep_does_not_delay_an_unrelated_qubit() {
 #[test]
 fn retirement_before_execution_still_accepts_feedback_but_not_reads() {
     let mut r = runtime(RuntimeConfig {
-        max_live_results: 1,
+        max_live_results: Some(1),
         ..Default::default()
     });
     let a = r.measure_leaked(0).unwrap();
@@ -260,4 +260,40 @@ fn shot_clock_preserves_barriers_without_emitted_work() {
             1100
         );
     }
+}
+
+#[test]
+fn default_retains_readable_futures_beyond_the_former_limit() {
+    let mut r = runtime(RuntimeConfig::default());
+    let first = r.measure(0).unwrap();
+    r.force_result(first).unwrap();
+    drain(&mut r);
+    r.set_bool_result(first, true).unwrap();
+    for _ in 0..65_536 {
+        let id = r.measure(0).unwrap();
+        r.force_result(id).unwrap();
+        drain(&mut r);
+        r.set_bool_result(id, false).unwrap();
+    }
+    assert_eq!(r.get_bool_result(first).unwrap(), Some(true));
+    assert_eq!(r.get_bool_result(first).unwrap(), Some(true));
+}
+
+#[test]
+fn explicit_result_limit_preserves_live_handles_and_reclaims_retired_ones() {
+    let mut r = runtime(RuntimeConfig {
+        max_live_results: Some(1),
+        ..Default::default()
+    });
+    let id = r.measure(0).unwrap();
+    r.force_result(id).unwrap();
+    drain(&mut r);
+    r.set_bool_result(id, true).unwrap();
+    r.increment_future_refcount(id).unwrap();
+    r.decrement_future_refcount(id).unwrap();
+    assert!(r.measure(1).is_err());
+    assert_eq!(r.get_bool_result(id).unwrap(), Some(true));
+    r.decrement_future_refcount(id).unwrap();
+    assert!(r.get_bool_result(id).is_err());
+    assert!(r.measure(1).is_ok());
 }

@@ -24,7 +24,7 @@ class PecosRuntimePlugin(Runtime):
     duration_ns_reset: int = 0
     max_batch_size: int = 1
     max_queued_batches: int = 4096
-    max_live_results: int = 65536
+    max_live_results: int | None = None
     library_path: Path | None = None
     native_gates: ClassVar[tuple[str, ...]] = ("rxy", "rz", "rzz")
 
@@ -34,6 +34,8 @@ class PecosRuntimePlugin(Runtime):
             if field.name in {"library_path", "random_seed"}:
                 continue
             value = getattr(self, field.name)
+            if field.name == "max_live_results" and value is None:
+                continue
             minimum = 1 if field.name.startswith("max_") else 0
             if type(value) is not int or not minimum <= value <= 2**64 - 1:
                 msg = f"{field.name} must be an integer between {minimum} and 2**64 - 1"
@@ -44,7 +46,7 @@ class PecosRuntimePlugin(Runtime):
         return [
             f"--{field.name.replace('_', '-')}={getattr(self, field.name)}"
             for field in fields(self)
-            if field.name not in {"library_path", "random_seed"}
+            if field.name not in {"library_path", "random_seed"} and getattr(self, field.name) is not None
         ]
 
     @property

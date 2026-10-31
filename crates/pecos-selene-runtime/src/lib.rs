@@ -14,7 +14,7 @@ use selene_core::utils::MetricValue;
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
 
-/// Gate durations are nanoseconds. Limits bound live scheduler storage.
+/// Gate durations are nanoseconds. Optional result limits bound retained futures.
 #[derive(Clone, Debug, Parser)]
 pub struct RuntimeConfig {
     #[arg(long, default_value_t = 0)]
@@ -32,8 +32,9 @@ pub struct RuntimeConfig {
     /// At this limit ready work must be drained before more batches are added.
     #[arg(long, default_value_t = 4096)]
     pub max_queued_batches: usize,
-    #[arg(long, default_value_t = 65536)]
-    pub max_live_results: usize,
+    /// Optional retained-future limit; omitted for hosts that do not retire eager futures.
+    #[arg(long)]
+    pub max_live_results: Option<usize>,
 }
 impl Default for RuntimeConfig {
     fn default() -> Self {
@@ -45,7 +46,7 @@ impl Default for RuntimeConfig {
             duration_ns_reset: 0,
             max_batch_size: 1,
             max_queued_batches: 4096,
-            max_live_results: 65536,
+            max_live_results: None,
         }
     }
 }
@@ -87,7 +88,7 @@ impl PecosRuntime {
         ensure!(
             config.max_batch_size > 0
                 && config.max_queued_batches > 0
-                && config.max_live_results > 0,
+                && config.max_live_results.is_none_or(|limit| limit > 0),
             "runtime limits must be positive"
         );
         let origin = start.into();
@@ -191,7 +192,9 @@ impl PecosRuntime {
     fn measure_impl(&mut self, q: u64, leaked: bool) -> Result<u64> {
         self.qubit(q)?;
         ensure!(
-            self.results.len() < self.config.max_live_results,
+            self.config
+                .max_live_results
+                .is_none_or(|limit| self.results.len() < limit),
             "live result limit exceeded; retire unused futures"
         );
         let id = self.next_result;

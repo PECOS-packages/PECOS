@@ -144,39 +144,7 @@ impl PhirJsonEngine {
 
         log::debug!("Loading PHIR program with metadata: {:?}", program.metadata);
 
-        // Initialize operation processor and extract variable definitions
-        let mut processor = OperationProcessor::new();
-        processor.environment.exports = super::exports::collect(&program.ops)?;
-
-        // Process variable definitions
-        let definitions = if processor.environment.exports.is_some() {
-            super::exports::all_operations(&program.ops)
-        } else {
-            program.ops.iter().collect()
-        };
-        for op in definitions {
-            if let Operation::VariableDefinition {
-                data,
-                data_type,
-                variable,
-                size,
-            } = op
-            {
-                processor.handle_variable_definition(
-                    data,
-                    data_type,
-                    variable,
-                    super::ast::declaration_size(data, data_type, variable, *size)?,
-                )?;
-            }
-        }
-
-        Ok(Self {
-            exec_stack: Self::initial_stack(Some(&program)),
-            program: Some(program),
-            processor,
-            message_builder: ByteMessageBuilder::new(),
-        })
+        Self::from_program(program)
     }
 
     /// Creates a new instance of `PhirJsonEngine` from a parsed `PHIRProgram`.
@@ -195,11 +163,8 @@ impl PhirJsonEngine {
         processor.environment.exports = super::exports::collect(&program.ops)?;
 
         // Process variable definitions
-        let definitions = if processor.environment.exports.is_some() {
-            super::exports::all_operations(&program.ops)
-        } else {
-            program.ops.iter().collect()
-        };
+        let definitions =
+            super::exports::declarations(&program.ops, processor.environment.exports.is_some());
         for op in definitions {
             if let Operation::VariableDefinition {
                 data,
@@ -296,6 +261,7 @@ impl PhirJsonEngine {
                     variable,
                     size,
                 } => {
+                    // Exporting programs registered even branch-local declarations at load time.
                     if self.processor.environment.exports.is_none() {
                         self.processor.handle_variable_definition(
                             data,

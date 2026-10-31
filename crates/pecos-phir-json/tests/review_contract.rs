@@ -515,7 +515,7 @@ fn result_and_assignment_sign_extend_identically() {
                         u64::MAX - 7,
                         "{dtype} {size} {destination}"
                     );
-                    match &interpreter.results(true)[name] {
+                    match &interpreter.results(true).unwrap()[name] {
                         ResultValue::Int(value, _) => assert_eq!(*value, -8),
                         ResultValue::UInt(value, _) => assert_eq!(*value, u64::MAX - 7),
                         other @ ResultValue::BitString(_) => panic!("unexpected {other:?}"),
@@ -779,7 +779,7 @@ fn non_declaration_data_errors_name_the_directive() {
             .to_string();
         assert_eq!(
             error,
-            "Input error: cvar_export: invalid variables null; supply an array of strings"
+            "Input error: cvar_export: invalid variables <missing or null>; supply an array of strings"
         );
     }
     {

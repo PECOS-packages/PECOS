@@ -62,29 +62,23 @@ impl<'a> BlockIterativeExecutor<'a> {
     /// Returns an error if any operation fails to process.
     pub fn process(&mut self) -> Result<(), PecosError> {
         let mut declarations = super::declarations::Declarations::default();
+        let mut operations = Vec::new();
         for op in &self.operation_stack {
             match op {
                 FlattenedOperation::Operation(op) => {
                     declarations.validate_operations(std::slice::from_ref(op))?;
+                    operations.push(*op);
                 }
                 FlattenedOperation::Buffer(ops) => {
                     for op in ops {
                         declarations.validate_operations(std::slice::from_ref(op))?;
+                        operations.push(*op);
                     }
                 }
                 FlattenedOperation::EndBlock => {}
             }
         }
-        let operations: Vec<Operation> = self
-            .operation_stack
-            .iter()
-            .flat_map(|op| match op {
-                FlattenedOperation::Operation(op) => vec![(*op).clone()],
-                FlattenedOperation::Buffer(ops) => ops.iter().map(|op| (*op).clone()).collect(),
-                FlattenedOperation::EndBlock => Vec::new(),
-            })
-            .collect();
-        self.executor.prepare_exports(&operations)?;
+        self.executor.prepare_exports(operations)?;
         while let Some(flattened_op) = self.operation_stack.pop_front() {
             match flattened_op {
                 FlattenedOperation::Operation(op) => {

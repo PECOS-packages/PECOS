@@ -380,7 +380,7 @@ fn interpreter_indexed_results_match_native() {
             .handle_cop("Result", &args, &returns, &None)
             .unwrap();
     }
-    let results = interpreter.results(true);
+    let results = interpreter.results(true).unwrap();
     for (name, expected) in [("a", 1), ("small", 1), ("out", 1_u64 << 40)] {
         match &results[name] {
             ResultValue::UInt(value, _) => assert_eq!(*value, expected, "{name}"),
@@ -482,7 +482,7 @@ fn omitted_bool_size_supports_measurement_on_every_rust_path() {
         .receive_results(&[[(MeasKey::Bit("flag".into(), 0), 1)].into()])
         .unwrap();
     assert!(matches!(
-        interpreter.results(true)["flag"],
+        interpreter.results(true).unwrap()["flag"],
         ResultValue::UInt(1, _) | ResultValue::Int(1, _)
     ));
 }

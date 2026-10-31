@@ -145,6 +145,7 @@ impl BlockExecutor {
                 size,
             } => {
                 debug!("Processing variable definition: {data_type} {variable}");
+                // Explicit exports hoisted these declarations in prepare_exports.
                 if self.processor.environment.exports.is_none() {
                     self.processor.handle_variable_definition(
                         data,
@@ -496,10 +497,14 @@ impl BlockExecutor {
     }
 
     /// Prepare static directives once at the whole-program boundary.
-    pub(crate) fn prepare_exports(&mut self, program: &[Operation]) -> Result<(), PecosError> {
-        self.processor.environment.exports = super::exports::collect(program)?;
+    pub(crate) fn prepare_exports<'a>(
+        &mut self,
+        program: impl IntoIterator<Item = &'a Operation>,
+    ) -> Result<(), PecosError> {
+        let operations: Vec<_> = program.into_iter().collect();
+        self.processor.environment.exports = super::exports::collect(operations.iter().copied())?;
         if self.processor.environment.exports.is_some() {
-            for op in super::exports::all_operations(program) {
+            for op in super::exports::declarations(operations.iter().copied(), true) {
                 if let Operation::VariableDefinition {
                     data,
                     data_type,

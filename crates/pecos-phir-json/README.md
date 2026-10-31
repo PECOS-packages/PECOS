@@ -296,6 +296,9 @@ present, even an empty `variables` list, only these outputs and executed Result
 destinations are reported. Invalid sources, renames, conflicting output names,
 and the reserved `_width_` prefix are rejected at load time. Without a directive,
 each runner retains its existing selection behavior, including native filters.
+A Result destination may also be exported under its own name; an alias of a
+different source cannot use that destination name. Declarations inside blocks
+require a program with `cvar_export`; otherwise move them to the top level.
 The module converter lowers exports through its end-of-program Result path.
 
 The converter rejects blocks such as `qparallel` and `if`, machine/meta operations,

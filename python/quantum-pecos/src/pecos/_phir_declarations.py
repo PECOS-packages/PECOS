@@ -30,7 +30,8 @@ def validate_declaration_names(operations: list[dict]) -> None:
         for node in ops:
             if not isinstance(node, dict):
                 continue
-            kind = {"qvar_define": "quantum", "cvar_define": "classical"}.get(node.get("data"))
+            data = node.get("data")
+            kind = {"qvar_define": "quantum", "cvar_define": "classical"}.get(data) if isinstance(data, str) else None
             if kind is not None:
                 variable = node["variable"]
                 if variable in declarations:
@@ -88,4 +89,5 @@ def validate_classical_inputs(program: dict) -> None:
 
     collect(program.get("ops", []))
     validate_phir_classical_inputs(json.dumps({"ops": inputs}))
+    validate_declaration_names(program.get("ops", []))
     collect_exports(program.get("ops", []))

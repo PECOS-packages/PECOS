@@ -27,8 +27,12 @@ def decode_export(node: dict) -> tuple[list[str], list[str] | None]:
     variables = node.get("variables")
     to = node.get("to", variables)
     for field, names in (("variables", variables), ("to", to)):
+        if isinstance(names, list) and any(name is None for name in names):
+            msg = f"cvar_export: invalid {field} entry <missing or null>; supply an array of strings"
+            raise ValueError(msg)
         if not isinstance(names, list) or any(not isinstance(name, str) for name in names):
-            msg = f"cvar_export: invalid {field} {names!r}; supply an array of strings"
+            bad = "<missing or null>" if names is None else repr(names)
+            msg = f"cvar_export: invalid {field} {bad}; supply an array of strings"
             raise ValueError(msg)
     if len(to) != len(variables):
         msg = f"cvar_export: invalid to {to!r}; supply one output name for each of {len(variables)} variables"
@@ -40,6 +44,7 @@ def collect_exports(operations: list[dict]) -> dict[str, str] | None:
     """Validate every export against program-wide declarations and Result names."""
     nodes = all_operations(operations)
     if not any(node.get("data") == "cvar_export" for node in nodes):
+        validate_declaration_placement(operations)
         return None
     declarations = {
         node["variable"]: node["data"]
@@ -64,7 +69,7 @@ def collect_exports(operations: list[dict]) -> dict[str, str] | None:
                 problem = f"reserved output {output!r}; choose a name without the _width_ prefix"
             elif output != source and output in declarations:
                 problem = f"output {output!r} conflicts with a declared variable; choose a different output name"
-            elif output in destinations:
+            elif output != source and output in destinations:
                 problem = f"output {output!r} conflicts with a Result destination; choose a different output name"
             elif output in outputs and outputs[output] != source:
                 problem = f"output {output!r} has different sources; choose a distinct output name for {source!r}"
@@ -74,3 +79,23 @@ def collect_exports(operations: list[dict]) -> dict[str, str] | None:
             msg = f"cvar_export: {problem}"
             raise ValueError(msg)
     return outputs
+
+
+def validate_declaration_placement(operations: list[dict]) -> None:
+    """Reject block-local declarations unless static exports enable their initialization."""
+    if any(node.get("data") == "cvar_export" for node in all_operations(operations)):
+        return
+    if not isinstance(operations, list):
+        return
+    for node in operations:
+        if not isinstance(node, dict) or "block" not in node:
+            continue
+        for field in ("ops", "true_branch", "false_branch"):
+            for child in all_operations(node.get(field) or []):
+                if child.get("data") in ("cvar_define", "qvar_define"):
+                    msg = (
+                        f"Nested declaration {child['data']} {child.get('variable')!r}: declarations inside blocks "
+                        "are only supported in programs that use cvar_export; move the declaration to the top level "
+                        "or add cvar_export"
+                    )
+                    raise ValueError(msg)

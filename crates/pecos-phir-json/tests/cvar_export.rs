@@ -130,7 +130,7 @@ fn execute_interpreter(interpreter: &mut PhirClassicalInterpreter) {
 fn assert_interpreter(interpreter: &PhirClassicalInterpreter, entries: &[(&str, u64, usize)]) {
     let (values, widths) = expected(entries);
     for ints in [true, false] {
-        let result = interpreter.results(ints);
+        let result = interpreter.results(ints).unwrap();
         assert_eq!(normalize_interpreter(&result, &widths), values);
         for (name, value) in &result {
             match value {
@@ -433,4 +433,128 @@ fn iterative_executor_collects_unexecuted_exports() {
         executor.process_export_mappings(),
         BTreeMap::from([("m".into(), 0)])
     );
+}
+
+#[test]
+fn result_destination_exported_under_its_own_name() {
+    for indexed in [false, true] {
+        let mut ops = declarations();
+        ops.extend([
+            export(&["a"]),
+            renamed("a", "alias"),
+            json!({"qop":"X","args":[["q",0]]}),
+            json!({"qop":"Measure","args":[["q",0]],"returns":[["m",0]]}),
+            if indexed {
+                json!({"cop":"Result","args":[["m",0]],"returns":[["a",1]]})
+            } else {
+                json!({"cop":"Result","args":["m"],"returns":["a"]})
+            },
+        ]);
+        let source = program(ops);
+        let value = if indexed { 2 } else { 1 };
+        let entries = [("a", value, 2), ("alias", value, 2)];
+        let mut native = PhirJsonEngine::from_json(&source).unwrap();
+        let mut converted = PhirEngine::new(phir_json_to_module(&source).unwrap()).unwrap();
+        let mut interpreter = PhirClassicalInterpreter::new();
+        interpreter.init(&source, None).unwrap();
+        for _ in 0..2 {
+            assert_native(&run(&mut native), &entries);
+            let shot = run(&mut converted);
+            let (values, widths) = expected(&entries);
+            assert_eq!(normalize(&shot, &widths), values);
+            assert_eq!(shot.data.len(), entries.len());
+            execute_interpreter(&mut interpreter);
+            assert_interpreter(&interpreter, &entries);
+            ClassicalEngine::reset(&mut native).unwrap();
+            ClassicalEngine::reset(&mut converted).unwrap();
+            interpreter.shot_reinit();
+        }
+    }
+}
+
+#[test]
+fn own_export_survives_unexecuted_result() {
+    let mut ops = declarations();
+    ops.extend([
+        renamed("a", "a"),
+        json!({"block":"if","condition":{"cop":"==","args":[0,1]},"true_branch":[
+            {"cop":"Result","args":["m"],"returns":["a"]}
+        ]}),
+    ]);
+    check_classical(ops, &[("a", 0, 2)]);
+}
+
+#[test]
+fn nested_declarations_without_exports_fail_at_load() {
+    use pecos_phir_json::v0_1::{ast::Operation, block_iterative_executor::BlockIterativeExecutor};
+    for data in ["cvar_define", "qvar_define"] {
+        let declaration = if data == "cvar_define" {
+            json!({"data":data,"variable":"inner","data_type":"u32","size":2})
+        } else {
+            json!({"data":data,"variable":"inner","size":1})
+        };
+        for block in [
+            json!({"block":"sequence","ops":[declaration]}),
+            json!({"block":"if","condition":{"cop":"==","args":[0,1]},"true_branch":[declaration]}),
+            json!({"block":"if","condition":{"cop":"==","args":[1,1]},"true_branch":[],"false_branch":[
+                {"block":"sequence","ops":[declaration]}
+            ]}),
+        ] {
+            let ops: Vec<Operation> = vec![serde_json::from_value(block.clone()).unwrap()];
+            let source = program(vec![block]);
+            let ast = PHIRProgram {
+                format: "PHIR/JSON".into(),
+                version: "0.1.0".into(),
+                metadata: BTreeMap::new(),
+                ops: ops.clone(),
+            };
+            let mut interpreter = PhirClassicalInterpreter::new();
+            let mut executor = BlockExecutor::new();
+            let errors = [
+                PhirJsonEngine::from_json(&source).unwrap_err().to_string(),
+                PhirJsonEngine::from_program(ast).unwrap_err().to_string(),
+                interpreter.init(&source, None).unwrap_err().to_string(),
+                phir_json_to_module(&source).unwrap_err().to_string(),
+                executor.execute_program(&ops).unwrap_err().to_string(),
+                BlockIterativeExecutor::new(&mut executor)
+                    .with_operations(&ops)
+                    .process()
+                    .unwrap_err()
+                    .to_string(),
+            ];
+            for error in errors {
+                assert!(error.contains(data) && error.contains("inner"), "{error}");
+                assert!(error.contains("declarations inside blocks are only supported in programs that use cvar_export"), "{error}");
+                assert!(
+                    error.contains("move the declaration to the top level"),
+                    "{error}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn missing_and_null_export_fields_have_actionable_errors() {
+    for (directive, field) in [
+        (json!({"data":"cvar_export"}), "variables"),
+        (json!({"data":"cvar_export","variables":null}), "variables"),
+        (
+            json!({"data":"cvar_export","variables":[null]}),
+            "variables entry",
+        ),
+        (
+            json!({"data":"cvar_export","variables":["m"],"to":[null]}),
+            "to entry",
+        ),
+        (
+            json!({"data":"cvar_export","variables":["m"],"to":null}),
+            "to",
+        ),
+    ] {
+        rejection(
+            &[directive],
+            &format!("invalid {field} <missing or null>; supply an array of strings"),
+        );
+    }
 }

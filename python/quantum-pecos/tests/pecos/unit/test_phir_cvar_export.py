@@ -145,7 +145,7 @@ ERRORS = [
     pytest.param([export("q")], "q", id="quantum_source"),
     pytest.param([{**export("m"), "to": ["out", "extra"]}], "extra", id="length"),
     pytest.param([{**export("m"), "to": [42]}], "42", id="non_string"),
-    pytest.param([{**export("m"), "to": None}], "None", id="null"),
+    pytest.param([{**export("m"), "to": None}], "<missing or null>", id="null"),
     pytest.param([rename("m", "out"), rename("a", "out")], "out", id="conflict"),
     pytest.param([rename("m", "scratch")], "scratch", id="declared"),
     pytest.param([rename("m", "q")], "q", id="quantum_output"),
@@ -184,7 +184,7 @@ def test_representation_and_direct_nested_path():
     for bad_to in [None, 42, [], [42]]:
         with pytest.raises(ValueError, match="cvar_export") as error:
             PyPHIR.handle_op({**export("m"), "to": bad_to}, rep)
-        assert str(bad_to) in str(error.value)
+        assert ("<missing or null>" if bad_to is None else str(bad_to)) in str(error.value)
     interpreter = PhirClassicalInterpreter()
     interpreter.init(rep)
     assert_output(
@@ -259,3 +259,143 @@ def test_python_result_order_follows_declarations():
     result = run(source, "python")
     assert list(result) == ["m", "a"]
     assert_output(result, {"m": 0, "a": 0}, {"m": 2, "a": 2})
+
+
+@pytest.mark.parametrize("runner", ["default", "python", "native"])
+@pytest.mark.parametrize("return_int", [True, False])
+@pytest.mark.parametrize("indexed", [False, True])
+def test_result_destination_exported_under_its_own_name(runner, return_int, indexed):
+    """An exported variable can also receive an executed Result copy."""
+    result_op = (
+        {"cop": "Result", "args": [["m", 0]], "returns": [["a", 1]]}
+        if indexed
+        else {"cop": "Result", "args": ["m"], "returns": ["a"]}
+    )
+    source = program(
+        [
+            *declarations(),
+            export("a"),
+            rename("a", "alias"),
+            {"qop": "X", "args": [["q", 0]]},
+            {"qop": "Measure", "args": [["q", 0]], "returns": [["m", 0]]},
+            result_op,
+        ],
+    )
+    value = 2 if indexed else 1
+    assert_output(
+        run(source, runner, return_int=return_int),
+        {"a": value, "alias": value},
+        {"a": 2, "alias": 2},
+        bitstrings=runner != "native" and not return_int,
+    )
+
+
+@pytest.mark.parametrize("runner", ["default", "python", "native"])
+def test_own_export_survives_unexecuted_result(runner):
+    """An unexecuted Result does not prevent the variable's explicit export."""
+    source = program(
+        [
+            *declarations(),
+            rename("a", "a"),
+            {
+                "block": "if",
+                "condition": {"cop": "==", "args": [0, 1]},
+                "true_branch": [{"cop": "Result", "args": ["m"], "returns": ["a"]}],
+            },
+        ],
+    )
+    assert_output(run(source, runner), {"a": 0}, {"a": 2})
+
+
+@pytest.mark.parametrize("runner", ["default", "python", "native"])
+@pytest.mark.parametrize("exports", [("m",), ("m", "m"), ("m", "k"), ("k", "m")])
+@pytest.mark.parametrize("conditional", [False, True])
+def test_zero_size_circuit_exports(runner, exports, conditional):
+    """Omitted registers cannot appear in exports; empty-only requests still select nothing."""
+    from pecos._phir_exports import all_operations
+
+    circuit = pc.QuantumCircuit(cvar_spec={"m": 0, "k": 1, "scratch": 1})
+    circuit.append("X", {0})
+    circuit.append("measure Z", {0}, var=("k", 0))
+    for name in exports:
+        metadata = {"cop_type": "ExportCVar", "export": name}
+        if conditional:
+            metadata["cond"] = {"op": "==", "a": 0, "b": 1}
+        circuit.append("cop", set(), **metadata)
+        # Keep exports separate to test dropping an empty directive next to live exports.
+        circuit.append("H", {0})
+    source = circuit.to_phir_dict()
+    nodes = all_operations(source["ops"])
+    assert not any(node.get("variable") == "m" for node in nodes)
+    directives = [node["variables"] for node in nodes if node.get("data") == "cvar_export"]
+    if "k" in exports:
+        assert directives == [["k"]]
+        expected = {"k": 1}
+    else:
+        assert directives
+        assert all(names == [] for names in directives)
+        expected = {}
+    assert_output(run(source, runner), expected, dict.fromkeys(expected, 1))
+
+
+@pytest.mark.parametrize(
+    "loader",
+    ["representation", "schema", "python", "python_unvalidated", "rust", "rust_unvalidated", "native"],
+)
+@pytest.mark.parametrize("kind", ["cvar_define", "qvar_define"])
+@pytest.mark.parametrize("branch", ["ops", "true_branch", "false_branch"])
+def test_nested_declarations_without_exports_fail_at_load(loader, kind, branch):
+    """Reject nested declarations at load time even when their branch never executes."""
+    from pecos.typing import PhirModel
+    from pecos_rslib import PhirJsonEngine
+    from pecos_rslib import RustPhirClassicalInterpreter as RustInterpreter
+
+    declaration = {"data": kind, "variable": "inner", "size": 1}
+    if kind == "cvar_define":
+        declaration["data_type"] = "u32"
+    block = {"block": "sequence", "ops": [declaration]}
+    if branch != "ops":
+        block = {
+            "block": "if",
+            "condition": {"cop": "==", "args": [int(branch == "false_branch"), 1]},
+            "true_branch": [],
+            branch: [block],
+        }
+    source = program([block])
+    python_interpreter = PhirClassicalInterpreter()
+    rust_interpreter = RustInterpreter()
+    python_interpreter.phir_validate = not loader.endswith("unvalidated")
+    rust_interpreter.phir_validate = not loader.endswith("unvalidated")
+    load = {
+        "representation": lambda: PyPHIR.from_phir(source),
+        "schema": lambda: PhirModel.model_validate(source),
+        "python": lambda: python_interpreter.init(source),
+        "python_unvalidated": lambda: python_interpreter.init(source),
+        "rust": lambda: rust_interpreter.init(source),
+        "rust_unvalidated": lambda: rust_interpreter.init(source),
+        "native": lambda: PhirJsonEngine(json.dumps(source)),
+    }[loader]
+    with pytest.raises(ValueError, match="Nested declaration") as error:
+        load()
+    assert kind in str(error.value)
+    assert "inner" in str(error.value)
+    assert "declarations inside blocks are only supported in programs that use cvar_export" in str(error.value)
+    assert "move the declaration to the top level" in str(error.value)
+
+
+@pytest.mark.parametrize(
+    ("directive", "field"),
+    [
+        ({"data": "cvar_export"}, "variables"),
+        ({"data": "cvar_export", "variables": None}, "variables"),
+        ({"data": "cvar_export", "variables": [None]}, "variables entry"),
+        ({**export("m"), "to": [None]}, "to entry"),
+        ({**export("m"), "to": None}, "to"),
+    ],
+)
+def test_missing_and_null_export_fields_have_actionable_errors(directive, field):
+    """Missing and null values use the same diagnostic words as Rust."""
+    source = program([*declarations(), directive])
+    with pytest.raises(ValueError, match="cvar_export") as error:
+        PyPHIR.from_phir(source)
+    assert str(error.value) == f"cvar_export: invalid {field} <missing or null>; supply an array of strings"

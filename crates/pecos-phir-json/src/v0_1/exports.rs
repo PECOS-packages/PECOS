@@ -12,6 +12,11 @@ pub(crate) fn decode(op: &Value) -> Result<(Vec<String>, Option<Vec<String>>), P
     fn strings(op: &Value, field: &str) -> Result<Vec<String>, PecosError> {
         let value = op.get(field).unwrap_or(&Value::Null);
         let error = || {
+            let value = if value.is_null() {
+                "<missing or null>".to_owned()
+            } else {
+                value.to_string()
+            };
             PecosError::Input(format!(
                 "cvar_export: invalid {field} {value}; supply an array of strings"
             ))
@@ -20,7 +25,14 @@ pub(crate) fn decode(op: &Value) -> Result<(Vec<String>, Option<Vec<String>>), P
             .as_array()
             .ok_or_else(error)?
             .iter()
-            .map(|entry| entry.as_str().map(str::to_owned).ok_or_else(error))
+            .map(|entry| {
+                if entry.is_null() {
+                    return Err(PecosError::Input(format!(
+                        "cvar_export: invalid {field} entry <missing or null>; supply an array of strings"
+                    )));
+                }
+                entry.as_str().map(str::to_owned).ok_or_else(error)
+            })
             .collect()
     }
     let variables = strings(op, "variables")?;
@@ -48,9 +60,19 @@ struct Collector {
     results: BTreeSet<String>,
     pairs: Vec<(String, String)>,
     present: bool,
+    nested_declaration: Option<(String, String)>,
 }
 
 impl Collector {
+    fn declare(&mut self, data: &str, name: &str, nested: bool) {
+        if let Some(kind) = declaration_kind(data) {
+            self.declarations.insert(name.to_owned(), kind);
+            if nested && self.nested_declaration.is_none() {
+                self.nested_declaration = Some((data.to_owned(), name.to_owned()));
+            }
+        }
+    }
+
     fn export(&mut self, variables: &[String], to: Option<&[String]>) -> Result<(), PecosError> {
         check_length(variables, to)?;
         self.present = true;
@@ -76,6 +98,11 @@ impl Collector {
 
     fn finish(self) -> Result<Option<ExportMap>, PecosError> {
         if !self.present {
+            if let Some((data, name)) = self.nested_declaration {
+                return Err(PecosError::Input(format!(
+                    "Nested declaration {data} {name:?}: declarations inside blocks are only supported in programs that use cvar_export; move the declaration to the top level or add cvar_export"
+                )));
+            }
             return Ok(None);
         }
         let mut outputs = BTreeMap::new();
@@ -92,7 +119,7 @@ impl Collector {
                 Some(format!(
                     "output {output:?} conflicts with a declared variable; choose a different output name"
                 ))
-            } else if self.results.contains(&output) {
+            } else if output != source && self.results.contains(&output) {
                 Some(format!(
                     "output {output:?} conflicts with a Result destination; choose a different output name"
                 ))
@@ -115,37 +142,58 @@ impl Collector {
     }
 }
 
-/// Visit all operations, including unexecuted branches, in source order.
-pub(crate) fn all_operations(ops: &[Operation]) -> Vec<&Operation> {
-    fn visit<'a>(ops: &'a [Operation], all: &mut Vec<&'a Operation>) {
-        for op in ops {
-            all.push(op);
-            if let Operation::Block {
-                ops,
-                true_branch,
-                false_branch,
-                ..
-            } = op
+/// Visit operations by reference, retaining whether each one is inside a block.
+fn walk_operations<'a>(ops: impl IntoIterator<Item = &'a Operation>) -> Vec<(&'a Operation, bool)> {
+    fn visit<'a>(op: &'a Operation, nested: bool, all: &mut Vec<(&'a Operation, bool)>) {
+        all.push((op, nested));
+        if let Operation::Block {
+            ops,
+            true_branch,
+            false_branch,
+            ..
+        } = op
+        {
+            for child in ops
+                .iter()
+                .chain(true_branch.as_deref().unwrap_or_default())
+                .chain(false_branch.as_deref().unwrap_or_default())
             {
-                visit(ops, all);
-                visit(true_branch.as_deref().unwrap_or_default(), all);
-                visit(false_branch.as_deref().unwrap_or_default(), all);
+                visit(child, true, all);
             }
         }
     }
     let mut all = Vec::new();
-    visit(ops, &mut all);
+    for op in ops {
+        visit(op, false, &mut all);
+    }
     all
 }
 
-pub(crate) fn collect(ops: &[Operation]) -> Result<Option<ExportMap>, PecosError> {
+/// Exports require every declaration to have storage before any branch executes.
+/// Otherwise only top-level declarations are initialized at load time.
+pub(crate) fn declarations<'a>(
+    ops: impl IntoIterator<Item = &'a Operation>,
+    has_exports: bool,
+) -> Vec<&'a Operation> {
+    let operations = if has_exports {
+        walk_operations(ops).into_iter().map(|(op, _)| op).collect()
+    } else {
+        ops.into_iter().collect::<Vec<_>>()
+    };
+    operations
+        .into_iter()
+        .filter(|op| matches!(op, Operation::VariableDefinition { .. }))
+        .collect()
+}
+
+pub(crate) fn collect<'a>(
+    ops: impl IntoIterator<Item = &'a Operation>,
+) -> Result<Option<ExportMap>, PecosError> {
     let mut collector = Collector::default();
-    for op in all_operations(ops) {
+    for (op, nested) in walk_operations(ops) {
         match op {
             Operation::VariableDefinition { data, variable, .. } => {
-                if let Some(kind) = declaration_kind(data) {
-                    collector.declarations.insert(variable.clone(), kind);
-                }
+                collector.declare(data, variable, nested);
             }
             Operation::DataExport {
                 data,
@@ -164,12 +212,12 @@ pub(crate) fn collect(ops: &[Operation]) -> Result<Option<ExportMap>, PecosError
 }
 
 pub(crate) fn collect_json(ops: &[Value]) -> Result<Option<ExportMap>, PecosError> {
-    fn visit(ops: &[Value], collector: &mut Collector) -> Result<(), PecosError> {
+    fn visit(ops: &[Value], nested: bool, collector: &mut Collector) -> Result<(), PecosError> {
         for op in ops {
             if let Some(data) = op.get("data").and_then(Value::as_str) {
-                if let Some(kind) = declaration_kind(data) {
+                if declaration_kind(data).is_some() {
                     let name = super::declarations::declaration_name(data, op.get("variable"))?;
-                    collector.declarations.insert(name.to_owned(), kind);
+                    collector.declare(data, name, nested);
                 } else if data == "cvar_export" {
                     let (variables, to) = decode(op)?;
                     collector.export(&variables, to.as_deref())?;
@@ -180,8 +228,8 @@ pub(crate) fn collect_json(ops: &[Value]) -> Result<Option<ExportMap>, PecosErro
             }
             if op.get("block").is_some() {
                 for field in ["ops", "true_branch", "false_branch"] {
-                    if let Some(nested) = op.get(field).and_then(Value::as_array) {
-                        visit(nested, collector)?;
+                    if let Some(children) = op.get(field).and_then(Value::as_array) {
+                        visit(children, true, collector)?;
                     }
                 }
             }
@@ -189,6 +237,7 @@ pub(crate) fn collect_json(ops: &[Value]) -> Result<Option<ExportMap>, PecosErro
         Ok(())
     }
     let mut collector = Collector::default();
-    visit(ops, &mut collector)?;
+    super::declarations::validate_json_operations(ops)?;
+    visit(ops, false, &mut collector)?;
     collector.finish()
 }

@@ -493,6 +493,7 @@ pub struct Environment {
     metadata: Vec<VariableInfo>,
     /// Maps source variable names to destination names for output
     mappings: Vec<(String, String)>,
+    /// Static output-to-source selection; `None` preserves legacy result selection.
     pub(crate) exports: Option<super::exports::ExportMap>,
     /// Declaration-order global qubit ranges, separate from classical storage.
     quantum_registers: BTreeMap<String, Range<usize>>,

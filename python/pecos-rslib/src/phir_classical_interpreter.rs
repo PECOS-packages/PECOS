@@ -457,7 +457,7 @@ impl PyPhirClassicalInterpreter {
             .inner
             .lock()
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Lock error: {e}")))?;
-        let results = inner.results(return_int);
+        let results = inner.results(return_int).map_err(pecos_error_to_pyerr)?;
 
         let dict = PyDict::new(py);
         if return_int {

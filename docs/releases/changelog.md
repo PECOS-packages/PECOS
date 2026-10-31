@@ -16,8 +16,12 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   report unexported variables, and an explicitly exported `measurement_*`
   register is reported. Load-time errors name an undeclared exported variable, a
   malformed `to`, an output name used by two sources, an output that equals
-  another declared variable or a `Result` destination, and the reserved
-  `_width_` prefix. Programs without `cvar_export` report what they did before.
+  another declared variable or a `Result` destination (exporting a `Result`
+  destination under its own name is allowed), and the reserved `_width_`
+  prefix. A `cvar_define` or `qvar_define` inside a block is supported only in
+  programs that use `cvar_export`; elsewhere it is a load-time error. `qc2phir`
+  drops exports of size-0 registers it does not declare. Programs without
+  `cvar_export` report what they did before.
 
 - `derive_seed` hashes its purpose string with a fixed SipHash-1-3 instead of
   `std`'s `DefaultHasher`, whose algorithm is unspecified across Rust releases

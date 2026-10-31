@@ -74,6 +74,7 @@ from phir.model import (
 from pydantic import model_validator
 
 from pecos._phir_declarations import validate_classical_inputs, validate_declaration_names
+from pecos._phir_exports import validate_declaration_placement
 
 
 class _PecosCVarDefine(_CVarDefine):
@@ -200,7 +201,9 @@ class PhirModel(_PHIRModel):
     @model_validator(mode="after")
     def _check_declaration_names(self) -> PhirModel:
         """Enforce PHIR-JSON v0.1's unique-name rule for both declaration kinds."""
-        validate_declaration_names(self.model_dump()["ops"])
+        operations = self.model_dump()["ops"]
+        validate_declaration_names(operations)
+        validate_declaration_placement(operations)
         return self
 
 

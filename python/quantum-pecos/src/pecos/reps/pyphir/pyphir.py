@@ -394,10 +394,11 @@ class PyPHIR:
                 if instr:
                     p.ops.append(instr)
 
-        for o in phir["ops"] if exports is not None else []:
-            if o.get("data") not in {"cvar_define", "qvar_define"}:
-                instr = cls.handle_op(o, p)
-                if instr:
-                    p.ops.append(instr)
+        if exports is not None:
+            for o in phir["ops"]:
+                if o.get("data") not in {"cvar_define", "qvar_define"}:
+                    instr = cls.handle_op(o, p)
+                    if instr:
+                        p.ops.append(instr)
 
         return p

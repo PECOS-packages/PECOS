@@ -2156,6 +2156,39 @@ def resolve_result_tags_for_guppy(
 class DagCircuit:
     """Directed acyclic graph circuit representation."""
 
+    def render(
+        self,
+        format: str = "svg",
+        *,
+        color: bool = True,
+        angle_unit: str = "radians",
+        start: int | None = None,
+        stop: int | None = None,
+        title: str | None = None,
+        show_measurement_ids: bool = False,
+    ) -> str:
+        """Render as ascii, unicode, svg, tikz, or dot; angles use radians or turns."""
+        ...
+
+    def inspect(
+        self,
+        *,
+        color: bool = True,
+        angle_unit: str = "radians",
+        start: int | None = None,
+        stop: int | None = None,
+        show_measurement_ids: bool = False,
+        include_html: bool = False,
+    ) -> dict[str, Any]:
+        """Owned SVG and stored-batch records; include_html adds standalone HTML."""
+        ...
+
+    def to_ascii(self) -> str: ...
+    def to_unicode(self) -> str: ...
+    def to_svg(self) -> str: ...
+    def to_tikz(self) -> str: ...
+    def to_dot(self) -> str: ...
+    def _repr_svg_(self) -> str: ...
     def __init__(self) -> None: ...
     def gate_count(self) -> int: ...
     def gate(self, node: int) -> Gate | None: ...
@@ -2282,6 +2315,11 @@ class TickHandle:
         qubits: Sequence[int],
         meas_ids: Sequence[int],
     ) -> list[tuple[int, int, int]]: ...
+    def measure_leaked_with_ids(
+        self,
+        qubits: Sequence[int],
+        meas_ids: Sequence[int],
+    ) -> TickHandle: ...
     def mz_free(self, qubits: Sequence[int]) -> list[tuple[int, int, int]]: ...
     def qalloc(self, qubits: Sequence[int]) -> TickHandle: ...
     def qfree(self, qubits: Sequence[int]) -> TickHandle: ...
@@ -2302,6 +2340,39 @@ class TickMeasureHandle:
 class TickCircuit:
     """Tick-based quantum circuit representation."""
 
+    def render(
+        self,
+        format: str = "svg",
+        *,
+        color: bool = True,
+        angle_unit: str = "radians",
+        start: int | None = None,
+        stop: int | None = None,
+        title: str | None = None,
+        show_measurement_ids: bool = False,
+    ) -> str:
+        """Render as ascii, unicode, svg, tikz, or dot; angles use radians or turns."""
+        ...
+
+    def inspect(
+        self,
+        *,
+        color: bool = True,
+        angle_unit: str = "radians",
+        start: int | None = None,
+        stop: int | None = None,
+        show_measurement_ids: bool = False,
+        include_html: bool = False,
+    ) -> dict[str, Any]:
+        """Owned SVG and stored-batch records; include_html adds standalone HTML."""
+        ...
+
+    def to_ascii(self) -> str: ...
+    def to_unicode(self) -> str: ...
+    def to_svg(self) -> str: ...
+    def to_tikz(self) -> str: ...
+    def to_dot(self) -> str: ...
+    def _repr_svg_(self) -> str: ...
     def __init__(self) -> None: ...
     @staticmethod
     def gate_locations(name: str, qubits: Sequence[int]) -> list[list[int]]: ...

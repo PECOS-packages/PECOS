@@ -117,6 +117,7 @@ def _qis_operation_trace_to_tick_circuit(
     require_hosted_operation_order: bool = False,
     max_hosted_tick_separation: int | None = None,
     allow_raw_measurement_id_fallback: bool = False,
+    preserve_measurement_kinds: bool = False,
     context: str,
 ) -> TickCircuit:
     """Replay captured QIS operation-trace chunks into a ``TickCircuit``."""
@@ -124,9 +125,20 @@ def _qis_operation_trace_to_tick_circuit(
         chunks,
         measurement_crosstalk_topology=measurement_crosstalk_topology,
         allow_raw_measurement_id_fallback=allow_raw_measurement_id_fallback,
+        preserve_measurement_kinds=preserve_measurement_kinds,
     )
     source_measurement_ids = source_measurement_ids_from_operation_trace(chunks)
-    runtime_measurement_ids = measurement_ids_in_execution_order(tick_circuit)
+    if preserve_measurement_kinds:
+        # The Boolean analysis emission reader intentionally excludes leakage
+        # measurements. The visual replay keeps their runtime result identities.
+        runtime_measurement_ids = [
+            mid
+            for _, gate in tick_circuit.gate_batches()
+            if gate.gate_type.name in {"MZ", "MeasureLeaked"}
+            for mid in gate.meas_ids
+        ]
+    else:
+        runtime_measurement_ids = measurement_ids_in_execution_order(tick_circuit)
     duplicate_runtime_ids = sorted(
         measurement_id for measurement_id, count in Counter(runtime_measurement_ids).items() if count > 1
     )
@@ -155,6 +167,15 @@ def _qis_operation_trace_to_tick_circuit(
     return tick_circuit
 
 
+def _qis_operation_trace_to_visualization_circuit(trace: list[dict[str, Any]]) -> TickCircuit:
+    """Validate a complete lowered trace and preserve its measurement kinds."""
+    return _qis_operation_trace_to_tick_circuit(
+        trace,
+        preserve_measurement_kinds=True,
+        context="circuit_diagram",
+    )
+
+
 def qis_operation_trace_to_tick_circuit(
     trace: list[dict[str, Any]],
     *,
@@ -178,6 +199,9 @@ def qis_operation_trace_to_tick_circuit(
         A runtime-lowered ``TickCircuit``. Detector and observable metadata are
         not attached automatically. Runtime-emitted ``Idle`` durations are
         preserved as integer nanosecond :class:`pecos.TimeUnits`.
+        Leakage-aware ``MeasureLeaked`` is projected onto Boolean ``MZ`` for
+        analysis, retaining its result ID. This replay does not represent the
+        runtime leakage outcome 2; retain the original trace for that distinction.
 
     Raises:
         TypeError: If trace framing, operation counts, or measurement metadata

@@ -50,6 +50,9 @@ pub fn parse_gate_definition(pair: Pair<Rule>, program: &mut Program) -> Result<
     let mut body = Vec::new();
     for statement_pair in body_pairs {
         if let Some(op) = parse_gate_def_statement(statement_pair)? {
+            for expression in &op.params {
+                program.validate_expression(expression, &params)?;
+            }
             body.push(op);
         }
     }

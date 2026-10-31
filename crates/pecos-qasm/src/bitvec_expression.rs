@@ -1,6 +1,7 @@
 //! QASM AST adapter for shared classical expression evaluation.
 
 use crate::ast::Expression;
+use crate::parser::errors::{undeclared_classical_bit, unknown_register};
 use ::bitvec::prelude::*;
 use pecos_core::{
     BitUInt, ExprValue, bitvec,
@@ -31,7 +32,7 @@ pub(crate) fn integer_value(bits: &BitVec<u8, Lsb0>) -> Result<ExprValue, PecosE
 /// Registers are unsigned at their stored width; individual bits are booleans.
 /// Small literals are signed 64-bit integers, and larger literals retain their
 /// parsed width and are unsigned. The destination never sets arithmetic width.
-/// `default_width` is used only for an absent register without a declared size.
+/// Registers without stored values must still have a declared size.
 /// Function calls require the engine and are handled only at the top level.
 ///
 /// # Errors
@@ -39,7 +40,6 @@ pub(crate) fn integer_value(bits: &BitVec<u8, Lsb0>) -> Result<ExprValue, PecosE
 pub fn evaluate_expression_bitvec(
     expr: &Expression,
     context: &dyn BitVecExpressionContext,
-    default_width: usize,
 ) -> Result<ExprValue, PecosError> {
     match expr {
         Expression::Integer(bits) => integer_value(bits),
@@ -54,7 +54,8 @@ pub fn evaluate_expression_bitvec(
             if let Some(bitvec) = context.get_register(name) {
                 Ok(ExprValue::Unsigned(bitvec::to_bituint(bitvec)?))
             } else {
-                let width = context.get_register_size(name).unwrap_or(default_width);
+                let width = context.get_register_size(name)
+                    .ok_or_else(|| unknown_register("classical", name))?;
                 let size = u16::try_from(width).ok().filter(|&size| size != 0).ok_or_else(|| {
                     PecosError::Input(format!("Expression width must be in 1..=65535, got {width}"))
                 })?;
@@ -63,11 +64,15 @@ pub fn evaluate_expression_bitvec(
         }
 
         Expression::BitId(reg_name, idx) => {
-            let bit_value = context
-                .get_register(reg_name)
-                .and_then(|bitvec| {
-                    bitvec.get(*idx).as_deref().copied()
-                })
+            let register = context.get_register(reg_name);
+            let size = context.get_register_size(reg_name)
+                .or_else(|| register.map(BitVec::len))
+                .ok_or_else(|| unknown_register("classical", reg_name))?;
+            if *idx >= size {
+                return Err(undeclared_classical_bit(reg_name, *idx, size));
+            }
+            let bit_value = register
+                .and_then(|bits| bits.get(*idx).as_deref().copied())
                 .unwrap_or(false);
             Ok(ExprValue::Boolean(bit_value))
         }
@@ -75,13 +80,13 @@ pub fn evaluate_expression_bitvec(
         Expression::BinaryOp { op, left, right } => {
             eval_binary_op(
                 op,
-                evaluate_expression_bitvec(left, context, default_width)?,
-                evaluate_expression_bitvec(right, context, default_width)?,
+                evaluate_expression_bitvec(left, context)?,
+                evaluate_expression_bitvec(right, context)?,
             )
         }
 
         Expression::UnaryOp { op, expr } => {
-            eval_unary_op(op, evaluate_expression_bitvec(expr, context, default_width)?)
+            eval_unary_op(op, evaluate_expression_bitvec(expr, context)?)
         }
 
         Expression::Pi => {
@@ -135,7 +140,7 @@ mod tests {
                 let context = RegisterContext(dividend);
                 let expr = binary("/", Expression::Variable("d".to_string()), integer("2"));
                 let ExprValue::Unsigned(result) =
-                    evaluate_expression_bitvec(&expr, &context, 1).unwrap()
+                    evaluate_expression_bitvec(&expr, &context).unwrap()
                 else {
                     panic!("Register division must be unsigned");
                 };
@@ -146,21 +151,18 @@ mod tests {
     }
 
     #[test]
-    fn unsigned_not_register_ignores_default_width() {
+    fn unsigned_not_register_uses_the_evaluation_width() {
         let context = RegisterContext(bitvec![u8, Lsb0; 1, 1]);
         let expr = Expression::UnaryOp {
             op: "~".to_string(),
             expr: Box::new(Expression::Variable("d".to_string())),
         };
-        for destination in [1, 4, 100] {
-            let ExprValue::Unsigned(value) =
-                evaluate_expression_bitvec(&expr, &context, destination).unwrap()
-            else {
-                panic!("Unsigned complement");
-            };
-            assert_eq!(value.size(), 64);
-            assert_eq!(value.to_u64(), Some(u64::MAX - 3));
-        }
+        let ExprValue::Unsigned(value) = evaluate_expression_bitvec(&expr, &context).unwrap()
+        else {
+            panic!("Unsigned complement");
+        };
+        assert_eq!(value.size(), 64);
+        assert_eq!(value.to_u64(), Some(u64::MAX - 3));
     }
 
     fn compare_register(op: &str, literal: &str) -> bool {
@@ -172,7 +174,7 @@ mod tests {
                 parse_integer_to_bitvec(literal).unwrap(),
             )),
         };
-        evaluate_expression_bitvec(&expr, &context, 1)
+        evaluate_expression_bitvec(&expr, &context)
             .unwrap()
             .as_bool()
     }
@@ -207,7 +209,7 @@ mod tests {
                         right: Box::new(Expression::Integer(right)),
                     };
                     assert_eq!(
-                        evaluate_expression_bitvec(&expr, &context, 1)
+                        evaluate_expression_bitvec(&expr, &context)
                             .unwrap()
                             .as_bool(),
                         expected,
@@ -241,7 +243,7 @@ mod tests {
                 right: Box::new(negative("16")),
             };
             assert_eq!(
-                evaluate_expression_bitvec(&expr, &context, 1)
+                evaluate_expression_bitvec(&expr, &context)
                     .unwrap()
                     .as_bool(),
                 expected,
@@ -275,7 +277,7 @@ mod tests {
                 #[test]
                 fn $name() {
                     let context = RegisterContext(BitVec::new());
-                    assert_eq!(evaluate_expression_bitvec(&$expr, &context, 1).unwrap().as_bool(), $expected);
+                    assert_eq!(evaluate_expression_bitvec(&$expr, &context).unwrap().as_bool(), $expected);
                 }
             )+
         };
@@ -302,7 +304,7 @@ mod tests {
             (negative(negative(integer("1"))), 1),
             (negative(integer("14")), -14),
         ] {
-            let ExprValue::Signed(value) = evaluate_expression_bitvec(&expr, &context, 1).unwrap()
+            let ExprValue::Signed(value) = evaluate_expression_bitvec(&expr, &context).unwrap()
             else {
                 panic!("Expected signed result");
             };
@@ -317,14 +319,13 @@ mod tests {
         let literal = parse_integer_to_bitvec("8").unwrap();
         assert_eq!(literal.len(), 4);
         let expr = negative(negative(Expression::Integer(literal)));
-        let ExprValue::Signed(value) = evaluate_expression_bitvec(&expr, &context, 1).unwrap()
-        else {
+        let ExprValue::Signed(value) = evaluate_expression_bitvec(&expr, &context).unwrap() else {
             panic!("Signed negation");
         };
         assert_eq!(value.size(), 64);
         assert_eq!(value.to_u64(), Some(8));
         assert!(
-            evaluate_expression_bitvec(&binary("==", expr, integer("8")), &context, 1)
+            evaluate_expression_bitvec(&binary("==", expr, integer("8")), &context)
                 .unwrap()
                 .as_bool()
         );
@@ -334,7 +335,7 @@ mod tests {
     fn unsigned_register_shift_count() {
         let context = RegisterContext(bitvec![u8, Lsb0; 1, 1]);
         let expr = binary("<<", integer("1"), Expression::Variable("d".to_string()));
-        let ExprValue::Unsigned(value) = evaluate_expression_bitvec(&expr, &context, 1).unwrap()
+        let ExprValue::Unsigned(value) = evaluate_expression_bitvec(&expr, &context).unwrap()
         else {
             panic!("Mixed shift is unsigned");
         };
@@ -350,7 +351,7 @@ mod tests {
             let context = RegisterContext(count);
             for (op, expected) in [("<<", left), (">>", right)] {
                 let expr = binary(op, integer("8"), Expression::Variable("d".to_string()));
-                let result = evaluate_expression_bitvec(&expr, &context, 1).unwrap();
+                let result = evaluate_expression_bitvec(&expr, &context).unwrap();
                 let (ExprValue::Unsigned(value) | ExprValue::Signed(value)) = result else {
                     panic!("Integer shift");
                 };
@@ -371,7 +372,7 @@ mod tests {
         ] {
             let expr = binary(op, integer("1"), integer(count));
             assert_eq!(
-                evaluate_expression_bitvec(&expr, &context, 100)
+                evaluate_expression_bitvec(&expr, &context)
                     .unwrap()
                     .as_u64(),
                 expected
@@ -379,7 +380,7 @@ mod tests {
         }
         let expr = binary("<<", integer("1"), integer("9223372036854775808"));
         assert_eq!(
-            evaluate_expression_bitvec(&expr, &context, 100)
+            evaluate_expression_bitvec(&expr, &context)
                 .unwrap()
                 .as_u64(),
             0
@@ -396,7 +397,7 @@ mod tests {
             for (op, expected) in [("<<", left), (">>", right)] {
                 let expr = binary(op, integer("8"), count.clone());
                 assert_eq!(
-                    evaluate_expression_bitvec(&expr, &context, 1)
+                    evaluate_expression_bitvec(&expr, &context)
                         .unwrap()
                         .as_u64(),
                     expected
@@ -405,7 +406,7 @@ mod tests {
         }
         for op in ["<<", ">>"] {
             let expr = binary(op, integer("8"), negative(integer("1")));
-            assert!(evaluate_expression_bitvec(&expr, &context, 1).is_err());
+            assert!(evaluate_expression_bitvec(&expr, &context).is_err());
         }
     }
     #[test]
@@ -413,7 +414,6 @@ mod tests {
         let result = evaluate_expression_bitvec(
             &binary("/", negative(integer("7")), integer("2")),
             &RegisterContext(BitVec::new()),
-            1,
         )
         .unwrap();
         let ExprValue::Signed(value) = result else {
@@ -434,24 +434,24 @@ mod tests {
                 (name == "declared").then_some(100)
             }
         }
-        for (name, width) in [("declared", 100), ("absent", 7)] {
-            let ExprValue::Unsigned(bits) =
-                evaluate_expression_bitvec(&Expression::Variable(name.to_string()), &Missing, 7)
-                    .unwrap()
-            else {
-                panic!("Unsigned missing register");
-            };
-            assert_eq!(bits.size(), width);
-            assert!(bits.is_zero());
-        }
-        for width in [0, 65536, usize::MAX] {
+        let ExprValue::Unsigned(bits) =
+            evaluate_expression_bitvec(&Expression::Variable("declared".to_string()), &Missing)
+                .unwrap()
+        else {
+            panic!("Unsigned declared register");
+        };
+        assert_eq!(bits.size(), 100);
+        assert!(bits.is_zero());
+        for expression in [
+            Expression::Variable("absent".to_string()),
+            Expression::BitId("absent".to_string(), 0),
+        ] {
+            let error = evaluate_expression_bitvec(&expression, &Missing)
+                .expect_err("Undeclared registers must not evaluate to zero")
+                .to_string();
             assert!(
-                evaluate_expression_bitvec(
-                    &Expression::Variable("absent".to_string()),
-                    &Missing,
-                    width
-                )
-                .is_err()
+                error.contains("absent") && error.contains("creg"),
+                "{error}"
             );
         }
         let context = RegisterContext(bitvec![u8, Lsb0; 1]);
@@ -460,20 +460,17 @@ mod tests {
             expr: Box::new(Expression::BitId("d".to_string(), 0)),
         };
         assert_eq!(
-            evaluate_expression_bitvec(&complement, &context, 8).unwrap(),
+            evaluate_expression_bitvec(&complement, &context).unwrap(),
             ExprValue::Boolean(false)
         );
-        for (name, index, expected) in [("absent", 0, false), ("d", 1, false), ("d", 0, true)] {
-            assert_eq!(
-                evaluate_expression_bitvec(
-                    &Expression::BitId(name.to_string(), index),
-                    &context,
-                    8
-                )
-                .unwrap(),
-                ExprValue::Boolean(expected)
-            );
-        }
+        assert_eq!(
+            evaluate_expression_bitvec(&Expression::BitId("d".to_string(), 0), &context).unwrap(),
+            ExprValue::Boolean(true)
+        );
+        let error = evaluate_expression_bitvec(&Expression::BitId("d".to_string(), 1), &context)
+            .expect_err("A bit outside the declared register must not evaluate to false")
+            .to_string();
+        assert!(error.contains("d[1]") && error.contains("creg"), "{error}");
         for (literal, signed, width) in [
             ("9223372036854775807", true, 64),
             ("9223372036854775808", false, 64),
@@ -487,7 +484,7 @@ mod tests {
             assert_eq!(bits.size(), width);
         }
         let result =
-            evaluate_expression_bitvec(&binary("==", integer("1"), integer("1")), &context, 100)
+            evaluate_expression_bitvec(&binary("==", integer("1"), integer("1")), &context)
                 .unwrap();
         let ExprValue::Unsigned(bits) = result else {
             panic!("Comparison must retain unsigned tag");
@@ -515,7 +512,7 @@ mod tests {
             ),
         ] {
             assert!(matches!(
-                evaluate_expression_bitvec(&expr, &RegisterContext(BitVec::new()), 8),
+                evaluate_expression_bitvec(&expr, &RegisterContext(BitVec::new())),
                 Err(PecosError::ParseInvalidExpression(_))
             ));
         }

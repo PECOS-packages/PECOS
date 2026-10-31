@@ -195,3 +195,329 @@ fn test_supported_vs_unsupported_operations() {
     // UNSUPPORTED (if any):
     // Add tests for operations that should fail if there are known unsupported cases
 }
+
+fn undeclared_source(statement: &str) -> String {
+    format!("OPENQASM 2.0; include \"qelib1.inc\"; qreg q[1]; creg c[1]; {statement}")
+}
+
+fn assert_undeclared_error(error: impl std::fmt::Display) {
+    let message = error.to_string();
+    assert!(message.contains("missing"), "{message}");
+    assert!(message.contains("creg"), "{message}");
+}
+
+macro_rules! undeclared_test {
+    ($name:ident, $statement:literal) => {
+        #[test]
+        fn $name() {
+            let source = undeclared_source($statement);
+            assert_undeclared_error(
+                QASMParser::parse_str(&source).expect_err("Must reject undeclared classical name"),
+            );
+        }
+    };
+}
+
+undeclared_test!(
+    undeclared_condition,
+    "if(missing == 0) x q[0]; measure q[0] -> c[0];"
+);
+undeclared_test!(undeclared_condition_bit, "if(missing[0] == 0) x q[0];");
+undeclared_test!(undeclared_condition_right, "if(c == missing) x q[0];");
+undeclared_test!(undeclared_assignment_value, "c = missing;");
+undeclared_test!(undeclared_assignment_bit_value, "c[0] = missing[0];");
+undeclared_test!(undeclared_assignment_target, "missing = 0;");
+undeclared_test!(undeclared_assignment_bit_target, "missing[0] = 0;");
+undeclared_test!(undeclared_binary_left, "c = missing + c;");
+undeclared_test!(undeclared_binary_right, "c = c + missing;");
+undeclared_test!(undeclared_unary, "c = ~missing;");
+undeclared_test!(undeclared_negation, "c = -missing[0];");
+undeclared_test!(undeclared_nested_expression, "c = (1 + (missing[0] | c));");
+undeclared_test!(undeclared_function_argument, "c = external(1, missing);");
+undeclared_test!(
+    undeclared_nested_function_argument,
+    "c = external(other(~missing[0]));"
+);
+undeclared_test!(undeclared_builtin_argument, "c = sin(missing);");
+undeclared_test!(undeclared_void_argument, "external(1, missing[0]);");
+undeclared_test!(
+    undeclared_condition_function_argument,
+    "if(external(missing) == 0) x q[0];"
+);
+undeclared_test!(undeclared_measurement_target, "measure q[0] -> missing[0];");
+undeclared_test!(
+    undeclared_register_measurement_target,
+    "measure q -> missing;"
+);
+undeclared_test!(undeclared_false_branch_value, "if(c == 1) c = missing;");
+undeclared_test!(undeclared_false_branch_target, "if(c == 1) missing = 0;");
+undeclared_test!(
+    undeclared_false_branch_measurement,
+    "if(c == 1) measure q[0] -> missing[0];"
+);
+undeclared_test!(undeclared_gate_argument, "rx(missing) q[0];");
+undeclared_test!(undeclared_gate_bit_argument, "rx(missing[0]) q[0];");
+undeclared_test!(undeclared_gate_function_argument, "rx(sin(missing)) q[0];");
+undeclared_test!(
+    undeclared_gate_body_argument,
+    "gate custom(theta) a { rx(theta + missing) a; }"
+);
+undeclared_test!(
+    undeclared_gate_body_bit_argument,
+    "gate custom(theta) a { rx(missing[0]) a; }"
+);
+undeclared_test!(
+    undeclared_gate_parameter_outside_scope,
+    "gate custom(missing) a { rx(missing) a; } c = missing;"
+);
+undeclared_test!(
+    undeclared_opaque_parameter_outside_scope,
+    "opaque custom(missing) a; c = missing;"
+);
+
+undeclared_test!(
+    undeclared_gate_qubit_as_value,
+    "gate custom(theta) missing { rx(missing) missing; }"
+);
+undeclared_test!(
+    undeclared_gate_parameter_in_other_scope,
+    "gate first(missing) a { rx(missing) a; } gate second(theta) a { rx(missing) a; }"
+);
+undeclared_test!(
+    undeclared_replaced_gate_definition,
+    "gate custom(theta) a { rx(missing) a; } gate custom(theta) a { rx(theta) a; }"
+);
+
+#[test]
+fn undeclared_engine_reproducer() {
+    let source = "OPENQASM 2.0; include \"qelib1.inc\"; qreg q[1]; creg c[1]; if(i == 0) x q[0]; measure q[0] -> c[0];";
+    let error = QASMEngine::from_str(source)
+        .expect_err("Engine creation must fail before any shot")
+        .to_string();
+    assert!(
+        error.contains("register: i") && error.contains("creg"),
+        "{error}"
+    );
+}
+
+#[test]
+fn undeclared_raw_parser() {
+    let error = QASMParser::parse_str_raw("OPENQASM 2.0; creg c[1]; c = missing;")
+        .expect_err("Raw parsing must validate names");
+    assert_undeclared_error(error);
+}
+
+#[test]
+fn undeclared_unexpanded_parser() {
+    let config = pecos_qasm::parser::ParseConfig {
+        expand_gates: false,
+        validate_gates: false,
+        ..Default::default()
+    };
+    assert_undeclared_error(
+        QASMParser::parse_with_config(&undeclared_source("c = missing;"), &config)
+            .expect_err("Name resolution is required even without gate validation"),
+    );
+}
+
+#[test]
+fn undeclared_expansion_entrypoint() {
+    assert_undeclared_error(
+        QASMParser::preprocess_and_expand(&undeclared_source("external(missing);"))
+            .expect_err("Expansion must validate standalone function arguments"),
+    );
+}
+
+#[test]
+fn undeclared_phir_json_source() {
+    assert_undeclared_error(
+        pecos_qasm::qasm_to_phir_json(&undeclared_source("if(missing == 0) x q[0];"))
+            .expect_err("PHIR conversion must validate names"),
+    );
+}
+
+#[test]
+fn undeclared_phir_json_ast() {
+    let mut program = QASMParser::parse_str(&undeclared_source("c = c;")).unwrap();
+    program.classical_registers.remove("c");
+    let error = pecos_qasm::program_to_phir_json(&program)
+        .expect_err("Direct AST conversion must validate names");
+    assert!(
+        error.contains("register: c") && error.contains("creg"),
+        "{error}"
+    );
+}
+
+#[test]
+fn declared_registers_and_formal_parameters_still_execute() {
+    use pecos_engines::ClassicalControlEngineBuilder;
+    use pecos_programs::Qasm;
+
+    let source = r#"
+        OPENQASM 2.0;
+        include "qelib1.inc";
+        gate inner(theta) a { rx(theta) a; }
+        gate outer(theta) a { inner(theta) a; }
+        opaque unused(theta) a;
+        qreg q[1];
+        creg c[2];
+        creg i[2];
+        i = 1;
+        RNGseed(i);
+        c = i + i[0];
+        if(c == 2) outer(pi) q[0];
+        if(i[0] == 0) x q[0];
+        measure q[0] -> c[0];
+    "#;
+    let results = pecos_qasm::qasm_engine()
+        .program(Qasm::from_string(source))
+        .to_sim()
+        .workers(1)
+        .run(3)
+        .unwrap();
+    for shot in results.shots {
+        assert_eq!(shot.data["c"].as_u32(), Some(3));
+        assert_eq!(shot.data["i"].as_u32(), Some(1));
+    }
+    pecos_qasm::qasm_to_phir_json(source).expect("Declared names also convert to PHIR-JSON");
+}
+
+#[test]
+fn undeclared_ast_engine_compile() {
+    use pecos_engines::ClassicalEngine;
+    let mut program = QASMParser::parse_str(&undeclared_source("if(c == 1) c = c;")).unwrap();
+    program.classical_registers.remove("c");
+    let engine = QASMEngine::new(pecos_qasm::QASMProgram::new(program, String::new()));
+    let error = engine
+        .compile()
+        .expect_err("Compilation must validate even a false branch")
+        .to_string();
+    assert!(
+        error.contains("register: c") && error.contains("creg"),
+        "{error}"
+    );
+}
+
+#[test]
+fn undeclared_ast_engine_commands() {
+    use pecos_engines::ClassicalEngine;
+    let mut program =
+        QASMParser::parse_str(&undeclared_source("x q[0]; if(c == 1) c = c;")).unwrap();
+    program.classical_registers.remove("c");
+    let mut engine = QASMEngine::new(pecos_qasm::QASMProgram::new(program, String::new()));
+    let error = engine
+        .generate_commands()
+        .err()
+        .expect("No quantum command may run before validation")
+        .to_string();
+    assert!(
+        error.contains("register: c") && error.contains("creg"),
+        "{error}"
+    );
+}
+
+fn assert_evaluator_rejects_undeclared(expression: &pecos_qasm::Expression) {
+    use bitvec::prelude::{BitVec, Lsb0};
+    use pecos_qasm::bitvec_expression::{BitVecExpressionContext, evaluate_expression_bitvec};
+
+    struct EmptyContext;
+    impl BitVecExpressionContext for EmptyContext {
+        fn get_register(&self, _: &str) -> Option<&BitVec<u8, Lsb0>> {
+            None
+        }
+        fn get_register_size(&self, _: &str) -> Option<usize> {
+            None
+        }
+    }
+    assert_undeclared_error(
+        evaluate_expression_bitvec(expression, &EmptyContext)
+            .expect_err("The evaluator must not synthesize a value for an undeclared name"),
+    );
+}
+
+#[test]
+fn undeclared_evaluator_register() {
+    assert_evaluator_rejects_undeclared(&pecos_qasm::Expression::Variable("missing".to_string()));
+}
+
+#[test]
+fn undeclared_evaluator_bit() {
+    assert_evaluator_rejects_undeclared(&pecos_qasm::Expression::BitId("missing".to_string(), 0));
+}
+
+#[cfg(feature = "phir")]
+#[test]
+fn undeclared_phir_module_source() {
+    assert_undeclared_error(
+        pecos_qasm::qasm_to_phir_module(&undeclared_source("if(missing == 0) x q[0];"))
+            .expect_err("PHIR module conversion must validate names"),
+    );
+}
+
+#[cfg(feature = "phir")]
+#[test]
+fn undeclared_phir_module_ast() {
+    let mut program = QASMParser::parse_str(&undeclared_source("c = c;")).unwrap();
+    program.classical_registers.remove("c");
+    let error = pecos_qasm::qasm_program_to_phir_module(&program)
+        .expect_err("Direct PHIR module conversion must validate names")
+        .to_string();
+    assert!(
+        error.contains("register: c") && error.contains("creg"),
+        "{error}"
+    );
+}
+
+macro_rules! undeclared_bit_test {
+    ($name:ident, $statement:literal) => {
+        #[test]
+        fn $name() {
+            let error = QASMParser::parse_str(&undeclared_source($statement))
+                .expect_err("A bit outside the register declaration must fail validation")
+                .to_string();
+            assert!(error.contains("c[1]") && error.contains("creg"), "{error}");
+        }
+    };
+}
+
+undeclared_bit_test!(undeclared_bit_condition, "if(c[1] == 0) x q[0];");
+undeclared_bit_test!(undeclared_bit_assignment_value, "c = c[1];");
+undeclared_bit_test!(undeclared_bit_assignment_target, "c[1] = 0;");
+undeclared_bit_test!(undeclared_bit_binary_operand, "c = c + c[1];");
+undeclared_bit_test!(undeclared_bit_unary_operand, "c = ~c[1];");
+undeclared_bit_test!(undeclared_bit_function_argument, "c = external(c[1]);");
+undeclared_bit_test!(undeclared_bit_void_argument, "external(c[1]);");
+undeclared_bit_test!(undeclared_bit_measurement_target, "measure q[0] -> c[1];");
+undeclared_bit_test!(undeclared_bit_false_branch, "if(c == 1) c[1] = 0;");
+undeclared_bit_test!(undeclared_bit_gate_argument, "rx(c[1]) q[0];");
+
+#[test]
+fn undeclared_evaluator_bit_out_of_bounds() {
+    use bitvec::prelude::{BitVec, Lsb0};
+    use pecos_qasm::bitvec_expression::{BitVecExpressionContext, evaluate_expression_bitvec};
+
+    struct DeclaredContext;
+    impl BitVecExpressionContext for DeclaredContext {
+        fn get_register(&self, _: &str) -> Option<&BitVec<u8, Lsb0>> {
+            None
+        }
+        fn get_register_size(&self, name: &str) -> Option<usize> {
+            (name == "c").then_some(1)
+        }
+    }
+    let error = evaluate_expression_bitvec(
+        &pecos_qasm::Expression::BitId("c".to_string(), 1),
+        &DeclaredContext,
+    )
+    .expect_err("Only declared bits may be read")
+    .to_string();
+    assert!(error.contains("c[1]") && error.contains("creg"), "{error}");
+    assert!(
+        !evaluate_expression_bitvec(
+            &pecos_qasm::Expression::BitId("c".to_string(), 0),
+            &DeclaredContext,
+        )
+        .unwrap()
+        .as_bool()
+    );
+}

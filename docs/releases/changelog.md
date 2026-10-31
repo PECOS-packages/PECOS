@@ -6,6 +6,15 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Breaking:** the PECOS QASM parser rejects a reference to an undeclared
+  classical register, or to a bit beyond a declared register's size, anywhere a
+  classical value is read or written: conditions, assignments, operands,
+  function arguments and measurement targets. Before, the engine evaluated an
+  undeclared name as 0, so `if(i == 0) x q[0];` with no `creg i` ran the gate.
+  The error names the identifier and says to declare it with `creg`. Gate and
+  opaque parameters are unaffected. `pecos_qasm::bitvec_expression::evaluate_expression_bitvec`
+  drops its unused width argument.
+
 - **Breaking:** Python simulator wrappers and the public `pecos.HybridEngine`
   validate whole known-gate batches per `run_gate` call and per circuit item
   before changing state, including when `simulate_gate=False`. Registered-gate

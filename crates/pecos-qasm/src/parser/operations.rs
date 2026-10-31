@@ -124,6 +124,10 @@ pub fn parse_quantum_op(
                     Rule::param_values => {
                         for param_expr in pair.into_inner() {
                             if param_expr.as_rule() == Rule::expr {
+                                // Resolve names before angle evaluation (which has no
+                                // classical register context and rejects bit references).
+                                program
+                                    .validate_expression(&parse_expr(param_expr.clone())?, &[])?;
                                 let expr = parse_gate_param_expr(param_expr)?;
                                 let value = expr.evaluate(None).map_err(|e| {
                                     PecosError::ParseInvalidExpression(format!(

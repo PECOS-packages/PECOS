@@ -14,7 +14,12 @@ pub fn invalid_operation(reason: impl Into<String>) -> PecosError {
 /// Create an error for unknown register
 #[must_use]
 pub fn unknown_register(reg_type: &str, name: &str) -> PecosError {
-    invalid_operation(format!("Unknown {reg_type} register: {name}"))
+    let reason = if reg_type == "classical" {
+        format!("Unknown classical register: {name}. Declare '{name}' with creg before using it")
+    } else {
+        format!("Unknown {reg_type} register: {name}")
+    };
+    invalid_operation(reason)
 }
 
 /// Create an error for register index out of bounds
@@ -22,6 +27,15 @@ pub fn unknown_register(reg_type: &str, name: &str) -> PecosError {
 pub fn index_out_of_bounds(reg_name: &str, idx: usize, size: usize) -> PecosError {
     invalid_operation(format!(
         "Register index out of bounds: {reg_name}[{idx}] (register size: {size})"
+    ))
+}
+
+/// Create an error for a bit outside a classical register's declaration.
+#[must_use]
+pub fn undeclared_classical_bit(name: &str, index: usize, size: usize) -> PecosError {
+    invalid_operation(format!(
+        "Classical bit '{name}[{index}]' is out of bounds for register size {size}. \
+         Declare '{name}' with creg large enough to contain bit {index}"
     ))
 }
 

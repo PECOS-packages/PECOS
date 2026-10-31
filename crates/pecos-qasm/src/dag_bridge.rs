@@ -89,6 +89,9 @@ impl std::error::Error for QasmBridgeError {}
 ///
 /// Returns [`QasmBridgeError`] if an operation cannot be converted.
 pub fn qasm_to_dag(program: &Program) -> Result<DagCircuit, QasmBridgeError> {
+    program
+        .validate_classical_references()
+        .map_err(|e| QasmBridgeError::ParameterError(e.to_string()))?;
     let mut dag = DagCircuit::new();
 
     // Compute total classical bits

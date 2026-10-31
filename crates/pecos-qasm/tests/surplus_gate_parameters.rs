@@ -12,7 +12,12 @@ fn surplus_gate_parameters_are_rejected() {
         let error =
             QASMParser::parse_str(&source).expect_err("surplus parameters must not be dropped");
         if operation == "u(a,b,c,d) q[0];" {
-            assert!(error.to_string().contains("Cannot evaluate variable 'a'"));
+            let message = error.to_string();
+            assert!(
+                message.contains("Unknown classical register: a"),
+                "{message}"
+            );
+            assert!(message.contains("creg"), "{message}");
         } else {
             assert!(error.to_string().contains("parameters but got"));
         }

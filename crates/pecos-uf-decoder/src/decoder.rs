@@ -49,17 +49,6 @@ struct Edge {
     obs_mask: u64,
 }
 
-/// Peeling strategy for correction extraction.
-#[derive(Debug, Clone, Copy, Default)]
-pub enum PeelingStrategy {
-    /// BFS from boundary. Fastest, slightly less accurate.
-    Bfs,
-    /// Prim's MST from boundary. Uses globally lightest edges.
-    /// Better accuracy, slight heap overhead at small sizes.
-    #[default]
-    PrimMst,
-}
-
 /// Growth strategy for cluster expansion.
 #[derive(Debug, Clone, Copy, Default)]
 pub enum GrowthStrategy {
@@ -81,8 +70,6 @@ pub struct UfDecoderConfig {
     /// Maximum growth rounds before giving up (prevents infinite loops).
     /// 0 = auto (100 * `num_detectors`).
     pub max_growth_rounds: usize,
-    /// How to build the spanning forest for peeling.
-    pub peeling: PeelingStrategy,
     /// How to grow clusters.
     pub growth: GrowthStrategy,
     /// Enable cluster predecoder for simple syndromes.
@@ -97,24 +84,22 @@ impl Default for UfDecoderConfig {
 }
 
 impl UfDecoderConfig {
-    /// Fast preset: event-driven growth, BFS peeling. Lowest latency.
+    /// Fast preset: event-driven growth.
     #[must_use]
     pub fn fast() -> Self {
         Self {
             max_growth_rounds: 0,
-            peeling: PeelingStrategy::Bfs,
             growth: GrowthStrategy::EventDriven,
             predecoder: true,
         }
     }
 
-    /// Balanced preset: event-driven weighted growth, Prim MST peeling.
-    /// Better accuracy, used as inner decoder for two-pass correlated mode.
+    /// Balanced preset: the same configuration as [`Self::fast`].
+    /// Used as inner decoder for two-pass correlated mode.
     #[must_use]
     pub fn balanced() -> Self {
         Self {
             max_growth_rounds: 0,
-            peeling: PeelingStrategy::PrimMst,
             growth: GrowthStrategy::EventDriven,
             predecoder: true,
         }
@@ -127,12 +112,11 @@ impl UfDecoderConfig {
         Self::balanced()
     }
 
-    /// Windowed preset: Prim MST peeling, no predecoder (need complete edge tracking).
+    /// Windowed preset: no predecoder (need complete edge tracking).
     #[must_use]
     pub fn windowed() -> Self {
         Self {
             max_growth_rounds: 0,
-            peeling: PeelingStrategy::PrimMst,
             growth: GrowthStrategy::EventDriven,
             predecoder: false,
         }
@@ -180,8 +164,6 @@ pub struct UfDecoder {
     visited: Vec<bool>,
     /// Peeling: visit order for reverse traversal.
     visit_order: Vec<u32>,
-    /// Peeling: priority queue for Prim's MST.
-    peel_heap: BinaryHeap<Reverse<(u64, usize, u32, u32)>>,
     /// Peeling: subtree parity for each node.
     subtree_parity: Vec<bool>,
     /// Peeling: correction edge indices.
@@ -340,7 +322,6 @@ impl UfDecoder {
             tree_parent: vec![None; num_nodes],
             visited: vec![false; num_nodes],
             visit_order: Vec::with_capacity(num_nodes),
-            peel_heap: BinaryHeap::new(),
             subtree_parity: vec![false; num_nodes],
             correction_edges: Vec::new(),
             weight_swap: Vec::new(),
@@ -873,90 +854,9 @@ impl UfDecoder {
         }
     }
 
-    /// Build a spanning forest and peel to extract the correction.
+    /// Build a BFS spanning forest and peel to extract the correction.
     /// Returns `(obs_mask, correction_edge_indices)`.
     fn peel_correction_with_edges(&mut self) -> (u64, Vec<usize>) {
-        match self.config.peeling {
-            PeelingStrategy::PrimMst => self.peel_prim_mst(),
-            PeelingStrategy::Bfs => self.peel_bfs(),
-        }
-    }
-
-    /// Prim's MST peeling: globally lightest spanning tree. Better accuracy.
-    fn peel_prim_mst(&mut self) -> (u64, Vec<usize>) {
-        let boundary = self.num_detectors;
-
-        self.tree_parent.fill(None);
-        self.visited.fill(false);
-        self.visit_order.clear();
-        self.peel_heap.clear();
-        self.correction_edges.clear();
-
-        for seed in std::iter::once(boundary).chain(0..self.num_detectors) {
-            if self.visited[seed] {
-                continue;
-            }
-            self.visited[seed] = true;
-            self.visit_order.push(seed as u32);
-
-            let adj_len = self.adj(seed).len();
-            for adj_i in 0..adj_len {
-                let (edge_idx, neighbor) = self.adj(seed)[adj_i];
-                if !self.visited[neighbor as usize] {
-                    let w_bits = self.edges[edge_idx].weight.to_bits();
-                    self.peel_heap
-                        .push(Reverse((w_bits, edge_idx, seed as u32, neighbor)));
-                }
-            }
-
-            while let Some(Reverse((_w_bits, edge_idx, from, to))) = self.peel_heap.pop() {
-                let tu = to as usize;
-                if self.visited[tu] {
-                    continue;
-                }
-                let from_root = self.find(from);
-                let to_root = self.find(to);
-                if from_root != to_root {
-                    continue;
-                }
-                self.visited[tu] = true;
-                self.tree_parent[tu] = Some((from, edge_idx));
-                self.visit_order.push(to);
-
-                let adj_len = self.adj(tu).len();
-                for adj_i in 0..adj_len {
-                    let (e_idx, nbr) = self.adj(tu)[adj_i];
-                    if !self.visited[nbr as usize] {
-                        let w_bits = self.edges[e_idx].weight.to_bits();
-                        self.peel_heap.push(Reverse((w_bits, e_idx, to, nbr)));
-                    }
-                }
-            }
-        }
-
-        // Peel: process in reverse visit order (leaves first).
-        self.subtree_parity.fill(false);
-        self.subtree_parity[..self.num_detectors]
-            .copy_from_slice(&self.is_defect[..self.num_detectors]);
-
-        let mut obs_mask = 0u64;
-
-        for i in (0..self.visit_order.len()).rev() {
-            let v = self.visit_order[i];
-            if let Some((parent, edge_idx)) = self.tree_parent[v as usize] {
-                if self.subtree_parity[v as usize] {
-                    obs_mask ^= self.edges[edge_idx].obs_mask;
-                    self.correction_edges.push(edge_idx);
-                }
-                self.subtree_parity[parent as usize] ^= self.subtree_parity[v as usize];
-            }
-        }
-
-        (obs_mask, self.correction_edges.clone())
-    }
-
-    /// BFS peeling: simpler, faster (no heap), slightly less accurate.
-    fn peel_bfs(&mut self) -> (u64, Vec<usize>) {
         let boundary = self.num_detectors;
 
         self.tree_parent.fill(None);

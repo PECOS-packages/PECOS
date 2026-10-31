@@ -406,7 +406,7 @@ mod tests {
         // The split mechanism carries the only observable, so a wrong projection
         // of it shows up in the predictions rather than only in construction.
         let dem = "error(0.1) D0 D2 L0 ^ D0 D3\nerror(0.01) D0\nerror(0.01) D1\nerror(0.01) D2\nerror(0.01) D3\ndetector(0,0,0) D0\ndetector(0,0,1) D1\ndetector(0,0,2) D2\ndetector(0,0,3) D3";
-        for buffer_size in [0, 1, 2] {
+        for buffer_size in [0, 1, 2, 3] {
             let config = BeamSearchConfig {
                 window: BeamWindowConfig {
                     step_size: 1,
@@ -432,7 +432,7 @@ mod tests {
             for bits in 0_u8..16 {
                 let syndrome: Vec<_> = (0..4).map(|bit| (bits >> bit) & 1).collect();
                 let predicted = decoder.decode_to_observables(&syndrome).unwrap();
-                if buffer_size == 2 {
+                if buffer_size == 3 {
                     assert_eq!(
                         predicted,
                         reference.decode_to_observables(&syndrome).unwrap(),

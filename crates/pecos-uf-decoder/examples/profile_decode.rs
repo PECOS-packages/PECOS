@@ -121,24 +121,4 @@ fn main() {
     profile_phases("d3", D3_DEM, num_shots);
     profile_phases("d5", D5_DEM, num_shots);
     profile_phases("d7", D7_DEM, num_shots);
-
-    // Also profile with balanced config (Prim MST)
-    println!();
-    println!("=== Balanced (Prim MST) ===");
-    let graph = DemMatchingGraph::from_dem_str(D5_DEM).unwrap();
-    let mut dec = UfDecoder::from_matching_graph(&graph, UfDecoderConfig::balanced()).unwrap();
-    let num_det = graph.num_detectors;
-
-    let mut rng = fastrand::Rng::with_seed(42);
-    let syndromes: Vec<Vec<u8>> = (0..num_shots)
-        .map(|_| (0..num_det).map(|_| u8::from(rng.f64() < 0.05)).collect())
-        .collect();
-
-    let t0 = Instant::now();
-    for syn in &syndromes {
-        let _ = dec.decode_syndrome(syn);
-    }
-    let elapsed = t0.elapsed();
-    let per_shot_ns = elapsed.as_secs_f64() * 1.0e9 / shots_as_f64(num_shots);
-    println!("d5-bal : {num_det:3} det, {per_shot_ns:8.0} ns/shot");
 }

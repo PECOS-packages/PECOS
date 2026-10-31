@@ -6,6 +6,7 @@ permissions:
 on:
   workflow_dispatch:
   push:
+    tags: ["py-*", "jl-*", "rs-*"]
     branches: [main, master, development, dev]
     paths:
       - 'crates/**'
@@ -24,6 +25,9 @@ on:
       - '.cargo/**'
       - 'scripts/ci/ensure-rust.sh'
       - '.github/workflows/circuit-inspector.yml'
+
+  schedule:
+    - cron: "23 22 * * *"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}

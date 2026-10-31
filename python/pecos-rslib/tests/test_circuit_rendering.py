@@ -145,9 +145,7 @@ def test_dag_range_uses_layers_not_original_ticks():
         dag.render(stop=3)
 
 
-@pytest.mark.parametrize(
-    "bounds", [{"start": -1}, {"stop": -1}, {"start": 2, "stop": 1}, {"stop": 5}]
-)
+@pytest.mark.parametrize("bounds", [{"start": -1}, {"stop": -1}, {"start": 2, "stop": 1}, {"stop": 5}])
 def test_render_rejects_invalid_ranges(bounds):
     circuit = TickCircuit()
     circuit.tick().h([0])
@@ -161,25 +159,17 @@ def test_measurement_ids_preserve_sparse_operand_mapping_and_ranges(output_forma
     circuit.tick().h([2, 8])
     circuit.tick().mz_with_ids([8, 2], [42, 7])
     for source in [circuit, circuit.to_dag_circuit()]:
-        assert source.render(output_format) == source.render(
-            output_format, show_measurement_ids=False
-        )
+        assert source.render(output_format) == source.render(output_format, show_measurement_ids=False)
         shown = source.render(output_format, start=1, stop=2, show_measurement_ids=True)
         assert "MZ[m42]" in shown
         assert "MZ[m7]" in shown
         if output_format == "ascii":
-            rows = {
-                row.split(":", 1)[0].strip(): row
-                for row in shown.splitlines()
-                if row.startswith("q")
-            }
+            rows = {row.split(":", 1)[0].strip(): row for row in shown.splitlines() if row.startswith("q")}
             assert "MZ[m42]" in rows["q8"]
             assert "MZ[m7]" in rows["q2"]
 
 
-@pytest.mark.parametrize(
-    ("gate_type", "symbol"), [("MZ", "MZ"), ("MeasureLeaked", "MZ_L")]
-)
+@pytest.mark.parametrize(("gate_type", "symbol"), [("MZ", "MZ"), ("MeasureLeaked", "MZ_L")])
 def test_measurement_labels_do_not_assign_missing_ids(gate_type, symbol):
     circuit = TickCircuit()
     circuit.tick().add_gate(gate_type, [2, 8])
@@ -210,9 +200,7 @@ def test_explicit_leakage_ids_keep_operand_order_metadata_and_reserve_ids():
     assert circuit.get_tick(1).gate_batches()[0].meas_ids == [43]
 
 
-@pytest.mark.parametrize(
-    ("qubits", "ids"), [([0], []), ([0, 1], [7, 7]), ([0], [2**64 - 1])]
-)
+@pytest.mark.parametrize(("qubits", "ids"), [([0], []), ([0, 1], [7, 7]), ([0], [2**64 - 1])])
 def test_invalid_explicit_leakage_ids_leave_gate_and_counter_unchanged(qubits, ids):
     circuit = TickCircuit()
     handle = circuit.tick()

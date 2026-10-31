@@ -26,6 +26,7 @@ shopt -s inherit_errexit
 branches=(dev)
 workflows=(
   cargo-deny.yml
+  circuit-inspector.yml
   codeql.yml
   cuda-build-check.yml
   dependency-integrity-check.yml
@@ -63,6 +64,7 @@ superseded_ok=(julia-release.yml python-release.yml)
 # commit time for a merge commit.
 daily_workflows=(
   cargo-deny.yml
+  circuit-inspector.yml
   codeql.yml
   cuda-build-check.yml
   dependency-integrity-check.yml

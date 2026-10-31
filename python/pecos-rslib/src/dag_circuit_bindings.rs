@@ -139,7 +139,7 @@ fn inspection_to_py(
             "angles_radians",
             gate.angles
                 .iter()
-                .map(|angle| angle.to_radians())
+                .map(pecos_core::Angle::to_radians)
                 .collect::<Vec<_>>(),
         )?;
         // Decimal strings preserve the fixed-point u64 values in browser JSON.

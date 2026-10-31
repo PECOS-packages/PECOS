@@ -2624,7 +2624,13 @@ mod tests {
 
     #[test]
     fn interaction_labels_stay_between_qubit_wires() {
-        for bottom in 1..6 {
+        for (bottom, svg_y, tikz_y) in [
+            (1, 40.0, -0.4),
+            (2, 40.0, -0.4),
+            (3, 80.0, -1.2),
+            (4, 80.0, -1.2),
+            (5, 120.0, -2.0),
+        ] {
             let mut d = CircuitDiagram::new(6);
             d.add_control(0);
             d.add_control(bottom);
@@ -2643,13 +2649,12 @@ mod tests {
                 .unwrap()
                 .parse()
                 .unwrap();
-            assert_eq!(y, (((bottom - 1) / 2 + 1) * 40) as f64);
+            assert_eq!(y, svg_y);
             let tikz = d.render_tikz("");
-            let label_y = -(((bottom - 1) / 2) as f64 + 0.5) * 0.8;
             assert!(
                 tikz.lines()
                     .any(|line| line.contains("{\\footnotesize RZZ}")
-                        && line.contains(&format!(",{label_y:.2})")))
+                        && line.contains(&format!(",{tikz_y:.2})")))
             );
         }
     }

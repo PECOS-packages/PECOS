@@ -1,10 +1,11 @@
-"""NumPy wrapper pins recorded on dev ad1e97642, before #1480 batch validation.
+"""NumPy wrapper pins recorded on dev ad1e97642, updated for #1480 batch validation.
 
 NumPy is installed by the workspace test dependency group. This module groups
 NumPy scalar and array location cases separately from the main wrapper corpus.
 """
 
 import numpy as np
+import pecos
 import pytest
 from pecos import simulators
 from pecos.simulators import CoinToss, PauliProp
@@ -60,18 +61,15 @@ def test_numpy_pair_tuple(state):
 
 def test_numpy_zero_dimensional_location(state):
     location = np.array(1)
-    if isinstance(state, PauliProp):
-        with pytest.raises(TypeError, match=r"^unhashable type: 'numpy\.ndarray'$"):
-            state.run_gate("X", [location])
-    else:
-        # KNOWN-WRONG (#1480): An unhashable 0-d location is accepted for mutation, then fails on result insertion.
+    if isinstance(state, CoinToss):
         assert state.run_gate("X", [location]) == {}
-        if isinstance(state, CoinToss):
-            assert state.run_gate("Measure", [location]) == {}
-        else:
-            with pytest.raises(TypeError, match=r"^unhashable type: 'numpy\.ndarray'$"):
-                state.run_gate("Measure", [location])
-            assert state.run_gate("Measure", {1}) == {1: 1}
+        assert state.run_gate("Measure", [location]) == {}
+    else:
+        # Unhashable qubits are rejected before either mutation or measurement.
+        for symbol in ("X", "Measure"):
+            with pytest.raises(ValueError, match=f"{symbol}: expected a hashable qubit index"):
+                state.run_gate(symbol, [location])
+        assert state.run_gate("Measure", {1}) == {}
 
 
 def test_numpy_bare_zero_dimensional_array(state):
@@ -82,3 +80,22 @@ def test_numpy_bare_zero_dimensional_array(state):
     else:
         with pytest.raises(TypeError, match=r"^iteration over a 0-d array$"):
             state.run_gate("X", np.array(1))
+
+
+@pytest.mark.parametrize("name", ["StateVec", "SparseStabPy", "PauliProp"])
+def test_numpy_unhashable_pair_tail_is_atomic(name):
+    state = getattr(simulators, name)(num_qubits=4)
+    if isinstance(state, PauliProp):
+        state.faults = {"X": {0}, "Y": set(), "Z": set()}
+    else:
+        state.run_gate("X", [0])
+    with pytest.raises(ValueError, match="CX: expected a hashable qubit index"):
+        state.run_gate("CX", [(0, 1), (np.array(2), 3)])
+    assert state.run_gate("Measure", [0, 1]) == {0: 1}
+    state.run_gate("CX", [(0, 1)])
+    assert state.run_gate("Measure", [0, 1]) == {0: 1, 1: 1}
+
+
+def test_hybrid_numpy_zero_dimensional_zero_raises():
+    with pytest.raises(TypeError, match=r"len\(\) of unsized object"):
+        pecos.HybridEngine.run_gate(simulators.SparseStabPy(2), {}, "X", np.array(0))

@@ -70,6 +70,7 @@ class CuStateVec(StateVector):
         super().__init__()
 
         self.bindings = bindings.gate_dict
+        self.gate_capacity = num_qubits
         self.num_qubits = num_qubits
 
         try:

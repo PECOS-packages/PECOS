@@ -80,6 +80,24 @@ pub struct PecosRuntime {
     closed: bool,
     ending: bool,
 }
+// Only the physical operations emitted by this scheduler reach this helper.
+// Their one or two qubit IDs fit on the stack; conflict checks need no hash set.
+fn operation_qubits(op: &Operation) -> impl Iterator<Item = u64> + Clone + use<> {
+    let ids = match *op {
+        Operation::RXYGate { qubit_id, .. }
+        | Operation::Reset { qubit_id }
+        | Operation::Measure { qubit_id, .. }
+        | Operation::MeasureLeaked { qubit_id, .. } => [Some(qubit_id), None],
+        Operation::RZZGate {
+            qubit_id_1,
+            qubit_id_2,
+            ..
+        } => [Some(qubit_id_1), Some(qubit_id_2)],
+        _ => unreachable!("unsupported internal scheduler operation"),
+    };
+    ids.into_iter().flatten()
+}
+
 impl PecosRuntime {
     /// Construct a runtime. Gate durations may be zero; storage limits must be positive.
     /// # Errors
@@ -129,41 +147,47 @@ impl PecosRuntime {
     }
     fn push(&mut self, op: Operation, duration: u64) -> Result<()> {
         self.live()?;
-        let qubits = op.get_qubit_ids();
+        let qubits = operation_qubits(&op);
         let mut earliest = self.emitted_end;
-        for q in &qubits {
-            earliest = earliest.max(self.qubit(*q)?.available);
+        for q in qubits.clone() {
+            earliest = earliest.max(self.qubit(q)?.available);
         }
         let mut candidate = None;
-        // Sealed batches cannot accept work submitted after a force or barrier.
-        for (i, batch) in self.queue.iter().enumerate().skip(self.ready).rev() {
-            if !batch.get_qubit_ids().is_disjoint(&qubits) {
-                break;
-            }
-            let source = batch.runtime_source().expect("runtime batch");
-            let start: u64 = source.start().into();
-            if start < earliest {
-                break;
-            }
-            if batch.len() < self.config.max_batch_size
-                && batch
+        // Singleton batches cannot accept another operation, so skip the search.
+        if self.config.max_batch_size > 1 {
+            // Sealed batches cannot accept work submitted after a force or barrier.
+            for (i, batch) in self.queue.iter().enumerate().skip(self.ready).rev() {
+                if batch
                     .iter_ops()
-                    .all(|other| std::mem::discriminant(other) == std::mem::discriminant(&op))
-            {
-                candidate = Some(i);
-            }
-            // Measurement results are delivered in source order, including when
-            // a host maps multiple native futures to the same program slot.
-            if matches!(
-                op,
-                Operation::Measure { .. } | Operation::MeasureLeaked { .. }
-            ) && batch.iter_ops().any(|other| {
-                matches!(
-                    other,
+                    .any(|other| operation_qubits(other).any(|q| qubits.clone().any(|id| id == q)))
+                {
+                    break;
+                }
+                let source = batch.runtime_source().expect("runtime batch");
+                let start: u64 = source.start().into();
+                if start < earliest {
+                    break;
+                }
+                if batch.len() < self.config.max_batch_size
+                    && batch
+                        .iter_ops()
+                        .all(|other| std::mem::discriminant(other) == std::mem::discriminant(&op))
+                {
+                    candidate = Some(i);
+                }
+                // Measurement results are delivered in source order, including when
+                // a host maps multiple native futures to the same program slot.
+                if matches!(
+                    op,
                     Operation::Measure { .. } | Operation::MeasureLeaked { .. }
-                )
-            }) {
-                break;
+                ) && batch.iter_ops().any(|other| {
+                    matches!(
+                        other,
+                        Operation::Measure { .. } | Operation::MeasureLeaked { .. }
+                    )
+                }) {
+                    break;
+                }
             }
         }
         if let Some(i) = candidate {
@@ -432,13 +456,10 @@ impl RuntimeInterface for PecosRuntime {
         let mut ready = self.ready;
         for id in ids {
             let mut end = self.emitted_end.max(self.qubit(*id)?.available);
-            if let Some((i, batch)) = self
-                .queue
-                .iter()
-                .enumerate()
-                .rev()
-                .find(|(_, b)| b.get_qubit_ids().contains(id))
-            {
+            if let Some((i, batch)) = self.queue.iter().enumerate().rev().find(|(_, b)| {
+                b.iter_ops()
+                    .any(|op| operation_qubits(op).any(|q| q == *id))
+            }) {
                 ready = ready.max(i + 1);
                 end = end.max(batch.runtime_source().expect("runtime batch").end().into());
             }

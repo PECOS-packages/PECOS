@@ -38,6 +38,10 @@ interface.
 - RZ rotates a software phase; subsequent RXY axes incorporate that phase.
   RXY, RZ and RZZ are accepted. RPP is unsupported and must be decomposed by the
   caller. Noise applies to emitted operations, not eliminated virtual rotations.
+  Phase tracking currently accumulates `f64` angles without range reduction:
+  extreme magnitudes can lose smaller intervening rotations, for example
+  `RZ(2^54); RZ(1); RZ(-2^54)`. Bounded-frame tracking needs a coordinated change
+  to the runtime and PECOS source-provenance matching.
 - Independent operations of the same kind can share a batch up to
   `max_batch_size`. Measurement emissions retain source order, including across
   ordinary and leakage measurements. This preserves reused PECOS result slots.

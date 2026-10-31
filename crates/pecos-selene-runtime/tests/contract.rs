@@ -297,3 +297,65 @@ fn explicit_result_limit_preserves_live_handles_and_reclaims_retired_ones() {
     assert!(r.get_bool_result(id).is_err());
     assert!(r.measure(1).is_ok());
 }
+
+#[test]
+fn two_qubit_dependencies_survive_independent_pulse_packing() {
+    for max_batch_size in [1, 2, 8] {
+        let mut r = runtime(RuntimeConfig {
+            max_batch_size,
+            duration_ns_rxy: 10,
+            duration_ns_rzz: 30,
+            ..Default::default()
+        });
+        r.rxy_gate(0, 0.1, 0.0).unwrap();
+        r.rzz_gate(0, 1, 0.2).unwrap();
+        r.rxy_gate(1, 0.3, 0.0).unwrap();
+        r.rxy_gate(2, 0.4, 0.0).unwrap();
+        r.rzz_gate(1, 2, 0.5).unwrap();
+        r.global_barrier(0).unwrap();
+        let batches = drain(&mut r);
+        let timings: Vec<_> = batches
+            .iter()
+            .map(|batch| {
+                let source = batch.runtime_source().unwrap();
+                (
+                    u64::from(source.start()),
+                    u64::from(source.end()),
+                    batch.len(),
+                )
+            })
+            .collect();
+        if max_batch_size == 1 {
+            assert_eq!(
+                timings,
+                [
+                    (100, 110, 1),
+                    (110, 140, 1),
+                    (140, 150, 1),
+                    (150, 160, 1),
+                    (160, 190, 1)
+                ]
+            );
+        } else {
+            assert_eq!(
+                timings,
+                [(100, 110, 2), (110, 140, 1), (140, 150, 1), (150, 180, 1)]
+            );
+            assert_eq!(
+                batches[0].iter_ops().cloned().collect::<Vec<_>>(),
+                [
+                    Operation::RXYGate {
+                        qubit_id: 0,
+                        theta: 0.1,
+                        phi: 0.0
+                    },
+                    Operation::RXYGate {
+                        qubit_id: 2,
+                        theta: 0.4,
+                        phi: 0.0
+                    },
+                ]
+            );
+        }
+    }
+}

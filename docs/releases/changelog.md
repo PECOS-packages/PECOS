@@ -15,7 +15,8 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   referencing a name that is not one of its declared parameters is also rejected,
   even if the gate is unused or a classical register has that name. Gate and
   opaque formal parameters are unaffected. `pecos_qasm::bitvec_expression::evaluate_expression_bitvec`
-  drops its unused width argument.
+  drops its unused width argument, and `pecos_qasm::dag_bridge::QasmBridgeError`
+  gains an `InvalidProgram` variant.
 
 - **Breaking:** Python simulator wrappers and the public `pecos.HybridEngine`
   validate whole known-gate batches per `run_gate` call and per circuit item

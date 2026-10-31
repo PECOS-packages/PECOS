@@ -543,3 +543,11 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+pub(crate) fn pecos_test_runtime(args: &[&str]) -> SeleneRuntime {
+    let path = find_built_selene_runtime("pecos_selene_runtime_plugin")
+        .expect("Cargo must build the PECOS runtime plugin dev dependency");
+    SeleneRuntime::with_plugin_config(path, args.iter().map(ToString::to_string).collect(), vec![])
+        .with_native_gate_set(RuntimeNativeGateSet::RXY_RZ_RZZ)
+}

@@ -71,6 +71,7 @@ rev = "458d640dc4cf84a7a7988ea65ce5a9f7bcb8c511"
 libc.workspace = true
 
 [dev-dependencies]
+pecos-selene-runtime-plugin = { path = "../../python/selene-plugins/pecos-selene-runtime-plugin" }
 pecos-simulators.workspace = true
 num-complex.workspace = true
 pecos-qis-test-runtime = { path = "tests/fixtures/runtime-descriptor" }

@@ -104,6 +104,10 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   also returns `MeasurementWork`, the refactor and decouple work that
   measurement executed, for benchmarking.
 
+- Python: C4-Helix two-block circuits apply a transversal CNOT between syndrome
+  rounds, with block-prefixed measurement labels and discovered detectors
+  (`cnot_circuit`, `cnot_definitions`); measured distance is 5 <= d <= 6.
+
 - Python: C4-Helix logic words render to certified Guppy programs with reusable
   gate gadgets and data relabels. `logic_definitions` supplies typed detectors
   and signed observable references for `build_dem_from_guppy`.

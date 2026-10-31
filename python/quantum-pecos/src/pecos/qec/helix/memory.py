@@ -82,6 +82,25 @@ def set_discovered_metadata(circuit: TickCircuit, found: DiscoveredDetectors) ->
     circuit.set_meta("num_detectors", str(len(detectors)))
 
 
+def discovered_definitions(
+    circuit: TickCircuit,
+    found: DiscoveredDetectors,
+) -> tuple[list[Detector], list[Observable]]:
+    """Return typed parities, rejecting nonzero detectors and retaining observable signs."""
+    refs = [result_ref(tag, occurrence=occurrence) for tag, occurrence in helix_result_refs(circuit)]
+    detectors = []
+    for index, (records, reference) in enumerate(found.detectors):
+        if reference != 0:
+            msg = f"Detector {index} has nonzero reference {reference}: {records}"
+            raise ValueError(msg)
+        detectors.append(Detector(*(refs[record] for record in records), id=index))
+    observables = [
+        Observable(*(refs[record] for record in records), id=index, metadata={"reference": reference})
+        for index, (records, reference) in enumerate(found.observables)
+    ]
+    return detectors, observables
+
+
 def memory_definitions(basis: str, rounds: int) -> tuple[list[Detector], list[Observable]]:
     """Return discovered parities with scalar result references independent of scheduling."""
     circuit, found = _memory_discovery(basis, rounds)

@@ -110,7 +110,7 @@ def helix_result_classifier() -> Callable[[str, Callable[[str], object]], Result
 
     def classify(label: str, _meta: Callable[[str], object]) -> ResultRef:
         if re.fullmatch(
-            r"(?:c4[xz]:[0-4]|[xz]8:[0-3]|flag:[xz][0-3]\.[1-3]|czf:[0-6]\.[xz]|data:(?:[0-9]|1[0-9]))",
+            r"(?:[AB]\.)?(?:c4[xz]:[0-4]|[xz]8:[0-3]|flag:[xz][0-3]\.[1-3]|czf:[0-6]\.[xz]|data:(?:[0-9]|1[0-9]))",
             label,
         ):
             return ("scalar", label)

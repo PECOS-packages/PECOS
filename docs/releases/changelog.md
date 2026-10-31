@@ -18,8 +18,9 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   declaration order. Noncontiguous child placements raise `ValueError`.
   Hand-built AST child allocators must specify `offset`; older JSON without a
   child offset raises `ValueError` instead of silently aliasing sibling storage.
-  `QAlloc(n, parent=p)` now reserves slots exactly like `p.child(n)`.
-  **Breaking:** every declaration, including declarations in Main, must use
+  **Breaking:** `QAlloc(n, parent=p)` now reserves slots exactly like
+  `p.child(n)`, so the parent slots it covers can no longer be used directly
+  (it used to reserve nothing). Every declaration, including declarations in Main, must use
   the same storage for a duplicate name (same size and, for child allocators,
   the same parent and offset), or conversion raises `ValueError`.
   Nested `block_inputs` functions cannot introduce registers that exist only
@@ -28,8 +29,10 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   In complete programs (`Main`), QASM rejects undeclared register and allocator
   references, including inline measurement outputs that could collide with swap
   temporaries. Stim, QIR and QuantumCircuit also reject undeclared quantum
-  allocators in complete programs. These undeclared-reference errors use
-  `ValueError`. Of the backends that accepted inline measurement outputs on dev,
+  allocators in complete programs. These undeclared-reference errors, and the
+  existing ones for QIR undeclared classical storage, unknown `Permute`
+  references and unknown `prepare_all` allocators, raise `ValueError` instead
+  of `NotImplementedError`. Of the backends that accepted inline measurement outputs on dev,
   only QASM rejects them: every classical register must be declared in the program.
   Stim and QuantumCircuit continue to accept inline outputs and preserve their
   measurement mappings. QIR continues to require declared classical storage;

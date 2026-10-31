@@ -412,7 +412,7 @@ class SlrToAst:
 
         if var_class == "QReg":
             # QReg maps to AllocatorDecl
-            return AllocatorDecl(name=var.sym, capacity=var.size, offset=0)
+            return AllocatorDecl(name=var.sym, capacity=var.size)
 
         if var_class == "CReg":
             # CReg maps to RegisterDecl

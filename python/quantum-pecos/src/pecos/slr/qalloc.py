@@ -143,6 +143,12 @@ class QAlloc:
             parent: Parent allocator to reserve slots from, as with parent.child().
                 None creates a base allocator.
         """
+        if parent is not None and not isinstance(parent, QAlloc):
+            msg = (
+                f"QAlloc parent must be a QAlloc, got {type(parent).__name__} {parent!r}; "
+                "build children with parent.child(n, name=...)"
+            )
+            raise TypeError(msg)
         if parent is None and capacity < 0:
             msg = f"Capacity must be non-negative, got {capacity}"
             raise ValueError(msg)
@@ -199,10 +205,10 @@ class QAlloc:
         return tuple(self._parent_indices)
 
     @property
-    def parent_offset(self) -> int:
-        """First reserved parent slot, rejecting placements a contiguous AST cannot represent."""
+    def parent_offset(self) -> int | None:
+        """First reserved parent slot (None for a root), rejecting placements a contiguous AST cannot represent."""
         if self._parent is None:
-            return 0
+            return None
         offset = self._parent_indices[0] if self._parent_indices else 0
         if self._parent_indices != list(range(offset, offset + self.capacity)):
             msg = f"Allocator {self.name!r} must have contiguous parent indices for all {self.capacity} slots."

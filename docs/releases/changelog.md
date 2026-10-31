@@ -1015,8 +1015,15 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 - pecos-neo gate suppression applies per operand group in batched commands,
   including adapted circuits and importance sampling. `LeakageChannel` injects
   partner Pauli noise only within pairs containing exactly one leaked qubit.
-  Adapted gate execution now emits one after-gate event with the full operand
-  slice even when some or all groups are skipped, matching queue execution.
+
+- pecos-neo suppressed operand groups without a leaked qubit receive no
+  after-gate noise (including idle-after-two-qubit-gate noise and acting as a
+  crosstalk source); their qubits can now be crosstalk targets of the groups
+  that ran. The after-gate event, and user after-gate handlers on the
+  queue path, carry executed groups plus groups suppressed while containing a
+  leaked qubit at the skip decision, in original operand order. A non-empty
+  command whose groups were all suppressed without leakage emits no after-gate
+  event; commands with no operands are unchanged.
 
 - Gate commands with more than 255 qubits no longer panic. PHIR-JSON broadcasts
   use one command per operation, retaining individual preparation/measurement

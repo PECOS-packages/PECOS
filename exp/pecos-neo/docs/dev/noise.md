@@ -280,6 +280,16 @@ When noise is applied, it produces a `NoiseResponse` that the runner processes:
 | `NoiseResponse::MarkLeaked(qubits)` | Mark qubits as leaked in context |
 | `NoiseResponse::Multiple(responses)` | Combine multiple responses |
 
+After-gate noise and queue user after-gate handlers receive only executed groups
+and groups suppressed while containing a leaked qubit. This partition uses the
+noise context immediately after before-gate dispatch and preserves operand order.
+Groups suppressed without leakage receive no after-gate noise, even if leakage
+appears during decomposition. If a non-empty command has no retained groups, it
+emits no after-gate event; originally empty operands keep their normal behavior.
+Because idle-after-two-qubit-gate noise and crosstalk sources also come from the
+after-gate event, a group suppressed without leakage gets neither; its qubits can
+still be crosstalk targets of the groups that ran.
+
 ## Noise Context
 
 The `NoiseContext` tracks simulation state for noise decisions:

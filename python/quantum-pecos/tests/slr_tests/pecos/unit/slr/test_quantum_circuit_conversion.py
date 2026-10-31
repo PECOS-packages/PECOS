@@ -476,7 +476,8 @@ class TestQuantumCircuitIf:
 
 @pytest.mark.parametrize("scope", ["main", "block", "parallel", "repeat", "for-range", "for-bounds", "nested-for"])
 @pytest.mark.parametrize(
-    "kind", ["register-set", "bit-set", "register-print", "bit-print", "binary", "unary", "compare"],
+    "kind",
+    ["register-set", "bit-set", "register-print", "bit-print", "binary", "unary", "compare"],
 )
 def test_legacy_quantum_circuit_rejects_classical_operations(scope: str, kind: str) -> None:
     """Classical statements must not fall through the empty quantum-target path."""

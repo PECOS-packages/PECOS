@@ -473,14 +473,11 @@ def test_accumulator_rejects_changed_keys(first, second):
 
 
 @pytest.mark.parametrize("runner", ["default", "python", "native"])
-@pytest.mark.parametrize("declared", [False, True])
-def test_result_source_width_conflict_at_load(runner, declared):
+def test_result_source_signedness_conflict_at_load(runner):
     ops = [
-        {"data": "cvar_define", "variable": "a", "data_type": "u32", "size": 2},
+        {"data": "cvar_define", "variable": "a", "data_type": "i32", "size": 2},
         {"data": "cvar_define", "variable": "b", "data_type": "u32", "size": 3},
     ]
-    if declared:
-        ops.append({"data": "cvar_define", "variable": "copy", "data_type": "u32", "size": 4})
     ops.append(
         {
             "block": "if",
@@ -491,7 +488,7 @@ def test_result_source_width_conflict_at_load(runner, declared):
             ],
         },
     )
-    with pytest.raises((ValueError, RuntimeError), match=r"copy.*source widths"):
+    with pytest.raises((ValueError, RuntimeError), match=r'copy.*conflicting signedness.*"a".*"b"'):
         load(program(ops), runner)
 
 
@@ -516,5 +513,181 @@ def test_unexecuted_result_uses_destination_final_value_and_type(runner):
         run(source, runner, return_int=False),
         {"created": 0, "declared": 126},
         {"created": 5, "declared": 7},
+        bitstrings=runner != "native",
+    )
+
+
+@pytest.mark.parametrize("runner", ["default", "python", "native"])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_result_widths_are_static_maxima(runner, reverse):
+    copies = [
+        {"cop": "Result", "args": [["a", 0]], "returns": [["out", 0]]},
+        {"cop": "Result", "args": [["b", 1]], "returns": [["out", 40]]},
+        {"cop": "Result", "args": ["a"], "returns": ["whole"]},
+        {"cop": "Result", "args": ["b"], "returns": ["whole"]},
+        {"cop": "Result", "args": [["b", 1]], "returns": ["bit"]},
+        {"cop": "Result", "args": ["whole"], "returns": ["chain"]},
+    ]
+    source = program(
+        [
+            {"data": "cvar_define", "variable": "a", "data_type": "u32", "size": 1},
+            {"data": "cvar_define", "variable": "b", "data_type": "u64", "size": 50},
+            export(),
+            *(reversed(copies) if reverse else copies),
+        ],
+    )
+    assert_output(
+        run(source, runner, return_int=False),
+        {"out": 0, "whole": 0, "bit": 0, "chain": 0},
+        {"out": 41, "whole": 50, "bit": 1, "chain": 50},
+        bitstrings=runner != "native",
+    )
+
+
+@pytest.mark.parametrize("runner", ["default", "python", "native"])
+@pytest.mark.parametrize(
+    ("a_type", "a_size", "b_size"), [("u32", 8, 1), ("u32", 2, 3), ("u32", 1, 1), ("u32", 1, 2), ("i32", 2, 3)],
+)
+def test_declared_results_accept_all_source_types(runner, a_type, a_size, b_size):
+    source = program(
+        [
+            {"data": "cvar_define", "variable": "a", "data_type": a_type, "size": a_size},
+            {"data": "cvar_define", "variable": "b", "data_type": "u32", "size": b_size},
+            {"data": "cvar_define", "variable": "out", "data_type": "u32", "size": 8},
+            export(),
+            {"cop": "=", "args": [1], "returns": ["a"]},
+            {"cop": "=", "args": [1], "returns": ["b"]},
+            {
+                "cop": "Result",
+                "args": ["a", "b", ["a", 0], ["b", 0]],
+                "returns": ["out", "out", ["out", 6], ["out", 7]],
+            },
+        ],
+    )
+    assert_output(run(source, runner), {"out": 193}, {"out": 8})
+
+
+@pytest.mark.parametrize("runner", ["default", "python", "native"])
+def test_result_created_names_are_hoisted(runner):
+    source = program(
+        [
+            {"data": "cvar_define", "variable": "a", "data_type": "u32", "size": 3},
+            export("a"),
+            {"cop": "=", "args": ["created"], "returns": ["a"]},
+            {"cop": "=", "args": [5], "returns": ["created"]},
+            {
+                "block": "if",
+                "condition": {"cop": "==", "args": [0, 1]},
+                "true_branch": [
+                    {"cop": "Result", "args": ["a"], "returns": ["created"]},
+                ],
+            },
+        ],
+    )
+    assert_output(run(source, runner), {"a": 0, "created": 5}, {"a": 3, "created": 3})
+
+
+@pytest.mark.parametrize("runner", ["default", "python", "native"])
+def test_no_exports_report_all_classical_storage(runner):
+    source = program(
+        [
+            {"data": "qvar_define", "variable": "q", "size": 1},
+            {"data": "cvar_define", "variable": "measurement_user", "data_type": "u32", "size": 2},
+            {"data": "cvar_define", "variable": "a", "data_type": "u32", "size": 2},
+            {"cop": "Result", "args": ["a"], "returns": ["copy"]},
+        ],
+    )
+    assert_output(
+        run(source, runner), {"a": 0, "copy": 0, "measurement_user": 0}, {"a": 2, "copy": 2, "measurement_user": 2},
+    )
+    assert run(program(source["ops"][:1]), runner) == {}
+
+
+@pytest.mark.parametrize("runner", ["default", "python", "native"])
+def test_grouped_measure_counts_qubits(runner):
+    source = program(
+        [
+            {"data": "qvar_define", "variable": "q", "size": 2},
+            {"data": "cvar_define", "variable": "m", "data_type": "u32", "size": 2},
+            {"qop": "X", "args": [["q", 1]]},
+            {"qop": "Measure", "args": [[["q", 0], ["q", 1]]], "returns": [["m", 0], ["m", 1]]},
+        ],
+    )
+    assert_output(run(source, runner), {"m": 2}, {"m": 2})
+
+
+@pytest.mark.parametrize("runner", ["default", "python", "native"])
+@pytest.mark.parametrize(
+    ("args", "returns"),
+    [
+        (None, [["m", 0]]),
+        ("q", [["m", 0]]),
+        ({"q": 0}, [["m", 0]]),
+        ([["q", 0]], "m"),
+        ([["q", 0]], {"m": 0}),
+        ([[["q", 0], ["q", 1]]], [["m", 0]]),
+    ],
+)
+def test_malformed_measure_diagnostics_name_the_operation(runner, args, returns):
+    source = program([{"qop": "Measure", "args": args, "returns": returns}])
+    encoded_args = json.dumps(args, separators=(",", ":"), ensure_ascii=False)
+    encoded_returns = json.dumps(returns, separators=(",", ":"), ensure_ascii=False)
+    diagnostic = (
+        f"Measure args {encoded_args}: invalid args or returns {encoded_returns}; "
+        "supply arrays and give each measured qubit a destination"
+    )
+    with pytest.raises((ValueError, RuntimeError)) as error:
+        load(source, runner)
+    assert diagnostic in str(error.value)
+
+
+@pytest.mark.parametrize("interpreter", ["rust", "python"])
+def test_noise_measurement_stays_internal(interpreter):
+    from pecos.noise.error_model import NoErrorModel
+    from pecos.reps.pyphir.op_types import QOp
+
+    class InjectMeasurement(NoErrorModel):
+        def process(self, ops, _callback=None):
+            result = []
+            for op in ops:
+                result.append(op)
+                if op.name == "Measure":
+                    result.append(QOp("Measure", [1], returns=[["__q1__", 0]]))
+            return result
+
+    source = program(
+        [
+            {"data": "qvar_define", "variable": "q", "size": 2},
+            {"data": "cvar_define", "variable": "m", "data_type": "u32", "size": 1},
+            {"qop": "X", "args": [["q", 1]]},
+            {"qop": "Measure", "args": [["q", 0]], "returns": [["m", 0]]},
+        ],
+    )
+    engine = HybridEngine(cinterp=interpreter, qsim="stabilizer", error_model=InjectMeasurement())
+    assert engine.run(source, shots=2, return_int=True, seed=1) == {"m": [0, 0]}
+
+
+@pytest.mark.parametrize("runner", ["default", "python", "native"])
+def test_indexed_results_reserve_unexecuted_writes(runner):
+    source = program(
+        [
+            {"data": "cvar_define", "variable": "s", "data_type": "i32", "size": 2},
+            {"data": "cvar_define", "variable": "u", "data_type": "u32", "size": 5},
+            export(),
+            {"cop": "=", "args": [-1], "returns": ["s"]},
+            {"cop": "Result", "args": [["s", 0], ["s", 0]], "returns": [["out", 0], "bit"]},
+            {
+                "block": "if",
+                "condition": {"cop": "==", "args": [0, 1]},
+                "true_branch": [
+                    {"cop": "Result", "args": [["u", 0], ["u", 0]], "returns": [["out", 40], "bit"]},
+                ],
+            },
+        ],
+    )
+    assert_output(
+        run(source, runner, return_int=False),
+        {"out": 1, "bit": 1},
+        {"out": 41, "bit": 1},
         bitstrings=runner != "native",
     )

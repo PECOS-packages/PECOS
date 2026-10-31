@@ -1656,94 +1656,15 @@ impl OperationProcessor {
     /// and provides a clean, simple approach to gathering exported values.
     #[must_use]
     pub fn process_export_mappings(&self) -> BTreeMap<String, u64> {
-        if let Some(outputs) = self
-            .environment
-            .selected_outputs()
-            .or_else(|| self.environment.result_outputs())
-        {
-            return outputs
-                .into_iter()
-                .filter_map(|(output, source)| {
-                    self.environment
-                        .get(&source)
-                        .map(|value| (output, value.as_u64()))
-                })
-                .collect();
-        }
-        let mut exported_values = BTreeMap::new();
-        log::debug!("Processing export mappings using environment as source of truth");
-
-        // Get all mappings from the environment
-        let mappings = self.environment.get_mappings();
-
-        if !mappings.is_empty() {
-            log::debug!(
-                "Processing {} explicit mappings from environment",
-                mappings.len()
-            );
-
-            // Process all explicit mappings first
-            for (source_register, export_name) in mappings {
-                // Skip if we already have this export (in case of duplicates)
-                if exported_values.contains_key(export_name) {
-                    log::debug!("Skipping already processed export: {export_name}");
-                    continue;
-                }
-
-                log::debug!("Processing export mapping: {source_register} -> {export_name}");
-
-                // Primary approach: Direct lookup in environment
-                if self.environment.has_variable(source_register) {
-                    if let Some(value) = self.environment.get(source_register) {
-                        log::debug!("Using value from environment: {source_register} = {value}");
-                        exported_values.insert(export_name.clone(), value.as_u64());
-                    } else {
-                        log::debug!(
-                            "Variable {source_register} exists in environment but has no value"
-                        );
-                    }
-                } else {
-                    // If the source doesn't exist, log but don't use fallbacks since environment
-                    // is the single source of truth
-                    log::warn!(
-                        "Source variable '{source_register}' for export '{export_name}' not found in environment"
-                    );
-                }
-            }
-        }
-
-        // If no explicit mappings or we didn't find any values, include all variables with values
-        if mappings.is_empty() || exported_values.is_empty() {
-            log::debug!("Adding automatic mappings for all variables with values");
-
-            for var_info in self.environment.get_all_variables() {
-                // Skip variables we've already exported
-                if exported_values.contains_key(&var_info.name) {
-                    continue;
-                }
-                // Skip quantum variables and internal measurement variables
-                if var_info.data_type == DataType::Qubits {
-                    continue;
-                }
-                if var_info.name.starts_with("measurement_") {
-                    continue;
-                }
-
-                // Include any variable that has a value
-                if let Some(val) = self.environment.get(&var_info.name) {
-                    log::debug!("Adding variable: {} = {}", var_info.name, val);
-                    exported_values.insert(var_info.name.clone(), val.as_u64());
-                }
-            }
-        }
-
-        // Log summary of what we're exporting
-        log::debug!("Exporting {} values:", exported_values.len());
-        for (name, value) in &exported_values {
-            log::debug!("  {name} = {value}");
-        }
-
-        exported_values
+        self.environment
+            .output_sources()
+            .into_iter()
+            .filter_map(|(output, source)| {
+                self.environment
+                    .get(&source)
+                    .map(|value| (output, value.as_u64()))
+            })
+            .collect()
     }
 }
 

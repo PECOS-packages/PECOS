@@ -30,6 +30,9 @@ from phir.model import (
     Barrier as _Barrier,
 )
 from phir.model import (
+    Bit as _Bit,
+)
+from phir.model import (
     Comment as _Comment,
 )
 from phir.model import (
@@ -74,7 +77,7 @@ from phir.model import (
 from pydantic import model_validator
 
 from pecos._phir_declarations import validate_classical_inputs, validate_declaration_names
-from pecos._phir_exports import validate_declaration_placement
+from pecos._phir_exports import validate_declaration_placement, validate_measure_returns
 
 
 class _PecosCVarDefine(_CVarDefine):
@@ -156,7 +159,26 @@ class RXYXY2QOp(_TQOp):
         raise ValueError(msg)
 
 
-_PecosOpType: TypeAlias = _FFCall | _COp | ResultCOp | RXYXY2QOp | _QOp | _MOpType | _Barrier
+_PecosMeasureArgs: TypeAlias = list[_Bit | list[_Bit]]
+
+
+class _PecosMeasOp(_Op):
+    """Measure accepts grouped qubits with one return per flattened qubit."""
+
+    qop: Literal["Measure"]
+    args: _PecosMeasureArgs
+    returns: list[_Bit]
+
+    @model_validator(mode="before")
+    @classmethod
+    def check_measure(cls, value: dict) -> dict:
+        """Keep malformed fields and flattened counts in the shared diagnostic."""
+        if isinstance(value, dict) and value.get("qop") == "Measure":
+            validate_measure_returns("Measure", value.get("args"), value.get("returns"))
+        return value
+
+
+_PecosOpType: TypeAlias = _FFCall | _COp | ResultCOp | RXYXY2QOp | _PecosMeasOp | _QOp | _MOpType | _Barrier
 
 
 class _PecosSeqBlock(_SeqBlock):
@@ -175,7 +197,7 @@ class _PecosIfBlock(_IfBlock):
 class _PecosQParBlock(_QParBlock):
     """QParBlock with PECOS quantum operations and static export directives."""
 
-    ops: list[_QOp | RXYXY2QOp | _ExportVar]
+    ops: list[_QOp | RXYXY2QOp | _PecosMeasOp | _ExportVar]
 
 
 _PecosBlockType: TypeAlias = _PecosSeqBlock | _PecosQParBlock | _PecosIfBlock

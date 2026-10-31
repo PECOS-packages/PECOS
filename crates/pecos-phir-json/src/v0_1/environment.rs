@@ -530,13 +530,23 @@ impl Environment {
         })
     }
 
-    /// Legacy Result-only selection, fixed across shots even if a branch is not taken.
-    pub(crate) fn result_outputs(&self) -> Option<super::exports::ExportMap> {
-        (!self.result_destinations.is_empty()).then(|| {
-            self.result_destinations
+    /// Explicit exports, or every classical storage location when exports are absent.
+    pub(crate) fn output_sources(&self) -> super::exports::ExportMap {
+        self.selected_outputs().unwrap_or_else(|| {
+            let mut outputs: super::exports::ExportMap = self
+                .metadata
                 .iter()
-                .map(|name| (name.clone(), name.clone()))
-                .collect()
+                .filter(|info| info.data_type != DataType::Qubits)
+                .map(|info| (info.name.clone(), info.name.clone()))
+                .collect();
+            // Preserve aliases installed directly through the Environment API.
+            // PHIR Result mappings are self-mappings and do not select a subset.
+            outputs.extend(
+                self.mappings
+                    .iter()
+                    .map(|(source, dest)| (dest.clone(), source.clone())),
+            );
+            outputs
         })
     }
 
@@ -852,7 +862,7 @@ impl Environment {
                 .map_or(64, |info| info.size);
             if index as usize >= size {
                 return Err(PecosError::Input(format!(
-                    "Result: bit index {index} is invalid for register {} of declared size {size}; use an index below {size}",
+                    "Result: bit index {index} is invalid for register {} of size {size}; use an index below {size}",
                     serde_json::json!(reference.name)
                 )));
             }
@@ -891,21 +901,32 @@ impl Environment {
         Ok(sources.into_iter().zip(destinations).collect())
     }
 
+    pub(crate) fn validate_result_destination_name(&self, name: &str) -> Result<(), PecosError> {
+        if self.quantum_registers.contains_key(name) {
+            return Err(PecosError::Input(format!(
+                "Result: destination {name:?} is quantum; use a classical variable or a new export name"
+            )));
+        }
+        Ok(())
+    }
+
     /// Create Result destinations with the native whole-register or indexed storage rules.
     pub(crate) fn prepare_result_destination(
         &mut self,
         source: &ResultReference,
         destination: &ResultReference,
     ) -> Result<(), PecosError> {
+        self.validate_result_destination_name(&destination.name)?;
         if !self.has_variable(&destination.name) {
-            if self.quantum_registers.contains_key(&destination.name) {
-                return Err(PecosError::Input(format!(
-                    "Result: destination {:?} is quantum; use a classical variable or a new export name",
-                    destination.name
-                )));
-            }
-            let info = self.classical_info(&source.name)?;
-            self.ensure_classical_variable(&destination.name, info.data_type.clone(), info.size)?;
+            let (data_type, size) = if let Some(index) = destination.index {
+                (DataType::U64, (index as usize + 1).max(32))
+            } else if source.index.is_some() {
+                (DataType::U64, 1)
+            } else {
+                let info = self.classical_info(&source.name)?;
+                (info.data_type.clone(), info.size)
+            };
+            self.ensure_classical_variable(&destination.name, data_type, size)?;
         }
         // Earlier pairs may have created this destination with a smaller size.
         self.validate_result_index(destination)
@@ -1108,35 +1129,14 @@ impl Environment {
 
     /// Gets mapped results from the environment
     ///
-    /// This method returns mapped results from defined mappings or falls back to all variables
-    /// if no mappings are defined or no mapped variables have values.
+    /// Honors explicit exports; otherwise includes every classical variable and
+    /// any aliases installed directly through the mapping API.
     #[must_use]
     pub fn get_mapped_results(&self) -> BTreeMap<String, u32> {
-        if let Some(outputs) = self.selected_outputs().or_else(|| self.result_outputs()) {
-            return outputs
-                .into_iter()
-                .filter_map(|(output, source)| {
-                    self.get(&source).map(|value| (output, value.as_u32()))
-                })
-                .collect();
-        }
-        let mut results = BTreeMap::new();
-
-        // Apply all mappings from source to destination
-        for (source, dest) in &self.mappings {
-            if let Some(value) = self.get(source) {
-                results.insert(dest.clone(), value.as_u32());
-            }
-        }
-
-        // If no mappings exist or no values were found, return all variables that have values
-        if results.is_empty() {
-            for (i, info) in self.metadata.iter().enumerate() {
-                results.insert(info.name.clone(), self.values[i].as_u32());
-            }
-        }
-
-        results
+        self.output_sources()
+            .into_iter()
+            .filter_map(|(output, source)| self.get(&source).map(|value| (output, value.as_u32())))
+            .collect()
     }
 
     /// Copy a whole classical register, retaining the destination's declared width.

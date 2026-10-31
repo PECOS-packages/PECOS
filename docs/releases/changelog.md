@@ -23,6 +23,10 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   drops exports of size-0 registers it does not declare. Programs without
   `cvar_export` report what they did before.
 
+- The PECOS QASM parser accepts a `//` line comment that ends at end of input
+  without a newline (#1518). Before, such a program failed with a syntax error,
+  which included SLR-generated QASM ending in a `Comment`.
+
 - **Breaking:** SLR `LoopVar` comparisons (`==`, `!=`, `<`, `>`, `<=`, `>=`)
   and `+`/`-` build SLR expressions (#1517). Before, `i == 0` was a plain
   Python `False`, so `If(i == 0)` inside `For(i, ...)` became a branch that

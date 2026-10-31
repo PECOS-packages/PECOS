@@ -3064,6 +3064,146 @@ ret i64 %status
         }
     }
 
+    #[test]
+    fn observed_read_cancellation_and_recycled_handles_preserve_shot_isolation() {
+        use pecos_qis_ffi_types::{
+            Operation, RUNTIME_REQUEST_RESULT_ID, RuntimeObservedRead, RuntimeRequest,
+            SeleneRequest,
+        };
+        const FUTURE: u64 = (1_u64 << 63) + 7;
+        let _env_lock = ENV_MUTEX.lock().expect("environment lock");
+        let source = include_bytes!("../tests/fixtures/runtime_decode_reused_future.ll");
+        let mut interface = QisHeliosInterface::new();
+        interface
+            .load_program(source, ProgramFormat::LlvmIrText)
+            .unwrap();
+        // Both native measurements deliberately return the SAME high-bit handle.
+        // This tests the FFI bridge, not physical scheduling or DEM certification.
+        let responses = [FUTURE, 1, 0, FUTURE, 0, 0];
+        let expected = [
+            SeleneRequest::Measure {
+                qubit: 0,
+                result_id: 0,
+                leaked: false,
+            },
+            SeleneRequest::ReadFuture {
+                future: FUTURE,
+                boolean: true,
+            },
+            SeleneRequest::Refcount {
+                future: FUTURE,
+                increment: false,
+            },
+            SeleneRequest::Measure {
+                qubit: 0,
+                result_id: 1,
+                leaked: false,
+            },
+            SeleneRequest::ReadFuture {
+                future: FUTURE,
+                boolean: true,
+            },
+        ];
+        // Cancel with either only a pending read, or a completed and pending read.
+        // Follow each cancellation by two successful shots on the same interface.
+        for cancel_at in [1, 4] {
+            for cancel in [true, false, false] {
+                interface.enable_dynamic_mode().unwrap();
+                interface.set_native_selene_handles(true).unwrap();
+                let handle = interface.get_sync_handle().unwrap();
+                let (completed, completion) = std::sync::mpsc::channel();
+                let worker = std::thread::spawn(move || {
+                    let result = interface.execute_with_measurements(BTreeMap::new());
+                    let _ = completed.send(());
+                    (interface, result)
+                });
+                let mut prefixes = Vec::new();
+                let drive = (|| -> Result<(), InterfaceError> {
+                    for (step, response) in responses.into_iter().enumerate() {
+                        let requested = handle.wait_for_need_result(2_000);
+                        if requested != Some(RUNTIME_REQUEST_RESULT_ID as u64) {
+                            return Err(InterfaceError::Other(format!(
+                                "missing synchronous request at step {step}: {requested:?}"
+                            )));
+                        }
+                        prefixes.push(handle.get_pending_operations()?);
+                        if cancel && step == cancel_at {
+                            return Ok(()); // Getter is waiting; no result has been supplied.
+                        }
+                        handle
+                            .set_measurement_outcome(RUNTIME_REQUEST_RESULT_ID as u64, response)?;
+                        handle.signal_result_ready()?;
+                    }
+                    completion
+                        .recv_timeout(std::time::Duration::from_secs(2))
+                        .map_err(|error| {
+                            InterfaceError::Other(format!(
+                                "program did not finish after decode: {error}"
+                            ))
+                        })
+                })();
+                // Release the worker before assertions, including failed driver paths.
+                if cancel || drive.is_err() {
+                    handle.abort_execution().unwrap();
+                }
+                let (returned, result) = worker.join().unwrap();
+                interface = returned;
+                interface.disable_dynamic_mode().unwrap();
+                drive.unwrap();
+                for (prefix, request) in prefixes.iter().zip(&expected) {
+                    assert_eq!(
+                        prefix,
+                        &[Operation::RuntimeRequest {
+                            request: RuntimeRequest::Native(request.clone()),
+                            result_id: Some(RUNTIME_REQUEST_RESULT_ID),
+                        }]
+                    );
+                }
+                if cancel {
+                    assert_eq!(prefixes.len(), cancel_at + 1);
+                    assert!(
+                        matches!(
+                            result,
+                            Err(InterfaceError::ProgramError(
+                                pecos_qis_ffi_types::ProgramError::Cancelled
+                            ))
+                        ),
+                        "{result:?}"
+                    );
+                } else {
+                    result.unwrap();
+                    assert_eq!(prefixes.len(), 6);
+                    assert_eq!(
+                        prefixes[5],
+                        [Operation::RuntimeRequest {
+                            request: RuntimeRequest::Decode {
+                                window_id: 7,
+                                instance_id: 0,
+                                syndrome: vec![1],
+                                context: Some(b"{}".to_vec()),
+                                observed_reads: Some(vec![
+                                    RuntimeObservedRead {
+                                        name: "read".into(),
+                                        occurrence: 0,
+                                        source_id: 0,
+                                        value: true
+                                    },
+                                    RuntimeObservedRead {
+                                        name: "read".into(),
+                                        occurrence: 1,
+                                        source_id: 1,
+                                        value: false
+                                    },
+                                ]),
+                            },
+                            result_id: Some(RUNTIME_REQUEST_RESULT_ID),
+                        }]
+                    );
+                }
+            }
+        }
+    }
+
     fn is_qir_text(ir: &str) -> bool {
         match validate_qis_dialect(ir.as_bytes(), ProgramFormat::LlvmIrText) {
             Err(InterfaceError::InvalidFormat(message))

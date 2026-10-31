@@ -773,7 +773,13 @@ fn queue_runtime_request(request: Result<RuntimeRequest, String>) -> Result<Opti
     if ffi::cancellation_requested() {
         return Ok(None);
     }
-    let request = request?;
+    let mut request = request?;
+    if let RuntimeRequest::Decode { observed_reads, .. } = &mut request {
+        let reads = crate::decoder_reads::take_interval()?;
+        if observed_reads.is_some() {
+            *observed_reads = Some(reads);
+        }
+    }
     let dynamic = crate::is_dynamic_mode_active();
     if !dynamic
         && matches!(
@@ -1221,6 +1227,7 @@ pub unsafe extern "C-unwind" fn pecos_runtime_decode(
             instance_id,
             syndrome,
             context: None,
+            observed_reads: None,
         })
     }));
     unsafe { finish_runtime_request(queued, "pecos_runtime_decode") }.value
@@ -1241,30 +1248,137 @@ pub unsafe extern "C-unwind" fn pecos_runtime_decode_v1(
     context: *const u8,
     context_length: u64,
 ) -> u64 {
-    let input = (|| {
-        if length > pecos_qis_ffi_types::MAX_RUNTIME_DETECTORS as u64 {
-            return Err("runtime decoder detector limit exceeded".into());
-        }
-        if context_length == 0
-            || context_length > pecos_qis_ffi_types::MAX_RUNTIME_DECODE_CONTEXT as u64
-        {
-            return Err("runtime decoder context length must be 1..65536".into());
-        }
-        let syndrome = unsafe { copy_input(syndrome, length) }?;
-        if syndrome.iter().any(|&bit| bit > 1) {
-            return Err("decoder syndrome must contain only zero or one".into());
-        }
-        let context = unsafe { copy_input(context, context_length) }?;
-        std::str::from_utf8(&context).map_err(|_| "decoder context must be UTF-8".to_string())?;
-        Ok(RuntimeRequest::Decode {
+    let input = unsafe {
+        decoder_request_v1(
             window_id,
             instance_id,
             syndrome,
-            context: Some(context),
-        })
-    })();
+            length,
+            context,
+            context_length,
+            false,
+        )
+    };
     let queued = queue_runtime_request(input);
     unsafe { finish_runtime_request(queued, "pecos_runtime_decode_v1") }.value
+}
+
+/// Decode with the v1 context and runtime-owned observations from named reads.
+///
+/// # Safety
+/// Both buffers must address their declared readable lengths. The non-nested
+/// guard and recovery discipline of the Selene entry points applies.
+#[unsafe(no_mangle)]
+pub unsafe extern "C-unwind" fn pecos_runtime_decode_observed_v1(
+    window_id: u64,
+    instance_id: u64,
+    syndrome: *const u8,
+    length: u64,
+    context: *const u8,
+    context_length: u64,
+) -> u64 {
+    let input = unsafe {
+        decoder_request_v1(
+            window_id,
+            instance_id,
+            syndrome,
+            length,
+            context,
+            context_length,
+            true,
+        )
+    };
+    let queued = queue_runtime_request(input);
+    unsafe { finish_runtime_request(queued, "pecos_runtime_decode_observed_v1") }.value
+}
+
+unsafe fn decoder_request_v1(
+    window_id: u64,
+    instance_id: u64,
+    syndrome: *const u8,
+    length: u64,
+    context: *const u8,
+    context_length: u64,
+    observed: bool,
+) -> Result<RuntimeRequest, String> {
+    if length > pecos_qis_ffi_types::MAX_RUNTIME_DETECTORS as u64 {
+        return Err("runtime decoder detector limit exceeded".into());
+    }
+    if context_length == 0
+        || context_length > pecos_qis_ffi_types::MAX_RUNTIME_DECODE_CONTEXT as u64
+    {
+        return Err("runtime decoder context length must be 1..65536".into());
+    }
+    let syndrome = unsafe { copy_input(syndrome, length) }?;
+    if syndrome.iter().any(|&bit| bit > 1) {
+        return Err("decoder syndrome must contain only zero or one".into());
+    }
+    let context = unsafe { copy_input(context, context_length) }?;
+    std::str::from_utf8(&context).map_err(|_| "decoder context must be UTF-8".to_string())?;
+    Ok(RuntimeRequest::Decode {
+        window_id,
+        instance_id,
+        syndrome,
+        context: Some(context),
+        observed_reads: observed.then(Vec::new),
+    })
+}
+
+/// Read a native Boolean future and retain its measurement provenance for decoding.
+/// Occurrences are assigned per name within the current decode interval.
+///
+/// # Safety
+/// Name must point to `name_length` readable UTF-8 bytes. The native future must
+/// obey the runtime lifetime rules. Non-nested guarded execution is required.
+#[unsafe(no_mangle)]
+pub unsafe extern "C-unwind" fn pecos_runtime_read_bool_v1(
+    name: *const u8,
+    name_length: u64,
+    future: u64,
+) -> bool {
+    if unsafe { ffi::cancellation_checkpoint() } {
+        return false;
+    }
+    // Move all allocations into context-owned state before the getter can
+    // suspend or transfer to the C recovery guard. Only scalars survive here.
+    let prepared = unsafe { prepare_decoder_read(name, name_length, future) };
+    if let Err(reason) = prepared {
+        unsafe { ffi::fatal_ffi_input("pecos_runtime_read_bool_v1", reason) };
+        return false;
+    }
+    let response = unsafe { native_read(future, true) };
+    if response.error_code != 0 {
+        unsafe { ffi::fatal_ffi_input("pecos_runtime_read_bool_v1", "native read failed".into()) };
+        return false;
+    }
+    let committed = crate::decoder_reads::commit_read(response.value);
+    if let Err(reason) = committed {
+        unsafe { ffi::fatal_ffi_input("pecos_runtime_read_bool_v1", reason) };
+        return false;
+    }
+    response.value != 0
+}
+
+unsafe fn prepare_decoder_read(name: *const u8, length: u64, future: u64) -> Result<(), String> {
+    if !crate::is_dynamic_mode_active() || !crate::uses_native_selene_handles() {
+        return Err("observed decoder reads require dynamic native execution".into());
+    }
+    if length == 0 || length > pecos_qis_ffi_types::MAX_RUNTIME_READ_NAME_BYTES as u64 {
+        return Err("decoder read name length must be 1..256".into());
+    }
+    let bytes = unsafe { copy_input(name, length) }?;
+    let name =
+        String::from_utf8(bytes).map_err(|_| "decoder read name must be UTF-8".to_string())?;
+    let ctx = crate::get_execution_context().ok_or("no execution context")?;
+    let ctx = unsafe { &*ctx };
+    let source = ctx
+        .native_future_sources
+        .lock()
+        .map_err(|_| "poisoned native future provenance")?
+        .get(&future)
+        .copied()
+        .ok_or("decoder read has unknown measurement provenance")?;
+    crate::decoder_reads::prepare_read(name, source as u64)
 }
 
 fn invalidate_native_future_provenance() -> Result<(), String> {

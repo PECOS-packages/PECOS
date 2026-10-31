@@ -155,6 +155,7 @@ from pecos.qec.runtime_decode_context import (
     RuntimeRecordRef,
 )
 from pecos.qec.runtime_decoder import RuntimeDecoder, RuntimeDecodeRequest, RuntimeDecodeWindow
+from pecos.qec.runtime_observed_reads import RuntimeReadSource
 from pecos.qec.surface import (
     LogicalOperator,
     PatchGeometry,
@@ -176,6 +177,7 @@ from pecos.qec.surface._detection_events import MissingObservableReferenceError
 
 __all__ = [
     "RuntimeRecordRef",
+    "RuntimeReadSource",
     "RuntimeDetectorBinding",
     "RuntimeDecodeSchema",
     "RuntimeDecodeBinding",

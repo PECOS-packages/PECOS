@@ -55,9 +55,9 @@ repos:
   - repo: local
     hooks:
       - id: no-by-value-selene-ir
-        name: use selene_test_ir helpers for Selene struct returns
+        name: 'Selene IR returns: selene_test_ir for 16-byte results, i64 for 8-byte, i32 for 4-byte'
         language: pygrep
-        entry: '(declare|call)\s+\{+\s*i32\b[^@\n]*@selene_'
+        entry: '\b(declare|call|invoke)\b(?![^@\n]*\b(void|i32|i64)\s+@)[^@\n]*@selene_'
         files: ^(crates|python|exp)/.*\.(rs|py|ll)$
 
       - id: dependency-integrity-check

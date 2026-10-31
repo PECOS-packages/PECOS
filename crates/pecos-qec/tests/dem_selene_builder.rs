@@ -473,7 +473,7 @@ fn half_turn_keeps_two_qubit_noise_and_idle_sites() {
             .circuit
             .ticks()
             .iter()
-            .flat_map(|tick| tick.gate_batches())
+            .flat_map(pecos_quantum::Tick::gate_batches)
             .collect();
         assert_eq!(
             gates

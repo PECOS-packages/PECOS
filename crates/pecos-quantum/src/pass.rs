@@ -82,6 +82,10 @@ pub fn lower_clifford_rotations(circuit: &mut TickCircuit) {
 /// two-qubit rotations stay parameterized: fault analysis resolves their ideal
 /// per-qubit Pauli action separately from their scheduled two-qubit noise site.
 /// Zero-angle rotations, gate order, batching, and attributes are retained.
+///
+/// # Panics
+///
+/// Panics if a lowered gate batch fails validation when written back to its tick.
 pub fn lower_clifford_rotations_preserving_arity(circuit: &mut TickCircuit) {
     for tick in circuit.ticks_mut() {
         for gate_idx in 0..tick.len() {
@@ -4542,7 +4546,7 @@ mod arity_preservation_tests {
         let kinds: Vec<_> = tc
             .ticks()
             .iter()
-            .flat_map(|tick| tick.gate_batches())
+            .flat_map(Tick::gate_batches)
             .map(|gate| gate.gate_type)
             .collect();
         assert_eq!(

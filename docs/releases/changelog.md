@@ -6,6 +6,11 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- The SLR parallel optimizer, on by default in `SlrConverter`, treats `For` and
+  `While` inside a `Parallel` as control flow, like `If` and `Repeat`. Before, it
+  flattened their bodies into the parallel group and dropped iterations:
+  `Parallel(For("i", 0, 2).Do(X(q[0])), ...)` applied `X` once instead of twice.
+
 - The PECOS QASM parser accepts a `//` line comment that ends at end of input
   without a newline (#1518). Before, such a program failed with a syntax error,
   which included SLR-generated QASM ending in a `Comment`.

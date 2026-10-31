@@ -755,6 +755,7 @@ def test_metadata_selects_destination_mode(spec: dict, *, measure: bool) -> None
         ({0}, {"var_output": {0: (3, 0)}}, 0, (3, 0)),
         ({0}, {"var_output": {0: ("c", 0.5)}}, 0, ("c", 0.5)),
         ({0}, {"var_output": {0: ("c", True)}}, 0, ("c", True)),
+        ({1}, {"var_output": {True: ("c", 0)}}, True, ("c", 0)),
         ({0}, {"var_output": {0: ("c", 0, 1)}}, 0, ("c", 0, 1)),
         ({0}, {"var_output": {0: ["c", 0]}}, 0, ["c", 0]),
         ({0}, {"var_output": {"0": ("c", 0)}}, "0", ("c", 0)),

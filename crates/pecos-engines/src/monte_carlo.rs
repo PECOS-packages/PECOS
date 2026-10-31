@@ -15,3 +15,6 @@ pub mod engine;
 
 pub use builder::MonteCarloEngineBuilder;
 pub use engine::{MonteCarloEngine, SeedReport, WorkerSeedRecord};
+
+pub mod worker_scope;
+pub use worker_scope::{DirectWorkerScope, WorkerScope};

@@ -1753,7 +1753,11 @@ def _surface_native_topology(
         # Keep this surface helper aligned with DetectorErrorModel.from_guppy:
         # traced QIS emits parameterized Clifford rotations, while DEM
         # replacement-branch approximations operate on named Clifford gates.
-        normalize_traced_tick_circuit(tc, context="surface traced-QIS native topology")
+        normalize_traced_tick_circuit(
+            tc,
+            context="surface traced-QIS native topology",
+            simplify_single_qubit_clifford_chains=False,
+        )
     if include_idle_gates:
         # Insert idle gates only when the requested noise model includes a
         # dedicated idle channel. Otherwise inserted idle gates receive ordinary

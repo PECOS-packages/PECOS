@@ -125,6 +125,11 @@ off unless insertion asked for it — and the idle-noise families apply to whate
 idles the runtime emitted. `with_strip_traced_idles(...)` overrides that pairing
 in either direction when you want it stated explicitly.
 
+The Guppy DEM pipeline retains adjacent one-qubit Clifford gates emitted by the
+selected runtime, even when their ideal actions cancel. It lowers Clifford
+rotations before fault propagation but does not merge or cancel the resulting
+one-qubit gate chains.
+
 The linear family uses a custom Z-biased distribution, keeping smaller X and Y
 memory errors while making dephasing dominant; its weights are an additive
 probability distribution and must sum to 1. The sine-squared family uses Z only,

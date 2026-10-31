@@ -6,6 +6,11 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- `QuantumCircuit.from_json_str` restores the integer qubit ids and
+  `(register, index)` tuples in `qvars`. Before, they came back as strings and
+  lists, and `to_phir_dict` on the restored circuit failed with "Couldn't find
+  qsym for qid".
+
 - **Breaking:** Python simulator wrappers and the public `pecos.HybridEngine`
   validate whole known-gate batches per `run_gate` call and per circuit item
   before changing state, including when `simulate_gate=False`. Registered-gate

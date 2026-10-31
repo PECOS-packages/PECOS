@@ -20,6 +20,8 @@ import math
 
 import pytest
 from pecos.circuits import QuantumCircuit
+from pecos.slr import CReg, Main, QReg, SlrConverter
+from pecos.slr.qeclib import qubit as qb
 from pecos_rslib import QubitConflictError, TickCircuit
 
 
@@ -1570,3 +1572,12 @@ def test_nonfinite_rotation_is_atomic(angle):
     with pytest.raises(ValueError, match="finite"):
         circuit.append({"RZ": {0}}, angles=(angle,))
     assert len(circuit) == 0
+
+
+def test_json_round_trip_keeps_qvars_usable_by_phir() -> None:
+    """from_json_str restores integer qubit ids and tuple refs in qvars."""
+    data, anc, m = QReg("data", 2), QReg("anc", 1), CReg("m", 1)
+    circuit = SlrConverter(Main(data, anc, m, qb.CX(data[0], anc[0]), qb.Measure(anc[0]) > m[0])).quantum_circuit()
+    restored = QuantumCircuit.from_json_str(circuit.to_json_str())
+    assert restored.metadata["qvars"] == circuit.metadata["qvars"]
+    assert restored.to_phir_dict()["ops"] == circuit.to_phir_dict()["ops"]

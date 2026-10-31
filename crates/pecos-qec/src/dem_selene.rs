@@ -839,7 +839,7 @@ impl DemProgram for SeleneDemProgram {
     fn prepare(&mut self, request: &DemProgramRequest<'_>) -> Result<DemBuildInput, DemBuildError> {
         let evidence = self.capture_and_analyze(request)?;
         let mut circuit = evidence.circuit;
-        pass::lower_clifford_rotations(&mut circuit);
+        pass::lower_clifford_rotations_preserving_arity(&mut circuit);
         pass::simplify_single_qubit_clifford_chains(&mut circuit);
         Ok(DemBuildInput {
             circuit,

@@ -429,7 +429,7 @@ class HybridEngine:
         locations = replayable_locations(locations)
         validator = getattr(state, "validate_gate_batch", None)
         if validator is not None:
-            validator(symbol, locations)
+            validator(symbol, locations, **params)
         else:
             # Native simulators expose their Rust capacity, including None for
             # growable PauliProp; num_qubits is never used as a fallback.

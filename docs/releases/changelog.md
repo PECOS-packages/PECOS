@@ -16,6 +16,8 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   With `qvars` and `qvar_spec` present, unused declared quantum registers
   survive, JSON string keys are accepted, and a classical register named `q`
   is accepted when no quantum register is named `q`.
+  A bool is no longer accepted as a `cvar_spec` width or a `var`/`var_output`
+  index; previously `False` and `True` counted as 0 and 1.
 
 - The PECOS QASM parser accepts a `//` line comment that ends at end of input
   without a newline (#1518). Before, such a program failed with a syntax error,

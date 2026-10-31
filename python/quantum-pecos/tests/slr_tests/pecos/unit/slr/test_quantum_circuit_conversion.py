@@ -727,12 +727,14 @@ def test_metadata_selects_destination_mode(spec: dict, *, measure: bool) -> None
         ({0}, {"var_output": {0: ("c", -1)}}, 0, ("c", -1)),
         ({0}, {"var_output": {0: (3, 0)}}, 0, (3, 0)),
         ({0}, {"var_output": {0: ("c", 0.5)}}, 0, ("c", 0.5)),
+        ({0}, {"var_output": {0: ("c", True)}}, 0, ("c", True)),
         ({0}, {"var_output": {0: ("c", 0, 1)}}, 0, ("c", 0, 1)),
         ({0}, {"var_output": {0: ["c", 0]}}, 0, ["c", 0]),
         ({0}, {"var_output": {"0": ("c", 0)}}, "0", ("c", 0)),
         ({0}, {"var_output": None}, 0, None),
         ({0}, {"var": "c0"}, 0, "c0"),
         ({0}, {"var": ["c", -1]}, 0, ["c", -1]),
+        ({0}, {"var": ("c", False)}, 0, ("c", False)),
         ({0, 1}, {"var": ("c", 0)}, 1, ("c", 0)),
     ],
 )
@@ -756,6 +758,17 @@ def test_destination_outside_declared_register(size: int, key: str) -> None:
         SlrConverter.from_quantum_circuit(qc)
     assert "Measure" in str(exc.value)
     assert repr(("c", size)) in str(exc.value)
+
+
+@pytest.mark.parametrize("size", [-1, 1.5, "2", True, None])
+def test_invalid_cvar_spec_width(size: object) -> None:
+    """A cvar_spec width must be a non-negative int; a bool is not one."""
+    qc = QuantumCircuit()
+    qc.append("X", {0})
+    qc.metadata["cvar_spec"] = {"c": size}
+    with pytest.raises(ValueError, match="cvar_spec entry 'c'") as exc:
+        SlrConverter.from_quantum_circuit(qc)
+    assert repr(size) in str(exc.value)
 
 
 @pytest.mark.parametrize("key", ["var_output", "var"])

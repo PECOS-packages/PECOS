@@ -1348,8 +1348,8 @@ class AstToGuppy:
             return f"{expr.name}.copy()"
         if isinstance(expr, VarExpr):
             msg = (
-                f"Unknown classical register {expr.name!r} as the source of the assignment to {target!r}; "
-                "declare it in this scope or pass it as a block input"
+                f"Unsupported assignment to {target!r}: {expr.name!r} is not a classical register in this scope. "
+                "Guppy supports integer literals and equal-width register copies here."
             )
             raise GuppyCodegenError(msg)
         msg = (

@@ -119,7 +119,7 @@ def test_register_copy_rejects_different_widths(source_width: int) -> None:
     ("target", "value", "reason"),
     [
         ("missing", LiteralExpr(value=1), "unknown classical register 'missing'"),
-        ("c", VarExpr(name="missing"), "Unknown classical register 'missing' as the source of the assignment to 'c'"),
+        ("c", VarExpr(name="missing"), "assignment to 'c': 'missing' is not a classical register"),
         ("c", BinaryExpr(op=BinaryOp.ADD, left=LiteralExpr(value=2), right=LiteralExpr(value=3)), "assignment to 'c'"),
     ],
 )

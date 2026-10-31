@@ -103,7 +103,7 @@ class CudaStateVec(StateVector):
         if is_empty_batch(locations):
             return output
         locations = replayable_locations(locations)
-        self.validate_gate_batch(symbol, locations)
+        self.validate_gate_batch(symbol, locations, **params)
 
         if params.get("simulate_gate", True):
             for location in locations:

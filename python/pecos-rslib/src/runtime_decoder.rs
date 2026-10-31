@@ -41,6 +41,37 @@ impl RuntimeDecoderSession for PythonDecoderSession {
         })
         .map_err(callback_error)
     }
+
+    fn decode_observed_v1(
+        &mut self,
+        window: u64,
+        instance: u64,
+        syndrome: &[u8],
+        context: &[u8],
+        reads: &[pecos_qis::runtime_decoder::RuntimeObservedRead],
+    ) -> Result<u64, PecosError> {
+        let _scope = CallbackScope::enter();
+        let observations: Vec<_> = reads
+            .iter()
+            .map(|r| (r.name.clone(), r.occurrence, r.source_id, r.value))
+            .collect();
+        Python::attach(|py| {
+            self.0
+                .call_method1(
+                    py,
+                    "decode_observed_v1",
+                    (
+                        window,
+                        instance,
+                        syndrome.to_vec(),
+                        context.to_vec(),
+                        observations,
+                    ),
+                )?
+                .extract(py)
+        })
+        .map_err(callback_error)
+    }
 }
 
 pub(crate) fn factory(object: Py<PyAny>, py: Python<'_>) -> PyResult<RuntimeDecoderFactory> {

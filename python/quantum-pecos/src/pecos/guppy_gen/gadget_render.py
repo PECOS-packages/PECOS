@@ -3,7 +3,7 @@
 
 """Render and load physical surface gadgets, and certify Guppy memory programs."""
 
-from pecos.guppy_gen._certificate import certify_surface_measurement_layout
+from pecos.guppy_gen._certificate import certify_measurement_layout
 from pecos.guppy_gen._module_loader import load_cached_guppy_source
 from pecos.qec.circuit_steps import OpType
 from pecos.qec.surface._check_plan import (
@@ -13,6 +13,7 @@ from pecos.qec.surface._check_plan import (
     resolve_surface_check_plan,
 )
 from pecos.qec.surface.circuit_builder import generate_tick_circuit_from_patch
+from pecos.qec.surface.decode import _surface_result_classifier
 from pecos.qec.surface.gadgets import (
     Gadget,
     GadgetKind,
@@ -468,5 +469,5 @@ def make_surface_memory(
         add_typed_annotations=False,
         check_plan=check_plan,
     )
-    certify_surface_measurement_layout(program, abstract_tc)
+    certify_measurement_layout(program, abstract_tc, _surface_result_classifier, family="surface")
     return program

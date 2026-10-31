@@ -37,6 +37,7 @@ def build_timed_runtime(
     gap: int,
     *,
     events: bool = False,
+    shot_relative_clock: bool = False,
     initial_nanos: int = 0,
     coalesce_queued: bool = False,
     prep_gap_nanos: int | None = None,
@@ -79,6 +80,8 @@ def build_timed_runtime(
         args.append(f"-DPREP_GAP_NANOS={prep_gap_nanos}ULL")
     if events:
         args.append("-DSYNTHETIC_EVENT")
+    if shot_relative_clock:
+        args.append("-DSHOT_RELATIVE_CLOCK")
     if platform.system() != "Darwin":
         args.append("-ldl")
     subprocess.run(args, check=True, capture_output=True, text=True)

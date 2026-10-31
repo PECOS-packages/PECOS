@@ -68,9 +68,6 @@ def flatten_block_calls(program: Program) -> Program:
     `AllocatorArg` is supported; richer BlockArg shapes raise
     `NotImplementedError`. Quantum-only for now.
     """
-    if not program.block_decls:
-        return program
-
     validate_unique_block_decl_names(program)
     decls = {decl.name: decl for decl in program.block_decls}
     new_body = _flatten_stmts(program.body, decls)
@@ -80,6 +77,7 @@ def flatten_block_calls(program: Program) -> Program:
         body=new_body,
         returns=program.returns,
         allocator=program.allocator,
+        is_fragment=program.is_fragment,
         block_decls=(),
     )
 
@@ -143,7 +141,7 @@ def _flatten_stmts(body: tuple[Statement, ...], decls: dict[str, BlockDecl]) -> 
 def _inline_call(call: BlockCall, decls: dict[str, BlockDecl]) -> tuple[Statement, ...]:
     decl = decls.get(call.callee)
     if decl is None:
-        msg = f"BlockCall references undefined block {call.callee!r}"
+        msg = f"BlockCall references undefined block {call.callee!r}; provide its block declaration."
         raise ValueError(msg)
     if len(call.arg_bindings) != len(decl.inputs):
         msg = (
@@ -181,9 +179,11 @@ def _inline_call(call: BlockCall, decls: dict[str, BlockDecl]) -> tuple[Statemen
             remap.add_whole_alloc(inp.name, arg.name, size)
         elif isinstance(arg, SingleQubitArg):
             remap.add_slot((inp.name, 0), (arg.slot.allocator, arg.slot.index))
+            remap.add_barrier_allocators(inp.name, (arg.slot.allocator,))
         elif isinstance(arg, SingleBitArg):
             remap.add_bit((inp.name, 0), (arg.bit.register, arg.bit.index))
         elif isinstance(arg, QubitBundleArg):
+            remap.add_barrier_allocators(inp.name, tuple(slot.allocator for slot in arg.slots))
             for k, slot in enumerate(arg.slots):
                 remap.add_slot((inp.name, k), (slot.allocator, slot.index))
         else:  # BitBundleArg already rejected above; defensive

@@ -17,7 +17,7 @@ import warnings
 from typing import TYPE_CHECKING
 
 from pecos.slr._qubit_args import gate_target_groups, qubit_key
-from pecos.slr.gen_codes._permutation import reject_permute_in_region
+from pecos.slr.gen_codes._permutation import reject_permute_in_region, reject_unsupported_permute
 from pecos.slr.gen_codes.generator import Generator
 
 if TYPE_CHECKING:
@@ -108,6 +108,8 @@ class StimGenerator(Generator):
         Parameters:
             block (Block): The block of operations to generate code for.
         """
+        reject_unsupported_permute(block, "StimGenerator", "stim")
+
         # Initialize the circuit and maps
         if self.circuit is None:
             import stim
@@ -266,18 +268,10 @@ class StimGenerator(Generator):
         # The shared argument resolver has already validated and ordered pairs.
         self.circuit.append_operation(gate_name, self._get_qubit_indices(op))
 
-    def _handle_permutation(self, op):
-        """Handle Permute operation by updating qubit mappings.
-
-        Args:
-            op: The permutation operation to handle.
-                Currently unused but kept for interface consistency.
-        """
-        # TODO: Implement proper permutation handling by analyzing op
-        # and updating the qubit_map accordingly
-        _ = op  # Mark as intentionally unused for now
-        if self.add_comments:
-            self.circuit.append("TICK")
+    def _handle_permutation(self, _op):
+        """Reject the unsupported operation even when called directly."""
+        msg = "StimGenerator does not support Permute; use SlrConverter(...).stim()."
+        raise NotImplementedError(msg)
 
     def _process_var_declaration(self, var):
         """Process a variable declaration."""

@@ -13,16 +13,20 @@
 [[IgnoredVulns]]
 id = "RUSTSEC-2025-0057"
 # fxhash@0.2.1 -- unmaintained.
-# Chain: hugr-passes -> hugr -> tket -> zlup.
-# Upstream owner: https://github.com/CQCL/hugr (awaiting rustc-hash/ahash swap).
+# Chains: fxhash -> relrc -> hugr-core -> hugr -> tket -> zlup, and fxhash -> tket.
+# Upstream owners: https://github.com/CQCL/hugr and https://github.com/Quantinuum/tket2
+# (awaiting rustc-hash/ahash swap).
 reason = "Transitive via hugr/tket; unmaintained-crate warning, no exploit path in PECOS."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2024-0436"
 # paste@1.0.15 -- unmaintained proc-macro.
-# Chain: hugr-passes/ascent and mwpf both pull it in.
-# Upstream owners: https://github.com/CQCL/hugr and https://github.com/yuewuo/mwpf.
-reason = "Transitive via hugr/tket and mwpf; unmaintained-crate warning, no runtime impact (proc-macro)."
+# Chains: paste -> malachite-bigint -> rustpython-ast/rustpython-parser -> guppy-zlup,
+# and a dev-dependency of pecos-simulators, pecos-gpu-sims, pecos-stab-active and
+# pecos-stab-tn (test-only macro use).
+# Upstream owner: https://github.com/RustPython/Parser (archived; same long-term fix
+# as RUSTSEC-2025-0075).
+reason = "Transitive via rustpython-parser in the experimental zlup frontend, plus test-only use in simulator crates; unmaintained-crate warning, no runtime impact (proc-macro)."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2024-0388"
@@ -30,13 +34,6 @@ id = "RUSTSEC-2024-0388"
 # Chain: fusion-blossom and mwpf both pull it in.
 # Upstream owners: https://github.com/yuewuo/fusion-blossom and https://github.com/yuewuo/mwpf.
 reason = "Transitive via fusion-blossom and mwpf; unmaintained-crate warning, no runtime impact (proc-macro)."
-
-[[IgnoredVulns]]
-id = "RUSTSEC-2024-0384"
-# instant@0.1.13 -- unmaintained; replaced by web-time.
-# Chain: hugr-passes/ascent -> ... -> zlup.
-# Upstream owner: https://github.com/CQCL/hugr (ascent is a transitive build-graph helper).
-reason = "Transitive via hugr-passes/ascent; unmaintained-crate warning, no Wasm target."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2024-0375"
@@ -122,7 +119,7 @@ id = "RUSTSEC-2026-0197"
 # Chains: cgmath -> hugr-core -> hugr -> tket -> zlup, and
 #         cgmath -> tket (dev-dependency) -> zlup.
 # Upstream owners: https://github.com/CQCL/hugr and https://github.com/CQCL/tket2.
-reason = "Transitive via hugr-core and tket; no swap_columns call exists in PECOS or in the pinned hugr-core 0.29.3/tket 0.21.2 sources, and no fixed cgmath release exists. Re-check on hugr/tket bumps."
+reason = "Transitive via hugr-core and tket; no swap_columns call exists in PECOS, in the hugr 0.30.3 crates, in tket 0.22.0, or in the pinned tket2 Selene compiler sources, and no fixed cgmath release exists. Re-check on hugr/tket bumps."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0367"
@@ -149,11 +146,24 @@ id = "RUSTSEC-2026-0369"
 reason = "Transitive via relay-bp/ndarray-npy, which read .npz entries by name and never call ZipArchive::extract or ZipStreamReader::extract, the affected APIs."
 
 [[IgnoredVulns]]
-id = "RUSTSEC-2026-0173"
-# proc-macro-error2@2.0.1 -- unmaintained proc-macro (fork of proc-macro-error).
-# Chain: pecos-qec -> selene-hugr-qis-compiler -> tket-qsystem -> hugr-cli 0.29 ->
-# tabled 0.21 -> tabled_derive 0.11 -> proc-macro-error2. tabled_derive 0.12 drops
-# it, but needs tabled 0.22, which hugr-cli only takes from 0.30.
-# Upstream owners: https://github.com/CQCL/hugr and https://github.com/Quantinuum/tket2.
-# Re-check on hugr/tket bumps.
-reason = "Transitive via hugr-cli -> tabled -> tabled_derive; compile-time proc-macro only, no runtime impact."
+id = "GHSA-m665-v7pm-7grj"
+# zip@2.4.2 -- ZipArchive and ZipStreamReader disagree when the local and central
+# headers of an entry differ. Fixed only in zip 9.0.5.
+# Chain: relay-bp 0.2.2 -> ndarray-npy 0.9.1 -> zip ^2 (same chain as
+# RUSTSEC-2026-0367..0369). The ignore is not version-scoped, but the workspace
+# requires zip >= 9.0.5, so it cannot hide the first-party pecos-build path.
+# Upstream owners: https://github.com/trmue/relay and https://github.com/jturner314/ndarray-npy.
+reason = "Transitive via relay-bp/ndarray-npy, which reads .npz entries only through ZipArchive and never uses ZipStreamReader, so no second parser sees the archive."
+
+[[IgnoredVulns]]
+id = "GHSA-qwgh-2vcv-g2f7"
+# block-buffer@0.10.4 -- the advisory covers buffers that keep their cursor inside the
+# block bytes (EagerBuffer, ReadBuffer), where an unwinding callback can leave it out
+# of range. Fixed in 0.12.1; the range is open below that, with no 0.10.x release.
+# 0.10.4 has neither shape: its cursor is a separate `pos` field that digest_blocks
+# sets only after the callback returns, and it has no ReadBuffer.
+# Chain: block-buffer 0.10 -> digest 0.10 -> sha2 0.10 -> wasmtime-environ 48 and
+# cranelift-codegen (incremental-cache, enabled unconditionally by
+# wasmtime-internal-cranelift). wasmtime 50 and main (51.0.0-dev) still require sha2 0.10.
+# Upstream owner: https://github.com/bytecodealliance/wasmtime. Re-check on wasmtime bumps.
+reason = "Transitive via wasmtime/cranelift -> sha2 0.10; block-buffer 0.10.4 stores its cursor outside the block and updates it only after the callback returns, so an unwinding callback cannot leave it out of range, and it has no ReadBuffer."

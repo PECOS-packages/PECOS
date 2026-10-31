@@ -92,9 +92,11 @@ Important fields include:
   barriers, and result recording.
 - `lowered_quantum_ops`: gates after the selected runtime has scheduled and
   lowered the source operations.
-- `lowered_quantum_ops_complete`: the runtime's attestation that the lowered
-  gate stream completely represents the lowerable source operations in that
-  chunk.
+- `lowered_quantum_ops_complete`: the producer's attestation that the chunk
+  contains all gates emitted by that lowering call, with complete provenance.
+- `runtime_lowering_deferred`: the runtime accepted source work but emitted no
+  gates in this chunk. Its output can appear in a later chunk; replay also
+  requires the final `trace_complete` completion attestation.
 - `named_result_traces`: provenance emitted for named `result(...)` records.
 - `named_results`: the shot's complete typed named outputs, in call order per
   tag, on the `named_results` chunk only. Unlike `named_result_traces`, it
@@ -108,6 +110,68 @@ Important fields include:
 The runtime-lowered stream is authoritative for the resulting circuit. A
 runtime may reorder independent gates, lower a source operation into different
 native gates, or add explicit scheduling operations.
+
+Runtime integrations can supply a `batch_adapter_factory`, explicitly or on the
+runtime plugin object. Simulation and tracing then share the same checked
+normalization of custom events. See [runtime custom events](runtime-custom-events.md#shared-simulation-and-tracing-adapters).
+The independent `clock_model` option declares whether native timestamps continue
+across shots or restart at zero; clean native instances remain reusable in both
+modes. It can also be declared on the runtime plugin object.
+Capture-only traces with unhandled events have `runtime_events_complete=false`
+and cannot be replayed as audited circuits.
+
+## Lazy Measurements
+
+PECOS targets the behavior of the same runtime running under Selene: successful
+reads, lazy scheduling, feedback ordering, and unsupported-read failures. It does
+not require a runtime to succeed on a program that also fails under Selene.
+
+A measurement request gives the selected Selene runtime ownership of scheduling
+that measurement. PECOS does not force it when submitting the request. When the
+program reads a future, PECOS queries the runtime's native Boolean or unsigned
+integer getter. If the value is pending, it calls `force_result` once, processes
+the work released by the runtime, and queries the getter again. Physical simulator
+outcomes are feedback to the runtime; the native getter determines the value
+returned to the program. After each native measurement batch, PECOS returns the
+outcomes before asking for more batches. It polls any work made ready by that
+feedback before resuming source submissions or the program. The host also polls
+ready work after each native call, including calls within a decomposed gate.
+
+Explicit barrier requests and their nanosecond delays reach the runtime. Source
+Idle requests use the same timing interface; PECOS derives physical Idles only
+from emitted timestamps. A runtime that ignores a delay remains authoritative.
+Opaque custom calls also reach the runtime, and synchronous responses wait until
+its emitted work and feedback have been processed. See [runtime request semantics](selene-runtime-execution.md).
+
+At completion PECOS calls the runtime's `shot_end` hook and processes its output,
+including measurements and work released by their feedback. It adds no terminal
+barrier. A runtime may discard unobserved requests at end, as the public SoftRZ
+runtime does. Traces contain the operations actually emitted by the runtime.
+
+This applies to simulation, tracing, and DEM construction. Forcing requests
+before their reads can change the runtime's batching, native gates, and idle
+durations even when ideal measurement outcomes agree. Build the DEM with the
+same runtime and configuration used for simulation.
+
+Rust callers using `QisRuntime` directly should query `read_result(program_id)`,
+call `force_result(program_id)` if it returns `None`, then extract ready work with
+empty lowering calls. Deliver each emitted batch's measurement outcomes before
+extracting more work, and query `read_result` again after processing ready work.
+An empty extraction while feedback is outstanding is not completion. The adapter
+resolves the native future ID and result type internally.
+PECOS uses native `force_result` for both ordinary and leakage-aware measurements,
+following Selene's result-read protocol. It does not substitute a qubit or global barrier:
+that could force later measurements on a reused physical qubit and change timing.
+If a requested result cannot make progress, execution fails promptly and the
+trace is not certified complete.
+
+The pinned public SoftRZ runtime does not implement `force_result` for
+leakage-aware measurements. A read that depends on forcing one therefore fails
+with an error, as it does in Selene's own emulator. PECOS preserves that behavior;
+adding support would be a separate upstream runtime change. Ordinary SoftRZ reads
+and both measurement kinds in the Simple runtime are supported.
+Non-Selene `QisRuntime` implementations without targeted forcing retain their
+generic drain path.
 
 ## Replaying a Stored Trace
 
@@ -128,17 +192,49 @@ The circuit metadata records the source measurement IDs under
 runtime-lowered `MeasId`s, even if runtime scheduling changes their execution
 order.
 
-## Runtime-Emitted Idle Gates
+## Runtime Timing and Idle Gates
 
-Some compatible runtimes emit explicit `Idle` operations as part of their
-schedule. Replay preserves those operations as `Idle` gates. Runtime durations
-are expressed in seconds and converted to integer PECOS `TimeUnits` using
+The lowered trace contains explicit `Idle` operations for runtime scheduling
+gaps. Replay preserves those operations as `Idle` gates. Trace durations are
+expressed in seconds and converted to integer PECOS `TimeUnits` using
 `1 TimeUnit = 1 ns`.
 
-PECOS does not infer or synthesize missing idles in this workflow. If the
-selected runtime emits no explicit idle operations, the traced circuit has no
-idle gates. This distinction matters when the circuit is later used with an
+PECOS inserts these explicit idles from gaps between the runtime's original
+batch timestamps, using the same lowering path as simulation. It does not
+invent a schedule for a runtime that supplies no timing gaps. Such a trace has
+no idle gates. This distinction matters when the circuit is later used with an
 idle-, T1-, or T2-dependent noise model.
+
+Reuse the simulator's idle parameters on the replayed circuit. For per-second
+rates, `NoiseParameters.for_runtime_idle_time_units()` converts them to the
+nanosecond units used by replay. Linear and sine-law rates are divided by
+`1e9`, quadratic coefficients by `1e18`, and T1/T2 durations are multiplied by
+`1e9`. Apply that conversion exactly once. The normalizer does not fit rates or
+replace the simulator's timing model.
+
+For example, if `physical_noise` is the existing `NoiseParameters` configuration
+in seconds, pass a converted copy to the DEM builder and retain the runtime's
+idles:
+
+<!--skip: API template requires a caller-supplied runtime that emits timing gaps; covered by test_runtime_batch_adapter.py.-->
+```python
+from pecos.qec import DetectorErrorModel
+
+build = (
+    DetectorErrorModel.builder()
+    .with_program(program)
+    .with_qubits(num_qubits)
+    .with_runtime(runtime_plugin)  # Includes its batch_adapter_factory, if needed.
+    .with_detectors_json(detectors_json)
+    .with_observables_json(observables_json)
+    .with_noise(physical_noise.for_runtime_idle_time_units())
+    .build()
+)
+```
+
+Do not add `with_idle_after_2q(...)` to this workflow: that introduces a different
+timing convention and strips runtime idles by default. The conversion above
+changes units only; it does not estimate new noise parameters.
 
 Runtime-specific measurement-crosstalk payload gates are also preserved. The
 advanced `measurement_crosstalk_topology="global_from_measurements"` option can
@@ -189,3 +285,11 @@ schedule checks than these general tracing APIs.
   fault model from a statically certifiable program
 - **[Noise Model Builders](noise-model-builders.md)** - Apply gate and idle
   noise in subsequent simulation workflows
+
+Embedded host decoder calls are described in
+[live supplied-window decoding](../development/runtime-decoding.md). Their request
+IDs and observed detector bytes appear in the source operation stream. These
+records do not identify every branch/loop site or certify an adaptive DEM.
+Versioned calls additionally retain their bounded context bytes in the source
+request. [Context v1](../development/runtime-decoder-contract.md) is a caller
+declaration, not automatic trace instrumentation or a runtime certificate.

@@ -235,8 +235,8 @@ impl MonteCarloEngine {
     ///
     /// Setting a seed restarts the run-seed stream. Each run draws a base seed,
     /// then derives each shot's seed from its global index, independently of the
-    /// worker count and earlier shots. Component seeds use `DefaultHasher`, so
-    /// seeded samples are not promised stable across Rust releases.
+    /// worker count and earlier shots. Component seeds are derived with a fixed
+    /// hash, so they do not depend on the Rust release.
     /// This method sets the seed for:
     /// - The internal `PecosRng` used to draw the base seed for each run
     /// - The template `HybridEngine` (which sets seeds for the noise model and quantum engine)

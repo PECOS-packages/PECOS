@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 
 from pecos_rslib_llvm import binding, ir
 
-from pecos.slr import Angle, Block, If, Repeat
+from pecos.slr import Angle, Block, For, If, Repeat, While
 from pecos.slr._qubit_args import gate_target_groups
 from pecos.slr.cops import (
     NEG,
@@ -390,8 +390,11 @@ class QIRGenerator(Generator):
 
         block (Block): the current SLR block to convert into a QIR block."""
 
-        if type(block).__name__ in ("If", "While", "For"):
-            reject_permute_in_region(block, "QIRGenerator", classical_runtime=isinstance(block, If))
+        if isinstance(block, For | While):
+            msg = f"QIRGenerator does not support {type(block).__name__}; use SlrConverter(...).qir()."
+            raise NotImplementedError(msg)
+        if isinstance(block, If):
+            reject_permute_in_region(block, "QIRGenerator", classical_runtime=True)
         self._current_block = block
         repeat_times = block.cond if isinstance(block, Repeat) else 1
 
@@ -938,6 +941,16 @@ class QIRGenerator(Generator):
             and hasattr(elems_f, "__iter__")
         ):
             # Element-wise permutation
+            refs = [*elems_i, *elems_f]
+            if refs and not (
+                all(isinstance(getattr(ref, "reg", None), QReg) for ref in refs)
+                or all(isinstance(getattr(ref, "reg", None), CReg) for ref in refs)
+            ):
+                msg = (
+                    "QIRGenerator does not support Permute with mixed quantum/classical or unknown elements; "
+                    "use SlrConverter(...).qir(), whose AST backend applies a static relabel."
+                )
+                raise NotImplementedError(msg)
             if len(elems_i) != len(elems_f):
                 msg = f"Cannot permute different numbers of elements: {len(elems_i)} and {len(elems_f)}"
                 raise ValueError(msg)
@@ -1073,6 +1086,10 @@ class QIRGenerator(Generator):
                 # For classical bit permutations, we're physically moving the values,
                 # so we don't need to update the permutation map.
                 # The operations should still refer to the original bits.
+
+        else:
+            msg = "QIRGenerator does not support this Permute operand shape; use SlrConverter(...).qir()."
+            raise NotImplementedError(msg)
 
     def _compose_permutation_maps(self, new_perm_map):
         """Compose a new permutation map with the existing one.

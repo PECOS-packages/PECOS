@@ -13,7 +13,7 @@ from pecos.slr.qalloc import QAlloc, QubitRef
 from pecos.slr.vars import QReg, Qubit, SymbolicElem
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterator, Sequence
 
 
 def qubit_key(qubit: Qubit | QubitRef) -> tuple[str, int]:
@@ -31,25 +31,32 @@ def _reject_symbolic_indices(qargs: Sequence, gate_name: str) -> None:
                 _reject_symbolic_indices(arg, gate_name)
 
 
+def iter_qubit_args(qargs: Sequence, gate_name: str) -> Iterator[QReg | QAlloc | Qubit | QubitRef]:
+    """Validate quantum operands and flatten collections, retaining whole registers."""
+    _reject_symbolic_indices(qargs, gate_name)
+    for arg in qargs:
+        match arg:
+            case tuple() | list():
+                yield from iter_qubit_args(arg, gate_name)
+            case QReg() | QAlloc() | Qubit() | QubitRef():
+                yield arg
+            case _:
+                msg = f"Gate {gate_name}: expected a qubit argument, got {arg!s} ({arg!r})"
+                raise ValueError(msg)
+
+
 def expand_qubit_args(qargs: Sequence, gate_name: str) -> list[Qubit | QubitRef]:
     """Expand register/allocator contents and nested collections into qubits.
 
     This collects operands, without assigning them to multi-qubit applications.
     QAlloc iteration includes only available, non-reserved slots.
     """
-    _reject_symbolic_indices(qargs, gate_name)
     expanded = []
-    for arg in qargs:
-        match arg:
-            case tuple() | list():
-                expanded.extend(expand_qubit_args(arg, gate_name))
-            case QReg() | QAlloc():
-                expanded.extend(arg)
-            case Qubit() | QubitRef():
-                expanded.append(arg)
-            case _:
-                msg = f"Gate {gate_name}: expected a qubit argument, got {arg!s} ({arg!r})"
-                raise ValueError(msg)
+    for arg in iter_qubit_args(qargs, gate_name):
+        if isinstance(arg, QReg | QAlloc):
+            expanded.extend(arg)
+        else:
+            expanded.append(arg)
     return expanded
 
 

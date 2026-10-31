@@ -25,11 +25,13 @@ Example:
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from pecos.slr.ast.codegen._block_flatten import flatten_block_calls
-from pecos.slr.ast.codegen._permutation import iter_permutes, reject_permute_in_region
+from pecos.slr.ast.codegen._loop_bounds import static_for_range
+from pecos.slr.ast.codegen._permutation import iter_permutes, parse_permute_ref, reject_permute_in_region
 from pecos.slr.ast.codegen._prep_tail import prep_tail
 from pecos.slr.ast.nodes import (
     AllocatorDecl,
@@ -52,6 +54,7 @@ from pecos.slr.ast.nodes import (
     PrintOp,
     RegisterDecl,
     RepeatStmt,
+    ReturnOp,
     WhileStmt,
 )
 
@@ -174,6 +177,7 @@ class StimCodeGenContext:
     allocator_parents: dict[str, str | None] = field(default_factory=dict)
     allocator_offsets: dict[str, int] = field(default_factory=dict)
     qreg_sizes: dict[str, int] = field(default_factory=dict)  # name -> capacity
+    creg_sizes: dict[str, int] = field(default_factory=dict)  # name -> size
     # Static logical permutation (same model as the QIR codegen /
     # the Guppy linearity tracker -- Stim has no permute instruction).
     # Maps a logical (reg, index) ref to the (reg, index) whose qubit
@@ -276,7 +280,7 @@ class AstToStim:
                     for i in range(decl.capacity):
                         self.context.get_qubit(decl.name, i)
             elif isinstance(decl, RegisterDecl):
-                pass  # Classical registers don't need qubit allocation
+                self.context.creg_sizes[decl.name] = decl.size
 
         if program.allocator:
             self.context.qreg_sizes[program.allocator.name] = program.allocator.capacity
@@ -341,7 +345,9 @@ class AstToStim:
                 "lose observable program output)."
             )
             raise NotImplementedError(msg)
-        # Other statement types (Comment, Return) don't generate Stim output
+        elif not isinstance(stmt, CommentOp | ReturnOp):
+            msg = f"Stim codegen does not support statement {type(stmt).__name__}: {stmt!r}"
+            raise NotImplementedError(msg)
 
     def _process_gate(self, node: GateOp) -> None:
         """Process a gate operation."""
@@ -436,7 +442,9 @@ class AstToStim:
         if isinstance(node.target, BitRef):
             self.context.bit_records[node.target.register, node.target.index] = None
         else:
-            self._invalidate_register(node.target)
+            # A declared name is a whole register, even if it contains brackets.
+            indexed = None if node.target in self.context.creg_sizes else re.fullmatch(r"(\w+)\[.*\]", node.target)
+            self._invalidate_register(indexed[1] if indexed is not None else node.target)
 
     def _invalidate_register(self, name: str) -> None:
         """Mark every bit of register `name` as no longer holding a tracked measurement."""
@@ -591,34 +599,9 @@ class AstToStim:
         )
         raise NotImplementedError(msg)
 
-    def _static_int_bound(self, expr: object, which: str) -> int:
-        """Resolve a static integer `For` bound.
-
-        The AST converter wraps integer range bounds in `LiteralExpr`
-        (`converter.py` `_convert_for`), so the bound is never a raw
-        `int` -- the old `isinstance(int)` guard was always false and
-        silently dropped every `For` body. A non-literal / non-int
-        bound is a symbolic/dynamic `For`: fail LOUD, never drop.
-        """
-        if isinstance(expr, LiteralExpr) and isinstance(expr.value, int) and not isinstance(expr.value, bool):
-            return expr.value
-        msg = (
-            f"Stim codegen: For loop {which} bound is not a static integer "
-            f"({type(expr).__name__}); only fixed-bound `For(i, <int>, "
-            "<int>)` is supported (symbolic/dynamic For is out of scope -- "
-            "and must not silently drop the loop body)."
-        )
-        raise NotImplementedError(msg)
-
     def _process_for(self, node: ForStmt) -> None:
-        """Unroll a static fixed-bound `For` (v1-supported)."""
-        start = self._static_int_bound(node.start, "start")
-        stop = self._static_int_bound(node.stop, "stop")
-        step = 1 if node.step is None else self._static_int_bound(node.step, "step")
-        if step == 0:
-            msg = "Stim codegen: For loop step is 0 (infinite loop); only a non-zero static step is supported."
-            raise NotImplementedError(msg)
-        for _ in range(start, stop, step):
+        """Unroll a static fixed-bound For."""
+        for _ in static_for_range(node, "Stim"):
             for stmt in node.body:
                 self._process_statement(stmt)
 
@@ -696,11 +679,23 @@ class AstToStim:
         so a bare CReg permute is not realizable -> fail loud (never
         a silent no-op). Mirrors the QIR codegen's helper.
         """
-        if ref.endswith("]") and "[" in ref:
-            name, idx = ref[:-1].split("[", 1)
-            return [(name, int(idx))]
-        if ref in self.context.qreg_sizes:
-            return [(ref, i) for i in range(self.context.qreg_sizes[ref])]
+        parsed = parse_permute_ref(ref, "Stim")
+        name = parsed[0] if parsed is not None else ref
+        sizes = {**self.context.creg_sizes, **self.context.qreg_sizes}
+        if name not in sizes:
+            msg = (
+                f"Stim codegen: unknown Permute reference {ref!r}; block-local registers are not declared "
+                f"by the AST converter (#1511). Declare register {name!r} at Main scope."
+            )
+            raise NotImplementedError(msg)
+        if parsed is not None:
+            _, index = parsed
+            if not 0 <= index < sizes[name]:
+                msg = f"Stim codegen: Permute reference {ref!r} is not a declared slot."
+                raise NotImplementedError(msg)
+            return [(name, index)]
+        if name in self.context.qreg_sizes:
+            return [(name, i) for i in range(sizes[name])]
         msg = (
             f"Stim codegen: whole-register Permute of {ref!r} is not "
             "supported (no classical-register model in Stim); a "
@@ -746,13 +741,18 @@ class AstToStim:
             msg = "Stim codegen: Permute must be bijective over the same ref set"
             raise NotImplementedError(msg)
 
-        # Compose ATOMICALLY (snapshot old, then map[s] = old.get(t, t))
-        # so a whole-register (a,b)/(b,a) pair applies once.
-        old = dict(self.context.permutation_map)
-        self.context.permutation_map.update({s: old.get(t, t) for s, t in zip(src_all, tgt_all, strict=True)})
-        # A Permute ref is a bare string that may name a qubit or a classical
-        # register (SLR allows both under one name), so classical bits under
-        # any permuted name stop being valid If conditions.
+        kinds = {name in self.context.qreg_sizes for name, _ in src_all}
+        if len(kinds) > 1:
+            msg = "Stim codegen: Permute cannot mix quantum and classical refs."
+            raise NotImplementedError(msg)
+
+        # Classical permutations only invalidate provenance. Quantum ones
+        # compose atomically so a whole-register swap applies exactly once.
+        if kinds == {True}:
+            old = dict(self.context.permutation_map)
+            self.context.permutation_map.update({s: old.get(t, t) for s, t in zip(src_all, tgt_all, strict=True)})
+        # Classical element permutations invalidate the tracked measurement
+        # records under the permuted register names.
         for name in {ref[0] for ref in src_all}:
             self._invalidate_register(name)
 

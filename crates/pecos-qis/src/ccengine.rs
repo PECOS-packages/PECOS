@@ -421,6 +421,7 @@ struct PendingMeasurements {
 /// This allows conditionals that depend on measurement results to work correctly.
 pub struct QisEngine {
     pub(crate) decoder_factory: Option<crate::runtime_decoder::RuntimeDecoderFactory>,
+    pub(crate) decoder_input_mode: crate::runtime_decoder::DecoderInputMode,
     decoder_session: Option<Box<dyn crate::runtime_decoder::RuntimeDecoderSession>>,
     pending_decode: Option<crate::runtime_decoder::PendingDecode>,
     next_decode_instance: u64,
@@ -628,6 +629,7 @@ impl QisEngine {
 
         Self {
             decoder_factory: None,
+            decoder_input_mode: crate::runtime_decoder::DecoderInputMode::Program,
             decoder_session: None,
             pending_decode: None,
             next_decode_instance: 0,
@@ -738,6 +740,7 @@ impl QisEngine {
     pub fn with_runtime(runtime: Box<dyn QisRuntime>) -> Self {
         Self {
             decoder_factory: None,
+            decoder_input_mode: crate::runtime_decoder::DecoderInputMode::Program,
             decoder_session: None,
             pending_decode: None,
             next_decode_instance: 0,
@@ -1412,6 +1415,7 @@ impl Clone for QisEngine {
 
         Self {
             decoder_factory: self.decoder_factory.clone(),
+            decoder_input_mode: self.decoder_input_mode,
             decoder_session: None,
             pending_decode: None,
             next_decode_instance: 0,
@@ -1991,7 +1995,27 @@ impl QisEngine {
             }
             let request = self.pending_decode.take().expect("pending decode");
             let session = self.decoder_session.as_mut().expect("decoder session");
-            let response = if let Some(reads) = request.observed_reads {
+            let response = if self.decoder_input_mode
+                == crate::runtime_decoder::DecoderInputMode::RuntimeBatches
+            {
+                let reads = request.observed_reads.as_deref().ok_or_else(|| {
+                    PecosError::Input(
+                        "decoder batch provenance requires observed decode calls".into(),
+                    )
+                })?;
+                let prefix = self
+                    .runtime
+                    .take_decoder_batches()
+                    .map_err(|e| PecosError::Input(e.to_string()))?;
+                session.decode_observed_with_batches_v1(
+                    request.window,
+                    request.instance,
+                    &request.syndrome,
+                    request.context.as_deref().expect("validated context"),
+                    reads,
+                    &prefix,
+                )?
+            } else if let Some(reads) = request.observed_reads {
                 session.decode_observed_v1(
                     request.window,
                     request.instance,

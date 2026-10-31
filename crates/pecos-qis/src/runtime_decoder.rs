@@ -4,7 +4,8 @@ pub use pecos_qis_ffi_types::RuntimeObservedRead;
 use std::sync::Arc;
 
 /// A fresh session is created on first use in each shot, on its host worker.
-/// Implementations receive only program-supplied observations and public IDs.
+/// Implementations receive program observations, public identities and optional
+/// outcome-free runtime-emission data.
 /// They must reject unsupported models, malformed inputs and failed decodes.
 pub trait RuntimeDecoderSession: Send + Sync {
     /// Return a frame mask whose meaning is defined by the supplied model mapping.
@@ -36,6 +37,23 @@ pub trait RuntimeDecoderSession: Send + Sync {
         ))
     }
 
+    /// Decode observed data with the executed runtime-emitted interval.
+    /// # Errors
+    /// Opt-in sessions must implement this method; never fall back silently.
+    fn decode_observed_with_batches_v1(
+        &mut self,
+        _window_id: u64,
+        _instance_id: u64,
+        _syndrome: &[u8],
+        _context: &[u8],
+        _reads: &[RuntimeObservedRead],
+        _prefix: &crate::decoder_batches::DecoderBatchPrefix,
+    ) -> Result<u64, PecosError> {
+        Err(PecosError::Input(
+            "decoder session does not support batch provenance".into(),
+        ))
+    }
+
     /// Check observed read sources and parities before decoding. No fallback.
     ///
     /// # Errors
@@ -52,6 +70,13 @@ pub trait RuntimeDecoderSession: Send + Sync {
             "decoder session does not support observed reads".into(),
         ))
     }
+}
+
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum DecoderInputMode {
+    #[default]
+    Program,
+    RuntimeBatches,
 }
 
 pub(crate) struct PendingDecode {

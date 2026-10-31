@@ -1127,7 +1127,7 @@ class QasmEngineBuilder:
 class QisEngineBuilder:
     """Builder for QIS engines."""
 
-    def runtime_decoder(self, factory: object) -> QisEngineBuilder:
+    def runtime_decoder(self, factory: object, *, capture_batches: bool = False) -> QisEngineBuilder:
         """Configure a zero-argument factory returning a fresh shot-local decoder session."""
         ...
 

@@ -173,11 +173,18 @@ impl PyQisEngineBuilder {
     }
 
     /// Install a zero-argument factory for fresh shot-local decoder sessions.
-    fn runtime_decoder(&mut self, factory: Py<PyAny>, py: Python<'_>) -> PyResult<Self> {
+    #[pyo3(signature = (factory, *, capture_batches = false))]
+    fn runtime_decoder(
+        &mut self,
+        factory: Py<PyAny>,
+        capture_batches: bool,
+        py: Python<'_>,
+    ) -> PyResult<Self> {
         self.inner = self
             .inner
             .clone()
-            .runtime_decoder(crate::runtime_decoder::factory(factory, py)?);
+            .runtime_decoder(crate::runtime_decoder::factory(factory, py)?)
+            .decoder_batch_capture(capture_batches);
         Ok(self.clone())
     }
 

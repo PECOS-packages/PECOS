@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 from pecos_rslib.qec import DetectorErrorModel
 
 from pecos.qec.runtime_decode_context import RuntimeDecodeBinding, RuntimeDecodeContext
+from pecos.qec.runtime_decoder_batches import RuntimeDecodeBatchPrefix
 from pecos.qec.runtime_observed_reads import check_observed_reads, validate_read_sources
 
 if TYPE_CHECKING:
@@ -31,6 +32,17 @@ class RuntimeDecodeRequest:
     window_id: int
     instance_id: int
     context: RuntimeDecodeContext | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class RuntimeDecodeBatchRequest(RuntimeDecodeRequest):
+    """Observed-decode request with a host-captured executed batch interval.
+
+    ``context`` still contains declarations; batches do not authenticate its
+    compiler sites, branches, loops, dependencies or physical model.
+    """
+
+    batch_prefix: RuntimeDecodeBatchPrefix
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -184,6 +196,8 @@ class _Session:
     def __init__(self, provider: Callable[[RuntimeDecodeRequest], RuntimeDecodeWindow]) -> None:
         self._provider = provider
         self._next_instance = 0
+        self._next_batch_index = 0
+        self._runtime_shot_id = None
         self._failed = False
 
     def decode(self, window_id: int, instance_id: int, syndrome: list[int] | bytes) -> int:
@@ -218,6 +232,35 @@ class _Session:
         self._failed = False
         return self._decode(window_id, instance_id, syndrome, parsed, observations)
 
+    def decode_observed_with_batches_v1(
+        self,
+        window_id: int,
+        instance_id: int,
+        syndrome: list[int] | bytes,
+        context: bytes,
+        observations: list[tuple[str, int, int, bool]],
+        prefix: bytes,
+    ) -> int:
+        if self._failed:
+            msg = "decoder session failed; start a fresh shot"
+            raise RuntimeError(msg)
+        self._failed = True
+        parsed = RuntimeDecodeContext.from_json(context)
+        batch_prefix = RuntimeDecodeBatchPrefix.from_json(prefix)
+        if batch_prefix.first_batch_index != self._next_batch_index or (
+            self._runtime_shot_id is not None and batch_prefix.runtime_shot_id != self._runtime_shot_id
+        ):
+            msg = "decoder batch prefix changed shot or skipped/repeated batches"
+            raise ValueError(msg)
+        if type(observations) is not list:
+            msg = "observations must be a bounded list of native read tuples"
+            raise ValueError(msg)
+        self._failed = False
+        result = self._decode(window_id, instance_id, syndrome, parsed, observations, batch_prefix)
+        self._next_batch_index = batch_prefix.next_batch_index
+        self._runtime_shot_id = batch_prefix.runtime_shot_id
+        return result
+
     def _decode(
         self,
         window_id: int,
@@ -225,6 +268,7 @@ class _Session:
         syndrome: list[int] | bytes,
         context: RuntimeDecodeContext | None,
         observations: list[tuple[str, int, int, bool]] | None = None,
+        batch_prefix: RuntimeDecodeBatchPrefix | None = None,
     ) -> int:
         if self._failed:
             msg = "decoder session failed; start a fresh shot"
@@ -243,7 +287,17 @@ class _Session:
         ):
             msg = "decoder dependencies must reference a prior instance"
             raise ValueError(msg)
-        window = self._provider(RuntimeDecodeRequest(window_id, instance_id, context))
+        request = (
+            RuntimeDecodeRequest(window_id, instance_id, context)
+            if batch_prefix is None
+            else RuntimeDecodeBatchRequest(
+                window_id=window_id,
+                instance_id=instance_id,
+                context=context,
+                batch_prefix=batch_prefix,
+            )
+        )
+        window = self._provider(request)
         if not isinstance(window, RuntimeDecodeWindow) or window.window_id != window_id:
             msg = "provider returned a different window identity"
             raise ValueError(msg)

@@ -125,6 +125,11 @@ off unless insertion asked for it — and the idle-noise families apply to whate
 idles the runtime emitted. `with_strip_traced_idles(...)` overrides that pairing
 in either direction when you want it stated explicitly.
 
+The DEM preserves the gates emitted by the selected runtime, including adjacent
+one-qubit Cliffords whose ideal actions cancel. Each executed gate still carries
+its own noise location. Clifford rotations are lowered for fault propagation
+without simplifying away those locations.
+
 The linear family uses a custom Z-biased distribution, keeping smaller X and Y
 memory errors while making dephasing dominant; its weights are an additive
 probability distribution and must sum to 1. The sine-squared family uses Z only,

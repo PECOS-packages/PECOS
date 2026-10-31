@@ -803,7 +803,13 @@ class TestDemGeneration:
 
     def test_traced_qis_native_topology_lowers_clifford_rotations(self) -> None:
         """Surface native topology should match from_guppy's traced-QIS normalization."""
-        from pecos.qec.surface.decode import _surface_native_topology, _surface_patch_cache_key
+        from collections import Counter
+
+        from pecos.qec.surface.decode import (
+            _build_surface_tick_circuit_for_native_model,
+            _surface_native_topology,
+            _surface_patch_cache_key,
+        )
 
         _require_selene_runtime()
 
@@ -824,6 +830,21 @@ class TestDemGeneration:
 
         assert "RZZ" not in gate_names
         assert "SZZ" in gate_names
+
+        # Compare against the emitted trace, lowering rotations without ideal
+        # gate-chain cancellation. DAG conversion may split gate batches, so
+        # count operands rather than batches to preserve every noise location.
+        traced = _build_surface_tick_circuit_for_native_model(patch, 2, "Z", circuit_source="traced_qis")
+        traced.lower_clifford_rotations()
+        emitted_sites: Counter[str] = Counter()
+        for _, gate in traced.gate_batches():
+            emitted_sites[gate.gate_type.name] += len(gate.qubits)
+        topology_sites: Counter[str] = Counter()
+        for node in topology.dag_circuit.nodes():
+            gate = topology.dag_circuit.gate(node)
+            if gate is not None:
+                topology_sites[gate.gate_type.name] += len(gate.qubits)
+        assert topology_sites == emitted_sites
 
     def test_guppy_module_cache_keys_on_full_patch_identity(self) -> None:
         """Rotated and non-rotated patches of the same dx/dz/budget must NOT

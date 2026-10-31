@@ -234,6 +234,9 @@ pub fn selene_soft_rz_engine() -> Result<QisEngineBuilder, RuntimeFetchError> {
 }
 
 #[cfg(all(test, feature = "selene"))]
+pub(crate) mod selene_test_ir;
+
+#[cfg(all(test, feature = "selene"))]
 pub(crate) mod test_env {
     use std::ffi::{OsStr, OsString};
     use std::sync::Mutex;

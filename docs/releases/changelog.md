@@ -23,6 +23,16 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   drops exports of size-0 registers it does not declare. Programs without
   `cvar_export` report what they did before.
 
+- **Breaking:** the native Union-Find decoder always peels on a BFS forest.
+  `PeelingStrategy` and `UfDecoderConfig::peeling` are removed, and the `fast`,
+  `balanced` and `accurate` configurations are now identical. The Prim spanning
+  forest gave 2 to 3.6 times more logical errors on rotated surface-code memory
+  (d=5 and 7, p=0.003 and 0.005, 100,000 shots). Results can change for
+  `pecos_uf_correlated`, `pecos_uf:balanced`, `pecos_uf:accurate`, `pecos_uf:bp`,
+  `pecos_uf:bp_serial`, `beamsearch`, `WindowedLogicalSubgraphDecoder`, the Python
+  `CssUfDecoder`, and Rust callers that used those configurations. `pecos_uf:fast`
+  is unchanged.
+
 - The PECOS QASM parser accepts a `//` line comment that ends at end of input
   without a newline (#1518). Before, such a program failed with a syntax error,
   which included SLR-generated QASM ending in a `Comment`.

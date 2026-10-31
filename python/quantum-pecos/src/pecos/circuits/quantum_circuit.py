@@ -670,6 +670,9 @@ class QuantumCircuit(MutableSequence):
         qc_dict = json.loads(qc_json)
 
         qc_meta = qc_dict["prog_metadata"]
+        if "qvars" in qc_meta:
+            # JSON turns the integer qubit ids into strings and the (register, index) pairs into lists.
+            qc_meta["qvars"] = {int(k): tuple(v) for k, v in qc_meta["qvars"].items()}
         qc = QuantumCircuit(**qc_meta)
 
         for gate_dict in qc_dict["gates"]:

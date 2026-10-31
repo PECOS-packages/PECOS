@@ -6,6 +6,11 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- `QuantumCircuit.from_json_str` restores the integer qubit ids and
+  `(register, index)` tuples in `qvars`. Before, they came back as strings and
+  lists, and `to_phir_dict` on the restored circuit failed with "Couldn't find
+  qsym for qid".
+
 - The PECOS QASM parser accepts a `//` line comment that ends at end of input
   without a newline (#1518). Before, such a program failed with a syntax error,
   which included SLR-generated QASM ending in a `Comment`.

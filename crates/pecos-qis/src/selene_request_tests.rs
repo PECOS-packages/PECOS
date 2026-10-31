@@ -995,13 +995,25 @@ fn opaque_future_reuse_does_not_inherit_source_provenance() {
     let _lock = crate::test_env::ENV_MUTEX.lock().unwrap();
     for (trace_enabled, output) in [
         (false, "bool"),
+        (false, "observed"),
+        (true, "observed"),
         (true, "bool"),
         (true, "repeated"),
         (true, "integer"),
         (false, "qir"),
         (true, "qir"),
     ] {
-        let source = if output == "qir" {
+        let source = if output == "observed" {
+            source
+                .replace(
+                    "declare i1 @___read_future_bool(i64)",
+                    "declare i1 @pecos_runtime_read_bool_v1(ptr, i64, i64)",
+                )
+                .replace(
+                    "@___read_future_bool(i64 %new)",
+                    "@pecos_runtime_read_bool_v1(ptr @name, i64 8, i64 %new)",
+                )
+        } else if output == "qir" {
             source
                 .replace("declare i64 @___qalloc()", "declare i32 @__quantum__qis__m__body(i64, i64)\ndeclare i32 @__quantum__rt__result_get_one(i64)")
                 .replace("%q = call i64 @___qalloc()\n            call void @___reset(i64 %q)\n            %old = call i64 @___lazy_measure(i64 %q)\n            call void @___dec_future_refcount(i64 %old)", "%old = call i32 @__quantum__qis__m__body(i64 0, i64 7)")
@@ -1047,7 +1059,14 @@ fn opaque_future_reuse_does_not_inherit_source_provenance() {
                         }
                     }
                 })();
-                if output == "qir" {
+                if output == "observed" {
+                    assert!(
+                        outcome
+                            .unwrap_err()
+                            .to_string()
+                            .contains("unknown measurement provenance")
+                    );
+                } else if output == "qir" {
                     assert!(
                         outcome
                             .unwrap_err()
@@ -1120,9 +1139,20 @@ fn decoder_request_never_forces_an_unread_native_future_or_inserts_a_barrier() {
             assert_eq!(context, b"{}");
             self.decode(window, instance, syndrome)
         }
+        fn decode_observed_v1(
+            &mut self,
+            window: u64,
+            instance: u64,
+            syndrome: &[u8],
+            context: &[u8],
+            reads: &[crate::runtime_decoder::RuntimeObservedRead],
+        ) -> std::result::Result<u64, PecosError> {
+            assert_eq!(reads, &[] as &[crate::runtime_decoder::RuntimeObservedRead]);
+            self.decode_v1(window, instance, syndrome, context)
+        }
     }
     let _lock = crate::test_env::ENV_MUTEX.lock().unwrap();
-    for versioned in [false, true] {
+    for mode in 0..3 {
         FORCES.set(0);
         with_config(
             |d| {
@@ -1143,7 +1173,7 @@ fn decoder_request_never_forces_an_unread_native_future_or_inserts_a_barrier() {
             %status = sub i64 1, %frame
             ret i64 %status
         }";
-                let source = if versioned {
+                let source = if mode != 0 {
                     format!("@context = private constant [2 x i8] c\"{{}}\"\n{}", source
                     .replace("declare i64 @pecos_runtime_decode(i64, i64, ptr, i64)",
                         "declare i64 @pecos_runtime_decode_v1(i64, i64, ptr, i64, ptr, i64)")
@@ -1151,6 +1181,14 @@ fn decoder_request_never_forces_an_unread_native_future_or_inserts_a_barrier() {
                         "@pecos_runtime_decode_v1(i64 9, i64 0, ptr %data, i64 1, ptr @context, i64 2)"))
                 } else {
                     source.to_string()
+                };
+                let source = if mode == 2 {
+                    source.replace(
+                        "pecos_runtime_decode_v1",
+                        "pecos_runtime_decode_observed_v1",
+                    )
+                } else {
+                    source
                 };
                 let mut engine = crate::QisEngine::new(
                     Box::new(crate::QisHeliosInterface::new()),

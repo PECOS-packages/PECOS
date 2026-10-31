@@ -1167,6 +1167,7 @@ impl QisEngine {
                         instance_id,
                         syndrome,
                         context,
+                        observed_reads,
                     },
                 result_id: Some(id),
             } = &ops[index]
@@ -1191,11 +1192,20 @@ impl QisEngine {
             {
                 return Err(PecosError::Input("invalid decoder context envelope".into()));
             }
+            if let Some(reads) = observed_reads {
+                if context.is_none() {
+                    return Err(PecosError::Input(
+                        "observed decoding requires context v1".into(),
+                    ));
+                }
+                pecos_qis_ffi_types::validate_observed_reads(reads).map_err(PecosError::Input)?;
+            }
             self.pending_decode = Some(crate::runtime_decoder::PendingDecode {
                 window: *window_id,
                 instance: *instance_id,
                 syndrome: syndrome.clone(),
                 context: context.clone(),
+                observed_reads: observed_reads.clone(),
             });
             &ops[..index]
         } else {
@@ -1981,7 +1991,15 @@ impl QisEngine {
             }
             let request = self.pending_decode.take().expect("pending decode");
             let session = self.decoder_session.as_mut().expect("decoder session");
-            let response = if let Some(context) = request.context {
+            let response = if let Some(reads) = request.observed_reads {
+                session.decode_observed_v1(
+                    request.window,
+                    request.instance,
+                    &request.syndrome,
+                    request.context.as_deref().expect("validated context"),
+                    &reads,
+                )?
+            } else if let Some(context) = request.context {
                 session.decode_v1(
                     request.window,
                     request.instance,

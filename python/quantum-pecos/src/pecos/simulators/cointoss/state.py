@@ -94,7 +94,7 @@ class CoinToss:
         result = self._sim.run_measure(qubit)
         return next(iter(result.values())) if result else 0
 
-    def validate_gate_batch(self, symbol: str, locations: object) -> None:
+    def validate_gate_batch(self, symbol: str, locations: object, **_params: object) -> None:
         """Check measurement spellings over every batch HybridEngine dispatches."""
         if self.bindings.get(symbol) is _measure_gate:
             validate_batch(symbol, locations, self.gate_capacity, allow_singletons=False)

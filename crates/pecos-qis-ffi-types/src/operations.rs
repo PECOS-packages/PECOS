@@ -35,6 +35,10 @@ pub enum RuntimeRequest {
         /// None identifies the original unbound intrinsic.
         #[serde(default)]
         context: Option<Vec<u8>>,
+        /// Runtime-getter snapshots, never populated from caller JSON. Some(empty)
+        /// requests checked decoding of a constant schema; None is legacy/v1.
+        #[serde(default)]
+        observed_reads: Option<Vec<crate::RuntimeObservedRead>>,
     },
     /// Selene ABI request: operands are native handles, never QIR slots.
     Native(SeleneRequest),

@@ -11,10 +11,39 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   lists, and `to_phir_dict` on the restored circuit failed with "Couldn't find
   qsym for qid".
 
+- The PECOS QASM parser accepts a `//` line comment that ends at end of input
+  without a newline (#1518). Before, such a program failed with a syntax error,
+  which included SLR-generated QASM ending in a `Comment`.
+
+- **Breaking:** SLR `LoopVar` comparisons (`==`, `!=`, `<`, `>`, `<=`, `>=`)
+  and `+`/`-` build SLR expressions (#1517). Before, `i == 0` was a plain
+  Python `False`, so `If(i == 0)` inside `For(i, ...)` became a branch that
+  never ran in Guppy, QASM and QIR, with no error. Guppy now emits the
+  comparison in its `for` loop. QASM and QIR raise `NotImplementedError` for a
+  loop variable used as a classical value, since their unrolling does not bind
+  it. Stim and QuantumCircuit keep rejecting such conditions. Bitwise and unary
+  operators on a `LoopVar` stay a `TypeError`. A `LoopVar` used outside the
+  `For` loop that binds it raises `ValueError` during conversion. `LoopVar`
+  stays hashable by identity.
+
 - **Breaking:** Python simulator wrappers and the public `pecos.HybridEngine`
   validate whole known-gate batches per `run_gate` call and per circuit item
   before changing state, including when `simulate_gate=False`. Registered-gate
-  decomposition is still validated per step until a later PR. Malformed locations,
+  batches are fully decomposed before any step runs. The pre-pass checks each
+  step's binding and qubits, plus every outer location's arity from the registry
+  definition, distinct operands,
+  and bounds against the state's capacity (including unused operands).
+  Step failures name the registered gate and failing step; outer-location failures
+  name the registered gate. SparseStabPy uses the same pure Clifford rotation
+  lowering check for active registered steps' parameters before any step runs;
+  plain `run_gate` and HybridEngine leave parameter checks to dispatch.
+  With `simulate_gate=False`, locations and registered-step bindings are still
+  validated, but rotation parameters are not. Step metadata can disable a step
+  (skipping parameter checks and execution), but no longer re-enables a step
+  inside a gate whose outer `simulate_gate` is `False`. An unbound registered step now raises even when disabled, where it was
+  previously silently skipped. Empty registered decompositions are valid no-ops
+  after outer-location validation.
+  Malformed locations,
   repeated operands within a location, and out-of-range qubits raise gate-named
   `ValueError`s; some errors previously raised `TypeError`.
   StateVec, CuStateVec, MPS and CudaStateVec require scalar one-qubit locations.
@@ -38,6 +67,13 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   Through HybridEngine, every CoinToss measurement binding (including MX/MY/MZ)
   is validated for every iterable batch container; other CoinToss gates remain
   no-ops.
+
+- Fixed registered simulator gates treating radians as turns and then treating
+  decomposed turns as radians, which silently produced incorrect rotations.
+  The simulator now converts at the registry boundary, including fixed and
+  negated input angles. The Python registry API continues to use turns.
+  Registered gates also accept `angle=` for a one-angle gate, as built-in gates
+  do, and `angle64` values; non-finite angles raise a gate-named `ValueError`.
 
 - `derive_seed` hashes its purpose string with a fixed SipHash-1-3 instead of
   `std`'s `DefaultHasher`, whose algorithm is unspecified across Rust releases

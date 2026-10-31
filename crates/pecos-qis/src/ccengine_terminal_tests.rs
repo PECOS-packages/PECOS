@@ -1903,17 +1903,19 @@ fn migrated_shot_replacement_leaves_original_host_tls_empty() {
 }
 
 fn leaked_lazy_read_program() -> String {
-    // Both SeleneFutureResult and SeleneU64Result use a hidden return pointer
-    // on Windows, and two registers on the other supported 64-bit targets.
-    #[cfg(not(windows))]
-    let (declarations, calls) = (
-        "declare {i32, i64} @selene_qubit_lazy_measure_leaked(ptr, i64)\ndeclare {i32, i64} @selene_future_read_u64(ptr, i64)",
-        "%future = call {i32, i64} @selene_qubit_lazy_measure_leaked(ptr null, i64 0)\n%id = extractvalue {i32, i64} %future, 1\n%read = call {i32, i64} @selene_future_read_u64(ptr null, i64 %id)",
+    let declarations = format!(
+        "{}\n{}",
+        crate::selene_test_ir::declaration("selene_qubit_lazy_measure_leaked", "ptr, i64"),
+        crate::selene_test_ir::declaration("selene_future_read_u64", "ptr, i64"),
     );
-    #[cfg(windows)]
-    let (declarations, calls) = (
-        "declare void @selene_qubit_lazy_measure_leaked(ptr sret({i32, i64}), ptr, i64)\ndeclare void @selene_future_read_u64(ptr sret({i32, i64}), ptr, i64)",
-        "%out = alloca {i32, i64}\ncall void @selene_qubit_lazy_measure_leaked(ptr sret({i32, i64}) %out, ptr null, i64 0)\n%future = load {i32, i64}, ptr %out\n%id = extractvalue {i32, i64} %future, 1\ncall void @selene_future_read_u64(ptr sret({i32, i64}) %out, ptr null, i64 %id)\n%read = load {i32, i64}, ptr %out",
+    let calls = format!(
+        "{}\n%id = extractvalue {{i32, i64}} %future, 1\n{}",
+        crate::selene_test_ir::call(
+            "future",
+            "selene_qubit_lazy_measure_leaked",
+            "ptr null, i64 0"
+        ),
+        crate::selene_test_ir::call("read", "selene_future_read_u64", "ptr null, i64 %id"),
     );
     format!(
         r"

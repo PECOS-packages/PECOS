@@ -63,22 +63,54 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   its other one-qubit gates require scalars. PauliProp/PauliFaultProp accept
   singleton tuples/lists, and DefaultSimulator accepts singleton sized, indexable
   sequences. `I` is a single-qubit gate and follows the same per-state rule as
-  `X`; a pair location for `I` is rejected (use `II`), except by CoinToss, whose
-  gates stay no-ops. Integer-like scalars are classified before sequences, and
+  `X`; a pair location for `I` is rejected (use `II`), except for CoinToss
+  built-in no-op bindings. Integer-like scalars are classified before sequences, and
   unhashable qubit indices are rejected up front, including inside locations.
   Zero-dimensional arrays used as qubit indices inside a batch (including
   operands inside a location) are now rejected, even where Rust-backed bindings
   and SparseStabPy accepted them for non-measuring gates. A bare `np.array(0)`
-  batch still skips dispatch in the wrappers. Multi-qubit locations must be ordered:
+  batch still skips dispatch in the non-CoinToss wrappers (and CoinToss no-ops).
+  Multi-qubit locations must be ordered:
   set/frozenset pairs are rejected, including in SparseStabPy and CudaStateVec
   where they previously ran. Batches may still repeat or overlap qubits and
   execute sequentially.
   Native SparseStab, Stabilizer, StateVec, StabVec, CoinToss and PauliProp expose
   a read-only `gate_capacity` property; PauliProp returns `None` and remains
-  growable. CoinToss's own no-op `run_gate` and its `run_circuit` are unchanged.
+  growable. CoinToss's `run_circuit` pre-checks
+  measurement batches before drawing RNG or recording results.
   Through HybridEngine, every CoinToss measurement binding (including MX/MY/MZ)
-  is validated for every iterable batch container; other CoinToss gates remain
-  no-ops.
+  is validated for every iterable batch container; built-in non-measurement
+  bindings remain no-ops, while custom bindings execute.
+
+- **Breaking:** CoinToss now measures MX/MY/MZ and iterable measurement batches
+  (set, frozenset, list, tuple, and generator) through both `run_circuit` and
+  `run_gate`. Previously, `run_gate` discarded measurements; `run_circuit`
+  measured prefixed spellings only in sets or as bare Python integers.
+  Both methods accept integer-like scalar locations and return nonzero binding
+  results under their original location keys. Custom bindings execute,
+  including custom measurement callables.
+  Built-in measurements and custom bindings with known positive arities or
+  measurement prefixes validate the whole batch before dispatch, even with
+  `simulate_gate=False`; built-in no-op bindings retain their permissive inputs.
+  Custom bindings with unknown or zero arities skip location validation.
+  All native measurement spellings have bindings, including `measure X`,
+  `measure Y`, and `MZForced`. Native Z measurement spellings honour
+  `forced_outcome` (-1 draws a coin, 0/1 return that outcome without a coin);
+  `MZForced` requires the parameter. This also changes paths that already
+  measured on dev: `Measure`, `measure Z`, and `Measure +Z` in `run_circuit`,
+  and Z measurements through HybridEngine, previously drew a coin and ignored
+  `forced_outcome`. They now return 0/1 without a coin when forced, and reject
+  invalid values before dispatch, including with `simulate_gate=False`.
+  This affects the QEC ideal gates in `checks2circuit.py` and
+  `color_488/circuit_implementation1.py`, which emit `measure Z` with
+  `forced_outcome=0`. MX and `Measure -Z` continue to ignore `forced_outcome`.
+  An unbound case-insensitive "measure"-prefixed spelling also measures in
+  `run_circuit` and `run_gate`. The public `pecos.HybridEngine` validates these
+  unbound prefixed batches before rejecting them as unsupported when enabled.
+  Rebinding a prefixed spelling can make it non-measuring.
+  Locations execute in container order, including duplicates. Outcomes and
+  coin use change for circuits that relied on the old silent skips or ignored
+  `simulate_gate=False` or `forced_outcome`.
 
 - Fixed registered simulator gates treating radians as turns and then treating
   decomposed turns as radians, which silently produced incorrect rotations.

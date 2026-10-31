@@ -205,9 +205,13 @@ class QisEngineBuilder:
         )
         return self
 
-    def runtime_decoder(self, factory: object) -> Self:
-        """Configure a fresh host decoder session per shot, for live QIS calls."""
-        self._builder = self._builder.runtime_decoder(factory)
+    def runtime_decoder(self, factory: object, *, capture_batches: bool = False) -> Self:
+        """Configure shot-local decoding, optionally with bounded emitted batches.
+
+        ``capture_batches`` requires observed native decode calls and ordinary
+        transport. The provider sees runtime timing/operations, never noise truth.
+        """
+        self._builder = self._builder.runtime_decoder(factory, capture_batches=capture_batches)
         return self
 
     def interface(self, builder: object) -> Self:

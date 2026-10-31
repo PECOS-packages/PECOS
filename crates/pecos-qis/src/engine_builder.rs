@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 pub struct QisEngineBuilder {
     runtime: Option<Box<dyn crate::runtime::QisRuntime>>,
     decoder_factory: Option<crate::runtime_decoder::RuntimeDecoderFactory>,
+    decoder_batch_capture: bool,
     scheduled_transport: ScheduledTransport,
     interface: Option<OperationCollector>,
     interface_builder: Option<Box<dyn crate::program::QisInterfaceBuilder>>,
@@ -23,6 +24,7 @@ impl Clone for QisEngineBuilder {
     fn clone(&self) -> Self {
         Self {
             decoder_factory: self.decoder_factory.clone(),
+            decoder_batch_capture: self.decoder_batch_capture,
             scheduled_transport: self.scheduled_transport,
             runtime: self.runtime.as_ref().map(|r| dyn_clone::clone_box(&**r)),
             interface: self.interface.clone(),
@@ -45,6 +47,7 @@ impl QisEngineBuilder {
         Self {
             runtime: None,
             decoder_factory: None,
+            decoder_batch_capture: false,
             scheduled_transport: ScheduledTransport::Off,
             interface: None,
             interface_builder: None,
@@ -62,6 +65,15 @@ impl QisEngineBuilder {
         factory: crate::runtime_decoder::RuntimeDecoderFactory,
     ) -> Self {
         self.decoder_factory = Some(factory);
+        self
+    }
+
+    /// Give observed decoder sessions a bounded runtime-emitted prefix.
+    /// Only the ordinary dynamic native path is supported; scheduled transport
+    /// has its own batch execution contract and is rejected here.
+    #[must_use]
+    pub fn decoder_batch_capture(mut self, enabled: bool) -> Self {
+        self.decoder_batch_capture = enabled;
         self
     }
 
@@ -331,7 +343,7 @@ impl ClassicalControlEngineBuilder for QisEngineBuilder {
         log::debug!("QisEngineBuilder::build() called");
 
         // Check that a runtime was provided
-        let runtime = self.runtime.ok_or_else(|| {
+        let mut runtime = self.runtime.ok_or_else(|| {
             PecosError::Processing(
                 "No runtime specified. Please provide a runtime using .runtime().\n\
                 Reference runtime:\n\
@@ -341,6 +353,19 @@ impl ClassicalControlEngineBuilder for QisEngineBuilder {
             )
         })?;
 
+        if self.decoder_batch_capture {
+            if self.decoder_factory.is_none()
+                || self.scheduled_transport.enabled()
+                || self.program_source.is_none()
+                || self.interface_builder.is_none()
+                || !runtime.uses_native_runtime_protocol()
+            {
+                return Err(PecosError::Input("decoder batch provenance requires a decoder and ordinary dynamic native execution".into()));
+            }
+            runtime
+                .enable_decoder_batch_capture()
+                .map_err(|e| PecosError::Input(e.to_string()))?;
+        }
         // Dynamic execution: when we have a program source and interface builder,
         // always use dynamic execution which properly handles measurement-dependent conditionals
         if let Some(program_source) = &self.program_source
@@ -357,6 +382,11 @@ impl ClassicalControlEngineBuilder for QisEngineBuilder {
             let mut engine = QisEngine::new(dynamic_interface, runtime);
             engine.scheduled_transport = self.scheduled_transport;
             engine.decoder_factory = self.decoder_factory;
+            engine.decoder_input_mode = if self.decoder_batch_capture {
+                crate::runtime_decoder::DecoderInputMode::RuntimeBatches
+            } else {
+                crate::runtime_decoder::DecoderInputMode::Program
+            };
             if let Some(trace_dir) = self.operation_trace_dir {
                 engine.set_operation_trace_dir(trace_dir);
             }

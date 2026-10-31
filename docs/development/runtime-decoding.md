@@ -116,6 +116,12 @@ continuations, verifies program-only decoder input and feedback, then checks
 recovery from decoder failure and reuse across workers. That test establishes
 execution ordering; it does not derive a Pauli DEM for those noise channels.
 
+The optional [runtime-emitted prefix](runtime-decoder-contract.md#runtime-emitted-prefixes-opt-in)
+now supplies bounded batch intervals to observed-read providers on the ordinary
+native path. It exposes timing, normalized operations and source measurement IDs
+without simulator truth. Control-flow context remains declared; compiler verification
+and physical-fragment JIT generation are still separate.
+
 ## Follow-up: providers driven by emitted physical batches
 
 Keep full JIT compilation separate from this supplied-model milestone. The [v1 provider contract](runtime-decoder-contract.md) adds immutable

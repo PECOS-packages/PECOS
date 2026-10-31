@@ -498,6 +498,7 @@ pub struct SeleneRuntime {
     active_shot: Option<(u64, u64)>,
     custom_events: Vec<RuntimeCustomEvent>,
     runtime_batch_index: usize,
+    decoder_batches: crate::decoder_batches::DecoderBatchBuffer,
     custom_event_policy: RuntimeCustomEventPolicy,
     unhandled_custom_events: bool,
     custom_event_handler: Option<CustomEventHandler>,
@@ -647,6 +648,7 @@ impl SeleneRuntime {
             active_shot: None,
             custom_events: Vec::new(),
             runtime_batch_index: 0,
+            decoder_batches: crate::decoder_batches::DecoderBatchBuffer::default(),
             custom_event_policy: RuntimeCustomEventPolicy::default(),
             unhandled_custom_events: false,
             custom_event_handler: None,
@@ -3379,6 +3381,16 @@ impl SeleneRuntime {
         if let Some(error) = batch.callback_error {
             return Err(RuntimeError::FfiError(error.to_string()));
         }
+        if self.decoder_batches.enabled
+            && batch
+                .start_time_nanos
+                .checked_add(batch.duration_nanos)
+                .is_none()
+        {
+            return Err(RuntimeError::ExecutionError(
+                "decoder batch end time overflow".into(),
+            ));
+        }
         let batch_index = self.runtime_batch_index;
         self.runtime_batch_index += 1;
         let mut lowered_ops = Vec::new();
@@ -3521,6 +3533,21 @@ impl SeleneRuntime {
             }
         }
 
+        if self.decoder_batches.enabled {
+            if self.unhandled_custom_events {
+                return Err(RuntimeError::ExecutionError(
+                    "decoder batch provenance rejects unhandled custom events".into(),
+                ));
+            }
+            self.decoder_batches
+                .push(crate::decoder_batches::DecoderBatch {
+                    batch_index,
+                    start_time_nanos: start_time,
+                    duration_nanos: batch.duration_nanos,
+                    normalization_applied: normalized,
+                    operations: lowered_ops.clone(),
+                })?;
+        }
         Ok(lowered_ops)
     }
 
@@ -3695,6 +3722,9 @@ impl Clone for SeleneRuntime {
             active_shot: self.active_shot,
             custom_events: self.custom_events.clone(),
             runtime_batch_index: self.runtime_batch_index,
+            decoder_batches: crate::decoder_batches::DecoderBatchBuffer::new(
+                self.decoder_batches.enabled,
+            ),
             custom_event_policy: self.custom_event_policy,
             unhandled_custom_events: self.unhandled_custom_events,
             custom_event_handler: self.custom_event_handler.clone(),
@@ -3879,6 +3909,17 @@ fn include_result(num_results: &mut usize, result: usize) {
 }
 
 impl QisRuntime for SeleneRuntime {
+    fn enable_decoder_batch_capture(&mut self) -> Result<()> {
+        self.decoder_batches.enabled = true;
+        Ok(())
+    }
+
+    fn take_decoder_batches(&mut self) -> Result<crate::decoder_batches::DecoderBatchPrefix> {
+        self.check_batch_failure()?;
+        self.decoder_batches
+            .take(self.batch_adapter_shot_id, self.runtime_batch_index)
+    }
+
     fn runtime_events_complete(&self) -> bool {
         !self.unhandled_custom_events
     }
@@ -4286,6 +4327,7 @@ impl QisRuntime for SeleneRuntime {
         self.scheduled_drained = false;
         self.scheduled_output = None;
         self.runtime_batch_index = 0;
+        self.decoder_batches.reset();
         self.pending_shot_start = Some((shot_id, seed));
         self.apply_pending_shot_start()?;
 
@@ -4401,6 +4443,7 @@ impl QisRuntime for SeleneRuntime {
         self.scheduled_drained = false;
         self.scheduled_output = None;
         self.runtime_batch_index = 0;
+        self.decoder_batches.reset();
         self.pending_shot_start = None;
         self.active_shot = None;
 
@@ -4900,6 +4943,133 @@ mod tests {
         let cloned = runtime.clone();
         assert_eq!(cloned.init_args, ["--duration-ns-rxy=10"]);
         assert_eq!(cloned.library_search_dirs, [PathBuf::from("/path/to/lib")]);
+    }
+
+    #[test]
+    fn decoder_batch_capture_retains_timing_source_routing_and_resets() {
+        let mut runtime = SeleneRuntime::new("synthetic-runtime.so");
+        runtime.enable_decoder_batch_capture().unwrap();
+        runtime.batch_adapter_shot_id = 42;
+        runtime.runtime_to_program_results.insert(901, (7, false));
+        let batch = RuntimeOperationBatch {
+            start_time_nanos: 20,
+            duration_nanos: 5,
+            operations: vec![
+                RuntimeScheduledOp::Rxy {
+                    qubit_id: 0,
+                    theta: 1.0,
+                    phi: 0.5,
+                },
+                RuntimeScheduledOp::Measure {
+                    qubit_id: 1,
+                    result_id: 901,
+                },
+            ],
+            ..Default::default()
+        };
+        runtime.convert_runtime_batch(batch).unwrap();
+        let prefix = runtime.take_decoder_batches().unwrap();
+        assert_eq!(
+            (
+                prefix.runtime_shot_id,
+                prefix.first_batch_index,
+                prefix.next_batch_index
+            ),
+            (42, 0, 1)
+        );
+        let captured = &prefix.batches[0];
+        assert_eq!(
+            (captured.start_time_nanos, captured.duration_nanos),
+            (20, 5)
+        );
+        assert_eq!(
+            captured.operations,
+            [
+                QuantumOp::Idle(20e-9, 0),
+                QuantumOp::RXY(1.0, 0.5, 0),
+                QuantumOp::Idle(20e-9, 1),
+                QuantumOp::Measure(1, 7),
+            ]
+        );
+        assert!(!serde_json::to_string(&prefix).unwrap().contains("901"));
+        assert!(runtime.take_decoder_batches().unwrap().batches.is_empty());
+        let mut cloned = runtime.clone();
+        cloned.reset().unwrap();
+        assert_eq!(cloned.take_decoder_batches().unwrap().next_batch_index, 0);
+        runtime.reset().unwrap();
+        assert_eq!(runtime.take_decoder_batches().unwrap().next_batch_index, 0);
+        // A retained provider snapshot is owned and survives resets.
+        assert_eq!(prefix.batches[0].operations.len(), 4);
+    }
+
+    #[test]
+    fn decoder_batch_capture_rejects_overflow_even_without_operations_or_adapter() {
+        let mut runtime = SeleneRuntime::new("synthetic-runtime.so");
+        runtime.enable_decoder_batch_capture().unwrap();
+        let error = runtime
+            .convert_runtime_batch(RuntimeOperationBatch {
+                start_time_nanos: u64::MAX,
+                duration_nanos: 1,
+                ..Default::default()
+            })
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("end time overflow"));
+        assert_eq!(
+            runtime.take_decoder_batches().unwrap_err().to_string(),
+            error
+        );
+        runtime.reset().unwrap();
+        assert!(runtime.take_decoder_batches().unwrap().batches.is_empty());
+    }
+
+    #[test]
+    fn decoder_batch_capture_limit_poisoning_and_recovery() {
+        let mut runtime = SeleneRuntime::new("synthetic-runtime.so");
+        runtime.enable_decoder_batch_capture().unwrap();
+        for _ in 0..crate::decoder_batches::MAX_DECODER_BATCHES {
+            runtime
+                .convert_runtime_batch(RuntimeOperationBatch::default())
+                .unwrap();
+        }
+        let error = runtime
+            .convert_runtime_batch(RuntimeOperationBatch::default())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("interval limit exceeded"));
+        assert_eq!(
+            runtime.take_decoder_batches().unwrap_err().to_string(),
+            error
+        );
+        runtime.reset().unwrap();
+        runtime
+            .convert_runtime_batch(RuntimeOperationBatch::default())
+            .unwrap();
+        assert_eq!(runtime.take_decoder_batches().unwrap().next_batch_index, 1);
+    }
+
+    #[test]
+    fn decoder_batch_capture_rejects_unmodeled_custom_events_and_poisoned_prefixes() {
+        let mut runtime = SeleneRuntime::new("synthetic-runtime.so");
+        runtime.enable_decoder_batch_capture().unwrap();
+        runtime.set_custom_event_policy(RuntimeCustomEventPolicy::Capture);
+        let failure = runtime
+            .convert_runtime_batch(RuntimeOperationBatch {
+                operations: vec![RuntimeScheduledOp::Custom {
+                    tag: 7,
+                    data: vec![1],
+                }],
+                ..Default::default()
+            })
+            .unwrap_err()
+            .to_string();
+        assert!(failure.contains("unhandled custom events"));
+        assert_eq!(
+            runtime.take_decoder_batches().unwrap_err().to_string(),
+            failure
+        );
+        runtime.reset().unwrap();
+        assert_eq!(runtime.take_decoder_batches().unwrap().next_batch_index, 0);
     }
 
     #[test]

@@ -154,7 +154,13 @@ from pecos.qec.runtime_decode_context import (
     RuntimeLoopRecord,
     RuntimeRecordRef,
 )
-from pecos.qec.runtime_decoder import RuntimeDecoder, RuntimeDecodeRequest, RuntimeDecodeWindow
+from pecos.qec.runtime_decoder import (
+    RuntimeDecodeBatchRequest,
+    RuntimeDecoder,
+    RuntimeDecodeRequest,
+    RuntimeDecodeWindow,
+)
+from pecos.qec.runtime_decoder_batches import RuntimeDecodeBatch, RuntimeDecodeBatchPrefix, RuntimeDecodeOperation
 from pecos.qec.runtime_observed_reads import RuntimeReadSource
 from pecos.qec.surface import (
     LogicalOperator,
@@ -187,6 +193,10 @@ __all__ = [
     "RuntimeClassicalInput",
     "RuntimeDecodeContext",
     "RuntimeDecodeRequest",
+    "RuntimeDecodeBatchRequest",
+    "RuntimeDecodeBatch",
+    "RuntimeDecodeBatchPrefix",
+    "RuntimeDecodeOperation",
     "RuntimeDecodeWindow",
     "RuntimeDecoder",
     "CircuitStep",

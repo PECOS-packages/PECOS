@@ -165,6 +165,83 @@ Equal parities cannot prove the program's full classical data flow. These checks
 also do not certify a single adaptive branch as a sound DEM, establish window
 independence or generate JIT fragments.
 
+## Runtime-emitted prefixes (opt-in)
+
+The ordinary dynamic native path can pass runtime batch provenance to an
+observed-read provider. This helper accepts the caller's per-shot provider factory;
+pass its returned engine builder to `sim(...).classical(...)`:
+
+```python
+from pecos import selene_engine
+from pecos.qec import RuntimeDecoder
+
+
+def batch_decoder_engine(provider_factory, runtime="selene_simple_runtime"):
+    return selene_engine(runtime).runtime_decoder(
+        RuntimeDecoder(provider_factory=provider_factory),
+        capture_batches=True,
+    )
+```
+
+The program still calls `pecos_runtime_decode_observed_v1`. The provider now
+receives `RuntimeDecodeBatchRequest`, which extends the existing request with
+an immutable `batch_prefix: RuntimeDecodeBatchPrefix`. This is captured by the
+host independently of caller JSON. The native import and FFI ABI remain unchanged.
+Legacy and declared-only calls are rejected in this mode. Scheduled transport
+and runtimes without capture support are rejected at construction.
+
+A prefix contains the engine-local `runtime_shot_id`, `first_batch_index`, an
+exclusive `next_batch_index`, and an ordered tuple of `RuntimeDecodeBatch` values.
+Indices cover every emitted batch since shot start or the preceding decode,
+including empty batches. Each interval is consumed once; repeated, missing or
+out-of-shot intervals fail. Empty intervals are valid and have equal watermarks.
+Buffers and session state reset for each shot and worker. Shot IDs are not global
+worker IDs; keep provider state in its existing shot-local session.
+
+Each batch retains its integer nanosecond start/duration, whether a batch adapter
+normalized it, and the runtime-lowered operation sequence after source-result
+routing and idle insertion. `RuntimeDecodeOperation` exposes `kind`, `qubits`,
+`parameters` and optional `source_id`. Angles are radians; Idle parameters use the
+existing lowering's floating-point seconds. Inserted idles may begin before the
+batch start. Operations are captured before the host's existing gate encoding
+and decompositions; they are not a second simulation or noise realization.
+Source IDs on measurements are the same shot-local occurrences used by observed
+reads. `None` on a measurement means runtime-owned work without a program source;
+it must not be guessed into a detector identity. Native future handles, raw custom
+payloads, measurement outcomes, seeds, fault samples and logical truth are excluded.
+Original custom payloads are handled by the existing checked adapter/metadata
+contract. Unhandled custom events reject capture even under capture-only policy.
+
+The host delivers the prefix only after the existing ready commands and their
+measurement feedback have executed. Capture adds no barrier, forcing, clock
+advance or extra drain. Unforced work may still be held by the runtime, and
+operations after the current decoder-dependent decision are unavailable. The
+watermark certifies the emitted prefix only, not a complete circuit or fault
+region. It is neither a cache key nor proof of independent closed windows.
+
+Retention is bounded to 4,096 batches and 65,536 runtime-lowered operations
+between decode calls (also before the first call and after the last). Exceeding
+either bound aborts the shot; the history is never silently truncated. A provider
+may retain supplied immutable snapshots at its own cost, but this does not change
+window ownership or boundary-state admission.
+
+Custom Python sessions implement
+`decode_observed_with_batches_v1(window, instance, syndrome, context, observations, prefix)`.
+The last argument is bounded version-one JSON bytes; the standard session validates
+and freezes it before provider selection. Rust sessions implement the corresponding
+method accepting `&DecoderBatchPrefix`; its default rejects. Neither bridge falls
+back to the older observed method. Custom sessions remain trusted extension points.
+
+This prerequisite connects actual batch timing/order and measurement occurrences
+to the existing declared QIS/HUGR decode site, branch events, active loop counts
+and classical inputs. It **does not verify those declarations**. Existing decorative
+source metadata uses matching heuristics and is deliberately not promoted into
+an exact compiler-site-to-physical-operation mapping. A future instrumenter must
+bind a module/compiler revision and site table, record the actual branch predicate,
+enforce loop-entry/backedge/exit counters, and capture typed input dependencies.
+Manual hook calls alone cannot establish instrumentation completeness. Full JIT,
+compiler-verified control flow and exact source-to-gate attribution remain follow-ups.
+
 ## Context v1
 
 `RuntimeDecodeContext.to_json()` produces the bounded envelope. All fields are

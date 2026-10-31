@@ -23,6 +23,11 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   drops exports of size-0 registers it does not declare. Programs without
   `cvar_export` report what they did before.
 
+- `belief_find` now gives its Union Find fallback the raw BP log-probability
+  ratios. It previously passed a transform that reversed their order, so on
+  shots where BP failed to converge the fallback visited the least likely bits
+  first. Seeded `belief_find` results can change on those shots.
+
 - The PECOS QASM parser accepts a `//` line comment that ends at end of input
   without a newline (#1518). Before, such a program failed with a syntax error,
   which included SLR-generated QASM ending in a `Comment`.

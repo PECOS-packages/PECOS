@@ -1803,9 +1803,9 @@ def test_from_guppy_constrained_surface_dem_byte_identical(
         budget=budget,
         noise=noise,
     )
-    assert got == ref_dem, (
-        f"constrained surface from_guppy not byte-identical for d={d}, budget={budget}, basis={basis}, rounds={rounds}"
-    )
+    assert (
+        got == ref_dem
+    ), f"constrained surface from_guppy not byte-identical for d={d}, budget={budget}, basis={basis}, rounds={rounds}"
 
 
 @pytest.mark.parametrize(

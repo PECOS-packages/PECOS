@@ -665,10 +665,13 @@ class TestDemGeneration:
             ancilla_budget=2,
             circuit_source="traced_qis",
         )
-        # The native topology path normalizes traced-QIS circuits (Clifford-rotation
-        # lowering + single-qubit Clifford-chain simplification) before DEM
-        # construction; the fresh comparison must apply the same normalization.
-        normalize_traced_tick_circuit(traced_tc, context="constrained budget cache test")
+        # The native topology path lowers Clifford rotations without simplifying
+        # physical gate chains; the fresh comparison must retain the same noise sites.
+        normalize_traced_tick_circuit(
+            traced_tc,
+            context="constrained budget cache test",
+            simplify_single_qubit_clifford_chains=False,
+        )
         cached_traced = generate_circuit_level_dem_from_builder(
             patch,
             num_rounds=2,

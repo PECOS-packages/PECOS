@@ -59,6 +59,56 @@ def _classical_register_dtype(size: int) -> str:
     raise ValueError(msg)
 
 
+_SCRATCH_STEM = "__pecos_scratch"
+
+
+def _is_measurement(sym: str) -> bool:
+    return sym == "Measure" or sym.startswith("measure")
+
+
+def _bare_measurement_scratch(qc: pecos.QuantumCircuit) -> tuple[dict[int, list[str | int]], list[dict[str, Any]]]:
+    """Give each qubit measured without a destination its own bit in internal scratch variables.
+
+    PHIR requires every Measure to have returns. The bits are never read, and the
+    cvar_export emitted alongside them keeps them out of the reported results.
+    """
+    bare = sorted(
+        {
+            qubit
+            for sym, qubits, meta in qc.items()
+            if _is_measurement(sym) and not {"var", "var_output"} & set(meta or {})
+            for qubit in qubits
+        },
+    )
+    taken = set(qc.metadata.get("cvar_spec", {})) | set(qc.metadata.get("qvar_spec", {"q": None}))
+    bits: dict[int, list[str | int]] = {}
+    declarations = []
+    for start in range(0, len(bare), 64):
+        chunk = bare[start : start + 64]
+        name = _SCRATCH_STEM
+        while name in taken:
+            name += "_"
+        taken.add(name)
+        declarations.append(
+            {
+                "data": "cvar_define",
+                "data_type": _classical_register_dtype(len(chunk)),
+                "variable": name,
+                "size": len(chunk),
+            },
+        )
+        bits.update({qubit: [name, index] for index, qubit in enumerate(chunk)})
+    return bits, declarations
+
+
+def _has_export(ops: list[dict[str, Any]]) -> bool:
+    return any(
+        op.get("data") == "cvar_export"
+        or any(_has_export(op.get(field) or []) for field in ("ops", "true_branch", "false_branch"))
+        for op in ops
+    )
+
+
 def conv_expr(expr: dict[str, Any]) -> dict[str, Any]:
     """Convert expression dictionary to PHIR format.
 
@@ -287,6 +337,10 @@ def to_phir_dict(qc: pecos.QuantumCircuit) -> dict:
         sym == "cop" and meta.get("cop_type") == "ExportCVar" and meta["export"] not in omitted_cvars
         for sym, _, meta in qc.items()
     )
+
+    scratch_bits, scratch_declarations = _bare_measurement_scratch(qc)
+    ops.extend(scratch_declarations)
+
     ops_buffer = []
     current_cond = None
 
@@ -368,7 +422,7 @@ def to_phir_dict(qc: pecos.QuantumCircuit) -> dict:
             if angles:
                 op["angles"] = [angles, "rad"]
 
-            if sym == "Measure" or sym.startswith("measure"):
+            if _is_measurement(sym):
                 # Getting return values:
                 if "var" in metadata:
                     var = metadata["var"]
@@ -399,6 +453,8 @@ def to_phir_dict(qc: pecos.QuantumCircuit) -> dict:
                             var_return.append(list(var))
                     op["returns"] = var_return
                     del metadata["var_output"]
+                else:
+                    op["returns"] = [scratch_bits[q] for q in qubits]
 
         cond = metadata.get("cond")
         if cond is not None:
@@ -428,6 +484,10 @@ def to_phir_dict(qc: pecos.QuantumCircuit) -> dict:
             current_cond,
             force_flush=True,
         )
+
+    if scratch_bits and not _has_export(ops):
+        user_cvars = [sym for sym, size in qc.metadata.get("cvar_spec", {}).items() if size]
+        ops.append({"data": "cvar_export", "variables": user_cvars})
 
     num_qubits = len(qid2qsym)
     prog["metadata"]["num_qubits"] = num_qubits

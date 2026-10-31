@@ -119,7 +119,7 @@ def test_register_copy_rejects_different_widths(source_width: int) -> None:
     ("target", "value", "reason"),
     [
         ("missing", LiteralExpr(value=1), "unknown classical register 'missing'"),
-        ("c", VarExpr(name="missing"), "assignment to 'c'"),
+        ("c", VarExpr(name="missing"), "Unknown classical register 'missing' as the source of the assignment to 'c'"),
         ("c", BinaryExpr(op=BinaryOp.ADD, left=LiteralExpr(value=2), right=LiteralExpr(value=3)), "assignment to 'c'"),
     ],
 )
@@ -128,3 +128,12 @@ def test_direct_ast_assignment_rejects_unsupported_forms(target, value, reason) 
     program = replace(program, body=(AssignOp(target=target, value=value),))
     with pytest.raises(GuppyCodegenError, match=reason):
         ast_to_guppy(program)
+
+
+def test_loop_indexed_bit_literal_is_a_bool() -> None:
+    # A symbolic bit target is a single-bit write; its literal must render as a Guppy bool.
+    q, c, i = QReg("q", 1), CReg("c", 2), LoopVar("i")
+    program = Main(q, c, For(i, 0, 2).Do(c[i].set(1)), Return(c))
+    source = SlrConverter(program).guppy()
+    assert "c[i] = True" in source
+    assert SlrConverter(program).hugr()

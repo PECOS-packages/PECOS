@@ -1341,6 +1341,12 @@ class AstToGuppy:
             # Guppy arrays move on assignment, even when their elements are
             # bools. An explicit copy leaves the source available to later ops.
             return f"{expr.name}.copy()"
+        if isinstance(expr, VarExpr):
+            msg = (
+                f"Unknown classical register {expr.name!r} as the source of the assignment to {target!r}; "
+                "declare it in this scope or pass it as a block input"
+            )
+            raise GuppyCodegenError(msg)
         msg = (
             f"Unsupported whole-register assignment to {target!r}: {expr!r}. "
             "Guppy supports integer literals and equal-width register copies here; "

@@ -80,10 +80,6 @@ fn converter_rejects_other_unimplemented_operation_kinds() {
             "PHIR meta barrier:",
             json!({"meta":"barrier","args":[["q",0]]}),
         ),
-        (
-            "cvar_export",
-            json!({"data":"cvar_export","variables":["m"]}),
-        ),
         ("cop =", json!({"cop":"=","args":[1],"returns":["m"]})),
         ("unexpected", json!({"unexpected":true})),
         ("42", json!(42)),
@@ -774,10 +770,20 @@ fn declaration_diagnostics_bound_json_values() {
 #[test]
 fn non_declaration_data_errors_name_the_directive() {
     use pecos_phir_json::v0_1::ast::Operation;
-    for (data, fix) in [
-        ("cvar_export", "supply the required variables array"),
-        ("future_data", "use a string variable name"),
+    for malformed in [
+        json!({"data":"cvar_export"}),
+        json!({"data":"cvar_export","variable":"a","data_type":"u32"}),
     ] {
+        let error = serde_json::from_value::<Operation>(malformed)
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            error,
+            "Input error: cvar_export: invalid variables null; supply an array of strings"
+        );
+    }
+    {
+        let (data, fix) = ("future_data", "use a string variable name");
         let error = serde_json::from_value::<Operation>(json!({"data":data}))
             .unwrap_err()
             .to_string();

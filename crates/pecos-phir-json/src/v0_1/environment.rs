@@ -493,6 +493,7 @@ pub struct Environment {
     metadata: Vec<VariableInfo>,
     /// Maps source variable names to destination names for output
     mappings: Vec<(String, String)>,
+    pub(crate) exports: Option<super::exports::ExportMap>,
     /// Declaration-order global qubit ranges, separate from classical storage.
     quantum_registers: BTreeMap<String, Range<usize>>,
     num_qubits: usize,
@@ -508,10 +509,22 @@ impl Environment {
             name_to_index: BTreeMap::new(),
             metadata: Vec::new(),
             mappings: Vec::new(),
+            exports: None,
             quantum_registers: BTreeMap::new(),
             num_qubits: 0,
             declarations: Declarations::default(),
         }
+    }
+
+    /// Explicit output names and their storage sources, including executed Results.
+    pub(crate) fn selected_outputs(&self) -> Option<super::exports::ExportMap> {
+        self.exports.as_ref().map(|exports| {
+            let mut outputs = exports.clone();
+            for (_, destination) in &self.mappings {
+                outputs.insert(destination.clone(), destination.clone());
+            }
+            outputs
+        })
     }
 
     /// Resets all variable values to zero while keeping their definitions
@@ -1081,6 +1094,14 @@ impl Environment {
     /// if no mappings are defined or no mapped variables have values.
     #[must_use]
     pub fn get_mapped_results(&self) -> BTreeMap<String, u32> {
+        if let Some(outputs) = self.selected_outputs() {
+            return outputs
+                .into_iter()
+                .filter_map(|(output, source)| {
+                    self.get(&source).map(|value| (output, value.as_u32()))
+                })
+                .collect();
+        }
         let mut results = BTreeMap::new();
 
         // Apply all mappings from source to destination

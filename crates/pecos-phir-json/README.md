@@ -285,13 +285,18 @@ that are not finite JSON scalars use a bounded non-string stand-in for named
 Rust diagnostics; int, str and float subclasses are normalized and accepted. Invalid declaration-name and size
 values are rendered with at most 80 characters, including an ellipsis.
 Exports use U32 through 32 bits and U64 for wider registers.
-Without Result mappings, all declared classical registers are exported.
+Without `cvar_export` or Result mappings, all declared classical registers are exported.
 CPhase is not a PHIR v0.1 gate and must be lowered before emitting PHIR JSON.
 
-Known limitation ([#1323](https://github.com/PECOS-packages/PECOS/issues/1323)):
-`cvar_export` remains unsupported. The native engine currently ignores it and
-exports all classical registers unless Result mappings select them. Lowering it
-to module Result instructions would select different registers.
+`cvar_export` selects the reported classical variables, optionally renaming them
+positionally with `to`. Every directive contributes to a static union, including
+directives in unexecuted branches in runners that support blocks. Values and
+widths come from the source registers at the end of the shot. With any directive
+present, even an empty `variables` list, only these outputs and executed Result
+destinations are reported. Invalid sources, renames, conflicting output names,
+and the reserved `_width_` prefix are rejected at load time. Without a directive,
+each runner retains its existing selection behavior, including native filters.
+The module converter lowers exports through its end-of-program Result path.
 
 The converter rejects blocks such as `qparallel` and `if`, machine/meta operations,
 unsupported data/classical operations and unrecognized operations with a named

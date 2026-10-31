@@ -146,9 +146,15 @@ impl PhirJsonEngine {
 
         // Initialize operation processor and extract variable definitions
         let mut processor = OperationProcessor::new();
+        processor.environment.exports = super::exports::collect(&program.ops)?;
 
         // Process variable definitions
-        for op in &program.ops {
+        let definitions = if processor.environment.exports.is_some() {
+            super::exports::all_operations(&program.ops)
+        } else {
+            program.ops.iter().collect()
+        };
+        for op in definitions {
             if let Operation::VariableDefinition {
                 data,
                 data_type,
@@ -186,9 +192,15 @@ impl PhirJsonEngine {
     pub fn from_program(program: PHIRProgram) -> Result<Self, PecosError> {
         super::declarations::validate_operations(&program.ops)?;
         let mut processor = OperationProcessor::new();
+        processor.environment.exports = super::exports::collect(&program.ops)?;
 
         // Process variable definitions
-        for op in &program.ops {
+        let definitions = if processor.environment.exports.is_some() {
+            super::exports::all_operations(&program.ops)
+        } else {
+            program.ops.iter().collect()
+        };
+        for op in definitions {
             if let Operation::VariableDefinition {
                 data,
                 data_type,
@@ -284,12 +296,14 @@ impl PhirJsonEngine {
                     variable,
                     size,
                 } => {
-                    self.processor.handle_variable_definition(
-                        data,
-                        data_type,
-                        variable,
-                        super::ast::declaration_size(data, data_type, variable, *size)?,
-                    )?;
+                    if self.processor.environment.exports.is_none() {
+                        self.processor.handle_variable_definition(
+                            data,
+                            data_type,
+                            variable,
+                            super::ast::declaration_size(data, data_type, variable, *size)?,
+                        )?;
+                    }
                     self.advance_cursor();
                 }
                 Operation::QuantumOp {
@@ -557,6 +571,23 @@ impl ClassicalEngine for PhirJsonEngine {
     #[allow(clippy::too_many_lines)]
     fn get_results(&self) -> Result<Shot, PecosError> {
         let mut results = Shot::default();
+        if let Some(outputs) = self.processor.environment.selected_outputs() {
+            for (output, source) in outputs {
+                let info = self.processor.environment.get_variable_info(&source)?;
+                let value = self.processor.environment.get(&source).ok_or_else(|| {
+                    PecosError::Input(format!(
+                        "cvar_export: source {source:?} has no value; declare it with cvar_define"
+                    ))
+                })?;
+                let width = if info.data_type.is_signed() {
+                    info.size + 1
+                } else {
+                    info.size
+                };
+                results.add_register_u64(&output, value.as_u64(), width);
+            }
+            return Ok(results);
+        }
 
         // First process all export mappings to get properly processed values
         let mut exported_values = self.processor.process_export_mappings();

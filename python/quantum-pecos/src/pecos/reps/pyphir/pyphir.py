@@ -25,6 +25,7 @@ from pecos_rslib import validate_phir_qop
 
 import pecos as pc
 from pecos._phir_declarations import validate_classical_inputs, validate_declaration_names
+from pecos._phir_exports import all_operations, collect_exports, decode_export
 from pecos.reps.pyphir import block_types as blk
 from pecos.reps.pyphir import data_types as d
 from pecos.reps.pyphir import op_types as op
@@ -86,6 +87,7 @@ class PyPHIR:
         self.qvar_meta = {}
         self.num_qubits = 0
         self.foreign_func_calls = set()
+        self._static_declarations = False
 
     @classmethod
     def handle_op(cls, o: dict | str | int, p: PyPHIR) -> TypeOp | str | list | int:
@@ -241,6 +243,12 @@ class PyPHIR:
                         msg = f"Meta instruction '{name}' not implemented/supported."
                         raise NotImplementedError(msg)
 
+                elif o.get("data") == "cvar_export":
+                    variables, to = decode_export(o)
+                    instr = d.ExportVar(variables, to, o.get("metadata"))
+                elif p._static_declarations and o.get("data") in {"cvar_define", "qvar_define"}:
+                    # Declarations in exporting programs are registered at load time.
+                    instr = None
                 elif "//" in o:
                     # Do not include comments
                     instr = None
@@ -252,6 +260,29 @@ class PyPHIR:
                 raise Exception(msg)
 
         return instr
+
+    def export_selection(self) -> dict[str, str] | None:
+        """Validate exports in this representation, including directly supplied PyPHIR."""
+        nodes = [{"data": "cvar_define", "variable": meta.variable} for meta in self.cvar_meta]
+        nodes.extend({"data": "qvar_define", "variable": name} for name in self.qvar_meta)
+
+        def visit(operations: list) -> None:
+            for instr in operations:
+                if isinstance(instr, d.ExportVar):
+                    node = {"data": "cvar_export", "variables": instr.variables}
+                    if instr.to is not None:
+                        node["to"] = instr.to
+                    nodes.append(node)
+                elif isinstance(instr, op.COp) and instr.name == "Result":
+                    nodes.append({"cop": "Result", "returns": instr.returns or []})
+                elif isinstance(instr, blk.IfBlock):
+                    visit(instr.true_branch)
+                    visit(instr.false_branch or [])
+                elif isinstance(instr, blk.SeqBlock | blk.QParallelBlock):
+                    visit(instr.ops)
+
+        visit(self.ops)
+        return collect_exports(nodes)
 
     @staticmethod
     def get_qargs(o: dict[str, Any], p: PyPHIR) -> list[int] | list[tuple[int]]:
@@ -298,7 +329,10 @@ class PyPHIR:
 
         next_qvar_int = 0
 
-        for o in phir["ops"]:
+        exports = collect_exports(phir["ops"])
+        p._static_declarations = exports is not None
+        declarations = all_operations(phir["ops"]) if exports is not None else phir["ops"]
+        for o in declarations:
             if "data" in o:
                 name = o["data"]
 
@@ -354,7 +388,14 @@ class PyPHIR:
 
                     p.qvar_meta[data.variable] = data
                     p.num_qubits += data.size
-            else:
+
+            elif exports is None:
+                instr = cls.handle_op(o, p)
+                if instr:
+                    p.ops.append(instr)
+
+        for o in phir["ops"] if exports is not None else []:
+            if o.get("data") not in {"cvar_define", "qvar_define"}:
                 instr = cls.handle_op(o, p)
                 if instr:
                     p.ops.append(instr)

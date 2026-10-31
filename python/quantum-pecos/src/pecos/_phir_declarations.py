@@ -17,6 +17,8 @@ import reprlib
 
 from pecos_rslib import validate_phir_classical_inputs
 
+from pecos._phir_exports import collect_exports
+
 
 def validate_declaration_names(operations: list[dict]) -> None:
     """Reject a name declared more than once, regardless of declaration kind."""
@@ -86,3 +88,4 @@ def validate_classical_inputs(program: dict) -> None:
 
     collect(program.get("ops", []))
     validate_phir_classical_inputs(json.dumps({"ops": inputs}))
+    collect_exports(program.get("ops", []))

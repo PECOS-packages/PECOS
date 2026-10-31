@@ -75,6 +75,16 @@ impl<'a> BlockIterativeExecutor<'a> {
                 FlattenedOperation::EndBlock => {}
             }
         }
+        let operations: Vec<Operation> = self
+            .operation_stack
+            .iter()
+            .flat_map(|op| match op {
+                FlattenedOperation::Operation(op) => vec![(*op).clone()],
+                FlattenedOperation::Buffer(ops) => ops.iter().map(|op| (*op).clone()).collect(),
+                FlattenedOperation::EndBlock => Vec::new(),
+            })
+            .collect();
+        self.executor.prepare_exports(&operations)?;
         while let Some(flattened_op) = self.operation_stack.pop_front() {
             match flattened_op {
                 FlattenedOperation::Operation(op) => {
@@ -141,7 +151,9 @@ impl<'a> BlockIterativeExecutor<'a> {
                         // Verify all operations are quantum operations or meta instructions
                         for op in ops {
                             match op {
-                                Operation::QuantumOp { .. } | Operation::MetaInstruction { .. } => {
+                                Operation::QuantumOp { .. }
+                                | Operation::MetaInstruction { .. }
+                                | Operation::DataExport { .. } => {
                                     // These are allowed in qparallel
                                 }
                                 _ => {

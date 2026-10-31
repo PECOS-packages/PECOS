@@ -135,9 +135,15 @@ impl PhirClassicalInterpreter {
 
         self.foreign_object = foreign_object;
         self.environment = Environment::new();
+        self.environment.exports = super::exports::collect(&program.ops)?;
 
         // Process variable definitions from the ops
-        for op in &program.ops {
+        let definitions = if self.environment.exports.is_some() {
+            super::exports::all_operations(&program.ops)
+        } else {
+            program.ops.iter().collect()
+        };
+        for op in definitions {
             if let Operation::VariableDefinition {
                 data,
                 data_type,
@@ -306,7 +312,18 @@ impl PhirClassicalInterpreter {
     #[must_use]
     pub fn results(&self, return_int: bool) -> BTreeMap<String, ResultValue> {
         let mut result = BTreeMap::new();
-        for info in self.environment.get_all_variables() {
+        let outputs = self.environment.selected_outputs().unwrap_or_else(|| {
+            self.environment
+                .get_all_variables()
+                .iter()
+                .filter(|info| info.data_type != DataType::Qubits)
+                .map(|info| (info.name.clone(), info.name.clone()))
+                .collect()
+        });
+        for (output, source) in outputs {
+            let Some(info) = self.environment.get_variable_info_opt(&source) else {
+                continue;
+            };
             if info.data_type == DataType::Qubits {
                 continue;
             }
@@ -314,15 +331,9 @@ impl PhirClassicalInterpreter {
                 if return_int {
                     let dtype_name = info.data_type.to_string();
                     if info.data_type.is_signed() {
-                        result.insert(
-                            info.name.clone(),
-                            ResultValue::Int(val.as_i64(), dtype_name),
-                        );
+                        result.insert(output.clone(), ResultValue::Int(val.as_i64(), dtype_name));
                     } else {
-                        result.insert(
-                            info.name.clone(),
-                            ResultValue::UInt(val.as_u64(), dtype_name),
-                        );
+                        result.insert(output.clone(), ResultValue::UInt(val.as_u64(), dtype_name));
                     }
                 } else {
                     // A signed size-S register is an i(S+1) integer, so it
@@ -345,7 +356,7 @@ impl PhirClassicalInterpreter {
                         (1u64 << width) - 1
                     };
                     let bits = format!("{:0>width$b}", val.as_u64() & mask, width = width);
-                    result.insert(info.name.clone(), ResultValue::BitString(bits));
+                    result.insert(output.clone(), ResultValue::BitString(bits));
                 }
             }
         }

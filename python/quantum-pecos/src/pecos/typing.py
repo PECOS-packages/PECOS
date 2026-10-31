@@ -159,22 +159,22 @@ _PecosOpType: TypeAlias = _FFCall | _COp | ResultCOp | RXYXY2QOp | _QOp | _MOpTy
 
 
 class _PecosSeqBlock(_SeqBlock):
-    """SeqBlock extended with PECOS-specific classical operations."""
+    """SeqBlock with PECOS operations and program-wide data directives."""
 
-    ops: list[_PecosOpType | _PecosBlockType]  # type: ignore[assignment]
+    ops: list[_PecosOpType | _PecosBlockType | _PecosDataMgmt]  # type: ignore[assignment]
 
 
 class _PecosIfBlock(_IfBlock):
-    """IfBlock extended with PECOS-specific classical operations."""
+    """IfBlock with PECOS operations and program-wide data directives."""
 
-    true_branch: list[_PecosOpType | _PecosBlockType]  # type: ignore[assignment]
-    false_branch: list[_PecosOpType | _PecosBlockType] | None = None  # type: ignore[assignment]
+    true_branch: list[_PecosOpType | _PecosBlockType | _PecosDataMgmt]  # type: ignore[assignment]
+    false_branch: list[_PecosOpType | _PecosBlockType | _PecosDataMgmt] | None = None  # type: ignore[assignment]
 
 
 class _PecosQParBlock(_QParBlock):
-    """QParBlock extended with PECOS-specific quantum operations."""
+    """QParBlock with PECOS quantum operations and static export directives."""
 
-    ops: list[_QOp | RXYXY2QOp]
+    ops: list[_QOp | RXYXY2QOp | _ExportVar]
 
 
 _PecosBlockType: TypeAlias = _PecosSeqBlock | _PecosQParBlock | _PecosIfBlock

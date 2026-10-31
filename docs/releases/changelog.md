@@ -6,6 +6,19 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Breaking:** PHIR `cvar_export` selects the reported classical variables in
+  every PECOS runner (#1323): the native PHIR-JSON engine (`sim(PhirJson(...))`),
+  the Rust and Python classical interpreters behind `HybridEngine`, and
+  `phir_json_to_module`, which used to reject it. Before, every runner ignored it
+  and reported all classical variables. The export set is the union of every
+  `cvar_export` in the program, including unexecuted branches; values are read at
+  the end of the shot; `to` renames positionally. Programs with exports no longer
+  report unexported variables, and an explicitly exported `measurement_*`
+  register is reported. Load-time errors name an undeclared exported variable, a
+  malformed `to`, an output name used by two sources, an output that equals
+  another declared variable or a `Result` destination, and the reserved
+  `_width_` prefix. Programs without `cvar_export` report what they did before.
+
 - `derive_seed` hashes its purpose string with a fixed SipHash-1-3 instead of
   `std`'s `DefaultHasher`, whose algorithm is unspecified across Rust releases
   (#1496). Every derived seed keeps its current value, so seeded results do not

@@ -102,17 +102,31 @@ def test_size_zero_registers_are_not_exported(runner) -> None:
     assert _run(qc.to_phir_json(), runner) == {"c": [1, 1, 1]}
 
 
-def test_scratch_name_avoids_measurement_destinations() -> None:
+@pytest.mark.parametrize("destination", ["var", "var_output"])
+def test_scratch_name_avoids_measurement_destinations(destination) -> None:
     # A destination register outside cvar_spec must not be merged with the scratch.
     qc = pc.QuantumCircuit(cvar_spec={"c": 1})
     qc.append("X", {0})
-    qc.append("measure Z", {0}, var=("__pecos_scratch", 0))
-    qc.append("measure Z", {1})
+    if destination == "var":
+        qc.append("measure Z", {0}, var=("__pecos_scratch", 0))
+    else:
+        qc.append("measure Z", {0, 1}, var_output={0: ("__pecos_scratch", 0), 1: ("c", 0)})
+    qc.append("measure Z", {2})
     returns = [
         ret for op in json.loads(qc.to_phir_json())["ops"] if op.get("qop") == "Measure" for ret in op["returns"]
     ]
     assert ["__pecos_scratch", 0] in returns
     assert ["__pecos_scratch_", 0] in returns
+
+
+def test_scratch_is_declared_before_its_first_use() -> None:
+    qc = pc.QuantumCircuit(cvar_spec={"c": 1})
+    qc.append("measure Z", {0}, var=("c", 0))
+    qc.append("measure Z", {1})
+    ops = json.loads(qc.to_phir_json())["ops"]
+    declared = next(i for i, op in enumerate(ops) if op.get("variable") == "__pecos_scratch")
+    first_measure = next(i for i, op in enumerate(ops) if op.get("qop") == "Measure")
+    assert declared < first_measure
 
 
 def test_native_bare_measurement_no_longer_writes_a_user_register_m() -> None:

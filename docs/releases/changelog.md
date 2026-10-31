@@ -6,6 +6,11 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- The SLR parallel optimizer, on by default in `SlrConverter`, treats `For` and
+  `While` inside a `Parallel` as control flow, like `If` and `Repeat`. Before, it
+  flattened their bodies into the parallel group and dropped iterations:
+  `Parallel(For("i", 0, 2).Do(X(q[0])), ...)` applied `X` once instead of twice.
+
 - **Breaking:** Python simulator wrappers and the public `pecos.HybridEngine`
   validate whole known-gate batches per `run_gate` call and per circuit item
   before changing state, including when `simulate_gate=False`. Registered-gate

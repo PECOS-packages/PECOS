@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 from pecos.slr._qubit_args import expand_qubit_args, qubit_key
 from pecos.slr.block import Block
 from pecos.slr.cond_block import If, Repeat
-from pecos.slr.loop_block import For
+from pecos.slr.loop_block import For, While
 from pecos.slr.main import Main
 from pecos.slr.misc import Parallel
 from pecos.slr.vars import CReg, SymbolicBit, SymbolicElem
@@ -168,14 +168,14 @@ class ParallelOptimizer:
     def _can_optimize_parallel(self, parallel: Parallel) -> bool:
         """Check if a Parallel block can be safely optimized.
 
-        Returns False if the block contains control flow (If/Repeat) or any
+        Returns False if the block contains control flow (If/Repeat/For/While) or any
         converted Block (a Block subclass with class-level `block_inputs`).
         Splatting a converted Block's body into the surrounding Parallel
         would destroy its scope boundary -- the BlockCall lowering needs the
         Block to remain a single op in the AST.
         """
         for op in parallel.ops:
-            if isinstance(op, If | Repeat):
+            if isinstance(op, If | Repeat | For | While):
                 return False
             if isinstance(op, Block):
                 if hasattr(type(op), "block_inputs"):
@@ -199,7 +199,7 @@ class ParallelOptimizer:
     def _contains_control_flow(self, block: Block) -> bool:
         """Check if a block contains any control flow operations."""
         for op in block.ops:
-            if isinstance(op, If | Repeat):
+            if isinstance(op, If | Repeat | For | While):
                 return True
             if isinstance(op, Block) and self._contains_control_flow(op):
                 return True

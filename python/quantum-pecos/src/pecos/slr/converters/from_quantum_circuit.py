@@ -65,8 +65,8 @@ def _measurement_basis(symbol: str) -> str | None:
 
 
 def _is_qubit_index(idx):
-    """Return whether idx is a valid qubit index; a negative one would wrap."""
-    return isinstance(idx, int) and idx >= 0
+    """Return whether idx is a valid non-negative index or width; a bool is not one."""
+    return isinstance(idx, int) and not isinstance(idx, bool) and idx >= 0
 
 
 def _one_qubit_location(symbol, location):
@@ -218,14 +218,14 @@ def _quantum_register_metadata(metadata):
                 "rename it to match [A-Za-z_][A-Za-z0-9_]*, such as 'data'"
             )
             raise ValueError(msg)
-        if not _is_qubit_index(size) or isinstance(size, bool):
+        if not _is_qubit_index(size):
             msg = f"Invalid QuantumCircuit qvar_spec entry {name!r}: {size!r}; expected a non-negative integer width"
             raise ValueError(msg)
     normalized = {}
     slots = {}
     for key, value in refs.items():
         idx = int(key) if isinstance(key, str) and key.isascii() and key.isdecimal() else key
-        if not _is_qubit_index(idx) or isinstance(idx, bool):
+        if not _is_qubit_index(idx):
             msg = f"Invalid qvars qubit id {key!r}; use a non-negative int or a decimal integer string"
             raise ValueError(msg)
         if idx in normalized:
@@ -238,7 +238,7 @@ def _quantum_register_metadata(metadata):
         if not isinstance(name, str) or name not in sizes:
             msg = f"Invalid qvars entry {key!r}: {value!r}; declare its register in qvar_spec"
             raise ValueError(msg)
-        if not _is_qubit_index(index) or isinstance(index, bool) or index >= sizes[name]:
+        if not _is_qubit_index(index) or index >= sizes[name]:
             msg = (
                 f"Invalid qvars entry {key!r}: {value!r}; "
                 f"use a non-negative integer index below qvar_spec width {sizes[name]}"

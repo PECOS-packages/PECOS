@@ -30,8 +30,11 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   takes the largest width contributed by its sources (a whole-register source's
   size, or one bit for an indexed source). Indexed destination writes use unsigned
   64-bit storage, sized to at least `max(32, largest destination index + 1)` across
-  the program. Conflicting signedness between whole-register sources of an
-  undeclared destination is a load-time error naming the destination and sources.
+  the program. Whole-register copies to an undeclared destination keep their
+  common source data type, such as `bool` or `i8`; differing source data types use
+  `u64` or `i64` according to signedness. Conflicting signedness between
+  whole-register sources of an undeclared destination is a load-time error naming
+  the destination and sources.
   The native `measurement_` name filter is removed, and quantum registers are
   no longer reported by its all-variables fallback. `HybridEngine` writes
   measurements into user registers beginning with `__`, keeps noise-only

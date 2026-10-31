@@ -1,0 +1,70 @@
+name: Circuit inspector
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master, development, dev]
+    paths:
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain*'
+      - '.cargo/**'
+      - 'scripts/ci/ensure-rust.sh'
+      - '.github/workflows/circuit-inspector.yml'
+  pull_request:
+    paths:
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain*'
+      - '.cargo/**'
+      - 'scripts/ci/ensure-rust.sh'
+      - '.github/workflows/circuit-inspector.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  inspector:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      RUSTFLAGS: -C debuginfo=0
+      RUST_BACKTRACE: 1
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+      - name: Set up Rust
+        run: |
+          bash scripts/ci/ensure-rust.sh stable minimal
+          export PATH="$HOME/.cargo/bin:$PATH"
+          rustup override set stable
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          shared-key: circuit-inspector
+          cache-bin: false
+          prefix-key: v1-rust-no-bin
+          save-if: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - name: Install locked DOM test dependencies
+        run: npm ci --prefix crates/pecos-quantum/tests/inspector --ignore-scripts
+      - name: Test Rust rendering, inspection, and measurement ordering
+        run: |
+          cargo test --locked -p pecos-core --lib circuit_diagram
+          cargo test --locked -p pecos-quantum --lib circuit_display
+          cargo test --locked -p pecos-quantum --lib circuit_inspect
+          cargo test --locked -p pecos-quantum --lib compaction_preserves_leakage_measurement_order_and_ids
+      - name: Test freshly exported interactive HTML
+        run: npm test --prefix crates/pecos-quantum/tests/inspector

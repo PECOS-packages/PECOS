@@ -6,6 +6,20 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- `SlrConverter.from_quantum_circuit` keeps the qubit register names that
+  SLR -> QuantumCircuit records in `qvars` and `qvar_spec` (#1498), so a round
+  trip reproduces `qreg data[2]; qreg anc[1];` instead of one `q` register.
+  Without that metadata the single `q` register stays. Supplying only one of
+  `qvars` and `qvar_spec`, a gate qubit missing from `qvars`, an out-of-range or
+  duplicate mapping, or a classical register sharing a quantum register's name
+  raises `ValueError`; a non-mapping `qvars` or `qvar_spec` raises `TypeError`.
+  With `qvars` and `qvar_spec` present, unused declared quantum registers
+  survive, JSON string keys are accepted, and a classical register named `q`
+  is accepted when no quantum register is named `q`.
+  A bool is no longer accepted as a `cvar_spec` width, a `var`/`var_output`
+  index or a qubit location in tuple-tick input; previously `False` and `True`
+  counted as 0 and 1.
+
 - The PECOS QASM parser accepts a `//` line comment that ends at end of input
   without a newline (#1518). Before, such a program failed with a syntax error,
   which included SLR-generated QASM ending in a `Comment`.

@@ -569,8 +569,13 @@ class PhirClassicalInterpreter:
                 if source_index is not None:
                     value = (value >> source_index) & 1
                 if destination not in self.csym2id:
-                    meta = self._classical_meta(source)
-                    self.add_cvar(destination, data_type_map[meta.data_type], meta.size)
+                    if destination_index is not None:
+                        self.add_cvar(destination, data_type_map["u64"], max(32, destination_index + 1))
+                    elif source_index is not None:
+                        self.add_cvar(destination, data_type_map["u64"], 1)
+                    else:
+                        meta = self._classical_meta(source)
+                        self.add_cvar(destination, data_type_map[meta.data_type], meta.size)
                 self._check_result_index(destination, destination_index)
                 target = destination if destination_index is None else (destination, destination_index)
                 self.assign_int(target, value)
@@ -626,7 +631,7 @@ class PhirClassicalInterpreter:
             msg = (
                 f"PHIR interpreter failed: Result: bit index {index} is invalid for register "
                 f"{json.dumps(name, ensure_ascii=False)} "
-                f"of declared size {size}; use an index below {size}"
+                f"of size {size}; use an index below {size}"
             )
             raise ValueError(msg)
 

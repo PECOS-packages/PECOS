@@ -6,6 +6,28 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Breaking:** PHIR runner results now have a consistent set of keys across shots.
+  Every `Result` destination is reported in every shot, including when its Result
+  never runs: its final value is reported, initially zero unless another operation
+  writes it. Result-created names are hoisted at load like declarations, so other
+  operations may read or write them before their Result executes, including when
+  that Result is in an unexecuted branch. Declared destinations keep their width
+  and signedness without restrictions on source types. An undeclared destination
+  takes the largest width contributed by its sources (a whole-register source's
+  size, or one bit for an indexed source). Indexed destination writes use unsigned
+  64-bit storage, sized to at least `max(32, largest destination index + 1)` across
+  the program. Conflicting signedness between whole-register sources of an
+  undeclared destination is a load-time error naming the destination and sources.
+  Without `cvar_export`, the native engine now reports every classical variable
+  plus Result destinations, including `measurement_`-prefixed user variables,
+  and excludes quantum registers. `HybridEngine` writes measurements into user
+  registers beginning with `__`, keeps noise-only measurements internal, and raises
+  a named shot/key error instead of accumulating ragged columns. Every runner,
+  including the native engine, rejects `Measure` without `returns` or with a
+  different number of destinations than measured qubits at load time; grouped
+  arguments are flattened before counting. Implicit measurement destinations
+  (`measurement_N` and `m`) have been removed.
+
 - **Breaking:** `QuantumCircuit.to_phir_json()` handles a measurement with no
   destination (#1497), such as SLR `qb.Measure(q[1])` with no `> c`. It used to
   emit a PHIR `Measure` without `returns`. PHIR validation and `HybridEngine`
@@ -33,7 +55,7 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   prefix. A `cvar_define` or `qvar_define` inside a block is supported only in
   programs that use `cvar_export`; elsewhere it is a load-time error. `qc2phir`
   drops exports of size-0 registers it does not declare. Programs without
-  `cvar_export` report what they did before.
+  `cvar_export` now follow the result rules described above.
 
 - **Breaking:** SLR `LoopVar` comparisons (`==`, `!=`, `<`, `>`, `<=`, `>=`)
   and `+`/`-` build SLR expressions (#1517). Before, `i == 0` was a plain

@@ -288,7 +288,8 @@ that are not finite JSON scalars use a bounded non-string stand-in for named
 Rust diagnostics; int, str and float subclasses are normalized and accepted. Invalid declaration-name and size
 values are rendered with at most 80 characters, including an ellipsis.
 Exports use U32 through 32 bits and U64 for wider registers.
-Without `cvar_export` or Result mappings, all declared classical registers are exported.
+Without `cvar_export`, every classical variable and Result destination is reported.
+Quantum registers are never reported, and classical names have no prefix filter.
 CPhase is not a PHIR v0.1 gate and must be lowered before emitting PHIR JSON.
 
 `cvar_export` selects the reported classical variables, optionally renaming them
@@ -299,11 +300,19 @@ present, even an empty `variables` list, only these outputs and every static Res
 destination are reported. Each Result destination appears in every shot, including
 shots where its Result does not execute. Its value is the destination's final value;
 all classical storage starts each shot at zero. Declared destinations retain their
-width and signedness; new destinations inherit their source's declaration, including
-indexed copies. Sources of different widths feeding one destination are rejected
-at load time. New destinations also require consistent source signedness. Invalid sources, renames, conflicting output names,
-and the reserved `_width_` prefix are rejected at load time. Without a directive,
-each runner retains its existing selection behavior, including native filters.
+width and signedness regardless of source types. For a new destination, whole-register
+sources contribute their size and signedness and indexed sources contribute one bit.
+Its size is the largest contribution across the entire program. Any indexed write to
+an undeclared destination uses unsigned 64-bit storage, with size at least
+`max(32, largest destination index + 1)`. Only conflicting signedness between
+whole-register sources of an undeclared destination is a load-time error; declare
+the destination to choose its type explicitly. Result-created names are hoisted
+at load just like declarations, even if their Result is in an unexecuted branch.
+Other operations may read or write them before that Result; reads see zero until
+something writes the name. Invalid sources, renames, conflicting output names,
+and the reserved `_width_` prefix are rejected at load time.
+Without a directive, all runners report every classical variable, including
+`measurement_`-prefixed names and Result destinations.
 A Result destination may also be exported under its own name; an alias of a
 different source cannot use that destination name. Declarations inside blocks
 require a program with `cvar_export`; otherwise move them to the top level.

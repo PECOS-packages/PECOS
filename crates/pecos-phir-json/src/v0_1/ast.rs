@@ -225,6 +225,10 @@ impl<'de> Deserialize<'de> for Operation {
                 .as_str()
                 .ok_or_else(|| D::Error::custom("qop must be a string"))?
                 .to_string();
+            if qop == "Measure" {
+                super::classical_validation::validate_measure_json(&val)
+                    .map_err(D::Error::custom)?;
+            }
             let angles = obj
                 .get("angles")
                 .map_or(Ok(None), convert_angles)
@@ -237,10 +241,6 @@ impl<'de> Deserialize<'de> for Operation {
                 .get("returns")
                 .map_or(Ok(vec![]), |v| serde_json::from_value(v.clone()))
                 .map_err(|e| D::Error::custom(format!("returns: {e}")))?;
-            if qop == "Measure" {
-                super::operations::validate_measurement_counts(args.len(), returns.len())
-                    .map_err(D::Error::custom)?;
-            }
             let metadata = extract_metadata(obj);
             Ok(Operation::QuantumOp {
                 qop,
@@ -445,7 +445,7 @@ impl<'de> Deserialize<'de> for Operation {
 }
 
 /// Represents an argument to a quantum operation
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(untagged)]
 pub enum QubitArg {
     /// Single qubit (var, idx)

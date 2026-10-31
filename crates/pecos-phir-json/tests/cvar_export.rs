@@ -670,39 +670,43 @@ fn private_measurement_bits_are_transferred() {
 }
 
 #[test]
-fn result_source_width_conflicts_fail_at_load() {
-    for declared in [false, true] {
+fn result_source_signedness_conflicts_fail_at_load() {
+    for nested in [false, true] {
         let mut ops = vec![
-            json!({"data":"cvar_define","variable":"a","data_type":"u32","size":2}),
+            json!({"data":"cvar_define","variable":"a","data_type":"i32","size":2}),
             json!({"data":"cvar_define","variable":"b","data_type":"u32","size":3}),
         ];
-        if declared {
-            ops.push(json!({"data":"cvar_define","variable":"copy","data_type":"u32","size":4}));
-        }
         ops.push(json!({"cop":"Result","args":["a"],"returns":["copy"]}));
         ops.push(json!({"cop":"Result","args":["b"],"returns":["copy"]}));
         let flat = program(ops.clone());
-        let copies = ops.split_off(if declared { 3 } else { 2 });
+        let copies = ops.split_off(2);
         ops.push(json!({"block":"if","condition":{"cop":"==","args":[0,1]},"true_branch":copies}));
-        for source in [flat.clone(), program(ops)] {
+        {
+            let source = if nested { program(ops) } else { flat.clone() };
             assert!(
                 PhirJsonEngine::from_json(&source)
                     .unwrap_err()
                     .to_string()
-                    .contains("destination \"copy\" has incompatible source widths")
+                    .contains("destination \"copy\" has conflicting signedness")
             );
             let error = PhirClassicalInterpreter::new()
                 .init(&source, None)
                 .unwrap_err()
                 .to_string();
             assert!(
-                error.contains("copy") && error.contains("widths"),
+                error.contains("copy")
+                    && error.contains("signedness")
+                    && error.contains("\"a\"")
+                    && error.contains("\"b\""),
                 "{error}"
             );
         }
         let error = phir_json_to_module(&flat).unwrap_err().to_string();
         assert!(
-            error.contains("copy") && error.contains("widths"),
+            error.contains("copy")
+                && error.contains("signedness")
+                && error.contains("\"a\"")
+                && error.contains("\"b\""),
             "{error}"
         );
     }
@@ -772,4 +776,148 @@ fn result_storage_precedes_copies_in_the_module_converter() {
     for (name, value, _) in entries {
         assert_eq!(integer(&result.data[*name]), *value);
     }
+}
+
+#[test]
+fn result_widths_are_static_maxima() {
+    for reverse in [false, true] {
+        let mut copies = vec![
+            json!({"cop":"Result","args":[["a",0]],"returns":[["out",0]]}),
+            json!({"cop":"Result","args":[["b",1]],"returns":[["out",40]]}),
+            json!({"cop":"Result","args":["a"],"returns":["whole"]}),
+            json!({"cop":"Result","args":["b"],"returns":["whole"]}),
+            json!({"cop":"Result","args":[["b",1]],"returns":["bit"]}),
+            json!({"cop":"Result","args":["whole"],"returns":["chain"]}),
+        ];
+        if reverse {
+            copies.reverse();
+        }
+        let mut ops = vec![
+            json!({"data":"cvar_define","variable":"a","data_type":"u32","size":1}),
+            json!({"data":"cvar_define","variable":"b","data_type":"u64","size":50}),
+            export(&[]),
+        ];
+        ops.extend(copies);
+        let source = program(ops);
+        let expected = [
+            ("out", 0, 41),
+            ("whole", 0, 50),
+            ("bit", 0, 1),
+            ("chain", 0, 50),
+        ];
+        let mut native = PhirJsonEngine::from_json(&source).unwrap();
+        assert_native(&run(&mut native), &expected);
+        let mut classical = PhirClassicalInterpreter::new();
+        classical.init(&source, None).unwrap();
+        execute_interpreter(&mut classical);
+        assert_interpreter(&classical, &expected);
+        let mut module = PhirEngine::new(phir_json_to_module(&source).unwrap()).unwrap();
+        let (values, widths) = crate::expected(&expected);
+        assert_eq!(normalize(&run(&mut module), &widths), values);
+    }
+}
+
+#[test]
+fn declared_results_accept_all_source_types() {
+    check_classical(
+        vec![
+            json!({"data":"cvar_define","variable":"a","data_type":"i32","size":2}),
+            json!({"data":"cvar_define","variable":"b","data_type":"u32","size":3}),
+            json!({"data":"cvar_define","variable":"out","data_type":"u32","size":8}),
+            export(&[]),
+            json!({"cop":"=","args":[-1],"returns":["a"]}),
+            json!({"cop":"=","args":[5],"returns":["b"]}),
+            json!({"cop":"Result","args":["a","b",["a",0]],"returns":["out","out",["out",6]]}),
+        ],
+        &[("out", 69, 8)],
+    );
+}
+
+#[test]
+fn result_created_names_are_hoisted() {
+    check_classical(
+        vec![
+            json!({"data":"cvar_define","variable":"a","data_type":"u32","size":3}),
+            export(&[]),
+            json!({"cop":"=","args":["created"],"returns":["a"]}),
+            json!({"cop":"=","args":[5],"returns":["created"]}),
+            json!({"block":"if","condition":{"cop":"==","args":[0,1]},"true_branch":[
+                {"cop":"Result","args":["a"],"returns":["created"]}
+            ]}),
+        ],
+        &[("created", 5, 3)],
+    );
+}
+
+#[test]
+fn no_exports_report_all_classical_storage() {
+    check_classical(
+        vec![
+            json!({"data":"qvar_define","variable":"q","size":1}),
+            json!({"data":"cvar_define","variable":"measurement_user","data_type":"u32","size":2}),
+            json!({"data":"cvar_define","variable":"a","data_type":"u32","size":2}),
+            json!({"cop":"Result","args":["a"],"returns":["copy"]}),
+        ],
+        &[("a", 0, 2), ("measurement_user", 0, 2), ("copy", 0, 2)],
+    );
+    check_classical(
+        vec![json!({"data":"qvar_define","variable":"q","size":1})],
+        &[],
+    );
+}
+
+#[test]
+fn grouped_measure_counts_qubits() {
+    let source = program(vec![
+        json!({"data":"qvar_define","variable":"q","size":2}),
+        json!({"data":"cvar_define","variable":"m","data_type":"u32","size":2}),
+        json!({"qop":"Measure","args":[[["q",0],["q",1]]],"returns":[["m",0],["m",1]]}),
+    ]);
+    PhirJsonEngine::from_json(&source).unwrap();
+    PhirClassicalInterpreter::new().init(&source, None).unwrap();
+    phir_json_to_module(&source).unwrap();
+}
+
+#[test]
+fn malformed_measure_diagnostics_name_the_operation() {
+    for (args, returns) in [
+        (Value::Null, json!([["m", 0]])),
+        (json!("q"), json!([["m", 0]])),
+        (json!({"q":0}), json!([["m", 0]])),
+        (json!([["q", 0]]), json!("m")),
+        (json!([["q", 0]]), json!({"m":0})),
+        (json!([[["q", 0], ["q", 1]]]), json!([["m", 0]])),
+    ] {
+        let source = program(vec![json!({"qop":"Measure","args":args,"returns":returns})]);
+        let diagnostic = format!(
+            "Measure args {args}: invalid args or returns {returns}; supply arrays and give each measured qubit a destination"
+        );
+        for error in [
+            PhirJsonEngine::from_json(&source).unwrap_err().to_string(),
+            PhirClassicalInterpreter::new()
+                .init(&source, None)
+                .unwrap_err()
+                .to_string(),
+            phir_json_to_module(&source).unwrap_err().to_string(),
+        ] {
+            assert!(error.contains(&diagnostic), "{error}");
+        }
+    }
+}
+
+#[test]
+fn indexed_results_reserve_unexecuted_writes() {
+    check_classical(
+        vec![
+            json!({"data":"cvar_define","variable":"s","data_type":"i32","size":2}),
+            json!({"data":"cvar_define","variable":"u","data_type":"u32","size":5}),
+            export(&[]),
+            json!({"cop":"=","args":[-1],"returns":["s"]}),
+            json!({"cop":"Result","args":[["s",0],["s",0]],"returns":[["out",0],"bit"]}),
+            json!({"block":"if","condition":{"cop":"==","args":[0,1]},"true_branch":[
+                {"cop":"Result","args":[["u",0],["u",0]],"returns":[["out",40],"bit"]}
+            ]}),
+        ],
+        &[("out", 1, 41), ("bit", 1, 1)],
+    );
 }

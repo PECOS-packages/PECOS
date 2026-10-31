@@ -30,7 +30,7 @@ from pecos._phir_exports import (
     collect_exports,
     collect_result_types,
     decode_export,
-    validate_measure_returns,
+    flatten_measure_args,
 )
 from pecos.reps.pyphir import block_types as blk
 from pecos.reps.pyphir import data_types as d
@@ -193,6 +193,8 @@ class PyPHIR:
                         [(name, register.size) for name, register in p.qvar_meta.items()],
                     )
                     args = cls.get_qargs(o, p)
+                    if o["qop"] == "Measure":
+                        args = flatten_measure_args(args)
 
                     # TODO: Added to satisfy old-style error models. Remove when they not longer need this...
                     if o.get("returns"):
@@ -284,8 +286,6 @@ class PyPHIR:
                     nodes.append(node)
                 elif isinstance(instr, op.COp) and instr.name == "Result":
                     nodes.append({"cop": "Result", "args": instr.args, "returns": instr.returns or []})
-                elif isinstance(instr, op.QOp):
-                    validate_measure_returns(instr.name, instr.args, instr.returns)
                 elif isinstance(instr, blk.IfBlock):
                     visit(instr.true_branch)
                     visit(instr.false_branch or [])

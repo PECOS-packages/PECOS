@@ -447,7 +447,7 @@ impl PhirClassicalInterpreter {
         }
 
         if qop_name == "Measure" {
-            super::operations::validate_measurement_counts(flat_args.len(), returns.len())?;
+            super::classical_validation::validate_measure_args(args, returns)?;
         }
 
         // Build var_output for measurement compatibility
@@ -473,7 +473,11 @@ impl PhirClassicalInterpreter {
         Ok(YieldedQOp {
             name: qop_name.to_string(),
             sim_name,
-            args: resolved_args,
+            args: if qop_name == "Measure" {
+                QOpArgs::Single(flat_args)
+            } else {
+                resolved_args
+            },
             returns: ret,
             metadata: meta,
             angles: angles.clone(),

@@ -50,7 +50,6 @@ def test_indexed_result_exports_destination() -> None:
     res = _run(
         [
             {"data": "cvar_define", "data_type": "u64", "variable": "m", "size": 2},
-            _cd("dst", 41),
             {"cop": "=", "returns": [["m", 0]], "args": [1]},
             {"cop": "Result", "args": [["m", 0]], "returns": [["dst", 40]]},
         ],
@@ -74,10 +73,10 @@ def test_multiple_indexed_results_accumulate() -> None:
 
 
 def test_out_of_range_result_bit_fails_fast() -> None:
-    """A Result bit index beyond its inherited destination width is rejected."""
+    """A Result bit index that exceeds the 64-bit backing type errors, not panics/drops."""
     with pytest.raises(
         ValueError,
-        match=r'Result: bit index 70 is invalid for register "dst" of declared size 2; use an index below 2',
+        match=r'Result: bit index 70 is invalid for register "dst" of size 64; use an index below 64',
     ):
         _run(
             [
@@ -171,7 +170,7 @@ def test_mixed_whole_and_indexed_result_same_destination() -> None:
         [
             _qc("q", 1),
             _cd("a", 8),
-            _cd("m", 8),
+            _cd("m", 1),
             _cd("c", 8),
             {"cop": "=", "args": [5], "returns": ["a"]},
             {"cop": "Result", "args": ["a"], "returns": ["c"]},  # c = 5

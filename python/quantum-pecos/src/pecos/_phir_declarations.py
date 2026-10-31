@@ -76,7 +76,7 @@ def validate_classical_inputs(program: dict) -> None:
             if not isinstance(node, dict):
                 continue
             if node.get("qop") == "Measure":
-                validate_measure_returns("Measure", node.get("args", []), node.get("returns"))
+                validate_measure_returns("Measure", node.get("args"), node.get("returns"))
             if node.get("cop") == "Result":
                 inputs.append({key: node[key] for key in ("cop", "args", "returns") if key in node})
             elif node.get("data") in ("cvar_define", "qvar_define"):

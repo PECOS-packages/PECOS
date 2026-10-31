@@ -72,13 +72,7 @@ impl CircuitInspection {
     /// Notebook clients can embed this document in a sandboxed `srcdoc` iframe.
     #[must_use]
     pub fn to_html(&self) -> String {
-        let mut out = String::from(
-            "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
-             <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
-             <meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; \
-             script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'\">\
-             <title>PECOS circuit inspector</title><style>",
-        );
+        let mut out = String::from(include_str!("circuit_inspector_head.html").trim_end());
         out.push_str(include_str!("circuit_inspector.css"));
         out.push_str("</style></head><body><main class=\"pecos-inspector\">");
         out.push_str("<header><h1>Circuit inspector</h1><p>Select a gate or a stored operation to inspect its source.</p></header>");

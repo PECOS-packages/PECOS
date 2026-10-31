@@ -331,6 +331,7 @@ fn indexed_results_preserve_bits_and_destination_values() {
         let source = json!({"format":"PHIR/JSON","version":"0.1.0","ops":[
             {"data":"qvar_define","variable":"q","size":1},
             {"data":"cvar_define","data_type":"u8","variable":"a","size":4},
+            {"data":"cvar_define","data_type":"u64","variable":"out","size":41},
             {"qop":"X","args":[["q",0]]},
             {"qop":"Measure","args":[["q",0]],"returns":[["a",2]]}, result
         ]})
@@ -358,7 +359,8 @@ fn interpreter_indexed_results_match_native() {
     };
     let source = json!({"format":"PHIR/JSON","version":"0.1.0","ops":[
         {"data":"cvar_define","data_type":"u8","variable":"a","size":4},
-        {"data":"cvar_define","data_type":"u8","variable":"small","size":1}
+        {"data":"cvar_define","data_type":"u8","variable":"small","size":1},
+        {"data":"cvar_define","data_type":"u64","variable":"out","size":41}
     ]})
     .to_string();
     let mut interpreter = PhirClassicalInterpreter::new();

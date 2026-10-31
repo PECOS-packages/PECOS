@@ -171,6 +171,9 @@ class PhirClassicalInterpreter:
             self._check_register_width(cvar.variable, cvar.data_type, cvar.size, dtype.itemsize * 8)
 
         self.initialize_cenv()
+        for name, (dtype, size) in self.program.result_types().items():
+            self.add_cvar(name, data_type_map[dtype], size)
+            self._result_destinations.add(name)
 
         return self.program.num_qubits
 
@@ -199,7 +202,6 @@ class PhirClassicalInterpreter:
 
     def shot_reinit(self) -> None:
         """Run all code needed at the beginning of each shot, e.g., resetting state."""
-        self._result_destinations.clear()
         self.initialize_cenv()
 
     @staticmethod
@@ -542,8 +544,8 @@ class PhirClassicalInterpreter:
             # After first execution, mutating op.args or op.returns is unsupported.
             decoded = self._result_references.get(op)
             if decoded is None:
-                # Counts depend on execution, like native PHIR. Cache only a
-                # successful decode, including for COp objects supplied directly.
+                # Also validate COp objects supplied directly after program loading.
+                # Cache only a successful decode.
                 validate_phir_result_counts(len(op.args), len(op.returns or []))
                 sources = tuple(self._result_reference(ref, "args") for ref in op.args)
                 destinations = tuple(self._result_reference(ref, "returns") for ref in op.returns)
@@ -567,11 +569,8 @@ class PhirClassicalInterpreter:
                 if source_index is not None:
                     value = (value >> source_index) & 1
                 if destination not in self.csym2id:
-                    if destination_index is None:
-                        meta = self._classical_meta(source)
-                        self.add_cvar(destination, data_type_map[meta.data_type], meta.size)
-                    else:
-                        self.add_cvar(destination, data_type_map["u64"], max(32, destination_index + 1))
+                    meta = self._classical_meta(source)
+                    self.add_cvar(destination, data_type_map[meta.data_type], meta.size)
                 self._check_result_index(destination, destination_index)
                 target = destination if destination_index is None else (destination, destination_index)
                 self.assign_int(target, value)
@@ -621,7 +620,7 @@ class PhirClassicalInterpreter:
         return validate_phir_result_reference(json.dumps(reference), field)
 
     def _check_result_index(self, name: str, index: int | None) -> None:
-        """Check an indexed Result against declared storage or a new u64 destination."""
+        """Check an indexed Result against its resolved storage width."""
         size = self._classical_meta(name).size if name in self.csym2id else 64
         if index is not None and not 0 <= index < size:
             msg = (
@@ -690,8 +689,6 @@ class PhirClassicalInterpreter:
     def result_bits(
         self,
         bits: Iterable[tuple[str, int]],
-        *,
-        filter_private: bool = True,
     ) -> dict[tuple[str, int], int]:
         """Get a dictionary of bit values given an iterable of bits.
 
@@ -702,7 +699,5 @@ class PhirClassicalInterpreter:
             for m, i in b:
                 m: str
                 i: int
-                if filter_private and m.startswith("__"):
-                    continue
                 send_meas[m, i] = self.get_bit(m, i)
         return send_meas

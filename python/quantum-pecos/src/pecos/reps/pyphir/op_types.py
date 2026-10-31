@@ -17,6 +17,7 @@ quantum operations, classical operations, and machine operations for quantum cir
 
 from __future__ import annotations
 
+from pecos._phir_exports import validate_measure_returns
 from pecos.reps.pyphir.instr_type import Instr
 
 
@@ -89,6 +90,7 @@ class QOp(Op):
             returns=returns,
             metadata=metadata,
         )
+        validate_measure_returns(name, args, returns)
         self.angles = angles
         self.sim_name = sim_name
         if self.sim_name is None:

@@ -182,6 +182,7 @@ impl PhirJsonEngine {
             }
         }
 
+        super::exports::prepare_results(&program.ops, &mut processor.environment)?;
         Ok(Self {
             exec_stack: Self::initial_stack(Some(&program)),
             program: Some(program),
@@ -537,7 +538,12 @@ impl ClassicalEngine for PhirJsonEngine {
     #[allow(clippy::too_many_lines)]
     fn get_results(&self) -> Result<Shot, PecosError> {
         let mut results = Shot::default();
-        if let Some(outputs) = self.processor.environment.selected_outputs() {
+        if let Some(outputs) = self
+            .processor
+            .environment
+            .selected_outputs()
+            .or_else(|| self.processor.environment.result_outputs())
+        {
             for (output, source) in outputs {
                 let info = self.processor.environment.get_variable_info(&source)?;
                 let value = self.processor.environment.get(&source).ok_or_else(|| {

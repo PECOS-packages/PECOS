@@ -237,6 +237,10 @@ impl<'de> Deserialize<'de> for Operation {
                 .get("returns")
                 .map_or(Ok(vec![]), |v| serde_json::from_value(v.clone()))
                 .map_err(|e| D::Error::custom(format!("returns: {e}")))?;
+            if qop == "Measure" {
+                super::operations::validate_measurement_counts(args.len(), returns.len())
+                    .map_err(D::Error::custom)?;
+            }
             let metadata = extract_metadata(obj);
             Ok(Operation::QuantumOp {
                 qop,
@@ -477,9 +481,6 @@ pub enum Expression {
     /// Integer literal
     Integer(i64),
 }
-
-// Constants for internal register naming
-pub const MEASUREMENT_PREFIX: &str = "measurement_";
 
 /// Validate a v0.1 quantum declaration: the type is optional and size must be positive.
 /// Declaration registration enforces the program-wide unique-name rule separately.

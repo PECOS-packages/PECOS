@@ -25,7 +25,13 @@ from pecos_rslib import validate_phir_qop
 
 import pecos as pc
 from pecos._phir_declarations import validate_classical_inputs, validate_declaration_names
-from pecos._phir_exports import all_operations, collect_exports, decode_export
+from pecos._phir_exports import (
+    all_operations,
+    collect_exports,
+    collect_result_types,
+    decode_export,
+    validate_measure_returns,
+)
 from pecos.reps.pyphir import block_types as blk
 from pecos.reps.pyphir import data_types as d
 from pecos.reps.pyphir import op_types as op
@@ -261,9 +267,12 @@ class PyPHIR:
 
         return instr
 
-    def export_selection(self) -> dict[str, str] | None:
-        """Validate exports in this representation, including directly supplied PyPHIR."""
-        nodes = [{"data": "cvar_define", "variable": meta.variable} for meta in self.cvar_meta]
+    def _selection_nodes(self) -> list[dict]:
+        """Describe static outputs, including directly supplied PyPHIR."""
+        nodes = [
+            {"data": "cvar_define", "variable": meta.variable, "data_type": meta.data_type, "size": meta.size}
+            for meta in self.cvar_meta
+        ]
         nodes.extend({"data": "qvar_define", "variable": name} for name in self.qvar_meta)
 
         def visit(operations: list) -> None:
@@ -274,7 +283,9 @@ class PyPHIR:
                         node["to"] = instr.to
                     nodes.append(node)
                 elif isinstance(instr, op.COp) and instr.name == "Result":
-                    nodes.append({"cop": "Result", "returns": instr.returns or []})
+                    nodes.append({"cop": "Result", "args": instr.args, "returns": instr.returns or []})
+                elif isinstance(instr, op.QOp):
+                    validate_measure_returns(instr.name, instr.args, instr.returns)
                 elif isinstance(instr, blk.IfBlock):
                     visit(instr.true_branch)
                     visit(instr.false_branch or [])
@@ -282,7 +293,15 @@ class PyPHIR:
                     visit(instr.ops)
 
         visit(self.ops)
-        return collect_exports(nodes)
+        return nodes
+
+    def export_selection(self) -> dict[str, str] | None:
+        """Validate program-wide exports."""
+        return collect_exports(self._selection_nodes())
+
+    def result_types(self) -> dict[str, tuple[str, int]]:
+        """Resolve storage for every Result destination."""
+        return collect_result_types(self._selection_nodes())
 
     @staticmethod
     def get_qargs(o: dict[str, Any], p: PyPHIR) -> list[int] | list[tuple[int]]:

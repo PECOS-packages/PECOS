@@ -84,15 +84,18 @@ def test_compacted_measurement_returns_stay_in_argument_order() -> None:
     ]
 
 
-def test_partial_measurement_destinations_are_not_merged() -> None:
-    """Named and unnamed measurements must keep their different return shapes."""
+def test_partial_measurement_destinations_keep_their_returns() -> None:
+    """Named and unnamed measurements keep each qubit paired with its own destination.
+
+    A bare measurement writes to the internal scratch variable (#1497), so both groups
+    carry returns and may compact; args and returns must stay aligned.
+    """
     qc = pc.QuantumCircuit(cvar_spec={"m": 1})
     qc.append("measure Z", {0})
     qc.append("measure Z", {1}, var=("m", 0))
     operations = [op for op in json.loads(qc.to_phir_json())["ops"] if "qop" in op]
-    assert len(operations) == 2
-    assert "returns" not in operations[0]
-    assert operations[1]["returns"] == [["m", 0]]
+    pairs = {tuple(arg): tuple(ret) for op in operations for arg, ret in zip(op["args"], op["returns"], strict=True)}
+    assert pairs == {("q", 0): ("__pecos_scratch", 0), ("q", 1): ("m", 0)}
 
 
 def test_register_names_are_part_of_the_qubit_identity() -> None:

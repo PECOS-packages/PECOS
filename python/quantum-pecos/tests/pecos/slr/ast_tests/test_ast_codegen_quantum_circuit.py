@@ -507,14 +507,15 @@ def test_measurement_results_reach_phir(measurement_program, optimize_parallel) 
     # PHIR otherwise assigns new qubit indices in first-use order.
     circuit.metadata["qvars"] = {qubit: ("q", qubit) for qubit in circuit.qudits}
     operations = json.loads(circuit.to_phir_json())["ops"]
+    # PHIR requires returns, so a bare measurement writes to an internal scratch variable (#1497).
+    user_registers = set(circuit.metadata.get("cvar_spec", {}))
     measurements = []
     for op in operations:
         if op.get("qop") == "Measure":
-            results = op.get("returns", [None] * len(op["args"]))
             assert "var_output" not in op.get("metadata", {})
             measurements.extend(
-                (qubit[1], tuple(bit) if bit is not None else None)
-                for qubit, bit in zip(op["args"], results, strict=True)
+                (qubit[1], tuple(bit) if bit[0] in user_registers else None)
+                for qubit, bit in zip(op["args"], op["returns"], strict=True)
             )
     _assert_measurements_match(measurements, _qasm_measurements(qasm))
 

@@ -530,17 +530,25 @@ impl Environment {
         })
     }
 
-    /// Explicit exports, or every classical storage location when exports are absent.
+    /// Explicit exports; otherwise the Result destinations when the program has
+    /// any; otherwise every classical storage location.
     pub(crate) fn output_sources(&self) -> super::exports::ExportMap {
         self.selected_outputs().unwrap_or_else(|| {
-            let mut outputs: super::exports::ExportMap = self
-                .metadata
-                .iter()
-                .filter(|info| info.data_type != DataType::Qubits)
-                .map(|info| (info.name.clone(), info.name.clone()))
-                .collect();
+            // Without cvar_export, Result destinations select the native outputs,
+            // as they did before cvar_export was honoured.
+            let mut outputs: super::exports::ExportMap = if self.result_destinations.is_empty() {
+                self.metadata
+                    .iter()
+                    .filter(|info| info.data_type != DataType::Qubits)
+                    .map(|info| (info.name.clone(), info.name.clone()))
+                    .collect()
+            } else {
+                self.result_destinations
+                    .iter()
+                    .map(|name| (name.clone(), name.clone()))
+                    .collect()
+            };
             // Preserve aliases installed directly through the Environment API.
-            // PHIR Result mappings are self-mappings and do not select a subset.
             outputs.extend(
                 self.mappings
                     .iter()
@@ -1129,8 +1137,8 @@ impl Environment {
 
     /// Gets mapped results from the environment
     ///
-    /// Honors explicit exports; otherwise includes every classical variable and
-    /// any aliases installed directly through the mapping API.
+    /// Honors explicit exports, then Result destinations, then all classical
+    /// variables, including aliases installed directly through the mapping API.
     #[must_use]
     pub fn get_mapped_results(&self) -> BTreeMap<String, u32> {
         self.output_sources()

@@ -247,7 +247,7 @@ impl ImprovedConverter {
         }
 
         self.combine_pending_measurements(&mut instructions)?;
-        if exports.is_none() {
+        if exports.is_none() && export_names.is_empty() {
             export_names.extend(
                 self.environment
                     .get_all_variables()

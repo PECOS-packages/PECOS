@@ -155,8 +155,8 @@ fn every_converted_gate_has_canonical_broadcast_arity() {
 }
 
 #[test]
-fn cvar_export_selects_subset_and_result_keeps_classical_storage() {
-    // Only cvar_export selects a subset; Result without exports keeps all classical storage.
+fn cvar_export_and_result_select_the_same_subset() {
+    // Both directives select m, while cvar_export reads it at shot end.
     let source = |export| {
         json!({"format":"PHIR/JSON","version":"0.1.0","ops":[
             {"data":"qvar_define","data_type":"qubits","variable":"q","size":4},
@@ -177,17 +177,13 @@ fn cvar_export_selects_subset_and_result_keeps_classical_storage() {
     assert!(!exported.data.contains_key("scratch"));
     assert_eq!(
         mapped.data.keys().collect::<Vec<_>>(),
-        vec!["_width_m", "_width_scratch", "m", "scratch"]
+        vec!["_width_m", "m"]
     );
-    assert_eq!(
-        converted.data.keys().collect::<Vec<_>>(),
-        vec!["m", "scratch"]
-    );
+    assert_eq!(converted.data.keys().collect::<Vec<_>>(), vec!["m"]);
     assert_eq!(mapped.data["m"].as_u32(), converted.data["m"].as_u32());
     let converted_export =
         run(&mut PhirEngine::new(phir_json_to_module(&with_export).unwrap()).unwrap());
-    assert_eq!(converted_export.data.keys().collect::<Vec<_>>(), vec!["m"]);
-    assert_eq!(converted_export.data["m"], converted.data["m"]);
+    assert_eq!(converted_export.data, converted.data);
 }
 
 #[test]
@@ -212,14 +208,7 @@ fn result_pairs_preserve_values_names_and_order() {
             .iter()
             .filter(|i| i.operation == Operation::Classical(pecos_phir::ops::ClassicalOp::Result))
             .collect();
-        assert_eq!(
-            results.len(),
-            native
-                .data
-                .keys()
-                .filter(|name| !name.starts_with("_width_"))
-                .count()
-        );
+        assert_eq!(results.len(), result["args"].as_array().unwrap().len());
         assert!(results.iter().all(|i| i.operands.len() == 1));
         let converted = run(&mut PhirEngine::new(module).unwrap());
         for name in result["returns"].as_array().unwrap() {

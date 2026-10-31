@@ -288,7 +288,8 @@ that are not finite JSON scalars use a bounded non-string stand-in for named
 Rust diagnostics; int, str and float subclasses are normalized and accepted. Invalid declaration-name and size
 values are rendered with at most 80 characters, including an ellipsis.
 Exports use U32 through 32 bits and U64 for wider registers.
-Without `cvar_export`, every classical variable and Result destination is reported.
+Without `cvar_export`, the native engine and module converter report only Result
+destinations when any exist; otherwise they report every classical variable.
 Quantum registers are never reported, and classical names have no prefix filter.
 CPhase is not a PHIR v0.1 gate and must be lowered before emitting PHIR JSON.
 
@@ -311,8 +312,11 @@ at load just like declarations, even if their Result is in an unexecuted branch.
 Other operations may read or write them before that Result; reads see zero until
 something writes the name. Invalid sources, renames, conflicting output names,
 and the reserved `_width_` prefix are rejected at load time.
-Without a directive, all runners report every classical variable, including
-`measurement_`-prefixed names and Result destinations.
+Without a directive, native and module output is limited to the static Result
+destinations when any exist. HybridEngine retains its existing rule of reporting
+every classical variable plus Result destinations. With neither exports nor
+Results, all runners report every classical variable, including `measurement_`-
+prefixed names, and exclude quantum registers.
 A Result destination may also be exported under its own name; an alias of a
 different source cannot use that destination name. Declarations inside blocks
 require a program with `cvar_export`; otherwise move them to the top level.

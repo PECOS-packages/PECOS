@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 
 from pecos.circuits.quantum_circuit import QuantumCircuit
 from pecos.slr._qubit_args import gate_target_groups, qubit_key
+from pecos.slr.cops import COp
 from pecos.slr.gen_codes._permutation import reject_permute_in_region, reject_unsupported_permute
 from pecos.slr.gen_codes.generator import Generator
 from pecos.slr.vars import SymbolicElem
@@ -293,6 +294,13 @@ class QuantumCircuitGenerator(Generator):
         elif op_class == "Vars":
             # Variable declarations already handled
             pass
+        elif isinstance(op, COp) or op_class == "Print":
+            msg = (
+                f"QuantumCircuitGenerator does not yet support {op_class}: "
+                "classical operations are not lowered. "
+                "Use the QASM, QIR or Guppy targets for these operations."
+            )
+            raise NotImplementedError(msg)
         else:
             # Quantum operations (QGate objects)
             self._handle_quantum_op(op)

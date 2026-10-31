@@ -1297,10 +1297,56 @@ class AstToGuppy:
         return lines
 
     def _emit_assign(self, node: AssignOp) -> list[str]:
-        is_bit_target = isinstance(node.target, BitRef)
-        target = self._render_bit_ref(node.target) if is_bit_target else str(node.target)
-        value = self._render_expression(node.value, bool_context=is_bit_target)
+        if isinstance(node.target, BitRef):
+            target = self._render_bit_ref(node.target)
+            value = self._render_expression(node.value, bool_context=True)
+        elif re.fullmatch(r"[A-Za-z_]\w*\[[A-Za-z_]\w*\]", node.target):
+            # The converter represents SymbolicBit targets as "register[i]"
+            # strings. These remain single-bit writes, not register writes.
+            target = node.target
+            value = self._render_expression(node.value, bool_context=True)
+        else:
+            target = node.target
+            value = self._render_register_assignment(target, node.value)
         return [f"{self.context.indent()}{target} = {value}"]
+
+    def _render_register_assignment(self, target: str, expr: Expression) -> str:
+        """Keep whole-register writes in the bool-array representation.
+
+        Guppy's int/nat are 64-bit, while QASM expressions retain register
+        widths and signedness. Reject arithmetic until it has a lowering
+        that preserves those semantics, rather than rendering array operands
+        as scalar integers.
+        """
+        decl = self.context.registers.get(target)
+        if decl is None:
+            msg = f"Cannot assign to unknown classical register {target!r}"
+            raise GuppyCodegenError(msg)
+        if decl.size <= 0:
+            msg = f"Cannot assign to classical register {target!r} with unsupported width {decl.size}"
+            raise GuppyCodegenError(msg)
+        if isinstance(expr, LiteralExpr) and isinstance(expr.value, int):
+            # QASM stores the low N bits, least significant bit first. Expand
+            # in Python so literals need not fit Guppy's fixed-width int.
+            bits = ", ".join(str(bool((expr.value >> index) & 1)) for index in range(decl.size))
+            return f"array({bits})"
+        if isinstance(expr, VarExpr) and expr.name in self.context.registers:
+            source = self.context.registers[expr.name]
+            if source.size != decl.size:
+                msg = (
+                    f"Cannot assign register {expr.name!r} (width {source.size}) to {target!r} "
+                    f"(width {decl.size}): Guppy register copies require equal widths"
+                )
+                raise GuppyCodegenError(msg)
+            # Guppy arrays move on assignment, even when their elements are
+            # bools. An explicit copy leaves the source available to later ops.
+            return f"{expr.name}.copy()"
+        msg = (
+            f"Unsupported whole-register assignment to {target!r}: {expr!r}. "
+            "Guppy supports integer literals and equal-width register copies here; "
+            "integer expressions require width-preserving register arithmetic lowering."
+        )
+        raise GuppyCodegenError(msg)
 
     def _emit_barrier(self, _node: BarrierOp) -> list[str]:
         return [f"{self.context.indent()}# barrier"]

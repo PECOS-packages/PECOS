@@ -6,6 +6,15 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Breaking:** Guppy code generation lowers a whole-register `CReg` assignment
+  from an integer literal to the matching bits (least significant first,
+  truncated to the register width) and an equal-width register copy to a copy.
+  Before, `c.set(1)` emitted `c = 1` on a bool array, so `.guppy()` returned
+  invalid source and `.hugr()` failed. Any other whole-register expression now
+  raises `GuppyCodegenError` at `.guppy()` naming the target. The deprecated
+  `QuantumCircuitGenerator` raises on classical `SET`, `Print` and standalone
+  classical expressions instead of silently dropping them.
+
 - **Breaking:** Python simulator wrappers and the public `pecos.HybridEngine`
   validate whole known-gate batches per `run_gate` call and per circuit item
   before changing state, including when `simulate_gate=False`. Registered-gate

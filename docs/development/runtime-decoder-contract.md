@@ -168,12 +168,19 @@ independence or generate JIT fragments.
 ## Runtime-emitted prefixes (opt-in)
 
 The ordinary dynamic native path can pass runtime batch provenance to an
-observed-read provider:
+observed-read provider. This helper accepts the caller's per-shot provider factory;
+pass its returned engine builder to `sim(...).classical(...)`:
 
 ```python
-engine = selene_engine(runtime).runtime_decoder(
-    RuntimeDecoder(provider_factory=provider_factory), capture_batches=True,
-)
+from pecos import selene_engine
+from pecos.qec import RuntimeDecoder
+
+
+def batch_decoder_engine(provider_factory, runtime="selene_simple_runtime"):
+    return selene_engine(runtime).runtime_decoder(
+        RuntimeDecoder(provider_factory=provider_factory),
+        capture_batches=True,
+    )
 ```
 
 The program still calls `pecos_runtime_decode_observed_v1`. The provider now

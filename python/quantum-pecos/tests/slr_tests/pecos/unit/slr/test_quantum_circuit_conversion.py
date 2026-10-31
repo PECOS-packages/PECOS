@@ -922,6 +922,8 @@ def test_nonmeasurement_params_rejected(symbol: str, params: dict) -> None:
         ("M", {(-1,)}),
         ("CX", {(0, -1)}),
         ("CX", {(0, 0)}),
+        ("X", {True}),
+        ("CX", {(False, True)}),
     ],
 )
 def test_malformed_gate_locations_rejected(symbol: str, locations: set) -> None:

@@ -803,7 +803,7 @@ class AstToQir:
         explicit returned value vanished from the QIS records (the
         `docs.inline_measure_creg` defect surfaced). Mirror the
         fail-loud doctrine: a silent miscompile must become a loud
-        `NotImplementedError`, not a buried wrong answer.
+        `ValueError`, not a buried wrong answer.
         """
         if reg_name not in self._creg_ptrs:
             msg = (
@@ -814,7 +814,7 @@ class AstToQir:
                 "values would be silently dropped from the recorded "
                 f"output). Declare {reg_name!r} in Main(...) or in an ordinary Block."
             )
-            raise NotImplementedError(msg)
+            raise ValueError(msg)
 
     def _creg_bit_ptr(self, reg_name: str, index: int) -> Any:
         """`getelementptr [N x i1], [N x i1]* %creg, i64 0, i64 index`.
@@ -889,7 +889,7 @@ class AstToQir:
                 f"QIR codegen: prepare_all references unknown allocator {node.allocator!r}; "
                 "declare the allocator before preparing it."
             )
-            raise NotImplementedError(msg)
+            raise ValueError(msg)
         slots = range(self.context.qreg_sizes[node.allocator]) if node.slots is None else node.slots
 
         reset_func = self._get_or_create_gate("reset", has_params=False, num_qubits=1)
@@ -914,7 +914,7 @@ class AstToQir:
         for alloc in allocators:
             if alloc not in self.context.qreg_sizes:
                 msg = f"QIR codegen: Barrier refers to unknown allocator {alloc!r}."
-                raise NotImplementedError(msg)
+                raise ValueError(msg)
             for i in range(self.context.qreg_sizes[alloc]):
                 index = self.context.get_qubit_index(alloc, i)
                 if index not in seen:
@@ -1106,12 +1106,12 @@ class AstToQir:
         sizes = {**self.context.creg_map, **self.context.qreg_sizes}
         if name not in sizes:
             msg = f"QIR codegen: unknown Permute ref {ref!r}"
-            raise NotImplementedError(msg)
+            raise ValueError(msg)
         if parsed is not None:
             _, index = parsed
             if not 0 <= index < sizes[name]:
                 msg = f"QIR codegen: Permute reference {ref!r} is not a declared slot."
-                raise NotImplementedError(msg)
+                raise ValueError(msg)
             return [(name, index)]
         return [(name, i) for i in range(sizes[name])]
 

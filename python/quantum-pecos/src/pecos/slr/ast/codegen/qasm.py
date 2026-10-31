@@ -501,7 +501,7 @@ class AstToQasm(BaseVisitor[list[str]]):
                         seen.add(name)
                     continue
                 msg = f"QASM codegen: undeclared allocator {name!r}; declare it before using Barrier."
-                raise NotImplementedError(msg)
+                raise ValueError(msg)
             physical = list(
                 dict.fromkeys(
                     self._render_slot_ref(SlotRef(allocator=name, index=i))
@@ -586,13 +586,16 @@ class AstToQasm(BaseVisitor[list[str]]):
             name = reference if slot is None else slot[0]
             if name not in sizes and not self.context.is_fragment:
                 msg = f"QASM codegen: undeclared register {name!r}; declare it before using Permute."
-                raise NotImplementedError(msg)
+                raise ValueError(msg)
         if any(ref is None for ref in parsed):
             if not all(ref is None for ref in parsed) or len(node.sources) != 2:
                 msg = "QASM codegen: Permute supports either indexed refs or a swap of two whole registers."
                 raise NotImplementedError(msg)
             a, b = node.sources
-            if a not in sizes or b not in sizes or sizes[a] != sizes[b]:
+            if a not in sizes or b not in sizes:
+                msg = "QASM codegen: Permute requires known whole registers of equal size."
+                raise ValueError(msg)
+            if sizes[a] != sizes[b]:
                 msg = "QASM codegen: Permute requires known whole registers of equal size."
                 raise NotImplementedError(msg)
             if (a in self.context.registers) != (b in self.context.registers):
@@ -603,7 +606,7 @@ class AstToQasm(BaseVisitor[list[str]]):
                 size = self.context.registers.get(name, self.context.allocators.get(name, 0))
                 if not 0 <= index < size:
                     msg = f"QASM codegen: Permute reference {name}[{index}] is not a declared slot."
-                    raise NotImplementedError(msg)
+                    raise ValueError(msg)
             kinds = {name in self.context.registers for name, _ in parsed}
             if len(kinds) > 1:
                 msg = "QASM codegen: Permute cannot mix quantum and classical element refs."
@@ -972,8 +975,11 @@ class AstToQasm(BaseVisitor[list[str]]):
 
     def _require_register(self, name: str) -> None:
         if name not in self.context.registers and not self.context.is_fragment:
-            msg = f"QASM codegen: undeclared classical register {name!r}; declare it before use."
-            raise NotImplementedError(msg)
+            msg = (
+                f"QASM codegen: undeclared classical register {name!r}; "
+                "QASM needs every classical register declared; declare it in Main(...)."
+            )
+            raise ValueError(msg)
 
     def _render_bit_ref(self, ref: BitRef) -> str:
         self._require_register(ref.register)

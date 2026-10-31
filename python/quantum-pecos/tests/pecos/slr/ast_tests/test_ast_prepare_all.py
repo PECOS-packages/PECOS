@@ -27,7 +27,7 @@ def prepared_program(request, child_allocator):
     name, size = "q", 3
     if child_allocator:
         declarations += (
-            AllocatorDecl(name="padding", capacity=1, parent="q"),
+            AllocatorDecl(name="padding", capacity=1, parent="q", offset=0),
             AllocatorDecl(name="child", capacity=2, parent="q", offset=1),
         )
         name, size = "child", 2
@@ -84,5 +84,5 @@ def test_qir_prepare_all_matches_qasm(prepared_program) -> None:
 def test_prepare_all_rejects_unknown_allocator(generate) -> None:
     """An allocator-wide prepare needs a known capacity in every fixed-size backend."""
     program = Program(name="unknown", body=(PrepareOp(allocator="missing"),))
-    with pytest.raises(NotImplementedError, match=r"prepare_all.*missing.*declare.*allocator"):
+    with pytest.raises(ValueError, match=r"prepare_all.*missing.*declare.*allocator"):
         generate(program)

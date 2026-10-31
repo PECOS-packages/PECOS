@@ -16,6 +16,9 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   Child allocator declarations carry their actual offset within the parent;
   QASM, Stim, QIR and QuantumCircuit resolve parent chains independently of
   declaration order. Noncontiguous child placements raise `ValueError`.
+  Hand-built AST child allocators must specify `offset`; older JSON without a
+  child offset raises `ValueError` instead of silently aliasing sibling storage.
+  `QAlloc(n, parent=p)` now reserves slots exactly like `p.child(n)`.
   **Breaking:** every declaration, including declarations in Main, must use
   the same storage for a duplicate name (same size and, for child allocators,
   the same parent and offset), or conversion raises `ValueError`.
@@ -25,10 +28,14 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   In complete programs (`Main`), QASM rejects undeclared register and allocator
   references, including inline measurement outputs that could collide with swap
   temporaries. Stim, QIR and QuantumCircuit also reject undeclared quantum
-  allocators and measurement outputs in complete programs. Fragments may reference
-  caller-owned registers: quantum references use root storage at offset zero,
-  and QASM, Stim and QuantumCircuit accept caller-owned measurement outputs.
-  QIR continues to require declared classical storage, including in fragments.
+  allocators in complete programs. These undeclared-reference errors use
+  `ValueError`. Of the backends that accepted inline measurement outputs on dev,
+  only QASM rejects them: every classical register must be declared in the program.
+  Stim and QuantumCircuit continue to accept inline outputs and preserve their
+  measurement mappings. QIR continues to require declared classical storage;
+  Guppy's existing inline-output support is unchanged. Fragments may reference
+  caller-owned registers: undeclared quantum names denote root storage at offset
+  zero, and QASM, Stim and QuantumCircuit accept caller-owned measurement outputs.
 - Guppy code generation raises `GuppyCodegenError` for a classical reference it
   cannot resolve in the current function (#1525). Before, a `block_inputs`
   block that used an outer register with a loop-variable index, such as

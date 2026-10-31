@@ -438,12 +438,6 @@ class AstToQuantumCircuit:
 
     def _process_measure(self, node: MeasureOp) -> None:
         """Process a measurement operation."""
-        for result in node.results:
-            if result.register not in self.circuit.metadata["cvar_spec"] and not self.context.is_fragment:
-                msg = (
-                    f"QuantumCircuit codegen: undeclared classical register {result.register!r}; declare it before use."
-                )
-                raise NotImplementedError(msg)
         for i, target in enumerate(node.targets):
             qubit = self.context.get_qubit(target.allocator, target.index)
             result = node.results[i] if i < len(node.results) else None
@@ -462,7 +456,7 @@ class AstToQuantumCircuit:
                 f"QuantumCircuit codegen: prepare_all references unknown allocator {node.allocator!r}; "
                 "declare the allocator before preparing it."
             )
-            raise NotImplementedError(msg)
+            raise ValueError(msg)
         slots = range(self.context.qreg_sizes[node.allocator]) if node.slots is None else node.slots
         qubits = [self.context.get_qubit(node.allocator, slot) for slot in slots]
         for qubit in qubits:
@@ -576,7 +570,7 @@ class AstToQuantumCircuit:
                 f"QuantumCircuit codegen: Permute reference {ref!r} is not a known qubit allocator; "
                 "declare a qubit allocator or use the QASM, QIR or Guppy targets for classical permutations."
             )
-            raise NotImplementedError(msg)
+            raise ValueError(msg)
         if parsed is not None:
             return [parsed]
         return [(ref, i) for i in range(self.context.qreg_sizes[ref])]

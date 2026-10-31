@@ -118,8 +118,8 @@ class TestFullPipeline:
     def test_pipeline_with_hierarchical_allocators(self) -> None:
         """Test pipeline with hierarchical allocators."""
         all_qubits = QAlloc(4, name="all")
-        data = all_qubits.child(2, name="data")
-        ancilla = all_qubits.child(2, name="ancilla")
+        data = QAlloc(2, name="data", parent=all_qubits)
+        ancilla = QAlloc(2, name="ancilla", parent=all_qubits)
 
         prog = Main(
             all_qubits,

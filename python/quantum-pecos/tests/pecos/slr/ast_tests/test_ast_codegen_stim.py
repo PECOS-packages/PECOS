@@ -526,7 +526,7 @@ class TestAstToStimConditionals:
             ast_to_stim(slr_to_ast(prog))
 
     def test_assigned_undeclared_register_is_rejected(self) -> None:
-        """Reject the missing declaration before recording measurements or assignments."""
+        """Whole-register assignment invalidates bits even without a register declaration."""
         q = QReg("q", 2)
         c = CReg("inline", 1)
         prog = Main(
@@ -536,7 +536,7 @@ class TestAstToStimConditionals:
             If(c[0] == 1).Then(qb.X(q[1])),
         )
 
-        with pytest.raises(NotImplementedError, match=r"undeclared classical register 'inline'.*declare"):
+        with pytest.raises(NotImplementedError, match="no longer comes from a tracked measurement"):
             ast_to_stim(slr_to_ast(prog))
 
     def test_assigned_bit_is_rejected(self) -> None:
@@ -916,8 +916,8 @@ def aliased_record_program():
         name="aliased",
         declarations=(
             AllocatorDecl(name="q", capacity=2),
-            AllocatorDecl(name="child", capacity=2, parent="q"),
-            AllocatorDecl(name="nested", capacity=2, parent="child"),
+            AllocatorDecl(name="child", capacity=2, parent="q", offset=0),
+            AllocatorDecl(name="nested", capacity=2, parent="child", offset=0),
             RegisterDecl(name="c", size=2),
         ),
         block_decls=(inner, outer),

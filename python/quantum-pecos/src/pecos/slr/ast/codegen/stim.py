@@ -404,10 +404,6 @@ class AstToStim:
 
     def _process_measure(self, node: MeasureOp) -> None:
         """Process a measurement operation."""
-        for result in node.results:
-            if result.register not in self.context.creg_sizes and not self.context.is_fragment:
-                msg = f"Stim codegen: undeclared classical register {result.register!r}; declare it before use."
-                raise NotImplementedError(msg)
         qubits = [self.context.get_qubit(t.allocator, t.index) for t in node.targets]
         # Result bits pair with targets by position, as in the QIR backend.
         for offset, bit in enumerate(node.results[: len(qubits)]):
@@ -449,7 +445,7 @@ class AstToStim:
                 f"Stim codegen: prepare_all references unknown allocator {node.allocator!r}; "
                 "declare the allocator before preparing it."
             )
-            raise NotImplementedError(msg)
+            raise ValueError(msg)
         slots = range(self.context.qreg_sizes[node.allocator]) if node.slots is None else node.slots
         qubits = [self.context.get_qubit(node.allocator, slot) for slot in slots]
         self.circuit.append_operation("R", qubits)
@@ -675,12 +671,12 @@ class AstToStim:
                 f"Stim codegen: unknown Permute reference {ref!r}; "
                 f"declare register {name!r} in Main or in an ordinary Block."
             )
-            raise NotImplementedError(msg)
+            raise ValueError(msg)
         if parsed is not None:
             _, index = parsed
             if not 0 <= index < sizes[name]:
                 msg = f"Stim codegen: Permute reference {ref!r} is not a declared slot."
-                raise NotImplementedError(msg)
+                raise ValueError(msg)
             return [(name, index)]
         if name in self.context.qreg_sizes:
             return [(name, i) for i in range(sizes[name])]

@@ -37,11 +37,14 @@ def allocator_offsets(program: Program) -> dict[str, int]:
         visiting.add(name)
         decl = declarations[name]
         if decl.parent is None:
-            if decl.offset != 0:
+            if decl.offset not in (None, 0):
                 msg = f"Root allocator {name!r} must have offset zero."
                 raise ValueError(msg)
             offset = 0
         else:
+            if decl.offset is None:
+                msg = f"Child allocator {name!r} has no offset; set offset=... or build it with parent.child(...)."
+                raise ValueError(msg)
             offset = resolve(decl.parent) + decl.offset
             parent = declarations.get(decl.parent)
             if decl.offset < 0 or (parent is not None and decl.offset + decl.capacity > parent.capacity):

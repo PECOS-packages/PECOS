@@ -353,8 +353,8 @@ class TestComplexRoundtrip:
     def test_hierarchical_allocators(self) -> None:
         """Test hierarchical allocator serialization."""
         all_qubits = QAlloc(4, name="all")
-        data_alloc = all_qubits.child(2, name="data")
-        ancilla_alloc = all_qubits.child(2, name="ancilla")
+        data_alloc = QAlloc(2, name="data", parent=all_qubits)
+        ancilla_alloc = QAlloc(2, name="ancilla", parent=all_qubits)
 
         prog = Main(
             all_qubits,

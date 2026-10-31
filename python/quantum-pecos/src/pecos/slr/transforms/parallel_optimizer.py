@@ -36,7 +36,7 @@ class ParallelOptimizer:
     that act on disjoint sets of qubits can be grouped together for parallel execution.
 
     The optimizer is conservative and will not optimize Parallel blocks containing
-    control flow (If/Repeat blocks) to ensure correctness.
+    control flow (If/Repeat/For/While blocks) to ensure correctness.
     """
 
     def transform(self, block: Block) -> Block:

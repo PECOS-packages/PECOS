@@ -206,6 +206,30 @@ fn assert_undeclared_error(error: impl std::fmt::Display) {
     assert!(message.contains("creg"), "{message}");
 }
 
+fn assert_gate_error(error: impl std::fmt::Display, expected: &[&str]) {
+    let message = error.to_string();
+    for fragment in expected {
+        assert!(
+            message.contains(fragment),
+            "Expected {fragment:?}: {message}"
+        );
+    }
+    assert!(
+        !message.contains("creg"),
+        "Gate errors must not suggest creg: {message}"
+    );
+}
+
+macro_rules! gate_error_test {
+    ($name:ident, $statement:literal, [$($expected:literal),+]) => {
+        #[test]
+        fn $name() {
+            let source = undeclared_source($statement);
+            assert_gate_error(QASMParser::parse_str(&source).expect_err("Invalid gate expression"), &[$($expected),+]);
+        }
+    };
+}
+
 macro_rules! undeclared_test {
     ($name:ident, $statement:literal) => {
         #[test]
@@ -255,16 +279,44 @@ undeclared_test!(
     undeclared_false_branch_measurement,
     "if(c == 1) measure q[0] -> missing[0];"
 );
-undeclared_test!(undeclared_gate_argument, "rx(missing) q[0];");
-undeclared_test!(undeclared_gate_bit_argument, "rx(missing[0]) q[0];");
-undeclared_test!(undeclared_gate_function_argument, "rx(sin(missing)) q[0];");
-undeclared_test!(
-    undeclared_gate_body_argument,
-    "gate custom(theta) a { rx(theta + missing) a; }"
+gate_error_test!(
+    undeclared_gate_argument,
+    "rx(missing) q[0];",
+    [
+        "Cannot evaluate variable 'missing'",
+        "gate arguments must be constant expressions"
+    ]
 );
-undeclared_test!(
+gate_error_test!(
+    undeclared_gate_bit_argument,
+    "rx(missing[0]) q[0];",
+    ["Bit references are not allowed in gate parameter expressions"]
+);
+gate_error_test!(
+    undeclared_gate_function_argument,
+    "rx(sin(missing)) q[0];",
+    [
+        "Cannot evaluate variable 'missing'",
+        "gate arguments must be constant expressions"
+    ]
+);
+gate_error_test!(
+    undeclared_gate_body_argument,
+    "gate custom(theta) a { rx(theta + missing) a; }",
+    [
+        "Gate 'custom'",
+        "unknown parameter 'missing'",
+        "declared parameters: [theta]"
+    ]
+);
+gate_error_test!(
     undeclared_gate_body_bit_argument,
-    "gate custom(theta) a { rx(missing[0]) a; }"
+    "gate custom(theta) a { rx(missing[0]) a; }",
+    [
+        "Gate 'custom'",
+        "bit references are not allowed in gate bodies",
+        "missing[0]"
+    ]
 );
 undeclared_test!(
     undeclared_gate_parameter_outside_scope,
@@ -275,17 +327,32 @@ undeclared_test!(
     "opaque custom(missing) a; c = missing;"
 );
 
-undeclared_test!(
+gate_error_test!(
     undeclared_gate_qubit_as_value,
-    "gate custom(theta) missing { rx(missing) missing; }"
+    "gate custom(theta) missing { rx(missing) missing; }",
+    [
+        "Gate 'custom'",
+        "unknown parameter 'missing'",
+        "declared parameters: [theta]"
+    ]
 );
-undeclared_test!(
+gate_error_test!(
     undeclared_gate_parameter_in_other_scope,
-    "gate first(missing) a { rx(missing) a; } gate second(theta) a { rx(missing) a; }"
+    "gate first(missing) a { rx(missing) a; } gate second(theta) a { rx(missing) a; }",
+    [
+        "Gate 'second'",
+        "unknown parameter 'missing'",
+        "declared parameters: [theta]"
+    ]
 );
-undeclared_test!(
+gate_error_test!(
     undeclared_replaced_gate_definition,
-    "gate custom(theta) a { rx(missing) a; } gate custom(theta) a { rx(theta) a; }"
+    "gate custom(theta) a { rx(missing) a; } gate custom(theta) a { rx(theta) a; }",
+    [
+        "Gate 'custom'",
+        "unknown parameter 'missing'",
+        "declared parameters: [theta]"
+    ]
 );
 
 #[test]
@@ -402,8 +469,8 @@ fn undeclared_ast_engine_compile() {
 fn undeclared_ast_engine_commands() {
     use pecos_engines::ClassicalEngine;
     let mut program =
-        QASMParser::parse_str(&undeclared_source("x q[0]; if(c == 1) c = c;")).unwrap();
-    program.classical_registers.remove("c");
+        QASMParser::parse_str(&undeclared_source("creg d[1]; x q[0]; if(c == 1) d = 0;")).unwrap();
+    program.classical_registers.remove("d");
     let mut engine = QASMEngine::new(pecos_qasm::QASMProgram::new(program, String::new()));
     let error = engine
         .generate_commands()
@@ -411,7 +478,7 @@ fn undeclared_ast_engine_commands() {
         .expect("No quantum command may run before validation")
         .to_string();
     assert!(
-        error.contains("register: c") && error.contains("creg"),
+        error.contains("register: d") && error.contains("creg"),
         "{error}"
     );
 }
@@ -489,7 +556,11 @@ undeclared_bit_test!(undeclared_bit_function_argument, "c = external(c[1]);");
 undeclared_bit_test!(undeclared_bit_void_argument, "external(c[1]);");
 undeclared_bit_test!(undeclared_bit_measurement_target, "measure q[0] -> c[1];");
 undeclared_bit_test!(undeclared_bit_false_branch, "if(c == 1) c[1] = 0;");
-undeclared_bit_test!(undeclared_bit_gate_argument, "rx(c[1]) q[0];");
+gate_error_test!(
+    undeclared_bit_gate_argument,
+    "rx(c[1]) q[0];",
+    ["Bit references are not allowed in gate parameter expressions"]
+);
 
 #[test]
 fn undeclared_evaluator_bit_out_of_bounds() {
@@ -521,3 +592,79 @@ fn undeclared_evaluator_bit_out_of_bounds() {
         .as_bool()
     );
 }
+
+macro_rules! gate_scope_test {
+    ($name:ident, $before:literal, $after:literal, $usage:literal) => {
+        #[test]
+        fn $name() {
+            let source = undeclared_source(concat!(
+                $before,
+                " gate g(a) x0 { rz(b) x0; } ",
+                $after,
+                " ",
+                $usage
+            ));
+            assert_gate_error(
+                QASMParser::parse_str(&source).expect_err("Only gate parameters are in scope"),
+                &[
+                    "Gate 'g'",
+                    "unknown parameter 'b'",
+                    "declared parameters: [a]",
+                ],
+            );
+        }
+    };
+}
+
+gate_scope_test!(gate_scope_creg_before_used, "creg b[1];", "", "g(1) q[0];");
+gate_scope_test!(gate_scope_creg_after_used, "", "creg b[1];", "g(1) q[0];");
+gate_scope_test!(gate_scope_creg_absent_used, "", "", "g(1) q[0];");
+gate_scope_test!(gate_scope_creg_before_unused, "creg b[1];", "", "");
+gate_scope_test!(gate_scope_creg_after_unused, "", "creg b[1];", "");
+gate_scope_test!(gate_scope_creg_absent_unused, "", "", "");
+
+#[test]
+fn gate_scope_direct_ast() {
+    let mut program =
+        QASMParser::parse_str(&undeclared_source("creg b[1]; gate g(a) x0 { rz(a) x0; }")).unwrap();
+    program.gate_definitions.get_mut("g").unwrap().body[0].params[0] =
+        pecos_qasm::Expression::Variable("b".to_string());
+    assert_gate_error(
+        program
+            .validate_classical_references()
+            .expect_err("AST validation must also use gate scope"),
+        &[
+            "Gate 'g'",
+            "unknown parameter 'b'",
+            "declared parameters: [a]",
+        ],
+    );
+}
+
+gate_error_test!(
+    gate_scope_nested_argument,
+    "creg b[1]; gate g(a) x0 { rz(sin(-b + a)) x0; }",
+    [
+        "Gate 'g'",
+        "unknown parameter 'b'",
+        "declared parameters: [a]"
+    ]
+);
+gate_error_test!(
+    gate_scope_declared_bit_argument,
+    "creg b[1]; gate g(b) x0 { rz(b[0]) x0; }",
+    [
+        "Gate 'g'",
+        "bit references are not allowed in gate bodies",
+        "b[0]"
+    ]
+);
+gate_error_test!(
+    gate_scope_no_parameters,
+    "gate g x0 { rz(b) x0; }",
+    [
+        "Gate 'g'",
+        "unknown parameter 'b'",
+        "declared parameters: []"
+    ]
+);

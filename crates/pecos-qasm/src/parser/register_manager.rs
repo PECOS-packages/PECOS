@@ -1,7 +1,7 @@
 use pecos_core::errors::PecosError;
 use std::collections::BTreeMap;
 
-use crate::parser::errors::{index_out_of_bounds, unknown_register};
+use crate::parser::errors::{index_out_of_bounds, unknown_classical_register, unknown_register};
 
 /// Manages quantum and classical registers
 #[derive(Debug, Clone)]
@@ -104,7 +104,7 @@ impl RegisterManager {
         self.classical_registers
             .get(reg_name)
             .copied()
-            .ok_or_else(|| unknown_register("classical", reg_name))
+            .ok_or_else(|| unknown_classical_register(reg_name))
     }
 
     /// Check if classical register index is valid

@@ -1,7 +1,7 @@
 //! QASM AST adapter for shared classical expression evaluation.
 
 use crate::ast::Expression;
-use crate::parser::errors::{undeclared_classical_bit, unknown_register};
+use crate::parser::errors::{classical_bit_out_of_bounds, unknown_classical_register};
 use ::bitvec::prelude::*;
 use pecos_core::{
     BitUInt, ExprValue, bitvec,
@@ -55,7 +55,7 @@ pub fn evaluate_expression_bitvec(
                 Ok(ExprValue::Unsigned(bitvec::to_bituint(bitvec)?))
             } else {
                 let width = context.get_register_size(name)
-                    .ok_or_else(|| unknown_register("classical", name))?;
+                    .ok_or_else(|| unknown_classical_register(name))?;
                 let size = u16::try_from(width).ok().filter(|&size| size != 0).ok_or_else(|| {
                     PecosError::Input(format!("Expression width must be in 1..=65535, got {width}"))
                 })?;
@@ -67,9 +67,9 @@ pub fn evaluate_expression_bitvec(
             let register = context.get_register(reg_name);
             let size = context.get_register_size(reg_name)
                 .or_else(|| register.map(BitVec::len))
-                .ok_or_else(|| unknown_register("classical", reg_name))?;
+                .ok_or_else(|| unknown_classical_register(reg_name))?;
             if *idx >= size {
-                return Err(undeclared_classical_bit(reg_name, *idx, size));
+                return Err(classical_bit_out_of_bounds(reg_name, *idx, size));
             }
             let bit_value = register
                 .and_then(|bits| bits.get(*idx).as_deref().copied())

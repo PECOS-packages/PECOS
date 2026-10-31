@@ -65,6 +65,8 @@ pub enum QasmBridgeError {
     UnknownGate(String),
     /// A parameter evaluation error.
     ParameterError(String),
+    /// An invalid source program, including undeclared classical references.
+    InvalidProgram(String),
 }
 
 impl fmt::Display for QasmBridgeError {
@@ -73,6 +75,7 @@ impl fmt::Display for QasmBridgeError {
             Self::UnsupportedOperation(msg) => write!(f, "unsupported operation: {msg}"),
             Self::UnknownGate(name) => write!(f, "unknown gate: {name}"),
             Self::ParameterError(msg) => write!(f, "parameter error: {msg}"),
+            Self::InvalidProgram(msg) => write!(f, "invalid QASM program: {msg}"),
         }
     }
 }
@@ -91,7 +94,7 @@ impl std::error::Error for QasmBridgeError {}
 pub fn qasm_to_dag(program: &Program) -> Result<DagCircuit, QasmBridgeError> {
     program
         .validate_classical_references()
-        .map_err(|e| QasmBridgeError::ParameterError(e.to_string()))?;
+        .map_err(|e| QasmBridgeError::InvalidProgram(e.to_string()))?;
     let mut dag = DagCircuit::new();
 
     // Compute total classical bits
@@ -624,6 +627,26 @@ fn gate_type_to_qasm_name(gate_type: GateType) -> &'static str {
 mod tests {
     use super::*;
     use crate::QASMParser;
+
+    #[test]
+    fn removed_register_is_an_invalid_program() {
+        let mut program =
+            QASMParser::parse_str("OPENQASM 2.0; qreg q[1]; creg c[1]; measure q[0] -> c[0];")
+                .unwrap();
+        program.classical_registers.remove("c");
+        let error =
+            qasm_to_dag(&program).expect_err("Removed classical register must fail validation");
+        assert!(
+            !matches!(error, QasmBridgeError::ParameterError(_)),
+            "{error}"
+        );
+        let message = error.to_string();
+        assert!(message.starts_with("invalid QASM program:"), "{message}");
+        assert!(
+            message.contains("register: c") && message.contains("creg"),
+            "{message}"
+        );
+    }
 
     #[test]
     fn diagonal_export_roundtrips_exactly() {

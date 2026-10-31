@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use crate::ast::{Expression, Operation};
 use crate::bitvec_expression::{BitVecExpressionContext, evaluate_expression_bitvec};
-use crate::parser::errors::unknown_register;
+use crate::parser::errors::unknown_classical_register;
 use crate::program::QASMProgram;
 
 /// Gate handler function type
@@ -1216,7 +1216,7 @@ impl QASMEngine {
                                         .classical_registers
                                         .get(target.as_str())
                                         .copied()
-                                        .ok_or_else(|| unknown_register("classical", target))?
+                                        .ok_or_else(|| unknown_classical_register(target))?
                                 };
 
                                 let value_expr = self.evaluate_expression_bitvec_with_width(
@@ -1229,12 +1229,11 @@ impl QASMEngine {
                                         let bit_value = value_expr.as_bool();
                                         self.update_register_bit(target, idx, u8::from(bit_value))?;
                                     }
-                                } else if let Some(register_size) =
-                                    program.classical_registers.get(target.as_str())
-                                {
+                                } else {
+                                    // The checked target width above is the register size.
                                     let result_bitvec = pecos_core::bitvec::from_expr_value(
                                         &value_expr,
-                                        *register_size,
+                                        target_width,
                                     )?;
 
                                     debug!(
@@ -1308,7 +1307,7 @@ impl QASMEngine {
                             .classical_registers
                             .get(target.as_str())
                             .copied()
-                            .ok_or_else(|| unknown_register("classical", target))?
+                            .ok_or_else(|| unknown_classical_register(target))?
                     };
 
                     let value_expr =
@@ -1319,11 +1318,10 @@ impl QASMEngine {
                             let bit_value = value_expr.as_bool();
                             self.update_register_bit(target, idx, u8::from(bit_value))?;
                         }
-                    } else if let Some(register_size) =
-                        program.classical_registers.get(target.as_str())
-                    {
+                    } else {
+                        // The checked target width above is the register size.
                         let result_bitvec =
-                            pecos_core::bitvec::from_expr_value(&value_expr, *register_size)?;
+                            pecos_core::bitvec::from_expr_value(&value_expr, target_width)?;
 
                         debug!(
                             "Setting register {} with BitVec of length {}",

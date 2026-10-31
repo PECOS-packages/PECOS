@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any
 import pecos
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterable, Sequence
 
 # TODO: Does this handle parallel gate ticks?
 
@@ -66,39 +66,49 @@ def _is_measurement(sym: str) -> bool:
     return sym == "Measure" or sym.startswith("measure")
 
 
-def _bare_measurement_scratch(qc: pecos.QuantumCircuit) -> tuple[dict[int, list[str | int]], list[dict[str, Any]]]:
-    """Give each qubit measured without a destination its own bit in internal scratch variables.
+class _BareMeasurementScratch:
+    """Internal scratch bits for qubits measured without a destination.
 
-    PHIR requires every Measure to have returns. The bits are never read, and the
-    cvar_export emitted alongside them keeps them out of the reported results.
+    PHIR requires every Measure to have returns. Each bare-measured qubit gets its own
+    bit as measurements are converted; ``finish`` names and sizes the variables once
+    every name the program uses is known. The bits are never read, and the cvar_export
+    emitted alongside them keeps them out of the reported results.
     """
-    bare = sorted(
-        {
-            qubit
-            for sym, qubits, meta in qc.items()
-            if _is_measurement(sym) and not {"var", "var_output"} & set(meta or {})
-            for qubit in qubits
-        },
-    )
-    taken = set(qc.metadata.get("cvar_spec", {})) | set(qc.metadata.get("qvar_spec", {"q": None}))
-    bits: dict[int, list[str | int]] = {}
-    declarations = []
-    for start in range(0, len(bare), 64):
-        chunk = bare[start : start + 64]
-        name = _SCRATCH_STEM
-        while name in taken:
-            name += "_"
-        taken.add(name)
-        declarations.append(
-            {
-                "data": "cvar_define",
-                "data_type": _classical_register_dtype(len(chunk)),
-                "variable": name,
-                "size": len(chunk),
-            },
-        )
-        bits.update({qubit: [name, index] for index, qubit in enumerate(chunk)})
-    return bits, declarations
+
+    def __init__(self) -> None:
+        self._rank: dict[int, int] = {}
+        self._entries: list[tuple[int, list[str | int | None]]] = []
+
+    def __bool__(self) -> bool:
+        return bool(self._rank)
+
+    def returns(self, qubits: Iterable[int]) -> list[list[str | int | None]]:
+        """Return placeholder destinations that ``finish`` fills with the variable name."""
+        destinations = []
+        for qubit in qubits:
+            rank = self._rank.setdefault(qubit, len(self._rank))
+            entry: list[str | int | None] = [None, rank % 64]
+            self._entries.append((rank // 64, entry))
+            destinations.append(entry)
+        return destinations
+
+    def finish(self, taken: set[str]) -> list[dict[str, Any]]:
+        """Name each 64-bit chunk to avoid ``taken``, fill the placeholders, and declare the chunks."""
+        names = []
+        declarations = []
+        for start in range(0, len(self._rank), 64):
+            name = _SCRATCH_STEM
+            while name in taken:
+                name += "_"
+            taken.add(name)
+            names.append(name)
+            size = min(64, len(self._rank) - start)
+            declarations.append(
+                {"data": "cvar_define", "data_type": _classical_register_dtype(size), "variable": name, "size": size},
+            )
+        for chunk, entry in self._entries:
+            entry[0] = names[chunk]
+        return declarations
 
 
 def _has_export(ops: list[dict[str, Any]]) -> bool:
@@ -338,8 +348,9 @@ def to_phir_dict(qc: pecos.QuantumCircuit) -> dict:
         for sym, _, meta in qc.items()
     )
 
-    scratch_bits, scratch_declarations = _bare_measurement_scratch(qc)
-    ops.extend(scratch_declarations)
+    scratch = _BareMeasurementScratch()
+    scratch_at = len(ops)
+    destination_names: set[str] = set()
 
     ops_buffer = []
     current_cond = None
@@ -433,6 +444,7 @@ def to_phir_dict(qc: pecos.QuantumCircuit) -> dict:
                         )
                         raise ValueError(msg)
                     op["returns"] = [list(var)]
+                    destination_names.add(var[0])
                     del metadata["var"]
                 elif "var_output" in metadata:
                     var_output = metadata["var_output"]
@@ -449,12 +461,14 @@ def to_phir_dict(qc: pecos.QuantumCircuit) -> dict:
                         var = var_output[q]
                         if isinstance(var, str):
                             var_return.append(var)
+                            destination_names.add(var)
                         else:
                             var_return.append(list(var))
+                            destination_names.add(var[0])
                     op["returns"] = var_return
                     del metadata["var_output"]
                 else:
-                    op["returns"] = [scratch_bits[q] for q in qubits]
+                    op["returns"] = scratch.returns(qubits)
 
         cond = metadata.get("cond")
         if cond is not None:
@@ -485,9 +499,12 @@ def to_phir_dict(qc: pecos.QuantumCircuit) -> dict:
             force_flush=True,
         )
 
-    if scratch_bits and not _has_export(ops):
-        user_cvars = [sym for sym, size in qc.metadata.get("cvar_spec", {}).items() if size]
-        ops.append({"data": "cvar_export", "variables": user_cvars})
+    if scratch:
+        cvar_spec = qc.metadata.get("cvar_spec", {})
+        taken = set(cvar_spec) | set(qc.metadata.get("qvar_spec", {})) | destination_names
+        ops[scratch_at:scratch_at] = scratch.finish(taken)
+        if not _has_export(ops):
+            ops.append({"data": "cvar_export", "variables": [sym for sym, size in cvar_spec.items() if size]})
 
     num_qubits = len(qid2qsym)
     prog["metadata"]["num_qubits"] = num_qubits

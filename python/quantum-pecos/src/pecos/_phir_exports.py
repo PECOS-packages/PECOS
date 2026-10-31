@@ -7,6 +7,8 @@
 
 import json
 
+from pecos_rslib import validate_phir_result_counts, validate_phir_result_reference
+
 
 def all_operations(operations: list[dict]) -> list[dict]:
     """Collect operations in every block and both branches, in source order."""
@@ -101,3 +103,79 @@ def validate_declaration_placement(operations: list[dict]) -> None:
                         "declarations inside blocks are only supported in programs that use cvar_export"
                     )
                     raise ValueError(msg)
+
+
+def collect_result_types(operations: list[dict]) -> dict[str, tuple[str, int]]:
+    """Resolve Result storage statically, including copies in unexecuted branches."""
+    nodes = all_operations(operations)
+    types = {node["variable"]: (node["data_type"], node["size"]) for node in nodes if node.get("data") == "cvar_define"}
+    declared = set(types)
+    quantum = {node["variable"] for node in nodes if node.get("data") == "qvar_define"}
+    pairs = []
+    for node in nodes:
+        if node.get("cop") == "Result":
+            args, returns = node.get("args", []), node.get("returns", [])
+            validate_phir_result_counts(len(args), len(returns))
+            pairs.extend(
+                (
+                    validate_phir_result_reference(json.dumps(source), "args"),
+                    validate_phir_result_reference(json.dumps(dest), "returns"),
+                )
+                for source, dest in zip(args, returns, strict=True)
+            )
+    pending = [(source, dest) for (source, _), (dest, _) in pairs]
+    source_types = {}
+    while pending:
+        unresolved = []
+        for source, dest in pending:
+            if dest in quantum:
+                msg = (
+                    "PHIR interpreter failed: Result: destination "
+                    f"{json.dumps(dest, ensure_ascii=False)} is quantum; "
+                    "use a classical variable or a new export name"
+                )
+                raise ValueError(msg)
+            if source not in types:
+                unresolved.append((source, dest))
+                continue
+            dtype, size = types[source]
+            signature = (size, dtype.startswith("i"))
+            previous = source_types.get(dest)
+            if previous is not None and (previous[0] != size or (dest not in declared and previous != signature)):
+                msg = (
+                    "PHIR interpreter failed: Result: destination "
+                    f"{json.dumps(dest, ensure_ascii=False)} has incompatible source widths or signedness; "
+                    "use sources with the same width and signedness"
+                )
+                raise ValueError(msg)
+            source_types[dest] = signature
+            if dest not in types:
+                types[dest] = (dtype, size)
+        if len(unresolved) == len(pending):
+            source, dest = unresolved[0]
+            msg = (
+                "PHIR interpreter failed: Result: unknown classical variable "
+                f"{json.dumps(source, ensure_ascii=False)} "
+                f"for destination {json.dumps(dest, ensure_ascii=False)}; "
+                "declare it with cvar_define"
+            )
+            raise ValueError(msg)
+        pending = unresolved
+    for pair in pairs:
+        for name, index in pair:
+            size = types[name][1]
+            if index is not None and index >= size:
+                msg = (
+                    f"PHIR interpreter failed: Result: bit index {index} is invalid for register "
+                    f"{json.dumps(name, ensure_ascii=False)} "
+                    f"of declared size {size}; use an index below {size}"
+                )
+                raise ValueError(msg)
+    return {dest: types[dest] for _, (dest, _) in pairs}
+
+
+def validate_measure_returns(name: str, args: list, returns: list | None) -> None:
+    """Require an explicit destination for each measured qubit before execution."""
+    if name == "Measure" and (not returns or len(returns) != len(args)):
+        msg = f"Measure: invalid returns {returns!r} for {len(args)} args; give each measured qubit a destination"
+        raise ValueError(msg)

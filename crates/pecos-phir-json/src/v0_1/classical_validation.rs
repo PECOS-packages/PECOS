@@ -98,6 +98,14 @@ pub(crate) fn result_field(op: &Value, field: &str) -> Result<Vec<ArgItem>, Peco
 pub fn validate_classical_inputs(program: &Value) -> Result<(), PecosError> {
     fn visit(ops: &[Value]) -> Result<(), PecosError> {
         for op in ops {
+            if op.get("qop").and_then(Value::as_str) == Some("Measure") {
+                let args = op.get("args").and_then(Value::as_array).map_or(0, Vec::len);
+                let returns = op
+                    .get("returns")
+                    .and_then(Value::as_array)
+                    .map_or(0, Vec::len);
+                super::operations::validate_measurement_counts(args, returns)?;
+            }
             if op.get("cop").and_then(Value::as_str) == Some("Result") {
                 result_field(op, "args")?;
                 result_field(op, "returns")?;

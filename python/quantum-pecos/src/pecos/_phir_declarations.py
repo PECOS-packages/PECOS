@@ -17,7 +17,7 @@ import reprlib
 
 from pecos_rslib import validate_phir_classical_inputs
 
-from pecos._phir_exports import collect_exports
+from pecos._phir_exports import collect_exports, validate_measure_returns
 
 
 def validate_declaration_names(operations: list[dict]) -> None:
@@ -75,6 +75,8 @@ def validate_classical_inputs(program: dict) -> None:
         for node in operations:
             if not isinstance(node, dict):
                 continue
+            if node.get("qop") == "Measure":
+                validate_measure_returns("Measure", node.get("args", []), node.get("returns"))
             if node.get("cop") == "Result":
                 inputs.append({key: node[key] for key in ("cop", "args", "returns") if key in node})
             elif node.get("data") in ("cvar_define", "qvar_define"):

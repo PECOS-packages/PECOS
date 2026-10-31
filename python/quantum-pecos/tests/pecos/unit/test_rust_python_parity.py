@@ -1469,7 +1469,7 @@ def test_result_rejects_quantum_destinations(destination) -> None:
 def test_result_indices_and_narrowing_preserve_values() -> None:
     """Indexed copies extract/replace bits; whole copies honor destination widths."""
     source = _make_classical_program(
-        [("a", "u8", 4), ("small", "u8", 1)],
+        [("a", "u8", 4), ("small", "u8", 1), ("out", "u64", 41)],
         [
             {"cop": "=", "args": [4], "returns": ["a"]},
             {"cop": "Result", "args": [["a", 2], ["a", 0]], "returns": [["out", 40], ["out", 1]]},
@@ -1805,12 +1805,12 @@ def test_unexecuted_result_count_mismatch_matches_native(validate: bool) -> None
             },
         ],
     )
-    native = run_phir_sim(json.dumps(source))
+    with pytest.raises(ValueError, match="Result: invalid counts"):
+        run_phir_sim(json.dumps(source))
     for interpreter in (RustPhirClassicalInterpreter(), PhirClassicalInterpreter()):
         interpreter.phir_validate = validate
-        actual = HybridEngine(cinterp=interpreter).run(source, return_int=True)
-        assert actual == {"a": [0]}
-        assert actual == {name: [int(value) for value in values] for name, values in native.items()}
+        with pytest.raises(ValueError, match="Result: invalid counts"):
+            interpreter.init(source)
 
 
 @pytest.mark.parametrize("method", ["handle_cops", "execute"])

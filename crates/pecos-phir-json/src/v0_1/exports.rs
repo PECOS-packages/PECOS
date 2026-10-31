@@ -241,3 +241,100 @@ pub(crate) fn collect_json(ops: &[Value]) -> Result<Option<ExportMap>, PecosErro
     visit(ops, false, &mut collector)?;
     collector.finish()
 }
+
+/// Allocate every Result destination before execution, resolving chains of copies.
+/// Declarations supply the type; an undeclared destination inherits its source type.
+pub(crate) fn prepare_results<'a>(
+    ops: impl IntoIterator<Item = &'a Operation>,
+    environment: &mut super::environment::Environment,
+) -> Result<(), PecosError> {
+    use super::environment::{Environment, ResultReference};
+    let ops = walk_operations(ops);
+    let mut types = Environment::new();
+    let mut pairs = Vec::new();
+    let mut declared = BTreeSet::new();
+    for (op, _) in &ops {
+        match op {
+            Operation::VariableDefinition {
+                data,
+                data_type,
+                variable,
+                size,
+            } => {
+                let size = super::ast::declaration_size(data, data_type, variable, *size)?;
+                if data == "cvar_define" {
+                    declared.insert(variable.clone());
+                    types.add_classical_variable(variable, data_type.parse()?, size)?;
+                } else if data == "qvar_define" {
+                    types.add_quantum_register(variable, size)?;
+                }
+            }
+            Operation::ClassicalOp {
+                cop, args, returns, ..
+            } if cop == "Result" => {
+                super::operations::validate_result_counts(args.len(), returns.len())?;
+                for (source, destination) in args.iter().zip(returns) {
+                    pairs.push((
+                        ResultReference::from_arg(source, "args")?,
+                        ResultReference::from_arg(destination, "returns")?,
+                    ));
+                }
+            }
+            Operation::QuantumOp {
+                qop, args, returns, ..
+            } if qop == "Measure" => {
+                super::operations::validate_measurement_counts(args.len(), returns.len())?;
+            }
+            _ => {}
+        }
+    }
+    let mut pending = pairs.clone();
+    let mut source_types = BTreeMap::new();
+    while !pending.is_empty() {
+        let count = pending.len();
+        let mut unresolved = Vec::new();
+        for (source, destination) in pending {
+            if !types.has_variable(&source.name) {
+                unresolved.push((source, destination));
+                continue;
+            }
+            let info = types.classical_info(&source.name)?;
+            let signature = (info.size, info.data_type.is_signed());
+            if source_types
+                .get(&destination.name)
+                .is_some_and(|previous: &(usize, bool)| {
+                    previous.0 != signature.0
+                        || (!declared.contains(&destination.name) && *previous != signature)
+                })
+            {
+                return Err(PecosError::Input(format!(
+                    "Result: destination {:?} has incompatible source widths or signedness; use sources with the same width and signedness",
+                    destination.name
+                )));
+            }
+            source_types.insert(destination.name.clone(), signature);
+            types.prepare_result_destination(&source, &destination)?;
+        }
+        if unresolved.len() == count {
+            let (source, destination) = &unresolved[0];
+            return Err(PecosError::Input(format!(
+                "Result: unknown classical variable {:?} for destination {:?}; declare it with cvar_define",
+                source.name, destination.name
+            )));
+        }
+        pending = unresolved;
+    }
+    for (source, destination) in pairs {
+        types.validate_result_index(&source)?;
+        let info = types.classical_info(&destination.name)?;
+        if environment.has_variable(&destination.name) || !declared.contains(&destination.name) {
+            environment.ensure_classical_variable(
+                &destination.name,
+                info.data_type.clone(),
+                info.size,
+            )?;
+        }
+        environment.result_destinations.insert(destination.name);
+    }
+    Ok(())
+}

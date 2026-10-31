@@ -495,6 +495,7 @@ pub struct Environment {
     mappings: Vec<(String, String)>,
     /// Static output-to-source selection; `None` preserves legacy result selection.
     pub(crate) exports: Option<super::exports::ExportMap>,
+    pub(crate) result_destinations: std::collections::BTreeSet<String>,
     /// Declaration-order global qubit ranges, separate from classical storage.
     quantum_registers: BTreeMap<String, Range<usize>>,
     num_qubits: usize,
@@ -511,20 +512,31 @@ impl Environment {
             metadata: Vec::new(),
             mappings: Vec::new(),
             exports: None,
+            result_destinations: std::collections::BTreeSet::new(),
             quantum_registers: BTreeMap::new(),
             num_qubits: 0,
             declarations: Declarations::default(),
         }
     }
 
-    /// Explicit output names and their storage sources, including executed Results.
+    /// Explicit output names and their storage sources, including every static Result destination.
     pub(crate) fn selected_outputs(&self) -> Option<super::exports::ExportMap> {
         self.exports.as_ref().map(|exports| {
             let mut outputs = exports.clone();
-            for (_, destination) in &self.mappings {
+            for destination in &self.result_destinations {
                 outputs.insert(destination.clone(), destination.clone());
             }
             outputs
+        })
+    }
+
+    /// Legacy Result-only selection, fixed across shots even if a branch is not taken.
+    pub(crate) fn result_outputs(&self) -> Option<super::exports::ExportMap> {
+        (!self.result_destinations.is_empty()).then(|| {
+            self.result_destinations
+                .iter()
+                .map(|name| (name.clone(), name.clone()))
+                .collect()
         })
     }
 
@@ -830,7 +842,10 @@ impl Environment {
         Ok(())
     }
 
-    fn validate_result_index(&self, reference: &ResultReference) -> Result<(), PecosError> {
+    pub(crate) fn validate_result_index(
+        &self,
+        reference: &ResultReference,
+    ) -> Result<(), PecosError> {
         if let Some(index) = reference.index {
             let size = self
                 .get_variable_info_opt(&reference.name)
@@ -883,13 +898,14 @@ impl Environment {
         destination: &ResultReference,
     ) -> Result<(), PecosError> {
         if !self.has_variable(&destination.name) {
-            let (data_type, size) = if let Some(index) = destination.index {
-                (DataType::U64, (index as usize + 1).max(32))
-            } else {
-                let info = self.classical_info(&source.name)?;
-                (info.data_type.clone(), info.size)
-            };
-            self.ensure_classical_variable(&destination.name, data_type, size)?;
+            if self.quantum_registers.contains_key(&destination.name) {
+                return Err(PecosError::Input(format!(
+                    "Result: destination {:?} is quantum; use a classical variable or a new export name",
+                    destination.name
+                )));
+            }
+            let info = self.classical_info(&source.name)?;
+            self.ensure_classical_variable(&destination.name, info.data_type.clone(), info.size)?;
         }
         // Earlier pairs may have created this destination with a smaller size.
         self.validate_result_index(destination)
@@ -904,6 +920,7 @@ impl Environment {
         for (source, destination) in self.validate_result(args, returns)? {
             self.copy_result_pair(&source, &destination)?;
             self.add_mapping(&destination.name, &destination.name)?;
+            self.result_destinations.insert(destination.name);
         }
         Ok(())
     }
@@ -1095,7 +1112,7 @@ impl Environment {
     /// if no mappings are defined or no mapped variables have values.
     #[must_use]
     pub fn get_mapped_results(&self) -> BTreeMap<String, u32> {
-        if let Some(outputs) = self.selected_outputs() {
+        if let Some(outputs) = self.selected_outputs().or_else(|| self.result_outputs()) {
             return outputs
                 .into_iter()
                 .filter_map(|(output, source)| {

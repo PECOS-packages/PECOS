@@ -258,7 +258,10 @@ unknown sources. Measurement destinations must be declared classical registers,
 and their bit indices must be below the declared size (excluding the sign bit).
 JSON-to-module conversion, which supports only straight-line programs, checks each
 measurement destination when it compiles. Native execution and both interpreters
-check destinations when the measurement runs.
+check destinations when the measurement runs. Every runner rejects a Measure with
+missing returns or different argument/return counts at load time. Each measured
+qubit needs an explicit destination; no register name is invented. Measurement
+writeback includes user registers beginning with `__`; exports control reporting.
 All classical storage types (`i8`–`i64`, `u8`–`u64`, and `bool`) support
 measurements. Declaration sizes use one shared Rust decoder: only an absent
 field means omitted. JSON null, negative, string, fractional and boolean size
@@ -272,8 +275,8 @@ before destination-width masking, independently of the source backing type,
 matching `=`. Malformed Result entries report the offending JSON value; Python
 uses TypeError for wrong types and ValueError for invalid integer indices.
 Rust classifies these as `PecosError::Input`. The Python interpreter validates
-Result reference syntax and declarations at load. It checks Result counts when
-that Result executes, like native and the Rust interpreter, and caches successful
+Result references, counts and destination types at load, including unexecuted
+branches, like native and the Rust interpreter. It caches execution-time
 reference decoding until the next init or full reset. Result arguments and returns
 are treated as immutable after first execution. Successful decoding holds each
 executed Result operation until the next init or full reset. Later shots do not
@@ -292,8 +295,13 @@ CPhase is not a PHIR v0.1 gate and must be lowered before emitting PHIR JSON.
 positionally with `to`. Every directive contributes to a static union, including
 directives in unexecuted branches in runners that support blocks. Values and
 widths come from the source registers at the end of the shot. With any directive
-present, even an empty `variables` list, only these outputs and executed Result
-destinations are reported. Invalid sources, renames, conflicting output names,
+present, even an empty `variables` list, only these outputs and every static Result
+destination are reported. Each Result destination appears in every shot, including
+shots where its Result does not execute. Its value is the destination's final value;
+all classical storage starts each shot at zero. Declared destinations retain their
+width and signedness; new destinations inherit their source's declaration, including
+indexed copies. Sources of different widths feeding one destination are rejected
+at load time. New destinations also require consistent source signedness. Invalid sources, renames, conflicting output names,
 and the reserved `_width_` prefix are rejected at load time. Without a directive,
 each runner retains its existing selection behavior, including native filters.
 A Result destination may also be exported under its own name; an alias of a

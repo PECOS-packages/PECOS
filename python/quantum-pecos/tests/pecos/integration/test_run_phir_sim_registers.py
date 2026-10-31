@@ -50,6 +50,7 @@ def test_indexed_result_exports_destination() -> None:
     res = _run(
         [
             {"data": "cvar_define", "data_type": "u64", "variable": "m", "size": 2},
+            _cd("dst", 41),
             {"cop": "=", "returns": [["m", 0]], "args": [1]},
             {"cop": "Result", "args": [["m", 0]], "returns": [["dst", 40]]},
         ],
@@ -73,10 +74,10 @@ def test_multiple_indexed_results_accumulate() -> None:
 
 
 def test_out_of_range_result_bit_fails_fast() -> None:
-    """A Result bit index that exceeds the 64-bit backing type errors, not panics/drops."""
+    """A Result bit index beyond its inherited destination width is rejected."""
     with pytest.raises(
         ValueError,
-        match=r'Result: bit index 70 is invalid for register "dst" of declared size 64; use an index below 64',
+        match=r'Result: bit index 70 is invalid for register "dst" of declared size 2; use an index below 2',
     ):
         _run(
             [
@@ -170,7 +171,7 @@ def test_mixed_whole_and_indexed_result_same_destination() -> None:
         [
             _qc("q", 1),
             _cd("a", 8),
-            _cd("m", 1),
+            _cd("m", 8),
             _cd("c", 8),
             {"cop": "=", "args": [5], "returns": ["a"]},
             {"cop": "Result", "args": ["a"], "returns": ["c"]},  # c = 5
@@ -290,23 +291,19 @@ def test_multi_qubit_measure() -> None:
     assert _as_int(res, "out") == 0b01
 
 
-def test_no_return_measure_keeps_later_outcomes_aligned() -> None:
-    """A no-return Measure reserves an outcome slot so later measures stay aligned.
-
-    q0=1 (via X) is measured without a return; q1=0 is measured into m2. The
-    outcomes must map by measured-qubit order, so m2 must see q1's 0, not q0's 1.
-    """
-    res = _run(
-        [
-            _qc("q", 2),
-            _cd("m2", 1),
-            {"qop": "X", "args": [["q", 0]]},  # q0 -> 1, q1 -> 0
-            {"qop": "Measure", "args": [["q", 0]]},  # no returns
-            {"qop": "Measure", "args": [["q", 1]], "returns": [["m2", 0]]},
-            {"cop": "Result", "args": ["m2"], "returns": ["out"]},
-        ],
-    )
-    assert _as_int(res, "out") == 0
+def test_no_return_measure_is_rejected_before_execution() -> None:
+    """A later explicit destination does not make a returnless Measure valid."""
+    with pytest.raises(ValueError, match=r"Measure.*give each measured qubit a destination"):
+        _run(
+            [
+                _qc("q", 2),
+                _cd("m2", 1),
+                {"qop": "X", "args": [["q", 0]]},
+                {"qop": "Measure", "args": [["q", 0]]},
+                {"qop": "Measure", "args": [["q", 1]], "returns": [["m2", 0]]},
+                {"cop": "Result", "args": ["m2"], "returns": ["out"]},
+            ],
+        )
 
 
 def test_unknown_block_type_fails_fast() -> None:

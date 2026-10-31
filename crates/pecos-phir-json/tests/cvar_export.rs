@@ -258,7 +258,7 @@ fn unexecuted_nested_export_and_result() {
         {"cop":"Result","args":["a"],"returns":["copy"]}
     ],"false_branch":[renamed("a","other")]}),
     );
-    check_classical(ops, &[("m", 0, 2), ("other", 0, 2)]);
+    check_classical(ops, &[("m", 0, 2), ("other", 0, 2), ("copy", 0, 2)]);
 }
 #[test]
 fn final_value_and_measurement_prefix() {
@@ -317,7 +317,7 @@ fn reused_interpreter_and_shots() {
     interpreter.execute_program().unwrap();
     assert_interpreter(&interpreter, &[("m", 0, 2), ("copy", 0, 2)]);
     interpreter.shot_reinit();
-    assert_interpreter(&interpreter, &[("m", 0, 2)]);
+    assert_interpreter(&interpreter, &[("m", 0, 2), ("copy", 0, 2)]);
     let mut native_ops = declarations();
     native_ops.extend([
         export(&["m"]),
@@ -326,7 +326,10 @@ fn reused_interpreter_and_shots() {
     let mut native = PhirJsonEngine::from_json(&program(native_ops)).unwrap();
     assert_native(&run(&mut native), &[("m", 0, 2), ("copy", 0, 2)]);
     ClassicalEngine::reset(&mut native).unwrap();
-    assert_native(&native.get_results().unwrap(), &[("m", 0, 2)]);
+    assert_native(
+        &native.get_results().unwrap(),
+        &[("m", 0, 2), ("copy", 0, 2)],
+    );
     interpreter.init(&program(declarations()), None).unwrap();
     assert_interpreter(&interpreter, &[("a", 0, 2), ("m", 0, 2), ("scratch", 0, 2)]);
 }
@@ -556,5 +559,217 @@ fn missing_and_null_export_fields_have_actionable_errors() {
             &[directive],
             &format!("invalid {field} <missing or null>; supply an array of strings"),
         );
+    }
+}
+
+#[test]
+fn conditional_result_is_static_and_resets() {
+    for with_export in [false, true] {
+        let mut ops = declarations();
+        if with_export {
+            ops.push(export(&["m"]));
+        }
+        ops.extend([
+            json!({"qop":"H","args":[["q",0]]}),
+            json!({"qop":"Measure","args":[["q",0]],"returns":[["m",0]]}),
+            json!({"block":"if", "condition":{"cop":"==","args":[["m",0],1]},
+                "true_branch":[{"cop":"Result","args":["m"],"returns":["copy"]}]}),
+        ]);
+        let source = program(ops);
+        let mut engine = PhirJsonEngine::from_json(&source).unwrap();
+        let mut interpreter = PhirClassicalInterpreter::new();
+        interpreter.init(&source, None).unwrap();
+        let mut keys = None;
+        for shot in 0..128 {
+            let outcome = u32::from(shot % 2 == 0);
+            ClassicalEngine::reset(&mut engine).unwrap();
+            assert!(!engine.generate_commands().unwrap().is_empty().unwrap());
+            let mut outcomes = pecos_engines::ByteMessage::outcomes_builder();
+            outcomes.add_outcomes(&[outcome as usize]);
+            engine.handle_measurements(outcomes.build()).unwrap();
+            assert!(engine.generate_commands().unwrap().is_empty().unwrap());
+            let result = engine.get_results().unwrap();
+            assert_eq!(integer(&result.data["copy"]), u64::from(outcome));
+            assert_eq!(integer(&result.data["_width_copy"]), 2);
+            let shot_keys: Vec<_> = result.data.keys().cloned().collect();
+            if let Some(ref expected) = keys {
+                assert_eq!(&shot_keys, expected);
+            }
+            keys = Some(shot_keys);
+            interpreter.shot_reinit();
+            let ops = interpreter.program_ops().to_vec();
+            for op in &ops {
+                interpreter
+                    .execute_ops(std::slice::from_ref(op))
+                    .next_batch()
+                    .unwrap();
+                if matches!(op, pecos_phir_json::v0_1::ast::Operation::QuantumOp { qop, .. } if qop == "Measure")
+                {
+                    let measured = BTreeMap::from([(("m".to_owned(), 0), i64::from(outcome))]);
+                    interpreter
+                        .receive_results(&[measured
+                            .iter()
+                            .map(|((name, bit), value)| (MeasKey::Bit(name.clone(), *bit), *value))
+                            .collect()])
+                        .unwrap();
+                }
+            }
+            assert!(
+                matches!(&interpreter.results(false).unwrap()["copy"], ResultValue::BitString(v) if v == &format!("{outcome:02b}"))
+            );
+        }
+    }
+}
+
+#[test]
+fn measure_requires_destinations_at_load() {
+    for returns in [None, Some(json!([])), Some(json!([["m", 0], ["m", 1]]))] {
+        let mut measure = json!({"qop":"Measure","args":[["q",0]]});
+        if let Some(returns) = returns {
+            measure["returns"] = returns;
+        }
+        let mut ops = declarations();
+        ops.push(measure);
+        let source = program(ops);
+        for error in [
+            PhirJsonEngine::from_json(&source)
+                .err()
+                .map(|e| e.to_string()),
+            PhirClassicalInterpreter::new()
+                .init(&source, None)
+                .err()
+                .map(|e| e.to_string()),
+            phir_json_to_module(&source).err().map(|e| e.to_string()),
+        ] {
+            let error = error.expect("returnless/mismatched Measure must fail at load");
+            assert!(
+                error.contains("Measure")
+                    && error.contains("give each measured qubit a destination"),
+                "{error}"
+            );
+        }
+    }
+}
+
+#[test]
+fn private_measurement_bits_are_transferred() {
+    let mut interpreter = PhirClassicalInterpreter::new();
+    interpreter
+        .init(
+            &program(vec![
+                json!({"data":"cvar_define","variable":"__x","data_type":"u32","size":1}),
+            ]),
+            None,
+        )
+        .unwrap();
+    interpreter
+        .receive_results(&[BTreeMap::from([(MeasKey::Bit("__x".into(), 0), 1)])])
+        .unwrap();
+    let bits = BTreeMap::from([(("__x".into(), 0), 1)]);
+    assert_eq!(interpreter.result_bits(std::slice::from_ref(&bits)), bits);
+}
+
+#[test]
+fn result_source_width_conflicts_fail_at_load() {
+    for declared in [false, true] {
+        let mut ops = vec![
+            json!({"data":"cvar_define","variable":"a","data_type":"u32","size":2}),
+            json!({"data":"cvar_define","variable":"b","data_type":"u32","size":3}),
+        ];
+        if declared {
+            ops.push(json!({"data":"cvar_define","variable":"copy","data_type":"u32","size":4}));
+        }
+        ops.push(json!({"cop":"Result","args":["a"],"returns":["copy"]}));
+        ops.push(json!({"cop":"Result","args":["b"],"returns":["copy"]}));
+        let flat = program(ops.clone());
+        let copies = ops.split_off(if declared { 3 } else { 2 });
+        ops.push(json!({"block":"if","condition":{"cop":"==","args":[0,1]},"true_branch":copies}));
+        for source in [flat.clone(), program(ops)] {
+            assert!(
+                PhirJsonEngine::from_json(&source)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("destination \"copy\" has incompatible source widths")
+            );
+            let error = PhirClassicalInterpreter::new()
+                .init(&source, None)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                error.contains("copy") && error.contains("widths"),
+                "{error}"
+            );
+        }
+        let error = phir_json_to_module(&flat).unwrap_err().to_string();
+        assert!(
+            error.contains("copy") && error.contains("widths"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn result_storage_uses_declarations_and_final_values() {
+    check_classical(
+        vec![
+            json!({"data":"cvar_define","variable":"source","data_type":"i32","size":4}),
+            json!({"data":"cvar_define","variable":"declared","data_type":"i64","size":6}),
+            export(&[]),
+            json!({"block":"if","condition":{"cop":"==","args":[0,1]},"true_branch":[
+                {"cop":"Result","args":["source","source"],"returns":["created","declared"]}
+            ]}),
+            json!({"cop":"=","args":[-2],"returns":["declared"]}),
+        ],
+        &[("created", 0, 5), ("declared", 126, 7)],
+    );
+}
+
+#[test]
+fn explicit_measurements_do_not_invent_or_overwrite_destinations() {
+    let source = program(vec![
+        json!({"data":"qvar_define","variable":"q","size":1}),
+        json!({"data":"cvar_define","variable":"__x","data_type":"u32","size":1}),
+        json!({"data":"cvar_define","variable":"measurement_0","data_type":"u32","size":1}),
+        export(&["__x", "measurement_0"]),
+        json!({"qop":"X","args":[["q",0]]}),
+        json!({"qop":"Measure","args":[["q",0]],"returns":[["__x",0]]}),
+    ]);
+    assert_native(
+        &run(&mut PhirJsonEngine::from_json(&source).unwrap()),
+        &[("__x", 1, 1), ("measurement_0", 0, 1)],
+    );
+    let mut interpreter = PhirClassicalInterpreter::new();
+    interpreter.init(&source, None).unwrap();
+    execute_interpreter(&mut interpreter);
+    assert_interpreter(&interpreter, &[("__x", 1, 1), ("measurement_0", 0, 1)]);
+    let result = run(&mut PhirEngine::new(phir_json_to_module(&source).unwrap()).unwrap());
+    assert_eq!(integer(&result.data["__x"]), 1);
+    assert_eq!(integer(&result.data["measurement_0"]), 0);
+}
+
+#[test]
+fn result_storage_precedes_copies_in_the_module_converter() {
+    let source = program(vec![
+        json!({"data":"qvar_define","variable":"q","size":1}),
+        json!({"data":"cvar_define","variable":"source","data_type":"i32","size":4}),
+        export(&[]),
+        json!({"cop":"Result","args":["future"],"returns":["early"]}),
+        json!({"qop":"X","args":[["q",0]]}),
+        json!({"qop":"Measure","args":[["q",0]],"returns":[["source",3]]}),
+        json!({"cop":"Result","args":["source","source"],"returns":["declared","future"]}),
+        json!({"data":"cvar_define","variable":"declared","data_type":"u8","size":2}),
+    ]);
+    let entries = &[("declared", 0, 2), ("future", 8, 5), ("early", 0, 5)];
+    assert_native(
+        &run(&mut PhirJsonEngine::from_json(&source).unwrap()),
+        entries,
+    );
+    let mut interpreter = PhirClassicalInterpreter::new();
+    interpreter.init(&source, None).unwrap();
+    execute_interpreter(&mut interpreter);
+    assert_interpreter(&interpreter, entries);
+    let result = run(&mut PhirEngine::new(phir_json_to_module(&source).unwrap()).unwrap());
+    for (name, value, _) in entries {
+        assert_eq!(integer(&result.data[*name]), *value);
     }
 }

@@ -6,6 +6,17 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Breaking:** SLR `LoopVar` comparisons (`==`, `!=`, `<`, `>`, `<=`, `>=`)
+  and `+`/`-` build SLR expressions (#1517). Before, `i == 0` was a plain
+  Python `False`, so `If(i == 0)` inside `For(i, ...)` became a branch that
+  never ran in Guppy, QASM and QIR, with no error. Guppy now emits the
+  comparison in its `for` loop. QASM and QIR raise `NotImplementedError` for a
+  loop variable used as a classical value, since their unrolling does not bind
+  it. Stim and QuantumCircuit keep rejecting such conditions. Bitwise and unary
+  operators on a `LoopVar` stay a `TypeError`. A `LoopVar` used outside the
+  `For` loop that binds it raises `ValueError` during conversion. `LoopVar`
+  stays hashable by identity.
+
 - **Breaking:** Python simulator wrappers and the public `pecos.HybridEngine`
   validate whole known-gate batches per `run_gate` call and per circuit item
   before changing state, including when `simulate_gate=False`. Registered-gate

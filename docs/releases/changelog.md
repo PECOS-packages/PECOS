@@ -55,7 +55,8 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   truncated to the register width) and an equal-width register copy to a copy.
   Before, `c.set(1)` emitted `c = 1` on a bool array, so `.guppy()` returned
   invalid source and `.hugr()` failed. Any other whole-register expression now
-  raises `GuppyCodegenError` at `.guppy()` naming the target. A literal written
+  raises `GuppyCodegenError` at `.guppy()` naming the target or the unresolved
+  reference. A literal written
   to a loop-indexed bit (`c[i].set(1)`) now renders as a Guppy bool; it used to
   fail at `.hugr()`. The deprecated
   `QuantumCircuitGenerator` raises on classical `SET`, `Print` and standalone

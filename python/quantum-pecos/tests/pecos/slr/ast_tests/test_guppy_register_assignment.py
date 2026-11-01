@@ -115,11 +115,18 @@ def test_register_copy_rejects_different_widths(source_width: int) -> None:
         SlrConverter(Main(c, d, c.set(d))).guppy()
 
 
+def test_direct_ast_numbered_bit_target_is_a_bool() -> None:
+    program = slr_to_ast(Main(CReg("c", 4)))
+    program = replace(program, body=(AssignOp(target="c[2]", value=LiteralExpr(value=1)),))
+    assert "c[2] = True" in ast_to_guppy(program)
+
+
 @pytest.mark.parametrize(
     ("target", "value", "reason"),
     [
-        ("missing", LiteralExpr(value=1), "unknown classical register 'missing'"),
-        ("c", VarExpr(name="missing"), "assignment to 'c': 'missing' is not a classical register"),
+        ("missing", LiteralExpr(value=1), "Unresolved classical reference 'missing'"),
+        ("c", VarExpr(name="missing"), "Unresolved classical reference 'missing'"),
+        ("c", VarExpr(name="c[0]"), r"assignment to 'c': 'c\[0\]' is not a whole classical register"),
         ("c", BinaryExpr(op=BinaryOp.ADD, left=LiteralExpr(value=2), right=LiteralExpr(value=3)), "assignment to 'c'"),
     ],
 )

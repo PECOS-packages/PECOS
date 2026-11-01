@@ -1323,10 +1323,7 @@ class AstToGuppy:
         that preserves those semantics, rather than rendering array operands
         as scalar integers.
         """
-        decl = self.context.registers.get(target)
-        if decl is None:
-            msg = f"Cannot assign to unknown classical register {target!r}"
-            raise GuppyCodegenError(msg)
+        decl = self.context.registers[target]
         if decl.size <= 0:
             msg = f"Cannot assign to classical register {target!r} with unsupported width {decl.size}"
             raise GuppyCodegenError(msg)
@@ -1347,8 +1344,11 @@ class AstToGuppy:
             # bools. An explicit copy leaves the source available to later ops.
             return f"{expr.name}.copy()"
         if isinstance(expr, VarExpr):
+            # An unresolved name fails here with the scope-aware message. A
+            # resolved one is a loop variable or a single bit, not a register.
+            source = self._render_classical_reference(expr.name)
             msg = (
-                f"Unsupported assignment to {target!r}: {expr.name!r} is not a classical register in this scope. "
+                f"Unsupported assignment to {target!r}: {source!r} is not a whole classical register. "
                 "Guppy supports integer literals and equal-width register copies here."
             )
             raise GuppyCodegenError(msg)

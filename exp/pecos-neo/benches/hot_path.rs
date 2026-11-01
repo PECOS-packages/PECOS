@@ -97,6 +97,7 @@ fn bench_noise_emission(c: &mut Criterion) {
     group.bench_function("after_measurement", |b| {
         b.iter(|| {
             let event = NoiseEvent::AfterMeasurement {
+                gate_type: GateType::MZ,
                 qubits: &qubits,
                 outcomes: &[false],
             };

@@ -441,6 +441,12 @@ impl ComposableNoiseModel {
     ///
     /// Useful for software-implemented gates that don't correspond to
     /// physical operations.
+    ///
+    /// Suppresses faults from these operations, including preparation, readout,
+    /// crosstalk and idle-after-two-qubit noise. Leakage suppression, preparation
+    /// clearing and lifecycle tracking still run. Scheduled idle is unaffected.
+    /// Custom channels must honor the setting; a fault primitive attached to a
+    /// `BeforeGate` composite still runs because that event decides suppression.
     #[must_use]
     pub fn with_noiseless_gate(mut self, gate_type: crate::command::GateType) -> Self {
         self.context.add_noiseless_gate(gate_type);
@@ -448,6 +454,12 @@ impl ComposableNoiseModel {
     }
 
     /// Mark multiple gate types as noiseless.
+    ///
+    /// Suppresses faults from these operations, including preparation, readout,
+    /// crosstalk and idle-after-two-qubit noise. Leakage suppression, preparation
+    /// clearing and lifecycle tracking still run. Scheduled idle is unaffected.
+    /// Custom channels must honor the setting; a fault primitive attached to a
+    /// `BeforeGate` composite still runs because that event decides suppression.
     #[must_use]
     pub fn with_noiseless_gates(mut self, gate_types: &[crate::command::GateType]) -> Self {
         for &gate_type in gate_types {
@@ -1288,6 +1300,7 @@ mod tests {
             let mut flat_rng = PecosRng::seed_from_u64(12345);
             let mut clone_rng = PecosRng::seed_from_u64(12345);
             let mut events = vec![NoiseEvent::AfterPreparation {
+                gate_type: GateType::PZ,
                 qubits: &[QubitId(0), QubitId(1), QubitId(2), QubitId(3)],
             }];
             events.extend(witnesses());
@@ -1388,7 +1401,10 @@ mod tests {
 
         // Emit preparation event
         let qubits = [QubitId(0)];
-        let prep_event = NoiseEvent::AfterPreparation { qubits: &qubits };
+        let prep_event = NoiseEvent::AfterPreparation {
+            gate_type: GateType::PZ,
+            qubits: &qubits,
+        };
 
         let mut rng = PecosRng::seed_from_u64(42);
         model.emit(&prep_event, &mut rng);
@@ -1400,6 +1416,7 @@ mod tests {
         // Emit measurement event
         let outcomes = [false];
         let meas_event = NoiseEvent::AfterMeasurement {
+            gate_type: GateType::MZ,
             qubits: &qubits,
             outcomes: &outcomes,
         };

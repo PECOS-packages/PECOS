@@ -380,10 +380,16 @@ impl NoiseChannel for PerGatePauliChannel {
                 ctx,
                 rng,
             ),
-            NoiseEvent::BeforeMeasurement { qubits } => {
+            NoiseEvent::BeforeMeasurement { gate_type, qubits } => {
+                if ctx.is_noiseless(*gate_type) {
+                    return NoiseResponse::None;
+                }
                 self.apply_before_measurement(qubits, ctx, rng)
             }
-            NoiseEvent::AfterPreparation { qubits } => {
+            NoiseEvent::AfterPreparation { gate_type, qubits } => {
+                if ctx.is_noiseless(*gate_type) {
+                    return NoiseResponse::None;
+                }
                 self.apply_after_preparation(qubits, ctx, rng)
             }
             _ => NoiseResponse::None,

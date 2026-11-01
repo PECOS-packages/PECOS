@@ -2151,14 +2151,14 @@ impl<S: CliffordGateable> CircuitRunner<S> {
 
         // Fast path
         if self.gate_handlers.before_measurement.is_empty() {
-            return self.emit_before_measurement_noise(sim, qubits);
+            return self.emit_before_measurement_noise(sim, command.gate_type, qubits);
         }
 
         let ctx = self.gate_context(command);
         let user_response =
             GateEventHandlers::dispatch(&self.gate_handlers.before_measurement, &ctx);
         let user_response = self.apply_handler_state_changes(user_response)?;
-        let noise_response = self.emit_before_measurement_noise_raw(qubits);
+        let noise_response = self.emit_before_measurement_noise_raw(command.gate_type, qubits);
         let combined = user_response.combine(noise_response);
         self.apply_noise_response(sim, combined)
     }
@@ -2174,10 +2174,11 @@ impl<S: CliffordGateable> CircuitRunner<S> {
 
         // Fast path
         if self.gate_handlers.after_measurement.is_empty() {
-            return self.emit_after_measurement_noise(sim, qubits, outcomes);
+            return self.emit_after_measurement_noise(sim, command.gate_type, qubits, outcomes);
         }
 
-        let noise_response = self.emit_after_measurement_noise_raw(qubits, outcomes);
+        let noise_response =
+            self.emit_after_measurement_noise_raw(command.gate_type, qubits, outcomes);
         let ctx = DispatchContext {
             leaked_suppressed: &[],
             gate_type: command.gate_type,
@@ -2205,10 +2206,10 @@ impl<S: CliffordGateable> CircuitRunner<S> {
 
         // Fast path
         if self.gate_handlers.after_preparation.is_empty() {
-            return self.emit_after_preparation_noise(sim, qubits);
+            return self.emit_after_preparation_noise(sim, command.gate_type, qubits);
         }
 
-        let noise_response = self.emit_after_preparation_noise_raw(qubits);
+        let noise_response = self.emit_after_preparation_noise_raw(command.gate_type, qubits);
         let ctx = self.gate_context(command);
         let user_response =
             GateEventHandlers::dispatch(&self.gate_handlers.after_preparation, &ctx);
@@ -2321,15 +2322,20 @@ impl<S: CliffordGateable> CircuitRunner<S> {
     fn emit_before_measurement_noise(
         &mut self,
         sim: &mut S,
+        gate_type: GateType,
         qubits: &[QubitId],
     ) -> Result<(), ExecutionError> {
-        let response = self.emit_before_measurement_noise_raw(qubits);
+        let response = self.emit_before_measurement_noise_raw(gate_type, qubits);
         self.apply_noise_response(sim, response)
     }
 
-    fn emit_before_measurement_noise_raw(&mut self, qubits: &[QubitId]) -> NoiseResponse {
+    fn emit_before_measurement_noise_raw(
+        &mut self,
+        gate_type: GateType,
+        qubits: &[QubitId],
+    ) -> NoiseResponse {
         if let Some(ref mut noise) = self.noise {
-            let event = NoiseEvent::BeforeMeasurement { qubits };
+            let event = NoiseEvent::BeforeMeasurement { gate_type, qubits };
             return noise.emit(&event, &mut self.rng);
         }
         NoiseResponse::None
@@ -2338,20 +2344,26 @@ impl<S: CliffordGateable> CircuitRunner<S> {
     fn emit_after_measurement_noise(
         &mut self,
         sim: &mut S,
+        gate_type: GateType,
         qubits: &[QubitId],
         outcomes: &[bool],
     ) -> Result<(), ExecutionError> {
-        let response = self.emit_after_measurement_noise_raw(qubits, outcomes);
+        let response = self.emit_after_measurement_noise_raw(gate_type, qubits, outcomes);
         self.apply_noise_response(sim, response)
     }
 
     fn emit_after_measurement_noise_raw(
         &mut self,
+        gate_type: GateType,
         qubits: &[QubitId],
         outcomes: &[bool],
     ) -> NoiseResponse {
         if let Some(ref mut noise) = self.noise {
-            let event = NoiseEvent::AfterMeasurement { qubits, outcomes };
+            let event = NoiseEvent::AfterMeasurement {
+                gate_type,
+                qubits,
+                outcomes,
+            };
             return noise.emit(&event, &mut self.rng);
         }
         NoiseResponse::None
@@ -2360,15 +2372,20 @@ impl<S: CliffordGateable> CircuitRunner<S> {
     fn emit_after_preparation_noise(
         &mut self,
         sim: &mut S,
+        gate_type: GateType,
         qubits: &[QubitId],
     ) -> Result<(), ExecutionError> {
-        let response = self.emit_after_preparation_noise_raw(qubits);
+        let response = self.emit_after_preparation_noise_raw(gate_type, qubits);
         self.apply_noise_response(sim, response)
     }
 
-    fn emit_after_preparation_noise_raw(&mut self, qubits: &[QubitId]) -> NoiseResponse {
+    fn emit_after_preparation_noise_raw(
+        &mut self,
+        gate_type: GateType,
+        qubits: &[QubitId],
+    ) -> NoiseResponse {
         if let Some(ref mut noise) = self.noise {
-            let event = NoiseEvent::AfterPreparation { qubits };
+            let event = NoiseEvent::AfterPreparation { gate_type, qubits };
             return noise.emit(&event, &mut self.rng);
         }
         NoiseResponse::None

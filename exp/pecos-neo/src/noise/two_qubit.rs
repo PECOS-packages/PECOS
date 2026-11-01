@@ -302,6 +302,11 @@ impl AngleScaling {
 /// 2. Emission errors that can cause Pauli errors AND/OR leakage
 ///
 /// Applies two-qubit Pauli errors after two-qubit gates.
+///
+/// At a positive error probability, this channel also suppresses gates on
+/// leaked operands, even when noiseless. At zero probability `responds_to`
+/// and `try_apply` return early; builders register `LeakageChannel` separately
+/// to guarantee suppression at every rate.
 #[derive(Debug, Clone)]
 pub struct TwoQubitChannel {
     /// Base probability of any error occurring.
@@ -559,10 +564,7 @@ impl NoiseChannel for TwoQubitChannel {
     ) -> NoiseResponse {
         match event {
             NoiseEvent::BeforeGate { qubits, .. } => {
-                // Skip noise for noiseless gates (but still check leakage)
-                if ctx.is_noiseless_operation(event) {
-                    return NoiseResponse::None;
-                }
+                // Suppress leaked operands even when the operation is noiseless.
                 Self::handle_before_gate(qubits, ctx)
             }
             NoiseEvent::AfterGate { .. } => {
@@ -596,9 +598,7 @@ impl NoiseChannel for TwoQubitChannel {
                 if !gate_type.is_two_qubit() || !gate_type.is_unitary_gate() {
                     return None;
                 }
-                if ctx.is_noiseless_operation(event) {
-                    return Some(NoiseResponse::None);
-                }
+                // Suppress leaked operands even when the operation is noiseless.
                 Some(Self::handle_before_gate(qubits, ctx))
             }
             NoiseEvent::AfterGate { gate_type, .. } => {

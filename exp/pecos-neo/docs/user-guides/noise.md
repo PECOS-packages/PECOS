@@ -116,7 +116,7 @@ Gate-event `qubits` contains executed groups only after a gate. Custom channels
 that model seepage, partner noise or idle effects on suppressed groups must read
 `leaked_suppressed` explicitly; `gated_qubits()` includes both sets. Composite
 filters classify by `group_size` and now also fire on batched commands, with
-partner conditions evaluated within each group. Suppressed groups run primitives
+partner conditions evaluated within each group. On noisy operations, suppressed groups run primitives
 only on currently leaked members.
 
 The seepage parameter is conditional on an emission fault: its marginal rate is
@@ -134,3 +134,28 @@ injected.
 Composite `seep()` retains its configurable Pauli weights. `unleak()` and
 `NoiseResponse::MarkUnleaked` clear only the leakage flag and preserve the
 simulator state; use `seep()` for the physical channel.
+
+### Noiseless operations and leakage
+
+All three noise builders always register leakage suppression, even with zero
+fault rates or custom leakage sources. Gates on leaked operands never run,
+including noiseless gates. Partner Pauli noise defaults to zero; opt in on
+`LeakageChannel` with `with_partner_pauli_probability(p)`. Each complete pair
+with exactly one leaked member receives a probability draw, then a uniform
+X/Y/Z on the healthy partner if it succeeds. This covers executed and
+leaked-suppressed groups. Noiseless operations produce neither draws nor faults.
+
+`with_noiseless_gate` and `with_noiseless_gates` suppress faults from the declared
+operation: injected gates, readout flips, leakage, seepage, crosstalk and
+idle-after-two-qubit noise. This includes composite primitives on suppressed
+groups. A scheduled `IdleTime` still produces its configured noise. Preparation
+still clears prior leakage, and lifecycle tracking still runs. A fault primitive
+placed on a `BeforeGate` composite is not silenced: that event decides suppression.
+Custom non-composite fault channels must check the noiseless setting themselves.
+
+`AfterPreparation`, `BeforeMeasurement` and `AfterMeasurement` carry the actual
+`gate_type`, distinguishing PZ from QAlloc and MZ from MeasureLeaked.
+On `CircuitRunner`'s command queue, leaked MZ reads 1 and leaked MeasureLeaked
+reports leaked, including when noiseless. `LeakageChannel` never changes an
+older measurement record. `execute_measure` and `ImportanceSamplingRunner`
+retain their separate measurement behavior without a leakage check.

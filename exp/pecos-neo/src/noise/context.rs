@@ -751,6 +751,9 @@ impl NoiseContext {
         self.noiseless_gates.contains(&gate_type)
     }
 
+    /// Check whether an operation suppresses faults, not lifecycle or suppression.
+    /// Preparation and measurement events use their own scheduled gate type;
+    /// reset, scheduled idle and other events return false.
     /// Check the scheduled and inherited noise types of a gate event.
     /// In particular, phase-shaped U operations inherit the RZ exemption.
     #[must_use]
@@ -773,6 +776,11 @@ impl NoiseContext {
                         && event
                             .noise_gate_type()
                             .is_some_and(|gate| self.is_noiseless(gate)))
+            }
+            super::NoiseEvent::AfterPreparation { gate_type, .. }
+            | super::NoiseEvent::BeforeMeasurement { gate_type, .. }
+            | super::NoiseEvent::AfterMeasurement { gate_type, .. } => {
+                self.is_noiseless(*gate_type)
             }
             _ => false,
         }

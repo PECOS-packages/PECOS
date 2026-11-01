@@ -510,6 +510,9 @@ impl NoiseChannel for IdleChannel {
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> NoiseResponse {
+        if ctx.is_noiseless_operation(event) {
+            return NoiseResponse::None;
+        }
         let gated_qubits = event.gated_qubits();
         let (qubits, duration) = match event {
             NoiseEvent::IdleTime { qubits, duration } => (*qubits, duration.as_f64()),

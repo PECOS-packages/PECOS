@@ -11,7 +11,7 @@ sys.path.insert(
 
 import pytest
 from pecos.circuits.quantum_circuit import QuantumCircuit
-from pecos.slr import CReg, For, If, Main, Parallel, QReg, Repeat, Return, SlrConverter, While
+from pecos.slr import Block, CReg, For, If, Main, Parallel, Print, QReg, Repeat, Return, SlrConverter, While
 from pecos.slr.gen_codes.gen_quantum_circuit import QuantumCircuitGenerator
 from pecos.slr.qeclib import qubit
 from pecos.slr.qeclib.qubit.measures import Measure
@@ -461,7 +461,7 @@ class TestQuantumCircuitIf:
 
     @pytest.mark.parametrize("generate", [_ast_quantum_circuit, _legacy_quantum_circuit], ids=["ast", "legacy"])
     def test_classical_assignment_support(self, generate) -> None:
-        """The AST backend rejects assignments that would change stored results."""
+        """Both backends reject assignments that would change stored results."""
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 2),
@@ -470,11 +470,38 @@ class TestQuantumCircuitIf:
             qubit.H(q[0]),
             Return(c),
         )
-        if generate is _ast_quantum_circuit:
-            with pytest.raises(NotImplementedError, match=r"does not yet support AssignOp"):
-                generate(prog)
-        else:
-            assert "{'H': {0}}" in str(generate(prog))
+        with pytest.raises(NotImplementedError, match=r"does not yet support (AssignOp|SET).*QASM, QIR or Guppy"):
+            generate(prog)
+
+
+@pytest.mark.parametrize("scope", ["main", "block", "parallel", "repeat", "for-range", "for-bounds", "nested-for"])
+@pytest.mark.parametrize(
+    "kind",
+    ["register-set", "bit-set", "register-print", "bit-print", "binary", "unary", "compare"],
+)
+def test_legacy_quantum_circuit_rejects_classical_operations(scope: str, kind: str) -> None:
+    """Classical statements must not fall through the empty quantum-target path."""
+    c = CReg("c", 2)
+    operation = {
+        "register-set": c.set(3),
+        "bit-set": c[0].set(1),
+        "register-print": Print(c),
+        "bit-print": Print(c[0]),
+        "binary": c + 1,
+        "unary": ~c,
+        "compare": c == 1,
+    }[kind]
+    body = {
+        "main": operation,
+        "block": Block(operation),
+        "parallel": Parallel(operation),
+        "repeat": Repeat(2).block(operation),
+        "for-range": For("i", range(2)).Do(operation),
+        "for-bounds": For("i", 0, 2).Do(operation),
+        "nested-for": For("i", 0, 2).Do(Block(Repeat(2).block(For("j", range(2)).Do(operation)))),
+    }[scope]
+    with pytest.raises(NotImplementedError, match=rf"support {type(operation).__name__}.*QASM, QIR or Guppy"):
+        _legacy_quantum_circuit(Main(c, body))
 
 
 def test_repeated_mx_and_my_agree() -> None:

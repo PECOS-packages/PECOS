@@ -118,9 +118,16 @@ impl OperandSelection<'_> {
         true
     }
 
-    fn prepare_non_gate_context(self, index: usize, ctx: &mut NoiseContext) {
+    /// Install non-gate operands once; a per-member copy would make the scan O(n^2).
+    fn begin_non_gate_scan(self, ctx: &mut NoiseContext) {
         if ctx.current_gate().is_none() {
-            ctx.set_current_qubit_index(index, self.qubits);
+            ctx.set_current_qubit_index(0, self.qubits);
+        }
+    }
+
+    fn select_non_gate_member(index: usize, ctx: &mut NoiseContext) {
+        if ctx.current_gate().is_none() {
+            ctx.set_current_member_index(index);
         }
     }
 }
@@ -145,6 +152,7 @@ fn apply_two_pass(
             qubits: group,
             suppressed: operands.suppressed,
         };
+        selection.begin_non_gate_scan(ctx);
         // Stage 2 is arbitrary work and runs even when stage 1 selected no members.
         for stage in [1, 2] {
             for (i, &q) in group.iter().enumerate() {
@@ -155,7 +163,7 @@ fn apply_two_pass(
                 if !selection.prepare(i, ctx) {
                     continue;
                 }
-                selection.prepare_non_gate_context(i, ctx);
+                OperandSelection::select_non_gate_member(i, ctx);
                 if let Some(outcomes) = outcomes
                     && index < outcomes.len()
                 {
@@ -413,6 +421,7 @@ impl<P: Primitive> CompositeChannel<P> {
         }
 
         // Single-pass processing (standard)
+        operands.begin_non_gate_scan(ctx);
         let mut combined = NoiseResponse::None;
         for (i, &qubit) in qubits.iter().enumerate() {
             // If probability is set, do threshold check
@@ -426,7 +435,7 @@ impl<P: Primitive> CompositeChannel<P> {
             if !operands.prepare(i, ctx) {
                 continue;
             }
-            operands.prepare_non_gate_context(i, ctx);
+            OperandSelection::select_non_gate_member(i, ctx);
 
             // Only set outcome context for measurement events
             if let Some(outcomes) = outcomes
@@ -470,6 +479,7 @@ impl<P: Primitive + Clone + 'static> NoiseChannel for CompositeChannel<P> {
         if qubits.is_empty() && suppressed.is_empty() {
             return NoiseResponse::None;
         }
+        let enclosing = ctx.enter_event();
         // For gate events, set gate context for dynamic probability primitives
         match event {
             NoiseEvent::BeforeGate {
@@ -515,9 +525,7 @@ impl<P: Primitive + Clone + 'static> NoiseChannel for CompositeChannel<P> {
             result = result.combine(response);
         }
 
-        // Clear context after processing
-        ctx.clear_current_gate();
-        ctx.clear_current_idle();
+        ctx.exit_event(enclosing);
 
         result
     }
@@ -942,11 +950,12 @@ impl<P: Primitive> BatchCompositeChannel<P> {
             );
         }
         let qubits = operands.qubits;
+        operands.begin_non_gate_scan(ctx);
         let mut combined = NoiseResponse::None;
         for (i, &qubit) in qubits.iter().enumerate() {
             // Use u64 threshold comparison for speed
             if self.sampler.check_single(rng) && operands.prepare(i, ctx) {
-                operands.prepare_non_gate_context(i, ctx);
+                OperandSelection::select_non_gate_member(i, ctx);
                 let composite_response = self.primitive.apply(qubit, ctx, rng);
                 if !composite_response.is_none() {
                     let noise_response = composite_to_noise_response(composite_response, qubit);
@@ -981,6 +990,7 @@ impl<P: Primitive + Clone + 'static> NoiseChannel for BatchCompositeChannel<P> {
         if qubits.is_empty() && suppressed.is_empty() {
             return NoiseResponse::None;
         }
+        let enclosing = ctx.enter_event();
         // For gate events, set gate context
         match event {
             NoiseEvent::BeforeGate {
@@ -1026,8 +1036,7 @@ impl<P: Primitive + Clone + 'static> NoiseChannel for BatchCompositeChannel<P> {
             result = result.combine(response);
         }
 
-        ctx.clear_current_gate();
-        ctx.clear_current_idle();
+        ctx.exit_event(enclosing);
 
         result
     }

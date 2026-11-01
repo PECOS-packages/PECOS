@@ -37,9 +37,12 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   rules now fire on batched commands (#1443), including registered custom gates.
   Every processing path supplies group-local partner context. Suppressed groups
   run primitives only on currently leaked members, not healthy partners.
-  Two-stage primitives now run both stages in geometric and batch processing,
-  shifting seeded results for `BatchCompositeChannel` and geometric
-  `CompositeChannel` models using them.
+  In geometric and batch processing, stage 2 of a two-stage primitive now runs
+  on every operand as a second pass, as linear processing does. All paths finish
+  both stages group by group, shifting seeded results for multi-group commands
+  and for `BatchCompositeChannel` and geometric `CompositeChannel` models using
+  them. A composite channel nested through `channel_action` now keeps the
+  enclosing event's gate, suppression marker, and operands for every member.
 
 - **Breaking:** Two-qubit and composite seepage now use the marginal rate
   `p * emission_ratio * seepage`, including angle scaling and excluding leakage

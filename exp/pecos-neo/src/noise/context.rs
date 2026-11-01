@@ -213,6 +213,20 @@ impl IdleInfo {
     }
 }
 
+/// Per-event context saved while a nested composite channel processes its own event.
+///
+/// `current_outcome` stays out: nested channels see the enclosing measurement outcome.
+#[derive(Debug)]
+pub(crate) struct EnclosingEvent {
+    gate: Option<GateInfo>,
+    gate_suppressed: bool,
+    idle: Option<IdleInfo>,
+    qubit_index: usize,
+    sampled_correlation: Option<usize>,
+    gate_qubits: SmallVec<[QubitId; 2]>,
+    fired_flags: [bool; 4],
+}
+
 /// Shared mutable state for noise channels.
 ///
 /// This context is passed to each noise channel when processing events,
@@ -431,6 +445,30 @@ impl NoiseContext {
         self.current_gate.as_ref()
     }
 
+    /// Take the enclosing event's state so a composite channel can process its own event.
+    pub(crate) fn enter_event(&mut self) -> EnclosingEvent {
+        EnclosingEvent {
+            gate: self.current_gate.take(),
+            gate_suppressed: std::mem::take(&mut self.current_gate_suppressed),
+            idle: self.current_idle.take(),
+            qubit_index: std::mem::take(&mut self.current_qubit_index),
+            sampled_correlation: self.sampled_correlation.take(),
+            gate_qubits: std::mem::take(&mut self.current_gate_qubits),
+            fired_flags: std::mem::take(&mut self.fired_flags),
+        }
+    }
+
+    /// Discard the finished event's state and restore the enclosing event.
+    pub(crate) fn exit_event(&mut self, enclosing: EnclosingEvent) {
+        self.current_gate = enclosing.gate;
+        self.current_gate_suppressed = enclosing.gate_suppressed;
+        self.current_idle = enclosing.idle;
+        self.current_qubit_index = enclosing.qubit_index;
+        self.sampled_correlation = enclosing.sampled_correlation;
+        self.current_gate_qubits = enclosing.gate_qubits;
+        self.fired_flags = enclosing.fired_flags;
+    }
+
     // --- Idle Context Tracking ---
 
     /// Set the current idle information for noise processing.
@@ -468,6 +506,11 @@ impl NoiseContext {
         }
         self.current_qubit_index = index;
         self.current_gate_qubits = gate_qubits.iter().copied().collect();
+    }
+
+    /// Select a member of the operands already in context, without copying them.
+    pub(crate) fn set_current_member_index(&mut self, index: usize) {
+        self.current_qubit_index = index;
     }
 
     /// Get the current qubit index within a multi-qubit gate.

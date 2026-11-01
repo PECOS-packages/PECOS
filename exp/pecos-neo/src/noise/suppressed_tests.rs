@@ -639,12 +639,143 @@ fn channel_adapter_preserves_custom_group_size() {
         group_size: std::num::NonZeroUsize::new(2).unwrap(),
         angles: &[],
     };
-    let gates = injected(channel.apply(
+    let mut gates = injected(channel.apply(
         &event,
         &mut NoiseContext::new(),
         &mut PecosRng::seed_from_u64(42),
     ));
-    assert_ne!(gates, Vec::<GateCommand>::new());
+    // Each group reaches the probe whole; how often it is repeated is not the contract here.
+    gates.dedup();
+    assert_eq!(
+        gates,
+        vec![GateCommand::x(QubitId(0)), GateCommand::x(QubitId(2))]
+    );
+}
+
+/// Records what a composite nested through `channel_action` sees for each member.
+#[derive(Clone, Default)]
+struct NestedProbe(std::sync::Arc<std::sync::Mutex<Vec<NestedView>>>);
+type NestedView = (QubitId, bool, GateType, Vec<QubitId>);
+impl Primitive for NestedProbe {
+    fn apply(&self, q: QubitId, ctx: &mut NoiseContext, _: &mut PecosRng) -> CompositeResponse {
+        self.0.lock().unwrap().push((
+            q,
+            ctx.is_current_gate_suppressed(),
+            ctx.current_gate().expect("adapter emits a gate").gate_type,
+            ctx.current_gate_qubits().to_vec(),
+        ));
+        CompositeResponse::None
+    }
+    fn describe(&self) -> String {
+        "nested probe".into()
+    }
+    fn clone_box(&self) -> Box<dyn Primitive> {
+        Box::new(self.clone())
+    }
+}
+
+fn nested_channels(probe: &NestedProbe) -> Vec<Box<dyn NoiseChannel>> {
+    let inner = CompositeChannel::new("inner", probe.clone());
+    let batch_inner = BatchCompositeChannel::new("batch inner", 0.999_999, probe.clone())
+        .unwrap()
+        .with_min_qubits(0)
+        .with_geometric_threshold(0.0);
+    vec![
+        Box::new(CompositeChannel::new(
+            "outer",
+            channel_action(inner.clone()),
+        )),
+        Box::new(CompositeChannel::new("outer", channel_action(batch_inner))),
+        Box::new(
+            BatchCompositeChannel::new("outer", 0.999_999, channel_action(inner))
+                .unwrap()
+                .with_min_qubits(0)
+                .with_geometric_threshold(0.0),
+        ),
+    ]
+}
+
+#[test]
+fn nested_composite_keeps_the_enclosing_gate_for_every_member() {
+    let pair = [QubitId(0), QubitId(1)];
+    for suppressed in [false, true] {
+        let probe = NestedProbe::default();
+        for channel in nested_channels(&probe) {
+            probe.0.lock().unwrap().clear();
+            let mut ctx = NoiseContext::new();
+            let mut rng = PecosRng::seed_from_u64(42);
+            let event = if suppressed {
+                ctx.mark_leaked(pair[0]);
+                ctx.mark_leaked(pair[1]);
+                after(&[], &pair)
+            } else {
+                after(&pair, &[])
+            };
+            channel.apply(&event, &mut ctx, &mut rng);
+            let views = probe.0.lock().unwrap().clone();
+            assert_ne!(views, Vec::<NestedView>::new());
+            for (_, seen_suppressed, gate, qubits) in views {
+                assert_eq!(seen_suppressed, suppressed);
+                assert_eq!(gate, GateType::CX);
+                assert_eq!(qubits, pair);
+            }
+            assert_eq!(ctx.current_gate_qubits(), &[]);
+            assert!(ctx.current_gate().is_none());
+        }
+    }
+}
+
+#[test]
+fn nested_composite_keeps_non_gate_operands_for_every_member() {
+    let qubits = [QubitId(0), QubitId(1), QubitId(2)];
+    let probe = NestedProbe::default();
+    for channel in nested_channels(&probe) {
+        probe.0.lock().unwrap().clear();
+        channel.apply(
+            &NoiseEvent::AfterPreparation { qubits: &qubits },
+            &mut NoiseContext::new(),
+            &mut PecosRng::seed_from_u64(42),
+        );
+        let views = probe.0.lock().unwrap().clone();
+        assert_ne!(views, Vec::<NestedView>::new());
+        for (_, _, _, seen) in views {
+            assert_eq!(seen, qubits);
+        }
+    }
+}
+
+#[test]
+fn nested_composite_restores_all_enclosing_event_state() {
+    let pair = [QubitId(0), QubitId(1)];
+    let inner = CompositeChannel::new("inner", nothing());
+    let batch_inner = BatchCompositeChannel::new("batch inner", 0.999_999, nothing())
+        .unwrap()
+        .with_min_qubits(0)
+        .with_geometric_threshold(0.0);
+    for adapter in [channel_action(inner), channel_action(batch_inner)] {
+        let mut ctx = NoiseContext::new();
+        ctx.mark_leaked(pair[1]);
+        ctx.set_current_gate(GateType::CX, &[], std::num::NonZeroUsize::new(2).unwrap());
+        ctx.set_current_idle(pecos_core::TimeUnits::new(5));
+        // The inner channel ends on member 1, so restoring member 0 is observable.
+        ctx.set_current_qubit_index(0, &pair);
+        ctx.set_current_gate_suppressed(true);
+        ctx.set_sampled_correlation(7);
+        ctx.set_fired(0, true);
+        Primitive::apply(
+            &adapter,
+            pair[1],
+            &mut ctx,
+            &mut PecosRng::seed_from_u64(42),
+        );
+        assert_eq!(ctx.current_gate().map(|g| g.gate_type), Some(GateType::CX));
+        assert!(ctx.current_idle().is_some());
+        assert_eq!(ctx.current_qubit_index(), 0);
+        assert_eq!(ctx.current_gate_qubits(), pair);
+        assert!(ctx.is_current_gate_suppressed());
+        assert_eq!(ctx.sampled_correlation(), Some(7));
+        assert!(ctx.is_fired(0));
+    }
 }
 
 #[derive(Clone)]
@@ -820,7 +951,7 @@ fn two_qubit_handles_complete_pairs_only() {
 }
 
 #[test]
-fn composite_linear_two_stage_seeded_compatibility() {
+fn composite_linear_two_stage_seeded_draw_order() {
     let channel = CompositeChannel::new(
         "seeded stages",
         two_stage(prob(0.43, pauli()).unwrap(), prob(0.61, pauli()).unwrap()),
@@ -828,28 +959,52 @@ fn composite_linear_two_stage_seeded_compatibility() {
     .with_probability(0.57)
     .unwrap()
     .with_geometric_threshold(0.0);
-    let mut observed = Vec::new();
-    for seed in [0, 1, 7, 42, 100] {
-        let mut rng = PecosRng::seed_from_u64(seed);
-        let gates = injected(channel.apply(
-            &after(&[QubitId(0), QubitId(1), QubitId(2), QubitId(3)], &[]),
-            &mut NoiseContext::new(),
-            &mut rng,
-        ));
-        let signature = gates.iter().fold(0_u64, |signature, gate| {
-            let pauli = match gate.gate_type {
-                GateType::X => 1,
-                GateType::Y => 2,
-                GateType::Z => 3,
-                _ => panic!("expected a Pauli fault"),
-            };
-            (signature << 4) | (4 * u64::try_from(gate.qubits[0].0).unwrap() + pauli)
-        });
-        observed.push((signature, rng.next_u64()));
-    }
-    // Golden gate signatures and next RNG words pin linear two-stage draw ordering.
+    let observe = |event: &NoiseEvent<'_>| -> Vec<(u64, u64)> {
+        [0, 1, 7, 42, 100]
+            .map(|seed| {
+                let mut rng = PecosRng::seed_from_u64(seed);
+                let gates = injected(channel.apply(event, &mut NoiseContext::new(), &mut rng));
+                let signature = gates.iter().fold(0_u64, |signature, gate| {
+                    let pauli = match gate.gate_type {
+                        GateType::X => 1,
+                        GateType::Y => 2,
+                        GateType::Z => 3,
+                        _ => panic!("expected a Pauli fault"),
+                    };
+                    (signature << 4) | (4 * u64::try_from(gate.qubits[0].0).unwrap() + pauli)
+                });
+                (signature, rng.next_u64())
+            })
+            .to_vec()
+    };
+    let qubits = [QubitId(0), QubitId(1), QubitId(2), QubitId(3)];
+    // Captured before per-group processing: one group keeps its seeded results.
     assert_eq!(
-        observed,
+        observe(&after(&qubits[..2], &[])),
+        vec![
+            (3, 17_356_855_043_271_732),
+            (0, 5_295_051_070_016_473_251),
+            (7, 5_768_340_367_737_899_501),
+            (103, 3_088_116_801_777_502_571),
+            (3, 6_666_168_914_398_614_217),
+        ]
+    );
+    assert_eq!(
+        observe(&NoiseEvent::AfterMeasurement {
+            qubits: &qubits,
+            outcomes: &[true, false, true, false],
+        }),
+        vec![
+            (1437, 16_722_455_084_393_394_041),
+            (633, 12_783_689_275_883_468_267),
+            (41, 10_898_401_604_247_839_105),
+            (1575, 11_803_152_480_074_679_081),
+            (382, 17_518_749_168_294_015_972),
+        ]
+    );
+    // Pins the intended change: each group finishes both stages before the next group starts.
+    assert_eq!(
+        observe(&after(&qubits, &[])),
         vec![
             (941, 1_213_719_370_718_833_293),
             (9, 12_783_689_275_883_468_267),
@@ -958,6 +1113,21 @@ fn composite_stage_two_runs_on_unsampled_groups() {
     }
 }
 
+#[derive(Clone, Default)]
+struct MemberIndexProbe(std::sync::Arc<std::sync::Mutex<Vec<usize>>>);
+impl Primitive for MemberIndexProbe {
+    fn apply(&self, _: QubitId, ctx: &mut NoiseContext, _: &mut PecosRng) -> CompositeResponse {
+        self.0.lock().unwrap().push(ctx.current_qubit_index());
+        CompositeResponse::None
+    }
+    fn describe(&self) -> String {
+        "member index probe".into()
+    }
+    fn clone_box(&self) -> Box<dyn Primitive> {
+        Box::new(self.clone())
+    }
+}
+
 #[test]
 fn composite_non_gate_context_linear_and_two_pass() {
     fn make_channel(
@@ -1002,6 +1172,18 @@ fn composite_non_gate_context_linear_and_two_pass() {
                 ));
                 if two_pass || !geometric {
                     assert_eq!(gates, qubits.map(GateCommand::x));
+                    let probe = MemberIndexProbe::default();
+                    let channel = if two_pass {
+                        make_channel(two_stage(nothing(), probe.clone()), batch, threshold)
+                    } else {
+                        make_channel(probe.clone(), batch, threshold)
+                    };
+                    channel.apply(
+                        &NoiseEvent::AfterPreparation { qubits: &qubits },
+                        &mut ctx,
+                        &mut PecosRng::seed_from_u64(42),
+                    );
+                    assert_eq!(*probe.0.lock().unwrap(), [0, 1, 2]);
                 } else {
                     // Single-pass geometric processing retains its existing non-gate context policy.
                     assert_eq!(gates, Vec::<GateCommand>::new());

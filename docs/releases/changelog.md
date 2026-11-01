@@ -6,6 +6,18 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Breaking:** `QuantumCircuit.to_phir_json()` handles a measurement with no
+  destination (#1497), such as SLR `qb.Measure(q[1])` with no `> c`. It used to
+  emit a PHIR `Measure` without `returns`. PHIR validation and `HybridEngine`
+  rejected that, and the native PHIR-JSON engine accepted it but reported the
+  result under an internal `measurement_N` name, or wrote it into a user register
+  named `m`, or failed when that register was too small. Each bare-measured qubit
+  now writes to its own bit of an internal `__pecos_scratch` variable, renamed to
+  avoid every declared and destination name and split every 64 bits. The program
+  then exports every non-empty user classical register unless it already exports,
+  so the scratch is never reported, and bare results no longer appear in native
+  results.
+
 - **Breaking:** PHIR `cvar_export` selects the reported classical variables in
   every PECOS runner (#1323): the native PHIR-JSON engine (`sim(PhirJson(...))`),
   the Rust and Python classical interpreters behind `HybridEngine`, and

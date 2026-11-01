@@ -115,6 +115,49 @@ def test_register_copy_rejects_different_widths(source_width: int) -> None:
         SlrConverter(Main(c, d, c.set(d))).guppy()
 
 
+def test_bool_literal_assignment_sets_the_low_bit() -> None:
+    c = CReg("c", 4)
+    assert "c = array(True, False, False, False)" in SlrConverter(Main(c, c.set(True))).guppy()
+
+
+@pytest.mark.parametrize(
+    ("form", "rendered"),
+    [("bit", "c[0] = d[1]"), ("and", "c[0] = (d[1] and d[2])"), ("eq", "c[0] = (d[1] == d[2])")],
+)
+def test_bit_assignment_accepts_bit_values(form: str, rendered: str) -> None:
+    c, d = CReg("c", 4), CReg("d", 4)
+    values = {"bit": d[1], "and": d[1] & d[2], "eq": d[1] == d[2]}
+    assert rendered in SlrConverter(Main(c, d, c[0].set(values[form]))).guppy()
+
+
+@pytest.mark.parametrize("form", ["register", "bit-add", "float", "register-and", "register-eq", "negate"])
+def test_bit_assignment_rejects_values_that_are_not_bits(form: str) -> None:
+    c, d = CReg("c", 4), CReg("d", 4)
+    values = {
+        "register": d,
+        "bit-add": d[0] + 1,
+        "float": 1.5,
+        "register-and": d & c,
+        "register-eq": d == 3,
+        "negate": -d[0],
+    }
+    with pytest.raises(GuppyCodegenError, match="Unsupported single-bit assignment"):
+        SlrConverter(Main(c, d, c[0].set(values[form]))).guppy()
+
+
+def test_bit_assignment_rejects_a_loop_variable() -> None:
+    c, i = CReg("c", 4), LoopVar("i")
+    with pytest.raises(GuppyCodegenError, match="Unsupported single-bit assignment"):
+        SlrConverter(Main(c, For(i, 0, 2).Do(c[i].set(i)))).guppy()
+
+
+def test_loop_variable_shadowing_a_register_is_not_a_register_copy() -> None:
+    c, d = CReg("c", 4), CReg("d", 4)
+    assert "c = array(True, False, False, False)" in SlrConverter(Main(c, d, For("d", 0, 2).Do(c.set(1)))).guppy()
+    with pytest.raises(GuppyCodegenError, match="assignment to 'c': 'd' is not a whole classical register"):
+        SlrConverter(Main(c, d, For("d", 0, 2).Do(c.set(d)))).guppy()
+
+
 def test_direct_ast_numbered_bit_target_is_a_bool() -> None:
     program = slr_to_ast(Main(CReg("c", 4)))
     program = replace(program, body=(AssignOp(target="c[2]", value=LiteralExpr(value=1)),))

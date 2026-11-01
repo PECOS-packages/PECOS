@@ -1304,16 +1304,39 @@ class AstToGuppy:
     def _emit_assign(self, node: AssignOp) -> list[str]:
         if isinstance(node.target, BitRef):
             target = self._render_bit_ref(node.target)
-            value = self._render_expression(node.value, bool_context=True)
-            return [f"{self.context.indent()}{target} = {value}"]
-        target = self._render_classical_reference(node.target, assignment=True)
-        if target in self.context.registers:
-            value = self._render_register_assignment(target, node.value)
+            value = self._render_bit_assignment(node.value)
         else:
-            # The converter represents SymbolicBit targets as "register[i]"
-            # strings. These remain single-bit writes, not register writes.
-            value = self._render_expression(node.value, bool_context=True)
+            target = self._render_classical_reference(node.target, assignment=True)
+            if target in self.context.registers:
+                value = self._render_register_assignment(target, node.value)
+            else:
+                # The converter represents SymbolicBit targets as "register[i]"
+                # strings. These remain single-bit writes, not register writes.
+                value = self._render_bit_assignment(node.value)
         return [f"{self.context.indent()}{target} = {value}"]
+
+    def _render_bit_assignment(self, expr: Expression) -> str:
+        """Render a single-bit write, rejecting values Guppy cannot store in a bool."""
+        if isinstance(expr, VarExpr):
+            is_bit = expr.name not in self.context.loop_variables
+        elif isinstance(expr, LiteralExpr):
+            is_bit = isinstance(expr.value, int)
+        else:
+            is_bit = self._is_bool_expression(expr)
+        if not is_bit or self._reads_whole_register(expr):
+            msg = (
+                f"Unsupported single-bit assignment from {expr!r}. "
+                "Guppy supports 0, 1, single bits and boolean expressions of bits here."
+            )
+            raise GuppyCodegenError(msg)
+        return self._render_expression(expr, bool_context=True)
+
+    def _reads_whole_register(self, expr: Expression) -> bool:
+        if isinstance(expr, VarExpr):
+            return expr.name in self.context.registers
+        if isinstance(expr, BinaryExpr):
+            return self._reads_whole_register(expr.left) or self._reads_whole_register(expr.right)
+        return isinstance(expr, UnaryExpr) and self._reads_whole_register(expr.operand)
 
     def _render_register_assignment(self, target: str, expr: Expression) -> str:
         """Keep whole-register writes in the bool-array representation.
@@ -1332,7 +1355,11 @@ class AstToGuppy:
             # in Python so literals need not fit Guppy's fixed-width int.
             bits = ", ".join(str(bool((expr.value >> index) & 1)) for index in range(decl.size))
             return f"array({bits})"
-        if isinstance(expr, VarExpr) and expr.name in self.context.registers:
+        if (
+            isinstance(expr, VarExpr)
+            and expr.name in self.context.registers
+            and expr.name not in self.context.loop_variables
+        ):
             source = self.context.registers[expr.name]
             if source.size != decl.size:
                 msg = (

@@ -6,6 +6,20 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Breaking:** pecos-neo single- and two-qubit gate channels now discard a
+  seeping qubit's state with an independent uniform I/X/Y/Z twirl (#1570),
+  including seepage after leaked-suppressed gates. The marginal seepage rate
+  remains `p * emission_ratio * seepage`; seeded results shift. `unleak()` and
+  `NoiseResponse::MarkUnleaked` still clear only the leakage flag.
+
+- **Breaking:** pecos-neo `CompositeNoiseModelBuilder` now registers `CorePlugin`
+  (#1571). Preparation clears earlier leakage before preparation faults run;
+  leakage drawn by that preparation still sticks. Prepared qubits become active,
+  and measured qubits become inactive. This enables the builder's preparation
+  and measurement crosstalk on other active, non-leaked qubits, which previously
+  never fired, and changes `active()` conditions and seeded results. This crosstalk
+  does not measure the affected qubit, so it differs from `GeneralNoiseModel`.
+
 - **Breaking:** `QuantumCircuit.to_phir_json()` handles a measurement with no
   destination (#1497), such as SLR `qb.Measure(q[1])` with no `> c`. It used to
   emit a PHIR `Measure` without `returns`. PHIR validation and `HybridEngine`

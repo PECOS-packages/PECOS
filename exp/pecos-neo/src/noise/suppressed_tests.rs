@@ -17,6 +17,37 @@ fn unmarked(response: &NoiseResponse) -> Vec<QubitId> {
         _ => vec![],
     }
 }
+
+/// A leaked or suppressed pair may receive a seep twirl, never gate error.
+fn assert_only_seep_injections(response: &NoiseResponse) {
+    let seeping = unmarked(response);
+    let gates = injected(response.clone());
+    if seeping.is_empty() {
+        assert_eq!(gates, vec![], "nothing seeped, so nothing may be injected");
+    }
+    let mut targets = std::collections::BTreeSet::new();
+    for gate in gates {
+        assert!(
+            matches!(gate.gate_type, GateType::X | GateType::Y | GateType::Z),
+            "seepage must inject only X, Y or Z, never a gate dagger: {gate:?}"
+        );
+        assert_eq!(
+            gate.qubits.len(),
+            1,
+            "seepage must be single-qubit: {gate:?}"
+        );
+        let qubit = gate.qubits[0];
+        assert!(
+            seeping.contains(&qubit),
+            "injected on non-seeping qubit {qubit:?}; MarkUnleaked={seeping:?}"
+        );
+        assert!(
+            targets.insert(qubit),
+            "more than one injection on seeping qubit {qubit:?}"
+        );
+    }
+}
+
 fn after<'a>(qubits: &'a [QubitId], suppressed: &'a [QubitId]) -> NoiseEvent<'a> {
     NoiseEvent::AfterGate {
         gate_type: GateType::CX,
@@ -203,10 +234,7 @@ fn suppressed_two_qubit_seepage_rate() {
                         let seeping = unmarked(&response);
                         first += u32::from(seeping.contains(&QubitId(0)));
                         joint += u32::from(seeping.len() == 2);
-                        assert!(
-                            injected(response).is_empty(),
-                            "a leaked or suppressed pair must never receive gate error"
-                        );
+                        assert_only_seep_injections(&response);
                     }
                     within_four_sigma(first, N, p * r * 0.5);
                     within_four_sigma(joint, N, if both { p * r * 0.25 } else { 0.0 });
@@ -237,7 +265,9 @@ fn suppressed_two_qubit_seepage_rate() {
         let mut count = 0;
         let mut rng = PecosRng::seed_from_u64(41);
         for _ in 0..N {
-            count += u32::from(!unmarked(&channel.apply(&event, &mut ctx, &mut rng)).is_empty());
+            let response = channel.apply(&event, &mut ctx, &mut rng);
+            count += u32::from(!unmarked(&response).is_empty());
+            assert_only_seep_injections(&response);
         }
         within_four_sigma(count, N, if angle == Angle64::ZERO { 0.0 } else { 0.0625 });
     }
@@ -924,7 +954,7 @@ fn two_qubit_handles_complete_pairs_only() {
                     channel.apply(&event, &mut ctx, &mut rng)
                 };
                 assert_eq!(unmarked(&response), qubits[..len / 2 * 2]);
-                assert_eq!(injected(response), Vec::<GateCommand>::new());
+                assert_only_seep_injections(&response);
                 let mut healthy = NoiseContext::new();
                 let response = if try_apply {
                     gate_error
@@ -933,6 +963,9 @@ fn two_qubit_handles_complete_pairs_only() {
                 } else {
                     gate_error.apply(&event, &mut healthy, &mut rng)
                 };
+                if suppressed {
+                    assert_only_seep_injections(&response);
+                }
                 let targets: Vec<_> = injected(response)
                     .into_iter()
                     .flat_map(|g| g.qubits.into_vec())

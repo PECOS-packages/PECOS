@@ -119,7 +119,9 @@ impl GateAction for Leak {
     }
 }
 
-/// Mark qubit as unleaked (seeped back to computational basis).
+/// Clear the leakage flag only, preserving the qubit's simulator state.
+///
+/// Use [`seep()`](actions::seep) for physical seepage that also randomizes the state.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Unleak;
 
@@ -1818,8 +1820,9 @@ impl GateAction for ErasureWithReplacement {
 /// - `Flip`: qubit flips to opposite value (X gate applied)
 /// - `Leak`: qubit transitions to leaked state
 ///
-/// This matches `GeneralNoiseModel`'s `p_meas_crosstalk_model` which uses
-/// state-dependent transition probabilities.
+/// The table has the same shape as `GeneralNoiseModel`'s `p_meas_crosstalk_model`.
+/// With no measurement outcome in context the state is drawn uniformly, because
+/// this action does not measure the qubit.
 #[derive(Debug, Clone)]
 pub struct CrosstalkAction {
     transitions: crate::noise::CrosstalkTransitions,
@@ -2077,7 +2080,9 @@ pub mod actions {
         Leak
     }
 
-    /// Mark qubit as unleaked.
+    /// Clear the leakage flag only, preserving the qubit's simulator state.
+    ///
+    /// Use [`seep()`] for physical seepage that also randomizes the state.
     #[must_use]
     pub fn unleak() -> Unleak {
         Unleak

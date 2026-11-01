@@ -253,7 +253,8 @@ dephase()                  // Z error only
 
 // Leakage
 leak()                     // Mark qubit as leaked
-seep(0.1)                  // With prob 0.1, unleak and apply random Pauli
+prob(0.1, seep())?          // With prob 0.1, unleak and apply uniform I/X/Y/Z
+unleak()                   // Clear the flag only; keep the simulator state
 
 // Gate injection
 inject(GateCommand::x(qubit))
@@ -321,6 +322,25 @@ inside observer responses are not applied recursively. Without a noise model,
 a handler mark returns `ExecutionError::HandlerLeakageWithoutNoise`.
 
 ## Noise Context
+
+`NoiseModelBuilder`, `GeneralNoiseModelBuilder` and `CompositeNoiseModelBuilder`
+register `CorePlugin` automatically. Its `AfterPreparation` handler marks qubits
+active and clears previous leakage before preparation noise runs, so a new leak
+from that same preparation remains. Its `AfterMeasurement` handler marks qubits
+inactive without clearing leakage. Thus crosstalk targets other prepared,
+unmeasured, non-leaked qubits, and custom `active()` conditions follow this
+lifecycle. A bare `ComposableNoiseModel` needs `.add_plugin(&CorePlugin)` for
+these preparation and measurement state updates.
+
+`SingleQubitChannel` and `TwoQubitChannel` discard a seeping qubit's state by
+sampling I, X, Y or Z uniformly and independently for each seeping qubit. Identity
+injects no gate. This fully depolarizing channel also discards correlations with
+other qubits. The draw happens only after seep selection, for both executed and
+leaked-suppressed groups; it does not change the seepage rate. No reset gate is
+injected.
+Composite `seep()` retains its configurable Pauli weights. `unleak()` and
+`NoiseResponse::MarkUnleaked` clear only the leakage flag and preserve the
+simulator state; use `seep()` for the physical channel.
 
 The `NoiseContext` tracks simulation state for noise decisions:
 

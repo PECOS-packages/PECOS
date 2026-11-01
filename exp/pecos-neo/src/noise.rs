@@ -113,6 +113,7 @@ pub mod plugin;
 pub mod plugins;
 pub mod prelude;
 pub mod preparation;
+mod seepage;
 pub mod single_qubit;
 pub mod topology;
 pub mod two_qubit;
@@ -633,8 +634,8 @@ impl<'a> NoiseEvent<'a> {
     /// The composer does not call this itself. `CorePlugin`'s event handlers
     /// call it for `AfterPreparation` and `AfterMeasurement` events, so this
     /// state is tracked independently of the channels added only when
-    /// `CorePlugin` is registered. `NoiseModelBuilder` and
-    /// `GeneralNoiseModelBuilder` register it.
+    /// `CorePlugin` is registered. `NoiseModelBuilder`,
+    /// `GeneralNoiseModelBuilder` and `CompositeNoiseModelBuilder` register it.
     ///
     /// Note: This is separate from noise effects (which channels handle).
     /// Events have inherent meaning independent of noise.
@@ -701,7 +702,10 @@ pub enum NoiseResponse {
     /// Mark qubits as leaked (left computational subspace).
     MarkLeaked(SmallVec<[QubitId; 4]>),
 
-    /// Mark qubits as returned from leakage (seepage).
+    /// Clear the leakage flags only, preserving the qubits' simulator state.
+    ///
+    /// For physical seepage that also discards the state, use
+    /// composite `seep()` (requires the `composite-noise` feature).
     MarkUnleaked(SmallVec<[QubitId; 4]>),
 
     /// Mark measurement outcomes as coming from leaked qubits.

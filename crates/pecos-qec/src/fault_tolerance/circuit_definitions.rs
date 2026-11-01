@@ -11,7 +11,8 @@ use super::dem_builder::{
 use pecos_core::{MeasId, QubitId};
 use pecos_quantum::{AnnotationKind, Attribute, DagCircuit, PauliAnnotation, TickCircuit};
 use pecos_quantum::{
-    MeasurementClass, parse_measurement_classes, validate_measurement_classes_length,
+    MeasurementClass, parse_measurement_classes, resolve_detector_fault_sector,
+    validate_measurement_classes_length,
 };
 use std::collections::BTreeMap;
 
@@ -71,7 +72,8 @@ pub struct ResolvedDetector {
     pub coords: Option<Vec<f64>>,
     /// Optional human-readable name.
     pub label: Option<String>,
-    /// Fault sector supplied by metadata; annotations alone leave it unknown.
+    /// Effective fault sector derived from measurement classes when present,
+    /// with explicit metadata checked for agreement; otherwise the explicit label.
     pub fault_sector: Option<String>,
     /// Absolute emission positions, preserving source order and multiplicity.
     pub measurements: Vec<usize>,
@@ -525,9 +527,17 @@ fn resolve_circuit<'a>(
     if let Some(json) =
         string_attribute("measurement_classes", get_attribute("measurement_classes"))?
     {
-        let parse = || {
+        let mut parse = || {
             let classes = parse_measurement_classes(json)?;
             validate_measurement_classes_length(&classes, emission.len())?;
+            for detector in &mut definitions.detectors {
+                detector.fault_sector = resolve_detector_fault_sector(
+                    detector.id,
+                    detector.fault_sector.as_deref(),
+                    &detector.measurements,
+                    &classes,
+                )?;
+            }
             Ok::<_, String>(classes)
         };
         definitions.measurement_classes =

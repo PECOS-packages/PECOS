@@ -2326,10 +2326,11 @@ class TickCircuit:
     def circuit_definitions(self) -> dict[str, Any]:
         """Return measurement-readout definitions resolved to absolute emission positions.
 
-        Detector dictionaries always include the explicit ``fault_sector`` (an opaque
-        non-empty string, or ``None`` when absent or null). If the circuit supplies
-        ``measurement_classes``, the result includes that validated list in emission
-        order. DEM construction derives labels from it and checks explicit agreement.
+        Detector dictionaries always include the effective ``fault_sector`` (an opaque
+        non-empty string, or ``None`` when unknown). With ``measurement_classes``, labels
+        are derived from parity-reduced support and explicit labels must agree; the
+        result also includes the validated classes in emission order. Without classes,
+        explicit labels pass through unchanged.
         Observable dictionaries include ``reference`` (integer 0 or 1) when
         metadata supplies a noiseless value, or ``None`` when absent.
         """
@@ -2995,6 +2996,21 @@ class qec:
             p_prep: float,
             **noise_options: Any,
         ) -> qec.DemBuilder: ...
+        def with_circuit_metadata(self, circuit: TickCircuit) -> qec.DemBuilder:
+            """Copy detectors, observables, measurement_classes and num_measurements.
+
+            Absent attributes preserve earlier settings, as do blank detectors,
+            observables and num_measurements strings. A blank measurement_classes
+            string is kept, and build() rejects it as malformed. Non-string attributes
+            and invalid counts raise ValueError; build() reports malformed JSON. Circuit
+            emission order must match the influence map's record order. Only attributes
+            are copied, so a circuit with detector or observable annotations must define
+            the same number of entries in the matching attribute, or ValueError is raised.
+            Use DetectorErrorModel.from_circuit for circuits defined by annotation alone.
+            The check reads the circuit only: a map that already carries annotated
+            observables needs the separate setters.
+            """
+
         def with_detectors_json(self, json: str) -> qec.DemBuilder: ...
         def with_measurement_classes_json(self, json: str) -> qec.DemBuilder: ...
         def with_observables_json(self, json: str) -> qec.DemBuilder: ...

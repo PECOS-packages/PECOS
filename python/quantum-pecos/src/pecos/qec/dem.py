@@ -381,7 +381,6 @@ class _DetectorErrorModelMixin:
         *,
         num_qubits: int,
         detectors_json: str,
-        measurement_classes_json: str | None = None,
         observables_json: str = "[]",
         num_measurements: int | None = None,
         noise: NoiseParameters | None = None,
@@ -480,8 +479,6 @@ class _DetectorErrorModelMixin:
                   function / ``GuppyFunctionDefinition`` (not an arbitrary
                   ``pecos.sim``-acceptable wrapper); use ``records`` for the
                   surface-code path.
-            measurement_classes_json: Optional per-record classes in the traced
-                circuit's emission order, used to derive detector fault sectors.
             observables_json: Observable definitions as a JSON list, e.g.
                 ``[{"id": 0, "records": [-1]}]`` (same id/records rules as
                 detectors).
@@ -664,8 +661,6 @@ class _DetectorErrorModelMixin:
             .with_require_hosted_operation_order(require_hosted_operation_order)
             .with_max_hosted_tick_separation(max_hosted_tick_separation)
         )
-        if measurement_classes_json is not None:
-            builder.with_measurement_classes_json(measurement_classes_json)
         if num_measurements is not None:
             builder.with_num_measurements(num_measurements)
         # Same-module private seam: the flat keyword surface stays on this
@@ -1087,7 +1082,6 @@ class GuppyDemBuilder:
         "_idle_after_2q",
         "_inference",
         "_max_hosted_tick_separation",
-        "_measurement_classes_json",
         "_noise",
         "_num_measurements",
         "_observables_kind",
@@ -1110,7 +1104,6 @@ class GuppyDemBuilder:
         self._detectors_value: Any = _UNSET
         self._observables_kind: str | object = _UNSET
         self._observables_value: Any = _UNSET
-        self._measurement_classes_json: Any = _UNSET
         self._num_measurements: Any = _UNSET
         self._noise: Any = _UNSET
         self._idle_after_2q: Any = _UNSET
@@ -1168,11 +1161,6 @@ class GuppyDemBuilder:
     def with_detectors_json(self, text: str) -> Self:
         """Set raw JSON detector specifications."""
         self._set_specs("detectors", "json", text)
-        return self
-
-    def with_measurement_classes_json(self, text: str) -> Self:
-        """Set classes in the traced circuit's measurement emission order."""
-        self._set_once("_measurement_classes_json", text, "with_measurement_classes_json")
         return self
 
     def with_observables_json(self, text: str) -> Self:
@@ -1588,8 +1576,6 @@ class GuppyDemBuilder:
                 "p_idle_z_quadratic_sine_rate": p_idle_z_quadratic_sine_rate,
             },
         )
-        if self._measurement_classes_json is not _UNSET:
-            circuit.set_meta("measurement_classes", self._measurement_classes_json)
         circuit.set_meta("detectors", detectors_json)
         circuit.set_meta("observables", observables_json)
         measurement_count = circuit.num_measurements() if self._num_measurements is _UNSET else self._num_measurements

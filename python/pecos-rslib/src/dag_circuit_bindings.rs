@@ -2408,7 +2408,15 @@ impl PyTickCircuit {
             .collect()
     }
 
-    /// Resolve detector and observable definitions to absolute emission positions.
+    /// Return measurement-readout definitions resolved to absolute emission positions.
+    ///
+    /// Detector dictionaries always include the effective `fault_sector` (an opaque
+    /// non-empty string, or `None` when unknown). With `measurement_classes`, labels
+    /// are derived from parity-reduced support and explicit labels must agree; the
+    /// result also includes the validated classes in emission order. Without classes,
+    /// explicit labels pass through unchanged.
+    /// Observable dictionaries include `reference` (integer 0 or 1) when
+    /// metadata supplies a noiseless value, or `None` when absent.
     fn circuit_definitions(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
         let definitions = definitions_from_tick_circuit(&self.inner)
             .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;

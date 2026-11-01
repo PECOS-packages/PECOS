@@ -3,6 +3,9 @@
 
 use pecos_core::MeasId;
 use pecos_qec::fault_tolerance::DagFaultInfluenceMap;
+use pecos_qec::fault_tolerance::circuit_definitions::{
+    DefinitionError, definitions_from_dag_circuit, definitions_from_tick_circuit,
+};
 use pecos_qec::{DemBuilder, MemoryBasis, ParityCheckMatrix, coloration_memory_circuit};
 use pecos_quantum::{Attribute, DagCircuit, Gate, TickCircuit};
 use serde_json::{Value, json};
@@ -115,36 +118,101 @@ fn equal_explicit_sector_is_accepted() {
 
 #[test]
 fn malformed_classes_name_the_ordinal() {
-    for classes in [
-        json!({}),
-        json!([1, null, null]),
-        json!([{}, null, null]),
-        json!([{"family":"X", "round":0}, null, null]),
-        json!([{"block":"", "family":"X", "round":0}, null, null]),
-        json!([{"block":7, "family":"X", "round":0}, null, null]),
-        json!([{"block":"a", "round":0}, null, null]),
-        json!([{"block":"a", "family":"", "round":0}, null, null]),
-        json!([{"block":"a", "family":7, "round":0}, null, null]),
-        json!([{"block":"a", "family":"X"}, null, null]),
-        json!([{"block":"a", "family":"X", "round":0.5}, null, null]),
-        json!([{"block":"a", "family":"X", "round":true}, null, null]),
-        json!([{"block":"a", "family":"X", "round":null}, null, null]),
-        json!([{"block":"a", "family":"X", "round":"0"}, null, null]),
-        json!([]),
-        json!([null, null, null, null]),
+    for (entry, reason, bad_value) in [
+        (json!(1), "expected an object or null", json!(1)),
+        (json!({}), "block is missing", json!({})),
+        (
+            json!({"family":"X", "round":0}),
+            "block is missing",
+            json!({"family":"X", "round":0}),
+        ),
+        (
+            json!({"block":"", "family":"X", "round":0}),
+            "block",
+            json!(""),
+        ),
+        (
+            json!({"block":7, "family":"X", "round":0}),
+            "block",
+            json!(7),
+        ),
+        (
+            json!({"block":"a", "round":0}),
+            "family is missing",
+            json!({"block":"a", "round":0}),
+        ),
+        (
+            json!({"block":"a", "family":"", "round":0}),
+            "family",
+            json!(""),
+        ),
+        (
+            json!({"block":"a", "family":7, "round":0}),
+            "family",
+            json!(7),
+        ),
+        (
+            json!({"block":"a", "family":"X"}),
+            "round is missing",
+            json!({"block":"a", "family":"X"}),
+        ),
+        (
+            json!({"block":"a", "family":"X", "round":0.5}),
+            "round",
+            json!(0.5),
+        ),
+        (
+            json!({"block":"a", "family":"X", "round":1.0}),
+            "round",
+            json!(1.0),
+        ),
+        (
+            json!({"block":"a", "family":"X", "round":9_223_372_036_854_775_808_u64}),
+            "round",
+            json!(9_223_372_036_854_775_808_u64),
+        ),
+        (
+            json!({"block":"a", "family":"X", "round":true}),
+            "round",
+            json!(true),
+        ),
+        (
+            json!({"block":"a", "family":"X", "round":null}),
+            "round",
+            Value::Null,
+        ),
+        (
+            json!({"block":"a", "family":"X", "round":"0"}),
+            "round",
+            json!("0"),
+        ),
+    ] {
+        let circuit = circuit(&json!([entry, null, null]), &json!([0]), &Value::Null);
+        let error = DemBuilder::from_tick_circuit(&circuit, 0.0, 0.0, 0.0, 0.0)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains(&format!("measurement_classes ordinal 0: {reason}")),
+            "{error}"
+        );
+        assert!(error.ends_with(&format!("got {bad_value}")), "{error}");
+    }
+    for (classes, expected) in [
+        (json!({}), "measurement_classes: expected a JSON list"),
+        (
+            json!([]),
+            "measurement_classes length 0 does not match measurement count 3",
+        ),
+        (
+            json!([null, null, null, null]),
+            "measurement_classes length 4 does not match measurement count 3",
+        ),
     ] {
         let circuit = circuit(&classes, &json!([0]), &Value::Null);
         let error = DemBuilder::from_tick_circuit(&circuit, 0.0, 0.0, 0.0, 0.0)
             .unwrap_err()
             .to_string();
-        let expected = match classes.as_array().map(Vec::len) {
-            None => "measurement_classes: expected a JSON list".to_owned(),
-            Some(length) if length != 3 => {
-                format!("measurement_classes length {length} does not match measurement count 3")
-            }
-            Some(_) => "ordinal 0".to_owned(),
-        };
-        assert!(error.contains(&expected), "{classes}: {error}");
+        assert!(error.contains(expected), "{error}");
     }
 }
 
@@ -293,4 +361,63 @@ fn stamped_id_beyond_the_records_is_rejected_with_classes() {
             "{error}"
         );
     }
+}
+
+#[test]
+fn resolved_definitions_carry_derived_labels_and_reject_disagreement() {
+    for explicit in [Value::Null, json!("X"), json!("Z")] {
+        let circuit = circuit(
+            &json!([class(&json!("X")), class(&json!("Z")), null]),
+            &json!([1, 1, 0]),
+            &explicit,
+        );
+        let dag = DagCircuit::try_from(&circuit).unwrap();
+        for result in [
+            definitions_from_tick_circuit(&circuit),
+            definitions_from_dag_circuit(&dag),
+        ] {
+            if explicit == json!("Z") {
+                let error = result.unwrap_err();
+                assert!(matches!(
+                    error,
+                    DefinitionError::Parse {
+                        kind: "measurement_classes",
+                        ..
+                    }
+                ));
+                let message = error.to_string();
+                assert!(
+                    message.contains("D3") && message.contains('Z') && message.contains('X'),
+                    "{message}"
+                );
+            } else {
+                assert_eq!(
+                    result.unwrap().detectors[0].fault_sector.as_deref(),
+                    Some("X")
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn fluent_circuit_builder_returns_labelled_dem_and_definitions() {
+    let mut circuit = circuit(
+        &json!([class(&json!("X")), null, null]),
+        &json!([0]),
+        &Value::Null,
+    );
+    circuit.set_meta(
+        "detectors",
+        Attribute::String(r#"[{"id":0,"records":[0]}]"#.into()),
+    );
+    let build = pecos_qec::DetectorErrorModel::builder()
+        .with_circuit(circuit)
+        .build()
+        .unwrap();
+    assert_eq!(build.dem.detectors[0].fault_sector.as_deref(), Some("X"));
+    assert_eq!(
+        build.definitions.detectors[0].fault_sector.as_deref(),
+        Some("X")
+    );
 }

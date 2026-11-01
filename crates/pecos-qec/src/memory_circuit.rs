@@ -15,8 +15,7 @@
 use pecos_quantum::{AnnotationKind, Attribute, F2Matrix, TickCircuit, TickMeasRef};
 
 use crate::ParityCheckMatrix;
-use crate::fault_tolerance::circuit_definitions::tick_circuit_measurement_emission;
-use pecos_quantum::MeasurementClass;
+use crate::fault_tolerance::circuit_definitions::tick_circuit_emission;
 
 /// Memory-experiment preparation and final-measurement basis.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -208,11 +207,7 @@ fn css_memory_measurement_classes_json(
             for measurement in measurements {
                 classes.insert(
                     measurement.meas_id,
-                    MeasurementClass {
-                        block: "memory".to_owned(),
-                        family: Some(family.to_owned()),
-                        round: i64::try_from(round).expect("round count fits i64"),
-                    },
+                    serde_json::json!({"block": "memory", "family": family, "round": round}),
                 );
             }
         }
@@ -224,24 +219,14 @@ fn css_memory_measurement_classes_json(
     for measurement in final_data {
         classes.insert(
             measurement.meas_id,
-            MeasurementClass {
-                block: "memory".to_owned(),
-                family: Some(final_family.to_owned()),
-                round: i64::try_from(x_measurements.len()).expect("round count fits i64"),
-            },
+            serde_json::json!({
+                "block": "memory", "family": final_family, "round": x_measurements.len(),
+            }),
         );
     }
-    let entries: Vec<_> = tick_circuit_measurement_emission(circuit)
+    let entries: Vec<_> = tick_circuit_emission(circuit)
         .into_iter()
-        .map(|record| {
-            record.meas_id.and_then(|id| classes.get(&id)).map(|class| {
-                serde_json::json!({
-                    "block": class.block,
-                    "family": class.family,
-                    "round": class.round,
-                })
-            })
-        })
+        .map(|id| id.and_then(|id| classes.get(&id)))
         .collect();
     serde_json::to_string(&entries).expect("classes are JSON-serializable")
 }

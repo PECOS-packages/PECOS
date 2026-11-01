@@ -85,7 +85,7 @@ pub use dag_circuit::{
     DagWireError, MeasRef, MeasResolveError, PauliAnnotation, TraversalWorkBuffers,
 };
 pub use fault_sector::{
-    MeasurementClass, parse_fault_sector, parse_measurement_classes,
+    MeasurementClass, parse_fault_sector, parse_measurement_classes, resolve_detector_fault_sector,
     validate_measurement_classes_length,
 };
 pub use tick_circuit::{

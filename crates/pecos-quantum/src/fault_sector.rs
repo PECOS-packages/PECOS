@@ -61,27 +61,36 @@ pub fn parse_measurement_classes(json: &str) -> Result<Vec<Option<MeasurementCla
             }
             let object = value
                 .as_object()
-                .ok_or_else(|| error("expected an object or null"))?;
-            let block = object
-                .get("block")
-                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| error(&format!("expected an object or null, got {value}")))?;
+            let required = |key: &str| {
+                object
+                    .get(key)
+                    .ok_or_else(|| error(&format!("{key} is missing, got {value}")))
+            };
+            let block_value = required("block")?;
+            let block = block_value
+                .as_str()
                 .filter(|block| !block.is_empty())
-                .ok_or_else(|| error("block must be a non-empty string"))?;
-            let family = match object.get("family") {
-                Some(serde_json::Value::Null) => None,
-                Some(serde_json::Value::String(family)) if !family.is_empty() => {
-                    Some(family.clone())
-                }
-                _ => {
-                    return Err(error(
-                        "family is required and must be a non-empty string or null",
-                    ));
+                .ok_or_else(|| {
+                    error(&format!(
+                        "block must be a non-empty string, got {block_value}"
+                    ))
+                })?;
+            let family = match required("family")? {
+                serde_json::Value::Null => None,
+                serde_json::Value::String(family) if !family.is_empty() => Some(family.clone()),
+                value => {
+                    return Err(error(&format!(
+                        "family must be a non-empty string or null, got {value}",
+                    )));
                 }
             };
-            let round = object
-                .get("round")
-                .and_then(serde_json::Value::as_i64)
-                .ok_or_else(|| error("round must be a signed 64-bit integer"))?;
+            let round_value = required("round")?;
+            let round = round_value.as_i64().ok_or_else(|| {
+                error(&format!(
+                    "round must be a signed 64-bit integer, got {round_value}"
+                ))
+            })?;
             Ok(Some(MeasurementClass {
                 block: block.to_owned(),
                 family,
@@ -106,4 +115,57 @@ pub fn validate_measurement_classes_length(
         ));
     }
     Ok(())
+}
+
+/// Resolve a detector's effective fault sector from absolute record positions.
+///
+/// Even multiplicities cancel. The remaining records must all have the same
+/// non-null family to derive a label; block and round do not affect it.
+///
+/// # Errors
+/// Rejects out-of-range positions and explicit labels that differ from the
+/// derived result (including no common family), naming the detector.
+pub fn resolve_detector_fault_sector(
+    detector_id: u32,
+    explicit: Option<&str>,
+    positions: &[usize],
+    classes: &[Option<MeasurementClass>],
+) -> Result<Option<String>, String> {
+    let mut support = std::collections::BTreeSet::new();
+    for &ordinal in positions {
+        if ordinal >= classes.len() {
+            return Err(format!(
+                "detector D{detector_id} references measurement {ordinal}, outside the {} measurement classes",
+                classes.len(),
+            ));
+        }
+        if !support.insert(ordinal) {
+            support.remove(&ordinal);
+        }
+    }
+    let family = |ordinal: usize| {
+        classes[ordinal]
+            .as_ref()
+            .and_then(|class| class.family.as_deref())
+    };
+    let derived = support
+        .first()
+        .and_then(|&ordinal| family(ordinal))
+        .filter(|expected| {
+            support
+                .iter()
+                .all(|&ordinal| family(ordinal) == Some(*expected))
+        });
+    if let Some(explicit) = explicit
+        && derived != Some(explicit)
+    {
+        let derived = derived.map_or_else(
+            || "no common family".to_owned(),
+            |family| format!("{family:?}"),
+        );
+        return Err(format!(
+            "detector D{detector_id} declares fault_sector {explicit:?} but its measurement classes give {derived}",
+        ));
+    }
+    Ok(derived.map(str::to_owned))
 }

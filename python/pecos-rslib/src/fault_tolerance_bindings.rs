@@ -70,8 +70,8 @@ use pecos_qec::fault_tolerance::dem_builder::{
     ReplacementBranchApproximation,
     TwoDetectorDirectRenderPolicy as RustTwoDetectorDirectRenderPolicy,
     compare_dems_exact as rust_compare_dems_exact,
-    compare_dems_statistical as rust_compare_dems_statistical,
-    verify_dem_equivalence as rust_verify_dem_equivalence,
+    compare_dems_statistical as rust_compare_dems_statistical, parse_detectors_json,
+    parse_observables_json, verify_dem_equivalence as rust_verify_dem_equivalence,
 };
 use pecos_qec::fault_tolerance::fault_distance::{
     FaultDistanceResult as RustFaultDistanceResult,
@@ -3126,6 +3126,105 @@ impl PyDemBuilder {
         slf
     }
 
+    /// Copy detector, observable, measurement-class and count metadata from a tick circuit.
+    ///
+    /// Absent attributes preserve earlier settings, as do blank `detectors`,
+    /// `observables` and `num_measurements` strings. A blank `measurement_classes`
+    /// string is kept, and `build()` rejects it as malformed. `build()` reports
+    /// malformed JSON. The circuit must emit records in the influence map's record order.
+    /// Only attributes are copied, so a circuit with detector or observable annotations
+    /// must define the same number of entries in the matching attribute. Use
+    /// `DetectorErrorModel.from_circuit` for circuits defined by annotation alone. The
+    /// check reads the circuit only: a map that already carries annotated observables
+    /// needs the separate setters.
+    ///
+    /// Returns:
+    ///     Self for method chaining.
+    ///
+    /// Raises:
+    ///     `ValueError`: If an attribute is not a string, `num_measurements` is not
+    ///         a non-negative integer, or the circuit has detector or observable
+    ///         annotations and the matching attribute defines a different number
+    ///         of entries.
+    fn with_circuit_metadata<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        circuit: &PyTickCircuit,
+    ) -> PyResult<PyRefMut<'py, Self>> {
+        use pecos_quantum::{AnnotationKind, Attribute};
+        use pyo3::exceptions::PyValueError;
+
+        let attribute = |name: &str| -> PyResult<Option<&str>> {
+            match circuit.inner.get_meta(name) {
+                None => Ok(None),
+                Some(Attribute::String(value)) => Ok(Some(value.as_str())),
+                Some(value) => Err(PyValueError::new_err(format!(
+                    "attribute {name:?} must be a string, got {value:?}",
+                ))),
+            }
+        };
+        let not_blank = |value: &&str| !value.trim().is_empty();
+        let detectors = attribute("detectors")?.filter(not_blank);
+        let observables = attribute("observables")?.filter(not_blank);
+        let classes = attribute("measurement_classes")?;
+        let count = attribute("num_measurements")?
+            .filter(not_blank)
+            .map(|value| {
+                value.parse::<usize>().map_err(|_| {
+                    PyValueError::new_err(format!(
+                        "num_measurements must be a non-negative integer string, got {value:?}",
+                    ))
+                })
+            })
+            .transpose()?;
+        let annotations = circuit.inner.annotations();
+        let annotated_detectors = annotations
+            .iter()
+            .filter(|annotation| matches!(annotation.kind, AnnotationKind::Detector { .. }))
+            .count();
+        let annotated_observables = annotations
+            .iter()
+            .filter(|annotation| matches!(annotation.kind, AnnotationKind::Observable { .. }))
+            .count();
+        // Malformed JSON stays for build() to report.
+        let defined_detectors = (annotated_detectors > 0)
+            .then(|| parse_detectors_json(detectors.unwrap_or_default()).map(|d| d.len()));
+        let defined_observables = (annotated_observables > 0)
+            .then(|| parse_observables_json(observables.unwrap_or_default()).map(|o| o.len()));
+        for (name, annotated, defined) in [
+            ("detectors", annotated_detectors, defined_detectors),
+            ("observables", annotated_observables, defined_observables),
+        ] {
+            if let Some(Ok(defined)) = defined
+                && defined != annotated
+            {
+                // from_circuit merges attributes with annotations, so it only
+                // helps when the attribute defines nothing.
+                let remedy = if defined == 0 {
+                    "use DetectorErrorModel.from_circuit or set the attribute"
+                } else {
+                    "make the attribute match the annotations"
+                };
+                return Err(PyValueError::new_err(format!(
+                    "circuit has {annotated} {name} annotations but its {name:?} attribute \
+                     defines {defined}; with_circuit_metadata reads attributes only, so {remedy}",
+                )));
+            }
+        }
+        if let Some(value) = detectors {
+            slf.detectors_json = Some(value.to_owned());
+        }
+        if let Some(value) = observables {
+            slf.observables_json = Some(value.to_owned());
+        }
+        if let Some(value) = classes {
+            slf.measurement_classes_json = Some(value.to_owned());
+        }
+        if let Some(value) = count {
+            slf.num_measurements = Some(value);
+        }
+        Ok(slf)
+    }
+
     /// Set measurement classes in influence-map record order, not stamped-id order.
     fn with_measurement_classes_json(
         mut slf: PyRefMut<'_, Self>,
@@ -3178,7 +3277,8 @@ impl PyDemBuilder {
     /// Raises:
     ///     `ValueError`: If the detector or observable JSON is malformed, or
     ///         a used record offset / `meas_id` is out of range for the
-    ///         configured measurement count.
+    ///         configured measurement count, measurement classes have the wrong
+    ///         length, or an explicit fault sector disagrees with the derived label.
     fn build(&self) -> PyResult<PyDetectorErrorModel> {
         let mut builder =
             RustDemBuilder::new(&self.influence_map).with_noise_config(self.noise.clone());

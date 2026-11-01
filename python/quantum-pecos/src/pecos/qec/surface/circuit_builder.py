@@ -4011,9 +4011,8 @@ def generate_dem_from_tick_circuit(
 
     # Get detector and observable metadata
     detectors_json = tc.get_meta("detectors")
-    observables_json = tc.get_meta("observables")
 
-    if not detectors_json:
+    if not detectors_json or (isinstance(detectors_json, str) and not detectors_json.strip()):
         msg = "TickCircuit must have detector metadata for DEM generation"
         raise ValueError(msg)
 
@@ -4051,12 +4050,7 @@ def generate_dem_from_tick_circuit(
     if hasattr(builder, "with_exact_branch_replay_circuit"):
         builder = builder.with_exact_branch_replay_circuit(dag)
     builder.with_num_measurements(num_measurements)
-    builder.with_detectors_json(detectors_json)
-    measurement_classes = tc.get_meta("measurement_classes")
-    if measurement_classes is not None:
-        builder.with_measurement_classes_json(measurement_classes)
-    if observables_json:
-        builder.with_observables_json(observables_json)
+    builder.with_circuit_metadata(tc)
 
     dem = builder.build_with_source_tracking()
 

@@ -249,6 +249,7 @@ fn css_memory_fault_sectors_follow_measurement_families() {
                 "Z"
             };
             assert_eq!(derived.fault_sector.as_deref(), Some(expected));
+            assert_eq!(detector.fault_sector, derived.fault_sector);
         }
         assert!(x_detectors > 0 && z_detectors > 0);
     }

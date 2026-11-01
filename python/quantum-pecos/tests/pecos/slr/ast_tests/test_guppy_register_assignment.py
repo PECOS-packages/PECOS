@@ -126,7 +126,10 @@ def test_bool_literal_assignment_sets_the_low_bit() -> None:
         ("bit", "c[0] = d[1]"),
         ("and", "c[0] = (d[1] and d[2])"),
         ("eq", "c[0] = (d[1] == d[2])"),
-        ("register-eq", "c[0] = (((1 if d[0] else 0) + (2 if d[1] else 0) + (4 if d[2] else 0) + (8 if d[3] else 0)) == 3)"),
+        (
+            "register-eq",
+            "c[0] = (((1 if d[0] else 0) + (2 if d[1] else 0) + (4 if d[2] else 0) + (8 if d[3] else 0)) == 3)",
+        ),
     ],
 )
 def test_bit_assignment_accepts_bit_values(form: str, rendered: str) -> None:
@@ -145,7 +148,7 @@ def test_bit_assignment_rejects_values_that_are_not_bits(form: str) -> None:
         "register-and": d & c,
         "negate": -d[0],
     }
-    with pytest.raises(GuppyCodegenError, match="Unsupported single-bit assignment|Guppy operator"):
+    with pytest.raises(GuppyCodegenError, match=r"Unsupported single-bit assignment|Guppy operator"):
         SlrConverter(Main(c, d, c[0].set(values[form]))).guppy()
 
 

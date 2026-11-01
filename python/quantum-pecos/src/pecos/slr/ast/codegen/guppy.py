@@ -2209,9 +2209,7 @@ class AstToGuppy:
                         f"registers compare as unsigned integers below 2**{MAX_PACKED_REGISTER_WIDTH}"
                     )
                     raise GuppyCodegenError(msg)
-            elif not self._is_whole_register(operand) and (
-                expr.op in ORDERING_OPS or not isinstance(operand, VarExpr)
-            ):
+            elif not self._is_whole_register(operand) and (expr.op in ORDERING_OPS or not isinstance(operand, VarExpr)):
                 msg = (
                     f"Unsupported register comparison in {expr!r}: compare to a register or a non-negative "
                     "literal, because Guppy's computed integers are signed and registers are unsigned."

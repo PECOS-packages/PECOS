@@ -9,7 +9,6 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-"""Whole-register assignments preserve Guppy's bool arrays and QASM bit order."""
 """Guppy code generation either rejects a classical expression or emits one Guppy accepts."""
 
 from dataclasses import replace
@@ -211,7 +210,12 @@ def test_register_comparison_does_not_use_a_name_a_program_can_shadow() -> None:
 
 @pytest.mark.parametrize(
     ("value", "reason"),
-    [(2**63, "does not fit"), (-(2**63) - 1, "does not fit"), (float("inf"), "no literal"), (float("nan"), "no literal")],
+    [
+        (2**63, "does not fit"),
+        (-(2**63) - 1, "does not fit"),
+        (float("inf"), "no literal"),
+        (float("nan"), "no literal"),
+    ],
 )
 def test_literals_guppy_cannot_write_are_rejected(value, reason) -> None:
     with pytest.raises(GuppyCodegenError, match=reason):

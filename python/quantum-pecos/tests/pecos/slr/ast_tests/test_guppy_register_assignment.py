@@ -122,15 +122,20 @@ def test_bool_literal_assignment_sets_the_low_bit() -> None:
 
 @pytest.mark.parametrize(
     ("form", "rendered"),
-    [("bit", "c[0] = d[1]"), ("and", "c[0] = (d[1] and d[2])"), ("eq", "c[0] = (d[1] == d[2])")],
+    [
+        ("bit", "c[0] = d[1]"),
+        ("and", "c[0] = (d[1] and d[2])"),
+        ("eq", "c[0] = (d[1] == d[2])"),
+        ("register-eq", "c[0] = (((1 if d[0] else 0) + (2 if d[1] else 0) + (4 if d[2] else 0) + (8 if d[3] else 0)) == 3)"),
+    ],
 )
 def test_bit_assignment_accepts_bit_values(form: str, rendered: str) -> None:
     c, d = CReg("c", 4), CReg("d", 4)
-    values = {"bit": d[1], "and": d[1] & d[2], "eq": d[1] == d[2]}
+    values = {"bit": d[1], "and": d[1] & d[2], "eq": d[1] == d[2], "register-eq": d == 3}
     assert rendered in SlrConverter(Main(c, d, c[0].set(values[form]))).guppy()
 
 
-@pytest.mark.parametrize("form", ["register", "bit-add", "float", "register-and", "register-eq", "negate"])
+@pytest.mark.parametrize("form", ["register", "bit-add", "float", "register-and", "negate"])
 def test_bit_assignment_rejects_values_that_are_not_bits(form: str) -> None:
     c, d = CReg("c", 4), CReg("d", 4)
     values = {
@@ -138,10 +143,9 @@ def test_bit_assignment_rejects_values_that_are_not_bits(form: str) -> None:
         "bit-add": d[0] + 1,
         "float": 1.5,
         "register-and": d & c,
-        "register-eq": d == 3,
         "negate": -d[0],
     }
-    with pytest.raises(GuppyCodegenError, match="Unsupported single-bit assignment"):
+    with pytest.raises(GuppyCodegenError, match="Unsupported single-bit assignment|Guppy operator"):
         SlrConverter(Main(c, d, c[0].set(values[form]))).guppy()
 
 

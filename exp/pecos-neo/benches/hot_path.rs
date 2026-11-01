@@ -67,6 +67,11 @@ fn bench_noise_emission(c: &mut Criterion) {
                 qubits: &qubits,
                 angles: &[],
                 gate_id: None,
+                group_size: pecos_neo::noise::gate_group_size(
+                    GateType::H.quantum_arity(),
+                    qubits.len(),
+                ),
+                leaked_suppressed: &[],
             };
             black_box(noise.emit(&event, &mut rng))
         });
@@ -79,6 +84,11 @@ fn bench_noise_emission(c: &mut Criterion) {
                 qubits: &qubits_2q,
                 angles: &[],
                 gate_id: None,
+                group_size: pecos_neo::noise::gate_group_size(
+                    GateType::CX.quantum_arity(),
+                    qubits_2q.len(),
+                ),
+                leaked_suppressed: &[],
             };
             black_box(noise.emit(&event, &mut rng))
         });
@@ -849,6 +859,11 @@ fn bench_composite_vs_channel_noise(c: &mut Criterion) {
                 qubits: &qubits,
                 angles: &[],
                 gate_id: None,
+                group_size: pecos_neo::noise::gate_group_size(
+                    GateType::H.quantum_arity(),
+                    qubits.len(),
+                ),
+                leaked_suppressed: &[],
             };
             black_box(noise.emit(&event, &mut rng))
         });
@@ -871,6 +886,8 @@ fn bench_composite_vs_channel_noise(c: &mut Criterion) {
                 qubits: &qubits,
                 angles: &[],
                 gate_id: None,
+                group_size: pecos_neo::noise::gate_group_size(GateType::H.quantum_arity(), qubits.len()),
+                leaked_suppressed: &[],
             };
             black_box(noise.emit(&event, &mut rng))
         });
@@ -891,6 +908,11 @@ fn bench_composite_vs_channel_noise(c: &mut Criterion) {
                 qubits: &qubits,
                 angles: &[],
                 gate_id: None,
+                group_size: pecos_neo::noise::gate_group_size(
+                    GateType::CX.quantum_arity(),
+                    qubits.len(),
+                ),
+                leaked_suppressed: &[],
             };
             black_box(noise.emit(&event, &mut rng))
         });
@@ -913,6 +935,8 @@ fn bench_composite_vs_channel_noise(c: &mut Criterion) {
                 qubits: &qubits,
                 angles: &[],
                 gate_id: None,
+                group_size: pecos_neo::noise::gate_group_size(GateType::CX.quantum_arity(), qubits.len()),
+                leaked_suppressed: &[],
             };
             black_box(noise.emit(&event, &mut rng))
         });
@@ -1201,6 +1225,11 @@ fn bench_batch_processor(c: &mut Criterion) {
                 qubits: &qubits,
                 angles: &angles,
                 gate_id: None,
+                group_size: pecos_neo::noise::gate_group_size(
+                    GateType::H.quantum_arity(),
+                    qubits.len(),
+                ),
+                leaked_suppressed: &[],
             };
             b.iter(|| black_box(batch_channel.apply(&event, &mut ctx, &mut rng)));
         });
@@ -1220,6 +1249,11 @@ fn bench_batch_processor(c: &mut Criterion) {
                     qubits: &qubits,
                     angles: &angles,
                     gate_id: None,
+                    group_size: pecos_neo::noise::gate_group_size(
+                        GateType::H.quantum_arity(),
+                        qubits.len(),
+                    ),
+                    leaked_suppressed: &[],
                 };
                 b.iter(|| black_box(composite_with_prob.apply(&event, &mut ctx, &mut rng)));
             },
@@ -1239,6 +1273,11 @@ fn bench_batch_processor(c: &mut Criterion) {
                         qubits: &qubits,
                         angles: &angles,
                         gate_id: None,
+                        group_size: pecos_neo::noise::gate_group_size(
+                            GateType::H.quantum_arity(),
+                            qubits.len(),
+                        ),
+                        leaked_suppressed: &[],
                     };
                     b.iter(|| black_box(composite_channel.apply(&event, &mut ctx, &mut rng)));
                 },

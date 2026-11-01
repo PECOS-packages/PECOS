@@ -513,7 +513,7 @@ impl ComposableNoiseModel {
     }
 
     /// Apply state changes from a noise response and notify observers.
-    fn apply_state_changes_with_observers(
+    pub(crate) fn apply_state_changes_with_observers(
         &mut self,
         response: &NoiseResponse,
         rng: &mut PecosRng,
@@ -1362,6 +1362,8 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::H.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         let mut rng = PecosRng::seed_from_u64(42);

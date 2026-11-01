@@ -61,7 +61,7 @@
 
 use crate::command::{CommandQueue, GateCommand, GateType};
 use crate::noise::validation::{ValidationError, ValidationResult, validate_probability};
-use crate::noise::{ComposableNoiseModel, NoiseEvent, NoiseResponse, surviving_gate_qubits};
+use crate::noise::{ComposableNoiseModel, NoiseEvent, NoiseResponse, partition_gate_qubits};
 use crate::outcome::{MeasurementOutcome, MeasurementOutcomes};
 use crate::sampling::importance::ImportanceConfig;
 use crate::sampling::weight::SampleWeight;
@@ -463,8 +463,13 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
     /// Execute a single command with importance-weighted noise.
     fn execute_command(&mut self, command: &GateCommand) -> Result<(), ImportanceSamplingError> {
         let skipped = self.emit_before_gate(command);
-        let surviving =
-            surviving_gate_qubits(&command.qubits, command.gate_type.quantum_arity(), &skipped);
+        let surviving = partition_gate_qubits(
+            &command.qubits,
+            crate::noise::gate_group_size(command.gate_type.quantum_arity(), command.qubits.len()),
+            &skipped,
+            None,
+        )
+        .executed;
         if !command.qubits.is_empty() && surviving.is_empty() {
             return Ok(());
         }
@@ -1036,8 +1041,13 @@ where
         command: &GateCommand,
     ) -> Result<(), ImportanceSamplingError> {
         let skipped = self.emit_before_gate(command);
-        let surviving =
-            surviving_gate_qubits(&command.qubits, command.gate_type.quantum_arity(), &skipped);
+        let surviving = partition_gate_qubits(
+            &command.qubits,
+            crate::noise::gate_group_size(command.gate_type.quantum_arity(), command.qubits.len()),
+            &skipped,
+            None,
+        )
+        .executed;
         if !command.qubits.is_empty() && surviving.is_empty() {
             return Ok(());
         }

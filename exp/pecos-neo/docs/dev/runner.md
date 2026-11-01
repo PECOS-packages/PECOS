@@ -201,10 +201,34 @@ let outcomes = runner.run(&mut state, &circuit)?;
 NoiseEvent::AfterGate {
     gate_type: GateType::I,     // Placeholder for custom gates
     qubits: &[QubitId(0)],
+    leaked_suppressed: &[],
+    group_size: std::num::NonZeroUsize::MIN,
     angles: &[],
     gate_id: Some(my_custom_gate),  // Actual gate identity
 }
 ```
+
+After-gate `qubits` contains executed operand groups only. `leaked_suppressed`
+contains complete groups skipped while leaked, in original order within each
+slice. The partition is fixed immediately after before-gate dispatch. A later
+unleak never promotes a suppressed group to executed, and a later leak never
+restores a dropped group. A qubit that seeps in the same before-gate emit that
+skipped it is healthy at this decision, so its group is dropped.
+
+A command with only leaked-suppressed groups still emits, with empty `qubits`.
+An all-dropped, originally non-empty command emits no after-gate event. Empty
+operands retain their event. Queue after-gate handlers receive the same split;
+adapted execution does not invoke user gate handlers.
+
+Gate-error channels use `qubits`. Seepage channels explicitly read suppressed
+groups. `LeakageChannel` also applies partner noise there. Idle-after-two-qubit
+noise acts on healthy members of executed and suppressed groups; crosstalk uses
+both as sources and exclusions. Dropped groups get neither effect, but can be
+crosstalk targets. `gated_qubits()` returns both slices without allocating when
+there are no suppressed groups.
+
+Handler leakage marks require a noise model and notify its observers once per
+mark. Before-gate marks are visible to channels in the same dispatch.
 
 ## Multiple Shots
 

@@ -104,8 +104,8 @@ CompositeNoiseModelBuilder::new()
 CompositeNoiseModelBuilder::new()
     // Leakage and seepage rates
     .with_leakage(
-        0.001,  // Probability of leaking per gate
-        0.1,    // Probability of seeping back per gate
+        0.001,  // Emission ratio within gate faults
+        0.1,    // Conditional seepage probability after a gate emission fault
     ).unwrap()
 ```
 
@@ -279,6 +279,46 @@ When noise is applied, it produces a `NoiseResponse` that the runner processes:
 | `NoiseResponse::ForceOutcomes(pairs)` | Set outcomes to specific values |
 | `NoiseResponse::MarkLeaked(qubits)` | Mark qubits as leaked in context |
 | `NoiseResponse::Multiple(responses)` | Combine multiple responses |
+
+After-gate `qubits` contains executed operand groups only. `leaked_suppressed`
+contains complete groups skipped while leaked, in original order within each
+slice. The partition is fixed immediately after before-gate dispatch. A later
+unleak never promotes a suppressed group to executed, and a later leak never
+restores a dropped group. A qubit that seeps in the same before-gate emit that
+skipped it is healthy at this decision, so its group is dropped.
+
+A command with only leaked-suppressed groups still emits, with empty `qubits`.
+An all-dropped, originally non-empty command emits no after-gate event. Empty
+operands retain their event. Queue after-gate handlers receive the same split;
+adapted execution does not invoke user gate handlers.
+
+Gate-error channels use `qubits`. Seepage channels explicitly read suppressed
+groups. `LeakageChannel` also applies partner noise there. Idle-after-two-qubit
+noise acts on healthy members of executed and suppressed groups; crosstalk uses
+both as sources and exclusions. Dropped groups get neither effect, but can be
+crosstalk targets. `gated_qubits()` returns both slices without allocating when
+there are no suppressed groups.
+
+`group_size` on before/after events is a `NonZeroUsize`. Queue commands use
+the gate type arity; adapted commands use the registered arity. A positive
+arity that divides non-empty operands is used directly; otherwise the size
+is the whole operand count, or one for empty operands.
+`NoiseContext::set_current_gate` also takes a `NonZeroUsize`.
+Composite filters classify by this size, including custom gates represented as
+`GateType::I`. Primitives see only their own group for partner/leakage conditions.
+On suppressed groups, primitives run only on currently leaked members.
+
+Single- and two-qubit seepage has marginal rate `p * r * s`: gate error `p`
+(angle-scaled for two-qubit gates), raw emission ratio `r`, and conditional
+seepage `s`. Leakage scale
+does not enter. Two-qubit channels share the `p` and `r` draws per pair, then draw
+`s` for each currently leaked member in operand order. Composite builders sample
+per qubit, so their both-leaked joint rate differs. Seeded results change.
+
+Handler leakage marks are applied with observers before combining the handler
+response with noise-model responses. Observer responses are combined, but marks
+inside observer responses are not applied recursively. Without a noise model,
+a handler mark returns `ExecutionError::HandlerLeakageWithoutNoise`.
 
 ## Noise Context
 

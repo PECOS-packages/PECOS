@@ -148,6 +148,7 @@ use pecos_random::PecosRng;
 use smallvec::SmallVec;
 use std::any::{Any, TypeId};
 use std::borrow::Cow;
+use std::num::NonZeroUsize;
 
 macro_rules! declare_noise_event_kinds {
     ($($variant:ident),+ $(,)?) => {
@@ -248,6 +249,8 @@ pub enum NoiseEvent<'a> {
     BeforeGate {
         gate_type: GateType,
         qubits: &'a [QubitId],
+        /// Operand-group size used for suppression and composite context, at least one.
+        group_size: NonZeroUsize,
         angles: &'a [Angle64],
         /// Optional gate ID for custom gate identification.
         /// This allows noise channels to apply per-custom-gate noise rates.
@@ -255,12 +258,21 @@ pub enum NoiseEvent<'a> {
         gate_id: Option<GateId>,
     },
 
-    /// Emitted after a gate is applied.
+    /// Emitted after a command with retained operand groups, or empty operands.
     ///
-    /// Channels can respond with `InjectGates` to add Pauli errors.
+    /// `qubits` contains executed groups only. `leaked_suppressed` contains
+    /// groups skipped while leaked immediately after before-gate dispatch.
+    /// Later leakage changes do not change either slice's membership.
+    /// Other skipped groups are dropped and receive no after-gate event work.
+    /// An all-suppressed command emits with empty `qubits`; an all-dropped,
+    /// originally non-empty command emits no event.
     AfterGate {
         gate_type: GateType,
         qubits: &'a [QubitId],
+        /// Operand-group size used for suppression and composite context, at least one.
+        group_size: NonZeroUsize,
+        /// Complete operand groups suppressed while leaked, in original order.
+        leaked_suppressed: &'a [QubitId],
         angles: &'a [Angle64],
         /// Optional gate ID for custom gate identification.
         /// This allows noise channels to apply per-custom-gate noise rates.
@@ -391,6 +403,7 @@ impl<'a> NoiseEvent<'a> {
             qubits,
             angles,
             gate_id: Some(gate_type.to_gate_id()),
+            group_size: gate_group_size(gate_type.quantum_arity(), qubits.len()),
         }
     }
 
@@ -410,6 +423,7 @@ impl<'a> NoiseEvent<'a> {
             qubits,
             angles,
             gate_id: Some(gate_id),
+            group_size: gate_group_size(gate_type.quantum_arity(), qubits.len()),
         }
     }
 
@@ -425,6 +439,8 @@ impl<'a> NoiseEvent<'a> {
             qubits,
             angles,
             gate_id: Some(gate_type.to_gate_id()),
+            group_size: gate_group_size(gate_type.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         }
     }
 
@@ -444,6 +460,8 @@ impl<'a> NoiseEvent<'a> {
             qubits,
             angles,
             gate_id: Some(gate_id),
+            group_size: gate_group_size(gate_type.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         }
     }
 
@@ -461,12 +479,12 @@ impl<'a> NoiseEvent<'a> {
         }
     }
 
-    /// Get the qubits involved in this event (if qubit-specific).
+    /// Get the event qubits; on `AfterGate`, these are executed groups only.
     ///
     /// Returns an empty slice for circuit-level events like `BeforeCircuit`
     /// and `AfterCircuit`.
     #[must_use]
-    pub fn qubits(&self) -> &[QubitId] {
+    pub fn qubits(&self) -> &'a [QubitId] {
         match self {
             Self::BeforeGate { qubits, .. }
             | Self::AfterGate { qubits, .. }
@@ -478,6 +496,35 @@ impl<'a> NoiseEvent<'a> {
             | Self::BetweenLayers { qubits, .. } => qubits,
             Self::BeforeCircuit { .. } | Self::AfterCircuit { .. } | Self::Signal { .. } => &[],
         }
+    }
+
+    /// Operand groups retained only because they contained a leaked qubit.
+    /// Returns an empty slice for every event except `AfterGate`.
+    #[must_use]
+    pub fn leaked_suppressed(&self) -> &'a [QubitId] {
+        match self {
+            Self::AfterGate {
+                leaked_suppressed, ..
+            } => leaked_suppressed,
+            _ => &[],
+        }
+    }
+
+    /// Get executed and leaked-suppressed operands for gate-associated effects.
+    ///
+    /// Borrows the ordinary event slice when there are no suppressed groups.
+    #[must_use]
+    pub fn gated_qubits(&self) -> Cow<'a, [QubitId]> {
+        if let Self::AfterGate {
+            qubits,
+            leaked_suppressed,
+            ..
+        } = self
+            && !leaked_suppressed.is_empty()
+        {
+            return Cow::Owned([*qubits, *leaked_suppressed].concat());
+        }
+        Cow::Borrowed(self.qubits())
     }
 
     /// Get the angles for this event (if applicable).
@@ -638,6 +685,14 @@ pub enum NoiseResponse {
     ///
     /// Qubits outside the current gate's operands have no effect. To suppress
     /// the whole command, list all of its operands.
+    ///
+    /// A suppressed group that contains no leaked qubit at the skip decision
+    /// is treated as a gate that did not run: it receives no after-gate effects,
+    /// including gate error, idle-after-two-qubit-gate noise, and acting as a
+    /// crosstalk source. Its qubits can still be crosstalk targets of the groups that
+    /// ran. A channel that skips a group and wants other noise on it must
+    /// apply that noise itself. Groups containing a leaked qubit at that decision
+    /// are instead retained in `AfterGate::leaked_suppressed`, never in `qubits`.
     SkipGate(SmallVec<[QubitId; 4]>),
 
     /// Flip measurement outcomes for specific qubits.
@@ -761,35 +816,66 @@ impl NoiseResponse {
     }
 }
 
-/// Retain complete operand groups that contain no skipped qubits, in order.
-/// The group size must be positive. Unchanged operands are borrowed.
-pub(crate) fn surviving_gate_qubits<'a>(
-    qubits: &'a [QubitId],
-    group_size: usize,
-    skipped: &[QubitId],
-) -> Cow<'a, [QubitId]> {
-    debug_assert!(
-        group_size > 0,
-        "callers must pass a positive operand-group size"
-    );
-    if skipped.is_empty() || !qubits.iter().any(|q| skipped.contains(q)) {
-        return Cow::Borrowed(qubits);
+/// Decide the operand-group size shared by gate event producers.
+///
+/// A positive arity dividing non-empty operands defines a batch. Otherwise
+/// the whole slice is one group, with size one for empty operands.
+#[must_use]
+pub fn gate_group_size(arity: usize, len: usize) -> NonZeroUsize {
+    match (NonZeroUsize::new(arity), NonZeroUsize::new(len)) {
+        (Some(arity), Some(len)) if len.get().is_multiple_of(arity.get()) => arity,
+        (_, Some(len)) => len,
+        (_, None) => NonZeroUsize::MIN,
     }
-    Cow::Owned(
-        qubits
-            .chunks(group_size)
-            .filter(|group| !group.iter().any(|q| skipped.contains(q)))
-            .flatten()
-            .copied()
-            .collect(),
-    )
+}
+
+/// Operand membership fixed immediately after before-gate dispatch.
+pub(crate) struct GateQubitPartition<'a> {
+    pub group_size: NonZeroUsize,
+    pub executed: Cow<'a, [QubitId]>,
+    pub leaked_suppressed: Cow<'a, [QubitId]>,
+    pub emit_after_gate: bool,
+}
+
+/// Partition complete groups, borrowing unchanged operands without allocation.
+pub(crate) fn partition_gate_qubits<'a>(
+    qubits: &'a [QubitId],
+    group_size: NonZeroUsize,
+    skipped: &[QubitId],
+    context: Option<&NoiseContext>,
+) -> GateQubitPartition<'a> {
+    if skipped.is_empty() || !qubits.iter().any(|q| skipped.contains(q)) {
+        return GateQubitPartition {
+            group_size,
+            executed: Cow::Borrowed(qubits),
+            leaked_suppressed: Cow::Borrowed(&[]),
+            emit_after_gate: true,
+        };
+    }
+    let mut executed = Vec::new();
+    let mut leaked_suppressed = Vec::new();
+    for group in qubits.chunks(group_size.get()) {
+        if !group.iter().any(|q| skipped.contains(q)) {
+            executed.extend_from_slice(group);
+        } else if context.is_some_and(|ctx| ctx.any_leaked(group)) {
+            leaked_suppressed.extend_from_slice(group);
+        }
+    }
+    GateQubitPartition {
+        group_size,
+        emit_after_gate: !executed.is_empty() || !leaked_suppressed.is_empty(),
+        executed: Cow::Owned(executed),
+        leaked_suppressed: Cow::Owned(leaked_suppressed),
+    }
 }
 
 /// Trait for noise channels that respond to events.
 ///
 /// Each noise channel handles a specific type of noise (e.g., single-qubit depolarizing,
 /// measurement errors, leakage). The composer combines multiple channels to form
-/// a complete noise model.
+/// a complete noise model. On `AfterGate`, `event.qubits()` contains executed
+/// groups only. Channels implementing seepage or gate-associated idle/crosstalk
+/// effects must explicitly read `leaked_suppressed` or `gated_qubits()`.
 pub trait NoiseChannel: Send + Sync {
     /// Declare every kind on which `try_apply` can return a response.
     ///
@@ -1607,6 +1693,8 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: gate_group_size(GateType::CX.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         assert_eq!(event.qubits(), &qubits);
@@ -1621,6 +1709,8 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: gate_group_size(GateType::RZ.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         assert_eq!(event.angles(), &angles);
@@ -1656,34 +1746,88 @@ mod tests {
     }
 
     #[test]
-    fn test_surviving_gate_qubits() {
-        let qubits = [
-            QubitId(0),
-            QubitId(1),
-            QubitId(2),
-            QubitId(3),
-            QubitId(4),
-            QubitId(5),
-        ];
+    fn test_partition_gate_qubits() {
+        let qubits: Vec<_> = (0..6).map(QubitId).collect();
         for skipped in [&[][..], &[QubitId(99)][..]] {
-            let result = surviving_gate_qubits(&qubits, 2, skipped);
-            assert!(matches!(result, Cow::Borrowed(_)));
-            assert_eq!(result.as_ptr(), qubits.as_ptr());
+            let partition =
+                partition_gate_qubits(&qubits, gate_group_size(2, qubits.len()), skipped, None);
+            assert!(matches!(partition.executed, Cow::Borrowed(_)));
+            assert_eq!(partition.executed.as_ptr(), qubits.as_ptr());
+            assert!(matches!(partition.leaked_suppressed, Cow::Borrowed(_)));
+            assert!(partition.leaked_suppressed.is_empty());
+            assert!(partition.emit_after_gate);
         }
+        for (group_size, skipped, leaked, executed, suppressed) in [
+            (2, vec![2, 99], vec![], vec![0, 1, 4, 5], vec![]),
+            (2, vec![2], vec![3], vec![0, 1, 4, 5], vec![2, 3]),
+            (2, vec![0, 2], vec![1], vec![4, 5], vec![0, 1]),
+            (2, vec![2], vec![2], vec![0, 1, 4, 5], vec![2, 3]),
+            (2, vec![0, 2, 5], vec![], vec![], vec![]),
+            (
+                2,
+                vec![0, 2, 5],
+                vec![0, 2, 5],
+                vec![],
+                vec![0, 1, 2, 3, 4, 5],
+            ),
+            (1, vec![2], vec![], vec![0, 1, 3, 4, 5], vec![]),
+            (3, vec![2], vec![], vec![3, 4, 5], vec![]),
+        ] {
+            let skipped: Vec<_> = skipped.into_iter().map(QubitId).collect();
+            let mut ctx = NoiseContext::new();
+            for q in &leaked {
+                ctx.mark_leaked(QubitId(*q));
+            }
+            // None preserves importance sampling's leakage-independent partition.
+            for context in [None, Some(&ctx)] {
+                let partition = partition_gate_qubits(
+                    &qubits,
+                    gate_group_size(group_size, qubits.len()),
+                    &skipped,
+                    context,
+                );
+                let expected: Vec<_> = executed.iter().copied().map(QubitId).collect();
+                assert_eq!(partition.executed.as_ref(), expected);
+                let expected: Vec<_> = if context.is_some() {
+                    suppressed.iter().copied().map(QubitId).collect()
+                } else {
+                    vec![]
+                };
+                assert_eq!(partition.leaked_suppressed.as_ref(), expected);
+                assert_eq!(
+                    partition.emit_after_gate,
+                    !executed.is_empty() || !expected.is_empty()
+                );
+            }
+        }
+        let partition = partition_gate_qubits(&[], NonZeroUsize::MIN, &[QubitId(0)], None);
+        assert!(matches!(partition.executed, Cow::Borrowed(_)));
+        assert!(partition.emit_after_gate);
+    }
+
+    #[test]
+    fn gate_group_size_and_gated_qubits() {
+        for (arity, len, expected) in [(2, 4, 2), (0, 4, 4), (2, 3, 3), (2, 0, 1), (0, 0, 1)] {
+            assert_eq!(gate_group_size(arity, len).get(), expected);
+        }
+        let qubits = [QubitId(0), QubitId(1)];
+        let event = NoiseEvent::after_gate(GateType::CX, &qubits, &[]);
+        let gated = event.gated_qubits();
+        assert!(matches!(gated, Cow::Borrowed(_)));
+        assert_eq!(gated.as_ptr(), qubits.as_ptr());
+        let suppressed = [QubitId(2), QubitId(3)];
+        let event = NoiseEvent::AfterGate {
+            gate_type: GateType::CX,
+            gate_id: None,
+            qubits: &qubits,
+            leaked_suppressed: &suppressed,
+            group_size: NonZeroUsize::new(2).unwrap(),
+            angles: &[],
+        };
+        assert_eq!(event.qubits(), qubits);
         assert_eq!(
-            surviving_gate_qubits(&qubits, 2, &[QubitId(2), QubitId(99)]).as_ref(),
-            &[QubitId(0), QubitId(1), QubitId(4), QubitId(5)]
-        );
-        assert_eq!(
-            surviving_gate_qubits(&qubits, 1, &[QubitId(2)]).as_ref(),
-            &[QubitId(0), QubitId(1), QubitId(3), QubitId(4), QubitId(5)]
-        );
-        assert_eq!(
-            surviving_gate_qubits(&qubits, 3, &[QubitId(2)]).as_ref(),
-            &[QubitId(3), QubitId(4), QubitId(5)]
-        );
-        assert!(
-            surviving_gate_qubits(&qubits, 2, &[QubitId(0), QubitId(2), QubitId(5)]).is_empty()
+            event.gated_qubits().as_ref(),
+            &[QubitId(0), QubitId(1), QubitId(2), QubitId(3)]
         );
     }
 
@@ -1878,3 +2022,7 @@ mod tests {
         assert_eq!(trans.sample(true, 0.9), CrosstalkResult::Leak);
     }
 }
+
+#[cfg(all(test, feature = "composite-noise"))]
+#[path = "noise/suppressed_tests.rs"]
+mod suppressed_tests;

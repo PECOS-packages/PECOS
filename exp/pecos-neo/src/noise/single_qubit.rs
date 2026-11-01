@@ -37,7 +37,7 @@ use super::{
     NoiseChannel, NoiseContext, NoiseEvent, NoiseResponse, PauliWeights, SingleQubitEmissionResult,
     SingleQubitEmissionWeights,
 };
-use crate::command::{GateCommand, GateType};
+use crate::command::GateCommand;
 use crate::noise::validation::{ValidationResult, validate_probability, validate_rate};
 use pecos_core::Angle64;
 use pecos_random::PecosRng;
@@ -320,17 +320,12 @@ impl NoiseChannel for SingleQubitChannel {
                 }
                 Self::handle_before_gate(qubits, ctx, rng)
             }
-            NoiseEvent::AfterGate {
-                gate_type,
-                qubits,
-                angles,
-                ..
-            } => {
+            NoiseEvent::AfterGate { .. } => {
                 // Skip noise for noiseless gates
                 if ctx.is_noiseless_operation(event) {
                     return NoiseResponse::None;
                 }
-                self.handle_after_gate(*gate_type, qubits, angles, ctx, rng)
+                self.handle_after_gate(event, ctx, rng)
             }
             _ => NoiseResponse::None,
         }
@@ -362,12 +357,7 @@ impl NoiseChannel for SingleQubitChannel {
                 }
                 Some(Self::handle_before_gate(qubits, ctx, rng))
             }
-            NoiseEvent::AfterGate {
-                gate_type,
-                qubits,
-                angles,
-                ..
-            } => {
+            NoiseEvent::AfterGate { gate_type, .. } => {
                 if !gate_type.is_single_qubit() || !gate_type.is_unitary_gate() {
                     return None;
                 }
@@ -375,7 +365,7 @@ impl NoiseChannel for SingleQubitChannel {
                 if ctx.is_noiseless_operation(event) {
                     return Some(NoiseResponse::None);
                 }
-                Some(self.handle_after_gate(*gate_type, qubits, angles, ctx, rng))
+                Some(self.handle_after_gate(event, ctx, rng))
             }
             _ => None,
         }
@@ -416,6 +406,14 @@ impl SingleQubitChannel {
         NoiseResponse::None
     }
 
+    /// Draw seepage conditional on a gate error and an emission error.
+    fn seeps(&self, rng: &mut PecosRng) -> bool {
+        self.emission_ratio > 0.0
+            && rng.check_probability(self.error_threshold)
+            && rng.check_probability(self.emission_threshold)
+            && rng.check_probability(self.seepage_threshold)
+    }
+
     /// Handle `AfterGate` event - apply Pauli or emission errors.
     ///
     /// `gate_type`/`angles` describe the gate just applied; an emission error
@@ -423,12 +421,21 @@ impl SingleQubitChannel {
     /// engines' gate-replacing emission semantics.
     fn handle_after_gate(
         &self,
-        gate_type: GateType,
-        qubits: &[pecos_core::QubitId],
-        angles: &[Angle64],
+        event: &NoiseEvent<'_>,
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> NoiseResponse {
+        let NoiseEvent::AfterGate {
+            gate_type,
+            qubits,
+            leaked_suppressed,
+            angles,
+            ..
+        } = event
+        else {
+            return NoiseResponse::None;
+        };
+        let gate_type = *gate_type;
         let mut gates = SmallVec::new();
         let mut leaked = SmallVec::new();
         let mut unleaked = SmallVec::new();
@@ -436,17 +443,9 @@ impl SingleQubitChannel {
         // Fast path: check if any leakage exists at all
         let has_any_leakage = ctx.leaked_count() > 0;
 
-        for &qubit in qubits {
-            // Skip expensive is_leaked call if we know no qubits are leaked
-            let is_leaked = has_any_leakage && ctx.is_leaked(qubit);
-
-            // For leaked qubits, only emission errors can cause seepage
-            if is_leaked {
-                if self.emission_ratio > 0.0
-                    && rng.check_probability(self.error_threshold)
-                    && rng.check_probability(self.emission_threshold)
-                    && rng.check_probability(self.seepage_threshold)
-                {
+        for &qubit in *qubits {
+            if has_any_leakage && ctx.is_leaked(qubit) {
+                if self.seeps(rng) {
                     unleaked.push(qubit);
                 }
                 continue;
@@ -485,6 +484,12 @@ impl SingleQubitChannel {
             }
         }
 
+        for &qubit in *leaked_suppressed {
+            if has_any_leakage && ctx.is_leaked(qubit) && self.seeps(rng) {
+                unleaked.push(qubit);
+            }
+        }
+
         // Build combined response
         let mut response = NoiseResponse::None;
 
@@ -519,6 +524,8 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::H.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         assert!(channel.responds_to(&event));
@@ -542,6 +549,8 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::CX.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         assert!(!channel.responds_to(&event));
@@ -561,6 +570,8 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::H.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         let mut ctx = NoiseContext::new();
@@ -603,6 +614,7 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::H.quantum_arity(), qubits.len()),
         };
 
         let mut ctx = NoiseContext::new();
@@ -625,6 +637,8 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::H.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         let mut ctx = NoiseContext::new();

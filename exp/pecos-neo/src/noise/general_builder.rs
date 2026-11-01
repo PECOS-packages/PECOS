@@ -293,7 +293,11 @@ impl GeneralNoiseModelBuilder {
         Ok(self)
     }
 
-    /// Set the seepage probability for single-qubit gates.
+    /// Set seepage probability conditional on an emission fault on a leaked qubit.
+    ///
+    /// The per-qubit marginal rate is `p1 * emission_ratio * seepage`, with
+    /// angle scaling included in `p1` where configured. Leakage scale does not
+    /// enter this product.
     #[must_use]
     pub fn with_p1_seepage(mut self, p: f64) -> Self {
         self.p1_seepage_prob = p;
@@ -351,7 +355,11 @@ impl GeneralNoiseModelBuilder {
         Ok(self)
     }
 
-    /// Set the seepage probability for two-qubit gates.
+    /// Set seepage probability conditional on an emission fault on a leaked qubit.
+    ///
+    /// The per-qubit marginal rate is `p2 * emission_ratio * seepage`, with
+    /// angle scaling included in `p2` where configured. Leakage scale does not
+    /// enter this product.
     #[must_use]
     pub fn with_p2_seepage(mut self, p: f64) -> Self {
         self.p2_seepage_prob = p;
@@ -1019,6 +1027,8 @@ mod tests {
             qubits: &qubits,
             angles: &[],
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::CX.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
         let gates = collect_gates(model.emit(&event, &mut PecosRng::seed_from_u64(67)));
 
@@ -1043,6 +1053,8 @@ mod tests {
             qubits: &qubits,
             angles: &[],
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::CX.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
         let gates = collect_gates(model.emit(&event, &mut PecosRng::seed_from_u64(71)));
 
@@ -1066,6 +1078,8 @@ mod tests {
             qubits: &qubits,
             angles: &[],
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::CX.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
         let gates = collect_gates(model.emit(&event, &mut PecosRng::seed_from_u64(73)));
 

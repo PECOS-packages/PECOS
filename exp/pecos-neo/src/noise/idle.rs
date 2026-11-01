@@ -510,12 +510,13 @@ impl NoiseChannel for IdleChannel {
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> NoiseResponse {
+        let gated_qubits = event.gated_qubits();
         let (qubits, duration) = match event {
             NoiseEvent::IdleTime { qubits, duration } => (*qubits, duration.as_f64()),
-            NoiseEvent::AfterGate {
-                gate_type, qubits, ..
-            } if self.idle_after_2q > 0.0 && gate_type.is_two_qubit() => {
-                (*qubits, self.idle_after_2q)
+            NoiseEvent::AfterGate { gate_type, .. }
+                if self.idle_after_2q > 0.0 && gate_type.is_two_qubit() =>
+            {
+                (gated_qubits.as_ref(), self.idle_after_2q)
             }
             _ => return NoiseResponse::None,
         };
@@ -599,6 +600,8 @@ mod tests {
             qubits,
             angles: &[],
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::CX.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         }
     }
 
@@ -1077,6 +1080,8 @@ mod tests {
             qubits: &qubits,
             angles: &[],
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::H.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         assert!(!channel.responds_to(&event));

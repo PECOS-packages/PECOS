@@ -437,6 +437,11 @@ mod tests {
                     qubits: pair_batch,
                     angles: &[],
                     gate_id: None,
+                    group_size: crate::noise::gate_group_size(
+                        GateType::CX.quantum_arity(),
+                        (pair_batch).len(),
+                    ),
+                    leaked_suppressed: &[],
                 };
                 batched_gates.extend(collect_gates(channel.apply(&event, &mut ctx, &mut rng)));
             }
@@ -452,6 +457,11 @@ mod tests {
                     qubits: pair,
                     angles: &[],
                     gate_id: None,
+                    group_size: crate::noise::gate_group_size(
+                        GateType::CX.quantum_arity(),
+                        pair.len(),
+                    ),
+                    leaked_suppressed: &[],
                 };
                 separate_gates.extend(collect_gates(channel.apply(
                     &event,

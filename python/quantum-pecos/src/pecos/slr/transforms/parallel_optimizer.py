@@ -163,8 +163,24 @@ class ParallelOptimizer:
             else:
                 new_ops.append(Parallel(*group))
 
-        # Return a Block containing the optimized structure
-        return Block(*new_ops)
+        # Keep storage in its original block order even when executable ops
+        # are flattened and regrouped. QAllocs are declarations, not gates.
+        declarations = self._declaration_block(parallel)
+        return Block(*([declarations] if declarations is not None else []), *new_ops)
+
+    def _declaration_block(self, block: Block) -> Block | None:
+        """Retain the declaration tree of a region whose operations are flattened."""
+        declarations = Block()
+        declarations.vars = block.vars
+        declarations.ops = [op for op in block.ops if type(op).__name__ == "QAlloc"]
+        for op in block.ops:
+            if isinstance(op, Block):
+                child = self._declaration_block(op)
+                if child is not None:
+                    declarations.ops.append(child)
+        if not declarations.vars.vars and not declarations.ops:
+            return None
+        return declarations
 
     def _can_optimize_parallel(self, parallel: Parallel) -> bool:
         """Check if a Parallel block can be safely optimized.
@@ -208,16 +224,7 @@ class ParallelOptimizer:
 
     def _collect_operations(self, parallel: Parallel) -> list[Node]:
         """Recursively collect all operations from a Parallel block."""
-        operations = []
-
-        for op in parallel.ops:
-            if isinstance(op, Block):
-                # Recursively collect from nested blocks
-                operations.extend(self._collect_from_block(op))
-            else:
-                operations.append(op)
-
-        return operations
+        return self._collect_from_block(parallel)
 
     def _collect_from_block(self, block: Block) -> list[Node]:
         """Recursively collect all operations from a Block."""
@@ -226,7 +233,7 @@ class ParallelOptimizer:
         for op in block.ops:
             if isinstance(op, Block):
                 operations.extend(self._collect_from_block(op))
-            else:
+            elif type(op).__name__ != "QAlloc":
                 operations.append(op)
 
         return operations

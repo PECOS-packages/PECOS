@@ -6,6 +6,19 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Breaking:** pecos-neo validates operand counts per operation and groups native
+  batches by quantum arity (#1442). `AdaptedOp::Gate` execution and batching now
+  reject repeated qubits, including `H([q0, q0])`, which previously ran twice.
+  `BatchedCircuit::from_resolved` takes `GateDefinitions`, validates angle counts for
+  gates with a `GateType`, and returns `Result`. `Batch::General` replaces `MultiAngle`, and `BatchExecutor`
+  requires `execute_general`. `ExecutionError` and `ResolutionError` gain variants
+  for invalid operands and missing decomposition angle inputs. `PathExplorer`
+  now panics on invalid circuit input, including repeated qubits.
+  MeasureLeaked, MeasureFree, QAlloc, QFree, PrepX and PrepY gain core specs matching
+  `GateRegistry`. Configured category noise now applies when they run as
+  `AdaptedOp::Gate`, or as a queued QFree, through an override or decomposition,
+  and it draws from the RNG.
+
 - **Breaking:** pecos-neo single- and two-qubit gate channels now discard a
   seeping qubit's state with an independent uniform I/X/Y/Z twirl (#1570),
   including seepage after leaked-suppressed gates. The marginal seepage rate

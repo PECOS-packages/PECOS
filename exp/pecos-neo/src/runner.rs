@@ -72,12 +72,12 @@ use std::sync::Arc;
 
 /// Convert a flat qubit slice to a vector of pairs.
 fn flat_to_pairs(qubits: &[QubitId]) -> SmallVec<[(QubitId, QubitId); 4]> {
-    qubits
-        .as_chunks::<2>()
-        .0
-        .iter()
-        .map(|c| (c[0], c[1]))
-        .collect()
+    let (pairs, remainder) = qubits.as_chunks::<2>();
+    assert!(
+        remainder.is_empty(),
+        "validated gate operands must contain complete pairs"
+    );
+    pairs.iter().map(|c| (c[0], c[1])).collect()
 }
 
 // --- Signal Handler Infrastructure ---
@@ -632,19 +632,28 @@ pub enum ExecutionError {
     },
     /// The command has invalid qubit support or payload.
     InvalidCommand(crate::command::GateCommandError),
-    /// A gate command carries an invalid number of target qubits.
+    /// A gate carries an invalid number of target qubits.
     QubitArity {
         gate: GateType,
         arity: usize,
         got: usize,
     },
-    /// A gate reaching its decomposition carries a number of target qubits
-    /// that is not a multiple of the gate's registered qubit arity.
+    /// Any gate reported by ID carries a number of target qubits that is not
+    /// a nonzero multiple of its registered qubit arity. This check can run
+    /// before decomposition.
     DecompositionQubitArity {
         gate_id: GateId,
         arity: usize,
         got: usize,
     },
+    /// A decomposition angle source refers to a missing input angle.
+    DecompositionAngleIndexOutOfRange {
+        gate_id: GateId,
+        index: usize,
+        angle_count: usize,
+    },
+    /// A gate reported by ID repeats qubits within one command.
+    DuplicateQubits { gate_id: GateId, qubits: Vec<usize> },
     /// A decomposition operation refers to an operand index outside the
     /// operand group it is instantiated over.
     DecompositionIndexOutOfRange {
@@ -696,9 +705,21 @@ impl std::fmt::Display for ExecutionError {
                 got,
             } => write!(
                 f,
-                "Gate ID {} received {got} targets for decomposition, which is not a nonzero \
+                "Gate ID {} received {got} targets, which is not a nonzero \
                  multiple of its registered qubit arity {arity}",
                 gate_id.0
+            ),
+            Self::DecompositionAngleIndexOutOfRange {
+                gate_id,
+                index,
+                angle_count,
+            } => write!(
+                f,
+                "Decomposition of gate {gate_id:?} uses angle index {index}, but only {angle_count} input angles were supplied"
+            ),
+            Self::DuplicateQubits { gate_id, qubits } => write!(
+                f,
+                "Gate {gate_id:?} requires distinct qubits; duplicated qubits: {qubits:?}"
             ),
             Self::DecompositionIndexOutOfRange {
                 gate_id,
@@ -1582,12 +1603,47 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         angles: &[Angle64],
         depth: usize,
     ) -> Result<(), ExecutionError> {
+        // Validate before noise or overrides can mutate the simulator.
         if let Some(gate_type) = gate_id.try_to_gate_type() {
             validate_angle_arity(gate_type, angles)?;
         }
-        // This grouping decides suppression, after-gate membership and group_size.
-        // Unknown/zero arity, or an empty or incomplete batch, is one group;
-        // the decomposition path validates the operand count separately.
+        if let Some(arity) = self.definitions.quantum_arity(gate_id).map(usize::from)
+            && arity > 0
+            && !qubits.len().is_multiple_of(arity)
+        {
+            return Err(match gate_id.try_to_gate_type() {
+                Some(gate) => ExecutionError::QubitArity {
+                    gate,
+                    arity,
+                    got: qubits.len(),
+                },
+                None => ExecutionError::DecompositionQubitArity {
+                    gate_id,
+                    arity,
+                    got: qubits.len(),
+                },
+            });
+        }
+        if qubits.len() > 1 {
+            let duplicates = pecos_core::duplicate_qubits(qubits.iter().map(|q| q.0));
+            if !duplicates.is_empty() {
+                return Err(match gate_id.try_to_gate_type() {
+                    Some(gate_type) => ExecutionError::InvalidCommand(
+                        crate::command::GateCommandError::InvalidGate {
+                            gate_type,
+                            message: format!(
+                                "Gate {gate_type:?} requires distinct qubits within one gate command; duplicated qubits: {duplicates:?}"
+                            ),
+                        },
+                    ),
+                    None => ExecutionError::DuplicateQubits {
+                        gate_id,
+                        qubits: duplicates,
+                    },
+                });
+            }
+        }
+        // Grouping preserves the existing empty-operand execution behavior.
         let group_size = self.gate_group_size(gate_id, qubits);
         let skipped = self.emit_before_gate(sim, gate_id, qubits, angles, group_size)?;
         let partition = self.partition_gate(qubits, group_size, &skipped);
@@ -1941,14 +1997,6 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         };
         Ok(match result {
             Ok(()) => CliffordRotationAttempt::Executed,
-            Err(message)
-                if gate_type.quantum_arity() == 2
-                    && qubits.as_chunks::<2>().0.iter().any(|[a, b]| a == b) =>
-            {
-                return Err(ExecutionError::InvalidCommand(
-                    crate::command::GateCommandError::InvalidGate { gate_type, message },
-                ));
-            }
             Err(_) => CliffordRotationAttempt::NonCliffordAngle,
         })
     }
@@ -1977,6 +2025,13 @@ impl<S: CliffordGateable> CircuitRunner<S> {
                     got,
                 }
             }
+            GroupInstantiationError::AngleIndexOutOfRange { index, angle_count } => {
+                ExecutionError::DecompositionAngleIndexOutOfRange {
+                    gate_id,
+                    index,
+                    angle_count,
+                }
+            }
             GroupInstantiationError::IndexOutOfRange { index, group_size } => {
                 ExecutionError::DecompositionIndexOutOfRange {
                     gate_id,
@@ -1986,8 +2041,9 @@ impl<S: CliffordGateable> CircuitRunner<S> {
             }
         };
 
-        // Check the operand count first, so a malformed batch reports its
-        // arity rather than a missing decomposition.
+        // Known positive arities have already rejected incomplete nonempty groups.
+        // Empty operands can still reach this check and are rejected for those
+        // arities; unknown/zero arity still instantiates the whole slice once.
         let arity = self.definitions.quantum_arity(gate_id).map(usize::from);
         let groups = operand_groups(qubits, arity).map_err(to_execution_error)?;
         let Some(decomp_entry) = self.definitions.decomposition(gate_id) else {
@@ -2743,33 +2799,6 @@ mod tests {
     use pecos_simulators::{SparseStab, StateVec};
 
     #[test]
-    fn repeated_rotation_pair_is_invalid_command_not_angle() {
-        use pecos_simulators::StabilizerTableauSimulator;
-        for (gate, kind) in [
-            (gates::RZZ, GateType::RZZ),
-            (gates::RXX, GateType::RXX),
-            (gates::RYY, GateType::RYY),
-            (gates::RXYXY2Q, GateType::RXYXY2Q),
-        ] {
-            let mut sim = SparseStab::with_seed(3, 42);
-            sim.h(&[QubitId(0)]);
-            let before = sim.clone();
-            let error = CircuitRunner::<SparseStab>::try_execute_clifford_rotation(
-                &mut sim,
-                gate,
-                &[QubitId(0), QubitId(1), QubitId(2), QubitId(2)],
-                &vec![Angle64::HALF_TURN; kind.angle_arity()],
-            )
-            .expect_err("invalid pair must not be classified as a non-Clifford angle");
-            assert!(
-                matches!(&error, ExecutionError::InvalidCommand(crate::command::GateCommandError::InvalidGate { gate_type, .. }) if *gate_type == kind)
-            );
-            assert!(error.to_string().contains("repeated qubit 2"));
-            assert_eq!(sim.full_tableau(), before.full_tableau());
-        }
-    }
-
-    #[test]
     fn test_queue_leakage_skip_is_pair_local() {
         let mut noise =
             ComposableNoiseModel::new().add_channel(crate::noise::LeakageChannel::new());
@@ -3134,9 +3163,19 @@ mod tests {
                 .with_noise(noise);
             let qubits: Vec<_> = (0..count).map(QubitId).collect();
             let mut state = SparseStab::with_seed(count, 42);
-            runner
-                .execute_gate(&mut state, id, &qubits, &[Angle64::HALF_TURN], 0)
-                .unwrap();
+            let result = runner.execute_gate(&mut state, id, &qubits, &[Angle64::HALF_TURN], 0);
+            if arity == Some(2) && count == 3 {
+                assert!(matches!(
+                    result,
+                    Err(ExecutionError::DecompositionQubitArity {
+                        arity: 2,
+                        got: 3,
+                        ..
+                    })
+                ));
+            } else {
+                result.unwrap();
+            }
             let expected_after = if arity == Some(2) && count == 4 {
                 vec![vec![QubitId(2), QubitId(3)]]
             } else {
@@ -4691,11 +4730,11 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Err(ExecutionError::DecompositionQubitArity {
-                    gate_id,
+                Err(ExecutionError::QubitArity {
+                    gate: GateType::CCX,
                     arity: 3,
                     got: 4,
-                }) if gate_id == gates::CCX
+                })
             ),
             "{result:?}"
         );

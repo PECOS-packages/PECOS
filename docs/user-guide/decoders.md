@@ -681,8 +681,10 @@ order. The final measurement count must match the list length.
 
 The normal manual Python route is `DemBuilder(map).with_circuit_metadata(circuit)`:
 it copies detectors, observables, classes and the measurement count together.
-It reads attributes only, so when a circuit has detector or observable annotations,
-the matching attribute must define the same number of entries. Use
+It copies attributes only, after checking them against the circuit: ids must be
+unique, references must resolve, and attributes must agree with any annotations on
+ids, measurements and labels. The influence map must hold the measurement records
+of `circuit.to_dag_circuit()`, so build it from that DAG. Use
 `DetectorErrorModel.from_circuit` for circuits defined by annotation alone.
 Resolved `circuit_definitions()` detector dictionaries carry the effective labels,
 including derived labels when explicit metadata is absent or null; disagreement

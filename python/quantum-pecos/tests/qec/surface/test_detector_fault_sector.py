@@ -12,6 +12,7 @@ from pecos.qec.surface import LogicalCircuitBuilder, SurfacePatch
 from pecos.qec.surface.decode import _surface_native_topology, _surface_patch_cache_key
 from pecos.qec.surface.logical_circuit import LogicalGateType
 from pecos.qec.surface.teleportation_decision import t_teleportation_decision_model
+from pecos_rslib import TickCircuit
 from pecos_rslib.decoders import pymatching
 from pecos_rslib.qec import DetectorErrorModel, SampleBatch
 
@@ -418,15 +419,15 @@ def test_with_circuit_metadata_changes_nothing_when_rejected(classified_circuit)
     assert dem.num_observables == 0
 
 
-def annotated_circuit(attribute_kind, attribute_value):
+def annotated_circuit(attribute_kind, attribute_value, *, labelled=False):
     """Build a one-detector, one-observable annotated circuit with one attribute under test."""
-    from pecos_rslib import TickCircuit
-
     circuit = TickCircuit()
-    circuit.tick().pz([0])
+    circuit.tick().pz([0, 1])
     measurements = list(circuit.tick().mz([0]))
-    circuit.detector(measurements)
-    circuit.observable(measurements)
+    circuit.tick().mz([1])
+    label = "annotation" if labelled else None
+    circuit.detector(measurements, label=label)
+    circuit.observable(measurements, label=label)
     # The other kind's attribute is valid, so only the kind under test can fail.
     other = "observables" if attribute_kind == "detectors" else "detectors"
     circuit.set_meta(other, '[{"id":0,"records":[0]}]')
@@ -436,38 +437,54 @@ def annotated_circuit(attribute_kind, attribute_value):
 
 
 @pytest.mark.parametrize(
-    ("value", "defined"),
-    [
-        (None, 0),
-        ("", 0),
-        (" \n", 0),
-        ("[]", 0),
-        ('[{"id":0,"records":[0]},{"id":1,"records":[0]}]', 2),
-    ],
-    ids=["absent", "empty", "whitespace", "empty-list", "surplus"],
+    "value",
+    [None, "", " \n", "[]"],
+    ids=["absent", "empty", "whitespace", "empty-list"],
 )
 @pytest.mark.parametrize("kind", ["detectors", "observables"])
-def test_with_circuit_metadata_rejects_attribute_annotation_count_mismatch(kind, value, defined):
+def test_with_circuit_metadata_rejects_annotations_with_empty_attribute(kind, value):
     from pecos_rslib.qec import DagFaultAnalyzer, DemBuilder
 
     circuit = annotated_circuit(kind, value)
     influence = DagFaultAnalyzer(circuit.to_dag_circuit()).build_influence_map()
     builder = DemBuilder(influence)
-    with pytest.raises(ValueError, match=f'1 {kind} annotations but its "{kind}" attribute defines {defined}') as error:
+    with pytest.raises(ValueError, match=f'{kind[:-1]} annotations but its "{kind}" attribute defines none'):
         builder.with_circuit_metadata(circuit)
     dem = builder.build()
     assert dem.detector_fault_sectors() == []
     assert dem.num_observables == 0
 
-    # The error offers from_circuit only where following that advice works.
-    assert ("DetectorErrorModel.from_circuit" in str(error.value)) == (defined == 0)
-    if defined == 0:
-        advised = DetectorErrorModel.from_circuit(circuit, p1=0.01, p2=0.01, p_meas=0.01, p_prep=0.01)
-        assert advised.num_detectors == 1
-        assert advised.num_observables == 1
-    else:
-        with pytest.raises(ValueError, match="ids differ"):
-            DetectorErrorModel.from_circuit(circuit, p1=0.01, p2=0.01, p_meas=0.01, p_prep=0.01)
+    advised = DetectorErrorModel.from_circuit(circuit, p1=0.01, p2=0.01, p_meas=0.01, p_prep=0.01)
+    assert advised.num_detectors == 1
+    assert advised.num_observables == 1
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        ('[{"id":0,"records":[0]},{"id":1,"records":[0]}]', "ids differ"),
+        ('[{"id":7,"records":[0]}]', "ids differ"),
+        ('[{"id":0,"records":[1]}]', "differ from annotation positions"),
+        ('[{"id":0,"records":[0],"label":"attribute"}]', "conflicting labels"),
+        ('[{"id":0,"records":[0]},{"id":0,"records":[1]}]', "is repeated in metadata"),
+        ('[{"id":0,"records":[9]}]', "out of range"),
+    ],
+    ids=["surplus", "other-id", "other-record", "label", "duplicate-id", "bad-record"],
+)
+@pytest.mark.parametrize("kind", ["detectors", "observables"])
+def test_with_circuit_metadata_applies_the_from_circuit_rules(kind, value, message):
+    from pecos_rslib.qec import DagFaultAnalyzer, DemBuilder
+
+    circuit = annotated_circuit(kind, value, labelled=True)
+    influence = DagFaultAnalyzer(circuit.to_dag_circuit()).build_influence_map()
+    builder = DemBuilder(influence)
+    with pytest.raises(ValueError, match=message):
+        builder.with_circuit_metadata(circuit)
+    with pytest.raises(ValueError, match=message):
+        DetectorErrorModel.from_circuit(circuit, p1=0.01, p2=0.01, p_meas=0.01, p_prep=0.01)
+    dem = builder.build()
+    assert dem.detector_fault_sectors() == []
+    assert dem.num_observables == 0
 
 
 @pytest.mark.parametrize("kind", ["detectors", "observables"])
@@ -479,19 +496,143 @@ def test_with_circuit_metadata_rejects_partial_attribute(kind):
     add_annotation = circuit.detector if kind == "detectors" else circuit.observable
     add_annotation(measurements)
     influence = DagFaultAnalyzer(circuit.to_dag_circuit()).build_influence_map()
-    with pytest.raises(ValueError, match=f'2 {kind} annotations but its "{kind}" attribute defines 1'):
+    with pytest.raises(ValueError, match="ids differ"):
+        DemBuilder(influence).with_circuit_metadata(circuit)
+
+
+def test_with_circuit_metadata_rejects_duplicate_ids_without_annotations(classified_circuit):
+    from pecos_rslib.qec import DagFaultAnalyzer, DemBuilder
+
+    classified_circuit.set_meta("detectors", '[{"id":0,"records":[0]},{"id":0,"records":[0]}]')
+    influence = DagFaultAnalyzer(classified_circuit.to_dag_circuit()).build_influence_map()
+    with pytest.raises(ValueError, match="detector id 0 is repeated in metadata"):
+        DemBuilder(influence).with_circuit_metadata(classified_circuit)
+
+
+def test_with_circuit_metadata_keeps_one_copy_of_a_map_annotation():
+    from pecos_rslib.qec import DagFaultAnalyzer, DemBuilder, InfluenceBuilder
+
+    circuit = TickCircuit()
+    circuit.tick().pz([0, 1])
+    circuit.tick().mz([0])
+    circuit.observable(list(circuit.tick().mz([1])))
+    circuit.set_meta("detectors", '[{"id":0,"records":[0]},{"id":1,"records":[1]}]')
+    circuit.set_meta("observables", '[{"id":0,"records":[1]}]')
+    dag = circuit.to_dag_circuit()
+    influence = DagFaultAnalyzer(dag).build_influence_map()
+    influence.merge_dem_outputs_from(InfluenceBuilder(dag).with_circuit_annotations().build())
+    dem = DemBuilder(influence).with_noise(0.01, 0.01, 0.01, 0.01).with_circuit_metadata(circuit).build()
+    assert "D1 L0" in dem.to_string()
+
+
+def measured_circuit(*gates):
+    circuit = TickCircuit()
+    circuit.tick().pz([0, 1])
+    for gate in gates:
+        gate(circuit.tick())
+    return circuit
+
+
+def z_on(qubit):
+    return lambda tick: tick.mz([qubit])
+
+
+def x_on(qubit):
+    return lambda tick: tick.mx([qubit])
+
+
+def cx(tick):
+    tick.cx([(0, 1)])
+
+
+@pytest.mark.parametrize(
+    ("map_gates", "message"),
+    [
+        ((z_on(1), z_on(0)), r"record 0: map has node \d+ qubit 1 basis 0.*circuit has node \d+ qubit 0"),
+        ((z_on(0),), r"record 1: map has no record, circuit has node \d+ qubit 1"),
+        ((z_on(0), z_on(1), z_on(0)), r"record 2: map has node \d+ qubit 0.*circuit has no record"),
+        ((), r"record 0: map has no record, circuit has node \d+ qubit 0"),
+        ((z_on(0), x_on(1)), r"record 1: map has node \d+ qubit 1 basis 1.*build the influence map"),
+        ((cx, z_on(0), z_on(1)), r"record 0: map has node \d+ qubit 0"),
+    ],
+    ids=["reversed", "shorter", "longer", "empty", "other-basis", "extra-gate-first"],
+)
+def test_with_circuit_metadata_rejects_map_of_another_circuit(map_gates, message):
+    from pecos_rslib.qec import DagFaultAnalyzer, DemBuilder
+
+    circuit = measured_circuit(z_on(0), z_on(1))
+    circuit.set_meta("detectors", '[{"id":0,"records":[0]}]')
+    influence = DagFaultAnalyzer(measured_circuit(*map_gates).to_dag_circuit()).build_influence_map()
+    with pytest.raises(ValueError, match=message):
+        DemBuilder(influence).with_circuit_metadata(circuit)
+
+
+def test_with_circuit_metadata_rejects_map_with_other_measurement_ids():
+    from pecos_rslib.qec import DagFaultAnalyzer, DemBuilder
+
+    def stamped(ids):
+        circuit = TickCircuit()
+        circuit.tick().pz([0, 1])
+        circuit.tick().mz_with_ids([0, 1], ids)
+        return circuit
+
+    circuit = stamped([1, 0])
+    circuit.set_meta("detectors", '[{"id":0,"meas_ids":[0]}]')
+    influence = DagFaultAnalyzer(stamped([0, 1]).to_dag_circuit()).build_influence_map()
+    with pytest.raises(ValueError, match="record 0"):
+        DemBuilder(influence).with_circuit_metadata(circuit)
+
+
+def test_with_circuit_metadata_resolves_ids_the_dag_minted():
+    from pecos_rslib.qec import DagFaultAnalyzer, DemBuilder
+
+    circuit = TickCircuit()
+    circuit.tick().pz([0, 1])
+    circuit.tick().mz_with_ids([0], [5])
+    circuit.tick().add_gate("MZ", [1])
+    # Id 6 is out of range as an ordinal, so only the DAG's minted id resolves it.
+    circuit.set_meta("detectors", '[{"id":0,"meas_ids":[6]}]')
+    influence = DagFaultAnalyzer(circuit.to_dag_circuit()).build_influence_map()
+    dem = DemBuilder(influence).with_noise(0.01, 0.01, 0.01, 0.01).with_circuit_metadata(circuit).build()
+    expected = DetectorErrorModel.from_circuit(circuit, p1=0.01, p2=0.01, p_meas=0.01, p_prep=0.01)
+    assert "error" in expected.to_string()
+    assert dem.to_string() == expected.to_string()
+
+
+@pytest.mark.parametrize("declared", ["0", "2"])
+def test_with_circuit_metadata_rejects_count_differing_from_circuit(classified_circuit, declared):
+    from pecos_rslib.qec import DagFaultAnalyzer, DemBuilder
+
+    classified_circuit.set_meta("num_measurements", declared)
+    influence = DagFaultAnalyzer(classified_circuit.to_dag_circuit()).build_influence_map()
+    with pytest.raises(ValueError, match=f"num_measurements={declared} disagrees with the 1"):
+        DemBuilder(influence).with_circuit_metadata(classified_circuit)
+
+
+def test_with_circuit_metadata_rejects_count_on_empty_circuit():
+    from pecos_rslib.qec import DagFaultAnalyzer, DemBuilder
+
+    circuit = TickCircuit()
+    circuit.set_meta("num_measurements", "5")
+    circuit.set_meta("detectors", '[{"id":0,"records":[3]}]')
+    influence = DagFaultAnalyzer(circuit.to_dag_circuit()).build_influence_map()
+    with pytest.raises(ValueError, match="num_measurements=5 disagrees with the 0"):
         DemBuilder(influence).with_circuit_metadata(circuit)
 
 
 @pytest.mark.parametrize("kind", ["detectors", "observables"])
-def test_with_circuit_metadata_leaves_malformed_annotated_json_to_build(kind):
+def test_with_circuit_metadata_requires_only_the_annotated_kind(kind):
     from pecos_rslib.qec import DagFaultAnalyzer, DemBuilder
 
-    circuit = annotated_circuit(kind, "not JSON")
+    circuit = TickCircuit()
+    circuit.tick().pz([0])
+    measurements = list(circuit.tick().mz([0]))
+    add_annotation = circuit.detector if kind == "detectors" else circuit.observable
+    add_annotation(measurements)
+    circuit.set_meta(kind, '[{"id":0,"records":[0]}]')
     influence = DagFaultAnalyzer(circuit.to_dag_circuit()).build_influence_map()
-    builder = DemBuilder(influence).with_circuit_metadata(circuit)
-    with pytest.raises(ValueError, match="JSON"):
-        builder.build()
+    dem = DemBuilder(influence).with_circuit_metadata(circuit).build()
+    assert (dem.num_detectors, dem.num_observables) == ((1, 0) if kind == "detectors" else (0, 1))
 
 
 def test_with_circuit_metadata_accepts_annotations_with_attributes(classified_circuit):
@@ -515,8 +656,25 @@ def test_generate_dem_rejects_blank_detectors(classified_circuit, blank):
     from pecos.qec.surface.circuit_builder import generate_dem_from_tick_circuit
 
     classified_circuit.set_meta("detectors", blank)
-    with pytest.raises(ValueError, match="TickCircuit must have detector metadata"):
+    with pytest.raises(ValueError, match=r"TickCircuit must have detector metadata.*DetectorErrorModel\.from_circuit"):
         generate_dem_from_tick_circuit(classified_circuit, p1=0.01, p2=0.01, p_meas=0.01, p_prep=0.01)
+
+
+@pytest.mark.parametrize("count", [None, "", " \n"], ids=["absent", "empty", "whitespace"])
+def test_generate_dem_takes_an_undeclared_count_from_the_map(count):
+    from pecos.qec.surface.circuit_builder import generate_dem_from_tick_circuit
+
+    def generate(declared):
+        circuit = TickCircuit()
+        circuit.tick().pz([0])
+        circuit.tick().mz([0])
+        circuit.set_meta("detectors", '[{"id":0,"records":[-1]}]')
+        if declared is not None:
+            circuit.set_meta("num_measurements", declared)
+        return generate_dem_from_tick_circuit(circuit, p1=0.01, p2=0.01, p_meas=0.01, p_prep=0.01)
+
+    assert "D0" in generate(count)
+    assert generate(count) == generate("1")
 
 
 @pytest.mark.parametrize("blank", ["", " \n"], ids=["empty", "whitespace"])
@@ -530,24 +688,23 @@ def test_with_circuit_metadata_rejects_blank_classes(classified_circuit, blank):
         builder.build()
 
 
-def test_with_circuit_metadata_validates_count_at_build(classified_circuit):
-    from pecos_rslib.qec import DagFaultAnalyzer, DemBuilder
-
-    classified_circuit.set_meta("num_measurements", "0")
-    influence = DagFaultAnalyzer(classified_circuit.to_dag_circuit()).build_influence_map()
-    builder = DemBuilder(influence).with_circuit_metadata(classified_circuit)
-    with pytest.raises(ValueError, match="num_measurements=0 disagrees"):
-        builder.build()
-
-
-@pytest.mark.parametrize("attribute", ["detectors", "observables", "measurement_classes"])
-def test_with_circuit_metadata_defers_json_parsing(classified_circuit, attribute):
+@pytest.mark.parametrize("attribute", ["detectors", "observables"])
+def test_with_circuit_metadata_rejects_malformed_definitions(classified_circuit, attribute):
     from pecos_rslib.qec import DagFaultAnalyzer, DemBuilder
 
     classified_circuit.set_meta(attribute, "not JSON")
     influence = DagFaultAnalyzer(classified_circuit.to_dag_circuit()).build_influence_map()
+    with pytest.raises(ValueError, match=f"invalid circuit definitions: {attribute[:-1]} metadata"):
+        DemBuilder(influence).with_circuit_metadata(classified_circuit)
+
+
+def test_with_circuit_metadata_leaves_malformed_classes_to_build(classified_circuit):
+    from pecos_rslib.qec import DagFaultAnalyzer, DemBuilder
+
+    classified_circuit.set_meta("measurement_classes", "not JSON")
+    influence = DagFaultAnalyzer(classified_circuit.to_dag_circuit()).build_influence_map()
     builder = DemBuilder(influence).with_circuit_metadata(classified_circuit)
-    with pytest.raises(ValueError, match="JSON"):
+    with pytest.raises(ValueError, match="measurement_classes: malformed JSON"):
         builder.build()
 
 
@@ -583,7 +740,7 @@ def test_analysis_requires_metadata(site, attribute, blank):
         elif blank is not None:
             circuit.set_meta(name, blank)
     args = (circuit, depolarizing(), 1) if site == "fit_dem_from_simulation" else (circuit, {"p_meas": 0.01})
-    with pytest.raises(ValueError, match=f"requires {attribute} metadata"):
+    with pytest.raises(ValueError, match=f"requires {attribute} metadata.*reads attributes"):
         getattr(analysis, site)(*args)
 
 

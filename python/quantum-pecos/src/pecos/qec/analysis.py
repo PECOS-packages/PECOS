@@ -39,7 +39,10 @@ def _require_dem_metadata(tick_circuit: object, caller: str) -> None:
     for attribute in ("detectors", "observables", "num_measurements"):
         value = tick_circuit.get_meta(attribute)
         if value is None or (isinstance(value, str) and not value.strip()):
-            msg = f"{caller} requires {attribute} metadata; set it on the TickCircuit before building the DEM"
+            msg = (
+                f"{caller} requires {attribute} metadata; set it on the TickCircuit before building "
+                "the DEM, because this route reads attributes, not annotations"
+            )
             raise ValueError(msg)
 
 

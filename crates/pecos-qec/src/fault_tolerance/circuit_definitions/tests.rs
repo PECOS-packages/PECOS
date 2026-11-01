@@ -219,6 +219,17 @@ fn invalid_measurement_count() {
 }
 
 #[test]
+fn invalid_measurement_count_states_the_limit() {
+    let value = "184467440737095516160".to_owned();
+    let message = DefinitionError::InvalidMeasurementCount {
+        value: value.clone(),
+    }
+    .to_string();
+    assert!(message.contains(&usize::MAX.to_string()), "{message}");
+    assert!(message.contains(&value), "{message}");
+}
+
+#[test]
 fn measurement_count_mismatch() {
     let mut circuit = stamped();
     circuit.set_meta("num_measurements", Attribute::String("18".into()));

@@ -3001,14 +3001,24 @@ class qec:
 
             Absent attributes preserve earlier settings, as do blank detectors,
             observables and num_measurements strings. A blank measurement_classes
-            string is kept, and build() rejects it as malformed. Non-string attributes
-            and invalid counts raise ValueError; build() reports malformed JSON. Circuit
-            emission order must match the influence map's record order. Only attributes
-            are copied, so a circuit with detector or observable annotations must define
-            the same number of entries in the matching attribute, or ValueError is raised.
-            Use DetectorErrorModel.from_circuit for circuits defined by annotation alone.
-            The check reads the circuit only: a map that already carries annotated
-            observables needs the separate setters.
+            string is kept, and build() rejects it as malformed, as it does malformed
+            class JSON. Only attributes are copied, after checking them against the
+            circuit. ValueError is raised for non-string attributes, a circuit that does
+            not convert to a DAG, a count that is invalid or differs from the circuit's,
+            an influence map whose measurement records differ from those of
+            circuit.to_dag_circuit(), malformed detectors or observables, repeated ids,
+            unresolved references, attributes that disagree with annotations on ids,
+            measurements or labels, and annotations whose matching attribute defines
+            nothing. The map check compares only each measurement's node, qubit, basis
+            and id, so a map from another circuit with the same records passes whatever
+            its other gates, as do annotated outputs merged into the map from elsewhere.
+            Build the map from this circuit. Use
+            DetectorErrorModel.from_circuit for circuits defined by annotation alone. A
+            map that already carries annotated observables, from a circuit with no
+            observables attribute, needs the separate setters. Those setters do not check
+            agreement with observables the map carries, so omit those observables.
+            Tracked Pauli annotations are not copied; they reach the DEM only through the
+            influence map.
             """
 
         def with_detectors_json(self, json: str) -> qec.DemBuilder: ...

@@ -2441,9 +2441,10 @@ impl<'a> DemBuilder<'a> {
 
         for obs in &self.observables {
             if influence_observable_ids.contains(&obs.id) {
-                // On the circuit path the reader enforced agreement, and annotation
-                // propagation seeds the measurement basis, so this drops only an
-                // identical duplicate of the propagated observable.
+                // When both come from one circuit the reader enforced agreement, and
+                // annotation propagation seeds the measurement basis, so this drops only
+                // an identical duplicate of the propagated observable. Definitions from
+                // another source are not compared with the map's outputs.
                 continue;
             }
             if obs.records.is_empty() {

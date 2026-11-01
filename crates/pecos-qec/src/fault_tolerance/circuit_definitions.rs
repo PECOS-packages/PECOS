@@ -186,7 +186,10 @@ pub enum DefinitionError {
         attribute: &'static str,
         value: Attribute,
     },
-    #[error("num_measurements {value:?} does not parse as usize")]
+    #[error(
+        "num_measurements must be a non-negative integer string no greater than {}, got {value:?}; set it to the number of measurements the circuit performs",
+        usize::MAX
+    )]
     InvalidMeasurementCount { value: String },
     #[error(
         "num_measurements={declared} disagrees with the {actual} measurement(s) the circuit performs; the declared count must match so detector/observable record offsets resolve correctly"

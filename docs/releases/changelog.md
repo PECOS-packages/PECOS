@@ -661,10 +661,10 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   agreement checks during definition resolution and DEM construction. Resolved
   circuit definitions carry the effective labels. Rust CSS memory builders emit
   these classes; Python `DemBuilder.with_circuit_metadata` copies all four DEM
-  metadata attributes and rejects annotated circuits whose detector or observable
-  attributes define a different number of entries. Manual Rust and Python DEM
-  builders accept class JSON in influence-map record order; Guppy builders do not
-  accept positional classes.
+  metadata attributes, checks detectors, observables and the count against the
+  circuit, and rejects an influence map whose measurement records differ from the
+  circuit's. Manual Rust and Python DEM builders accept class JSON in influence-map
+  record order; Guppy builders do not accept positional classes.
 - `LogicalCircuitBuilder` detector `fault_sector` labels follow the code's
   stabilizer family across a transversal H; previously post-H detectors were
   labelled with the measured family, which made graph decoders' labelled

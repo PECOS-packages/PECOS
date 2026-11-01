@@ -665,11 +665,7 @@ impl TwoQubitChannel {
             .copied()
             .filter(|&q| ctx.is_leaked(q) && rng.check_probability(self.seepage_threshold))
             .collect::<SmallVec<_>>();
-        if unleaked.is_empty() {
-            NoiseResponse::None
-        } else {
-            NoiseResponse::MarkUnleaked(unleaked)
-        }
+        super::seepage::seep_response(unleaked, rng)
     }
 
     /// Apply faults to complete executed pairs and seepage only to suppressed pairs.

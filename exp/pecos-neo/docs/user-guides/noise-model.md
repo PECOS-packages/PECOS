@@ -23,6 +23,15 @@ let noise = ComposableNoiseModel::new()
 
 ## How It Works
 
+`NoiseModelBuilder`, `GeneralNoiseModelBuilder` and `CompositeNoiseModelBuilder`
+register `CorePlugin` automatically. Its `AfterPreparation` handler marks qubits
+active and clears previous leakage before preparation noise runs, so a new leak
+from that same preparation remains. Its `AfterMeasurement` handler marks qubits
+inactive without clearing leakage. Thus crosstalk targets other prepared,
+unmeasured, non-leaked qubits, and custom `active()` conditions follow this
+lifecycle. A bare `ComposableNoiseModel` needs `.add_plugin(&CorePlugin)` for
+these preparation and measurement state updates.
+
 The noise model is event-driven. During simulation, the runner emits events
 at each point in execution -- `BeforeGate`, `AfterGate`, `AfterMeasurement`,
 `IdleTime`, `Signal`, etc. For each event:
@@ -108,4 +117,15 @@ only on currently leaked members.
 The seepage parameter is conditional on an emission fault: its marginal rate is
 `p * emission_ratio * seepage`, where `p` includes angle scaling. Leakage scale
 does not scale seepage. Two-qubit channels share the outer fault and emission
-draws per pair; composite builders preserve the per-qubit marginal rate.
+draws per pair, except through `channel_action` (#1568); composite builders
+preserve the per-qubit marginal rate.
+
+`SingleQubitChannel` and `TwoQubitChannel` discard a seeping qubit's state by
+sampling I, X, Y or Z uniformly and independently for each seeping qubit. Identity
+injects no gate. This fully depolarizing channel also discards correlations with
+other qubits. The draw happens only after seep selection, for both executed and
+leaked-suppressed groups; it does not change the seepage rate. No reset gate is
+injected.
+Composite `seep()` retains its configurable Pauli weights. `unleak()` and
+`NoiseResponse::MarkUnleaked` clear only the leakage flag and preserve the
+simulator state; use `seep()` for the physical channel.

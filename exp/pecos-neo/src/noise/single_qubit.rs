@@ -500,7 +500,7 @@ impl SingleQubitChannel {
             response = response.combine(NoiseResponse::MarkLeaked(leaked));
         }
         if !unleaked.is_empty() {
-            response = response.combine(NoiseResponse::MarkUnleaked(unleaked));
+            response = response.combine(super::seepage::seep_response(unleaked, rng));
         }
 
         response

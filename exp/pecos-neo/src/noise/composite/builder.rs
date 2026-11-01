@@ -41,6 +41,7 @@ use super::channel::{
 };
 use super::prelude::*;
 use crate::command::GateType;
+use crate::noise::plugins::CorePlugin;
 use crate::noise::two_qubit::AngleScaling;
 use crate::noise::validation::{
     ValidationError, ValidationResult, validate_angle_rate, validate_duration,
@@ -558,7 +559,11 @@ impl CompositeNoiseModelBuilder {
     ///
     /// When not set, crosstalk uses uniform random Pauli errors.
     ///
-    /// This matches `GeneralNoiseModel`'s `p_meas_crosstalk_model`.
+    /// The transition table has the same shape as `GeneralNoiseModel`'s
+    /// `p_meas_crosstalk_model`, but the source of the state differs. Neo crosstalk
+    /// does not measure the affected qubit, so unless an outcome is in context the
+    /// state is drawn uniformly, and an asymmetric table does not depend on the
+    /// qubit's real state.
     ///
     /// # Example
     ///
@@ -872,7 +877,7 @@ impl CompositeNoiseModelBuilder {
         if let Some(scaling) = self.p2_angle_scaling {
             scaling.validate_for_probability(self.p2)?;
         }
-        let mut model = ComposableNoiseModel::new();
+        let mut model = ComposableNoiseModel::new().add_plugin(&CorePlugin);
 
         // Set time scale if configured
         if let Some(scale) = self.time_scale {

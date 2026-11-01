@@ -216,6 +216,7 @@ impl IdleInfo {
 /// Per-event context saved while a nested composite channel processes its own event.
 ///
 /// `current_outcome` stays out: nested channels see the enclosing measurement outcome.
+#[cfg(feature = "composite-noise")]
 #[derive(Debug)]
 pub(crate) struct EnclosingEvent {
     gate: Option<GateInfo>,
@@ -433,6 +434,7 @@ impl NoiseContext {
         self.current_gate_suppressed
     }
 
+    #[cfg(feature = "composite-noise")]
     pub(crate) fn set_current_gate_suppressed(&mut self, suppressed: bool) {
         self.current_gate_suppressed = suppressed;
     }
@@ -446,6 +448,7 @@ impl NoiseContext {
     }
 
     /// Take the enclosing event's state so a composite channel can process its own event.
+    #[cfg(feature = "composite-noise")]
     pub(crate) fn enter_event(&mut self) -> EnclosingEvent {
         EnclosingEvent {
             gate: self.current_gate.take(),
@@ -459,6 +462,7 @@ impl NoiseContext {
     }
 
     /// Discard the finished event's state and restore the enclosing event.
+    #[cfg(feature = "composite-noise")]
     pub(crate) fn exit_event(&mut self, enclosing: EnclosingEvent) {
         self.current_gate = enclosing.gate;
         self.current_gate_suppressed = enclosing.gate_suppressed;
@@ -509,6 +513,7 @@ impl NoiseContext {
     }
 
     /// Select a member of the operands already in context, without copying them.
+    #[cfg(feature = "composite-noise")]
     pub(crate) fn set_current_member_index(&mut self, index: usize) {
         self.current_qubit_index = index;
     }

@@ -125,6 +125,11 @@ off unless insertion asked for it — and the idle-noise families apply to whate
 idles the runtime emitted. `with_strip_traced_idles(...)` overrides that pairing
 in either direction when you want it stated explicitly.
 
+The Guppy DEM pipeline retains adjacent one-qubit Clifford gates emitted by the
+selected runtime, even when their ideal actions cancel. It lowers Clifford
+rotations before fault propagation but does not merge or cancel the resulting
+one-qubit gate chains.
+
 Traced DEM preparation retains a physical two-qubit half-turn such as
 `RZZ(pi)` as a two-qubit noise location. Its ideal action is equivalent to
 `Z` on each operand, but its noise and post-gate idle insertion still follow

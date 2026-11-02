@@ -1029,7 +1029,11 @@ def test_szz_public_traced_qis_dem_matches_stim_with_z_frame_p1_free(basis: str)
         circuit_source="traced_qis",
         interaction_basis="szz",
     )
-    normalize_traced_tick_circuit(tick_circuit, context="SZZ public traced-QIS p1 test")
+    normalize_traced_tick_circuit(
+        tick_circuit,
+        context="SZZ public traced-QIS p1 test",
+        simplify_single_qubit_clifford_chains=False,
+    )
     noise = NoiseParameters(p1=0.001)
 
     native_errors = _raw_dem_errors(

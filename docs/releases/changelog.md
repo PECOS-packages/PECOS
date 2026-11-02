@@ -174,6 +174,11 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   flattened their bodies into the parallel group and dropped iterations:
   `Parallel(For("i", 0, 2).Do(X(q[0])), ...)` applied `X` once instead of twice.
 
+- `QuantumCircuit.from_json_str` restores the integer qubit ids and
+  `(register, index)` tuples in `qvars`. Before, they came back as strings and
+  lists, and `to_phir_dict` on the restored circuit failed with "Couldn't find
+  qsym for qid". A malformed `qvars` raises an error naming the bad value.
+
 - **Breaking:** Python simulator wrappers and the public `pecos.HybridEngine`
   validate whole known-gate batches per `run_gate` call and per circuit item
   before changing state, including when `simulate_gate=False`. Registered-gate

@@ -67,7 +67,7 @@ fn dependencies(
 }
 
 /// Instrument a canonical, bounded single-entry LLVM module. No input hooks,
-/// arbitrary callees, pointer arithmetic/loads, mutable globals, EH or indirect
+/// arbitrary callees, general pointer arithmetic/loads, mutable globals, EH or indirect
 /// control flow can enter this certified subset. LLVM verifies before and after.
 pub(crate) fn instrument(source: &str) -> Result<(String, ControlManifest), InterfaceError> {
     if source.len() > 4 * 1024 * 1024 {
@@ -230,7 +230,10 @@ pub(crate) fn instrument(source: &str) -> Result<(String, ControlManifest), Inte
     let mut sites = Vec::new();
     let mut scalars = BTreeMap::new();
     let mut resources = BTreeMap::<String, &'static str>::new();
-    let mut cells = BTreeSet::<String>::new();
+    let mut allocations = BTreeMap::<String, usize>::new();
+    // Every admitted pointer resolves to one byte of a bounded entry allocation.
+    let mut pointers = BTreeMap::<String, (String, usize)>::new();
+    let mut allocated_bytes = 0;
     let mut body = String::new();
     let mut dependency_checks = Vec::<(usize, Vec<String>)>::new();
     let assignment = re(&format!(r"^({NAME}) = (.*)$"));
@@ -254,7 +257,14 @@ pub(crate) fn instrument(source: &str) -> Result<(String, ControlManifest), Inte
     let store = re(&format!(
         r"^store i8 ({VALUE}), ptr ({NAME})(?:, align [0-9]+)?$"
     ));
+    let allocation = re(r"^alloca (?:i8|\[([0-9]+) x i8\])(?:, align [0-9]+)?$");
+    let gep = re(&format!(
+        r"^getelementptr inbounds \[([0-9]+) x i8\], ptr ({NAME}), i64 0, i64 ([0-9]+)$"
+    ));
     for (block_id, block) in blocks.iter().enumerate() {
+        // Only the consecutive stores directly before a decode establish its
+        // initialized range. Never inherit bytes from a predecessor or iteration.
+        let mut stored = BTreeSet::new();
         writeln!(body, "{}:", block.label).expect("String write");
         let block_site = site(&mut sites, block_id, "block", "u64");
         let mut entry_emitted = false;
@@ -310,8 +320,8 @@ pub(crate) fn instrument(source: &str) -> Result<(String, ControlManifest), Inte
                             }
                         }
                         "cell" => {
-                            if !cells.contains(operand) {
-                                return Err(error("expected local syndrome cell"));
+                            if !pointers.contains_key(operand) {
+                                return Err(error("expected local syndrome pointer"));
                             }
                         }
                         "float" => {
@@ -350,14 +360,16 @@ pub(crate) fn instrument(source: &str) -> Result<(String, ControlManifest), Inte
                 }
                 if name == "pecos_runtime_decode_observed_v1" {
                     check_global(4, 5)?;
-                    let cell = args[2].strip_prefix("ptr ").unwrap();
-                    let initialized = index
-                        .checked_sub(1)
-                        .and_then(|i| store.captures(&block.lines[i]))
-                        .is_some_and(|c| &c[2] == cell);
-                    if constant_length(3)? != 1 || !initialized {
+                    let (root, offset) = &pointers[args[2].strip_prefix("ptr ").unwrap()];
+                    let length = constant_length(3)?;
+                    if length == 0 || length > allocations[root] - offset {
+                        return Err(error("syndrome buffer extent"));
+                    }
+                    if (*offset..offset + length)
+                        .any(|byte| !stored.contains(&(root.clone(), byte)))
+                    {
                         return Err(error(
-                            "decode requires one byte and immediately preceding same-cell store",
+                            "decode requires consecutive same-block stores to every syndrome byte",
                         ));
                     }
                     let id = site(&mut sites, block_id, "decode", "u64");
@@ -414,15 +426,37 @@ pub(crate) fn instrument(source: &str) -> Result<(String, ControlManifest), Inte
                 if index + 1 != block.lines.len() {
                     return Err(error("nonterminal control instruction"));
                 }
-            } else if re(r"^alloca i8(?:, align [0-9]+)?$").is_match(instruction) {
+            } else if let Some(c) = allocation.captures(instruction) {
                 if block_id != 0 {
                     return Err(error("syndrome alloca must be in entry block"));
                 }
-                cells.insert(lhs.ok_or_else(|| error("unnamed alloca"))?.into());
-            } else if let Some(c) = store.captures(instruction) {
-                if !cells.contains(&c[2]) {
-                    return Err(error("nonlocal store"));
+                let extent = c
+                    .get(1)
+                    .map_or(Ok(1), |v| v.as_str().parse::<usize>())
+                    .map_err(|_| error("syndrome allocation extent"))?;
+                if extent == 0 || extent > 4096 - allocated_bytes {
+                    return Err(error("syndrome allocation byte limit exceeded"));
                 }
+                allocated_bytes += extent;
+                let lhs = lhs.ok_or_else(|| error("unnamed alloca"))?;
+                allocations.insert(lhs.into(), extent);
+                pointers.insert(lhs.into(), (lhs.into(), 0));
+            } else if let Some(c) = gep.captures(instruction) {
+                if block_id != 0 {
+                    return Err(error("syndrome pointer must be in entry block"));
+                }
+                let extent = c[1].parse::<usize>().map_err(|_| error("pointer extent"))?;
+                let offset = c[3].parse::<usize>().map_err(|_| error("pointer offset"))?;
+                if allocations.get(&c[2]) != Some(&extent) || offset >= extent {
+                    return Err(error("syndrome pointer must address an allocation byte"));
+                }
+                pointers.insert(
+                    lhs.ok_or_else(|| error("unnamed pointer"))?.into(),
+                    (c[2].into(), offset),
+                );
+            } else if let Some(c) = store.captures(instruction) {
+                let pointer = pointers.get(&c[2]).ok_or_else(|| error("nonlocal store"))?;
+                stored.insert(pointer.clone());
                 dependency_checks.push((block_site, vec![c[1].into()]));
             } else {
                 let operands = if let Some(c) = phi.captures(instruction) {
@@ -448,6 +482,12 @@ pub(crate) fn instrument(source: &str) -> Result<(String, ControlManifest), Inte
                         input: None,
                     },
                 );
+            }
+            if !store.is_match(instruction) {
+                stored.clear();
+            }
+            if pointers.len() > 4096 {
+                return Err(error("syndrome pointer table limit exceeded"));
             }
             body.push_str("  ");
             body.push_str(line);
@@ -740,6 +780,95 @@ mod tests {
         ];
         for bad in cases {
             assert!(instrument(&bad).is_err(), "admitted unsupported module");
+        }
+    }
+    fn array_source() -> String {
+        source().replace("%data = alloca i8", "%buffer = alloca [3 x i8]\n    %data = getelementptr inbounds [3 x i8], ptr %buffer, i64 0, i64 1\n    %second = getelementptr inbounds [3 x i8], ptr %buffer, i64 0, i64 2")
+            .replace("store i8 %bit, ptr %data", "store i8 %bit, ptr %data\n    store i8 0, ptr %second")
+            .replace("ptr %data, i64 1, ptr @ctx", "ptr %data, i64 2, ptr @ctx")
+    }
+    #[test]
+    fn control_compiler_accepts_initialized_bounded_ranges_and_aliases() {
+        let good = array_source();
+        instrument(&good).unwrap();
+        // An uninitialized byte outside the decoded subrange is not read.
+        // Multiple pointers to the same byte share initialization identity.
+        instrument(&good.replace("%second = getelementptr", "%alias = getelementptr inbounds [3 x i8], ptr %buffer, i64 0, i64 1\n    %second = getelementptr")
+            .replace("store i8 %bit, ptr %data", "store i8 %bit, ptr %alias")).unwrap();
+        instrument(&source().replace("%data = alloca i8", "%data = alloca [4096 x i8]")).unwrap();
+    }
+    #[test]
+    fn control_compiler_bounds_pointer_aliases_and_consumes_initialization() {
+        let mut aliases = String::new();
+        for i in 0..4095 {
+            writeln!(
+                aliases,
+                "    %alias{i} = getelementptr inbounds [1 x i8], ptr %data, i64 0, i64 0"
+            )
+            .unwrap();
+        }
+        let good = source().replace(
+            "%data = alloca i8",
+            &format!("%data = alloca [1 x i8]\n{aliases}"),
+        );
+        instrument(&good).unwrap();
+        let bad = good.replace("%data = alloca [1 x i8]", "%data = alloca [1 x i8]\n    %excess = getelementptr inbounds [1 x i8], ptr %data, i64 0, i64 0");
+        assert!(
+            instrument(&bad)
+                .unwrap_err()
+                .to_string()
+                .contains("pointer table limit")
+        );
+        let call = "%again = call i64 @pecos_runtime_decode_observed_v1(i64 7, i64 %instance, ptr %data, i64 1, ptr @ctx, i64 2)";
+        let stale = source().replace("%correct = icmp", &format!("{call}\n    %correct = icmp"));
+        assert!(
+            instrument(&stale)
+                .unwrap_err()
+                .to_string()
+                .contains("consecutive same-block stores")
+        );
+        instrument(&stale.replace(call, &format!("store i8 %bit, ptr %data\n    {call}"))).unwrap();
+        let wrong_root = array_source()
+            .replace(
+                "%buffer = alloca [3 x i8]",
+                "%other = alloca i8\n    %buffer = alloca [3 x i8]",
+            )
+            .replace("store i8 0, ptr %second", "store i8 0, ptr %other");
+        assert!(
+            instrument(&wrong_root)
+                .unwrap_err()
+                .to_string()
+                .contains("consecutive same-block stores")
+        );
+    }
+    #[test]
+    fn control_compiler_rejects_incomplete_or_unbounded_syndrome_storage() {
+        let good = array_source();
+        let cases = [
+            good.replace("store i8 0, ptr %second", ""),
+            good.replace("store i8 0, ptr %second", "store i8 0, ptr %data"),
+            good.replace("store i8 0, ptr %second", "store i8 0, ptr %second\n    %gap = add i64 0, 0"),
+            good.replace("ptr %data, i64 2, ptr @ctx", "ptr %data, i64 3, ptr @ctx"),
+            good.replace("ptr %data, i64 2, ptr @ctx", "ptr %data, i64 0, ptr @ctx"),
+            good.replace("ptr %data, i64 2, ptr @ctx", "ptr %data, i64 %instance, ptr @ctx"),
+            good.replace("ptr %buffer, i64 0, i64 2", "ptr %buffer, i64 0, i64 3"),
+            good.replace("ptr %buffer, i64 0, i64 2", "ptr %buffer, i64 0, i64 -1"),
+            good.replace("ptr %buffer, i64 0, i64 2", "ptr %buffer, i64 0, i64 %shot"),
+            good.replace("getelementptr inbounds [3 x i8]", "getelementptr inbounds [4 x i8]"),
+            good.replace("ptr %buffer, i64 0, i64 2", "ptr %data, i64 0, i64 1"),
+            good.replace("%buffer = alloca [3 x i8]", "%buffer = alloca [3 x i8]\n    %other = alloca [4094 x i8]"),
+            good.replace("%buffer = alloca [3 x i8]", "%buffer = alloca [4097 x i8]"),
+            good.replace("%buffer = alloca [3 x i8]", "%buffer = alloca [0 x i8]"),
+            // Stores across blocks or earlier loop iterations are not evidence.
+            good.replace("store i8 0, ptr %second", "store i8 0, ptr %second\n    br label %decode\ndecode:"),
+            good.replace("store i8 0, ptr %second", "br i1 %observed, label %initialize, label %decode\ninitialize:\n    store i8 0, ptr %second\n    br label %decode\ndecode:"),
+            good.replace("store i8 0, ptr %second", "").replace("%buffer = alloca [3 x i8]", "%buffer = alloca [3 x i8]\n    %initial = getelementptr inbounds [3 x i8], ptr %buffer, i64 0, i64 2\n    store i8 0, ptr %initial"),
+        ];
+        for (index, bad) in cases.iter().enumerate() {
+            assert!(
+                instrument(bad).is_err(),
+                "admitted unsupported storage case {index}"
+            );
         }
     }
     #[test]

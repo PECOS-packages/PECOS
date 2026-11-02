@@ -458,7 +458,7 @@ fn native_metadata_rejects_an_unexplained_pulse_axis() {
         op: QuantumOp::RXY(PI, 0.0, 0),
         metadata: TraceMetadata::new(),
         native_match: true,
-        folded_phi: Some(-0.37),
+        folded_phi: Some([-0.37; 2]),
     };
     assert!(SeleneRuntime::source_trace_metadata_matches_lowered_op(
         &source,
@@ -2563,4 +2563,142 @@ fn pecos_runtime_pressure_drains_between_decomposed_native_gates() {
         runtime.provide_measurement_outcomes(vec![(0, 0)]).unwrap();
         assert_eq!(runtime.read_result(0).unwrap(), Some(0));
     }
+}
+
+#[test]
+fn pecos_runtime_large_phase_cancellation_on_every_route() {
+    for route in Route::ALL {
+        for direct_requests in [false, true] {
+            for large in [2_f64.powi(54), 1e100, f64::MAX] {
+                let mut runtime = start(crate::selene_runtimes::pecos_test_runtime(&[]), 1);
+                let mut ops = vec![
+                    Operation::AllocateQubit { id: 0 },
+                    QuantumOp::Reset(0).into(),
+                ];
+                let gates = [
+                    QuantumOp::RXY(PI / 2.0, 0.0, 0),
+                    QuantumOp::RZ(large, 0),
+                    QuantumOp::RZ(1.0, 0),
+                    QuantumOp::RZ(-large, 0),
+                    QuantumOp::RXY(PI / 2.0, 0.0, 0),
+                ];
+                for gate in gates {
+                    ops.push(if direct_requests {
+                        let request = match gate {
+                            QuantumOp::RXY(theta, phi, _) => SeleneRequest::Rxy {
+                                qubit: 0,
+                                theta,
+                                phi,
+                            },
+                            QuantumOp::RZ(theta, _) => SeleneRequest::Rz { qubit: 0, theta },
+                            _ => unreachable!(),
+                        };
+                        Operation::RuntimeRequest {
+                            request: RuntimeRequest::Native(request),
+                            result_id: None,
+                        }
+                    } else {
+                        gate.into()
+                    });
+                }
+                ops.push(Operation::Barrier);
+                let lowered = route.lower_raw(&mut runtime, &ops);
+                let mut sim = StateVecAoS::new(1);
+                simulate(&mut sim, &lowered);
+                // The large Z rotations cancel, leaving RX(pi/2) RZ(1) RX(pi/2).
+                let expected = 0.5_f64.cos().powi(2);
+                assert!(
+                    (sim.probability(1) - expected).abs() < 1e-12,
+                    "{route:?}, requests={direct_requests}, angle={large}: {lowered:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn large_phase_metadata_matches_bounded_legacy_and_unfolded_runtimes() {
+    for kind in 0..3 {
+        for direct_requests in [false, true] {
+            let plugin = match kind {
+                0 => crate::selene_runtimes::selene_simple_runtime().unwrap(),
+                1 => crate::selene_runtimes::selene_soft_rz_runtime().unwrap(),
+                _ => crate::selene_runtimes::pecos_test_runtime(&[]),
+            };
+            let mut runtime = start(plugin, 1);
+            let mut ops = vec![Operation::AllocateQubit { id: 0 }];
+            for theta in [2_f64.powi(54), 1.0, -2_f64.powi(54)] {
+                ops.push(if direct_requests {
+                    Operation::RuntimeRequest {
+                        request: RuntimeRequest::Native(SeleneRequest::Rz { qubit: 0, theta }),
+                        result_id: None,
+                    }
+                } else {
+                    QuantumOp::RZ(theta, 0).into()
+                });
+            }
+            for (name, gate) in [
+                ("native", QuantumOp::RXY(0.75, 0.0, 0)),
+                ("huge-axis", QuantumOp::RXY(0.75, 1e100, 0)),
+                ("decomposed", QuantumOp::H(0)),
+            ] {
+                ops.push(Operation::TraceMetadata {
+                    metadata: TraceMetadata::from([("source_label".into(), name.into())]),
+                    qubit: None,
+                });
+                ops.push(
+                    if direct_requests && let QuantumOp::RXY(theta, phi, _) = gate {
+                        Operation::RuntimeRequest {
+                            request: RuntimeRequest::Native(SeleneRequest::Rxy {
+                                qubit: 0,
+                                theta,
+                                phi,
+                            }),
+                            result_id: None,
+                        }
+                    } else {
+                        gate.into()
+                    },
+                );
+            }
+            ops.push(Operation::Barrier);
+            let output = runtime.lower_operations_with_metadata(&ops).unwrap();
+            let labels: Vec<_> = output
+                .iter()
+                .filter_map(|op| op.metadata.get("source_label").map(String::as_str))
+                .collect();
+            assert_eq!(
+                labels,
+                ["native", "huge-axis", "decomposed"],
+                "kind={kind}, requests={direct_requests}: {output:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn phase_matching_handles_branch_cuts_without_accepting_different_axes() {
+    assert!(SeleneRuntime::same_phase(PI, -PI));
+    assert!(SeleneRuntime::same_phase(f64::MAX, f64::MAX));
+    assert!(!SeleneRuntime::same_phase(f64::MAX, -f64::MAX));
+    assert!(!SeleneRuntime::same_phase(f64::INFINITY, f64::INFINITY));
+    assert!(!SeleneRuntime::same_phase(f64::NAN, 0.0));
+    let mut phases = SubmittedPhase::default();
+    for angle in [f64::MAX, f64::MAX, -f64::MAX, -f64::MAX, 0.25] {
+        phases.add(angle);
+    }
+    let source = SourceTraceMetadata {
+        op: QuantumOp::RXY(1.0, 0.0, 0),
+        metadata: TraceMetadata::new(),
+        native_match: true,
+        folded_phi: Some(phases.fold(0.0)),
+    };
+    assert!(SeleneRuntime::source_trace_metadata_matches_lowered_op(
+        &source,
+        &QuantumOp::RXY(1.0, -0.25, 0)
+    ));
+    assert!(!SeleneRuntime::source_trace_metadata_matches_lowered_op(
+        &source,
+        &QuantumOp::RXY(1.0, 0.75, 0)
+    ));
 }

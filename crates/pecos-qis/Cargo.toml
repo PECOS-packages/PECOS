@@ -32,6 +32,7 @@ pecos-core.workspace = true
 pecos-engines.workspace = true
 pecos-programs.workspace = true
 pecos-random.workspace = true
+pecos-selene-runtime = { version = "0.2.0-dev.0", path = "../pecos-selene-runtime" }
 
 # QIS FFI infrastructure
 pecos-qis-ffi-types.workspace = true

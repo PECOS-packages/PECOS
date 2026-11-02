@@ -4,8 +4,11 @@
 //! 458d640dc4cf84a7a7988ea65ce5a9f7bcb8c511). No simulator or noise model lives
 //! here. Rust callers and the separately exported Selene plugin share this code.
 
+pub mod phase;
+
 use anyhow::{Result, bail, ensure};
 use clap::Parser;
+use phase::normalize_phase;
 use selene_core::runtime::{
     BatchOperation, Operation, RuntimeInterface, interface::RuntimeInterfaceFactory,
 };
@@ -363,7 +366,7 @@ impl RuntimeInterface for PecosRuntime {
     fn rxy_gate(&mut self, id: u64, theta: f64, phi: f64) -> Result<()> {
         ensure!(theta.is_finite() && phi.is_finite(), "non-finite rotation");
         let phase = self.qubit(id)?.phase;
-        let phi = phi - phase;
+        let phi = normalize_phase(normalize_phase(phi) - phase);
         ensure!(phi.is_finite(), "rotation phase overflow");
         self.push(
             Operation::RXYGate {
@@ -375,8 +378,8 @@ impl RuntimeInterface for PecosRuntime {
         )
     }
     fn rz_gate(&mut self, id: u64, theta: f64) -> Result<()> {
-        let phase = self.qubit(id)?.phase + theta;
-        ensure!(phase.is_finite(), "non-finite rotation phase");
+        ensure!(theta.is_finite(), "non-finite rotation phase");
+        let phase = normalize_phase(self.qubit(id)?.phase + normalize_phase(theta));
         self.qubits[usize::try_from(id)?].phase = phase;
         Ok(())
     }

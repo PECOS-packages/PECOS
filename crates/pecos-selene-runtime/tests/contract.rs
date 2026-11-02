@@ -359,3 +359,65 @@ fn two_qubit_dependencies_survive_independent_pulse_packing() {
         }
     }
 }
+
+#[test]
+fn large_cancelling_virtual_rotations_preserve_small_rotations() {
+    for large in [2_f64.powi(54), 1e100, f64::MAX] {
+        let mut r = runtime(RuntimeConfig::default());
+        for theta in [large, 1.0, -large] {
+            r.rz_gate(0, theta).unwrap();
+        }
+        r.rxy_gate(0, std::f64::consts::FRAC_PI_2, 0.0).unwrap();
+        r.global_barrier(0).unwrap();
+        let ops: Vec<_> = drain(&mut r).into_iter().flatten().collect();
+        let Operation::RXYGate { phi, .. } = ops[0] else {
+            panic!("expected pulse")
+        };
+        // The two large Z rotations cancel exactly, leaving a one-radian Z.
+        assert!(
+            (phi.sin() - (-1.0_f64).sin()).abs() < 1e-12,
+            "large={large}, phi={phi}"
+        );
+        assert!((phi.cos() - 1.0_f64.cos()).abs() < 1e-12);
+    }
+}
+
+#[test]
+fn large_pulse_axis_preserves_small_virtual_frame() {
+    for phi in [2_f64.powi(54), -1e100, f64::MAX] {
+        let mut r = runtime(RuntimeConfig::default());
+        r.rz_gate(0, 0.25).unwrap();
+        r.rxy_gate(0, 1.0, phi).unwrap();
+        r.global_barrier(0).unwrap();
+        let ops: Vec<_> = drain(&mut r).into_iter().flatten().collect();
+        let Operation::RXYGate { phi: actual, .. } = ops[0] else {
+            panic!("expected pulse")
+        };
+        // Independent angle-subtraction identities avoid subtracting 0.25 from
+        // a huge floating-point angle when constructing the expected axis.
+        let (s, c) = phi.sin_cos();
+        let (sf, cf) = 0.25_f64.sin_cos();
+        assert!((actual.sin() - (s * cf - c * sf)).abs() < 1e-12);
+        assert!((actual.cos() - (c * cf + s * sf)).abs() < 1e-12);
+    }
+}
+
+#[test]
+fn finite_rotations_do_not_overflow_the_virtual_frame() {
+    let mut r = runtime(RuntimeConfig::default());
+    for theta in [f64::MAX, f64::MAX, -f64::MAX, -f64::MAX] {
+        r.rz_gate(0, theta).unwrap();
+    }
+    r.rxy_gate(0, 1.0, f64::MAX).unwrap();
+    for invalid in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        assert!(r.rz_gate(0, invalid).is_err());
+        assert!(r.rxy_gate(0, 1.0, invalid).is_err());
+    }
+    r.rxy_gate(0, 1.0, 0.0).unwrap();
+    r.global_barrier(0).unwrap();
+    let ops: Vec<_> = drain(&mut r).into_iter().flatten().collect();
+    let Operation::RXYGate { phi, .. } = ops[1] else {
+        panic!("expected pulse")
+    };
+    assert!(phi.abs() < 1e-12, "invalid calls changed the frame: {phi}");
+}

@@ -20,8 +20,7 @@ relay-bp.workspace = true
 sprs.workspace = true
 
 [dev-dependencies]
-# A direct path also includes the backport in Maturin source distributions.
-ndarray-npy = { version = "0.9.1", path = "../../vendor/ndarray-npy" }
+ndarray-npy.workspace = true
 tempfile.workspace = true
 
 [lib]

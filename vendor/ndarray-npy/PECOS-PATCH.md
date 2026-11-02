@@ -42,10 +42,20 @@ workspace's dependency policy. No advisory suppression is needed with this patch
 
 The workspace tests in `crates/pecos-relay-bp/tests/npz_compatibility.rs` exercise
 stored and deflated archives, array names and lookup, and relay's sparse-matrix
-loader. The test dependency uses an explicit path so Maturin includes the patched
-crate in Python source distributions; the patch table alone is not discovered
-by its source-package traversal. Existing relay and native BP parity tests verify
+loader. Every Maturin package declares development-only path dependencies on
+both root patch targets (this crate and the HiGHS shim), so its source archive
+contains those crates and their local dependencies. The patch table alone is not
+discovered by Maturin's source-package traversal. These declarations do not add
+production dependency edges. Existing relay and native BP parity tests verify
 decoder compatibility.
+
+`scripts/ci/check_rust_sdists.py` builds all five Maturin source distributions
+through their configured PEP 517 backends and extracts them outside the checkout.
+It verifies both local patches are present, permits offline pruning of the copied
+workspace lockfile without introducing new package pins, then requires locked
+all-features metadata resolution with all local sources inside the archive.
+The Python lint workflow runs this check. Selene plugins use Hatchling and are
+not inputs to this Maturin check.
 The retained upstream suite can also be run with
 `cargo test --manifest-path vendor/ndarray-npy/Cargo.toml --all-features`.
 

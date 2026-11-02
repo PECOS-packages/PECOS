@@ -4753,9 +4753,11 @@ dependencies = [
 name = "pecos-rslib"
 version = "0.2.0-dev.0"
 dependencies = [
+ "highs",
  "log",
  "nalgebra",
  "ndarray 0.17.2",
+ "ndarray-npy",
  "num-complex 0.4.6",
  "parking_lot",
  "pecos",
@@ -4790,7 +4792,9 @@ name = "pecos-rslib-cuda"
 version = "0.2.0-dev.0"
 dependencies = [
  "env_logger",
+ "highs",
  "log",
+ "ndarray-npy",
  "pecos-build",
  "pecos-core",
  "pecos-cuquantum",
@@ -4802,6 +4806,8 @@ dependencies = [
 name = "pecos-rslib-exp"
 version = "0.2.0-dev.0"
 dependencies = [
+ "highs",
+ "ndarray-npy",
  "num-complex 0.4.6",
  "pecos-build",
  "pecos-core",
@@ -4826,8 +4832,10 @@ dependencies = [
 name = "pecos-rslib-llvm"
 version = "0.2.0-dev.0"
 dependencies = [
+ "highs",
  "inkwell",
  "log",
+ "ndarray-npy",
  "pecos-build",
  "pecos-llvm",
  "pyo3",
@@ -9130,6 +9138,8 @@ dependencies = [
 name = "zluppy-python"
 version = "0.2.0-dev.0"
 dependencies = [
+ "highs",
+ "ndarray-npy",
  "pyo3",
  "serde_json",
  "zlup",

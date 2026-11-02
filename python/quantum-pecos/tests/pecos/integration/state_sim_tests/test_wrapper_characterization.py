@@ -34,7 +34,7 @@ from pecos.simulators.quantum_simulator import QuantumSimulator
 from pecos_rslib import AngleSource, GateRegistry
 
 # GPU expectations (CuStateVec/MPS/CudaStateVec) are unverified until run on a CUDA host.
-# CoinToss run_gate assertions are input-independent no-op pins of current dispatch.
+# CoinToss ignores built-in non-measuring gates and returns its measurement results.
 QUANTUM = ("StateVec", "SparseStabPy", "CuStateVec", "MPS", "CudaStateVec")
 PAULI = ("PauliProp",)
 WRAPPERS = (*QUANTUM, *PAULI, "CoinToss")
@@ -93,10 +93,11 @@ def _prepare_one(state):
 def test_result_int_keys_and_zero_omission(state):
     _prepare_one(state)
     if isinstance(state, CoinToss):
-        # KNOWN-WRONG (#1480): CoinToss run_gate drops measurement outputs, including ones.
-        assert state.run_gate("Measure", {0, 1}) == {}
+        # Both CoinToss entry points record ones and omit zeros.
+        assert state.run_gate("Measure", {0, 1}) == {0: 1, 1: 1}
         assert state.run_circuit(_items("Measure", {0, 1})) == {0: 1, 1: 1}
         state.prob = 0
+        assert state.run_gate("Measure", {0, 1}) == {}
         assert state.run_circuit(_items("Measure", {0, 1})) == {}
     elif type(state).__name__ == "CudaStateVec":
         # KNOWN-WRONG (#1515): CudaStateVec retains zeros that other wrappers omit.
@@ -113,9 +114,10 @@ def test_result_singleton_tuple(state):
         # The generated native binding accepts 1-tuples; the wrapper retains them.
         assert state.run_gate("Measure", [(1,)]) == {(1,): 1}
     elif isinstance(state, CoinToss):
-        # CoinToss ignores locations in run_gate, but native circuit measurements reject tuples.
-        assert state.run_gate("Measure", [(1,)]) == {}
-        with pytest.raises(ValueError, match="MZ: expected a non-negative qubit index"):
+        # Both CoinToss entry points reject non-scalar measurement locations.
+        with pytest.raises(ValueError, match="Measure: expected a scalar qubit index"):
+            state.run_gate("Measure", [(1,)])
+        with pytest.raises(ValueError, match="Measure: expected a scalar qubit index"):
             state.run_circuit(_items("Measure", {(1,)}))
     else:
         # These measurement helpers require a scalar qubit, even in a batch.
@@ -128,10 +130,9 @@ def test_result_singleton_tuple(state):
 def test_location_containers(state, container):
     _prepare_one(state)
     if isinstance(state, CoinToss):
-        # KNOWN-WRONG (#1480): CoinToss run_circuit drops non-set measurement containers.
-        assert state.run_gate("Measure", container([1])) == {}
-        expected = {1: 1} if container is set else {}
-        assert state.run_circuit(_items("Measure", container([1]))) == expected
+        # Both entry points measure all iterable containers.
+        assert state.run_gate("Measure", container([1])) == {1: 1}
+        assert state.run_circuit(_items("Measure", container([1]))) == {1: 1}
     else:
         # All five iterable containers dispatch measurements in the other wrappers.
         assert state.run_gate("Measure", container([1])) == {1: 1}
@@ -147,7 +148,7 @@ def test_duplicate_x_list(state):
         assert state.faults == {"X": set(), "Y": set(), "Z": {1}}
         assert state.sign == 0
     elif isinstance(state, CoinToss):
-        assert state.run_gate("Measure", {1}) == {}
+        assert state.run_gate("Measure", {1}) == {1: 1}
     elif type(state).__name__ == "CudaStateVec":
         assert state.run_gate("Measure", {1}) == {1: 0}
     else:
@@ -163,8 +164,8 @@ def test_overlapping_pairs(state, pairs):
         state.run_gate("X", {0})
     assert state.run_gate("CX", pairs) == {}
     if isinstance(state, CoinToss):
-        # CoinToss ignores overlapping pairs just as it ignores every other gate batch.
-        assert state.run_gate("Measure", [0, 1, 2]) == {}
+        # CoinToss ignores CX but now runs the following measurements.
+        assert state.run_gate("Measure", [0, 1, 2]) == {0: 1, 1: 1, 2: 1}
         return
     # Each literal was recorded on dev; select by the actual container iteration order.
     reverse = list(pairs) == [(1, 2), (0, 1)]
@@ -201,6 +202,8 @@ def test_simulate_gate_false(state, locations):
     if isinstance(state, PauliProp):
         assert state.faults == {"X": set(), "Y": set(), "Z": {1}}
         assert state.sign == 0
+    elif isinstance(state, CoinToss):
+        assert state.run_gate("Measure", {1}) == {1: 1}
     elif type(state).__name__ == "CudaStateVec":
         assert state.run_gate("Measure", {1}) == {1: 0}
     else:
@@ -237,7 +240,7 @@ def test_identity_pair_today(state):
 
 @pytest.mark.parametrize("state", QUANTUM, indirect=True)
 def test_identity_pair_future(state):
-    # Q1: I has arity one; CoinToss run_gate remains out of scope.
+    # Q1: I has arity one; CoinToss non-measurement gates remain no-ops.
     with pytest.raises(ValueError, match="II"):
         state.run_gate("I", {(0, 1)})
 
@@ -258,7 +261,7 @@ def test_public_hybrid_engine(state):
     output = {"m": pecos.BitInt(2, 0)}
     circuit = QuantumCircuit()
     circuit.append("Measure", {1}, var=("m", 1))
-    # KNOWN-WRONG (#1480): CoinToss measures through HybridEngine but drops its own run_gate measurements.
+    # CoinToss measures through both HybridEngine and its own dispatch methods.
     assert pecos.HybridEngine.__module__ == "pecos.engines.hybrid_engine_old"
     pecos.HybridEngine().run_circuit(state, output, {}, circuit, None)
     assert int(output["m"]) == 2
@@ -370,10 +373,9 @@ def test_two_qubit_aliases(state, symbol, angle):
 )
 def test_cointoss_measure_spellings(symbol):
     state = CoinToss(2, prob=1, seed=42)
-    # KNOWN-WRONG (#1480): CoinToss run_circuit drops MX/MY/MZ despite having measurement bindings.
-    expected = {} if symbol in {"MX", "MY", "MZ"} else {1: 1}
-    assert state.run_circuit(_items(symbol, {1})) == expected
-    assert state.run_gate(symbol, {1}) == {}
+    # All measurement bindings and prefix spellings draw coins in both entry points.
+    assert state.run_circuit(_items(symbol, {1})) == {1: 1}
+    assert state.run_gate(symbol, {1}) == {1: 1}
     assert state.bindings[symbol](state, 1) == 1
 
 
@@ -526,9 +528,6 @@ def test_circuit_location_containers(state, container):
         # KNOWN-WRONG (#1515): StateVec.run_circuit raises TypeError for list/tuple/generator batches.
         with pytest.raises(TypeError, match="unsupported operand type"):
             state.run_circuit(circuit)
-    elif isinstance(state, CoinToss):
-        # KNOWN-WRONG (#1480): CoinToss run_circuit silently drops non-set measurement batches.
-        assert state.run_circuit(circuit) == ({1: 1} if container is set else {})
     else:
         # The other circuit paths accept each iterable without rebuilding it.
         assert state.run_circuit(circuit) == {1: 1}
@@ -545,9 +544,10 @@ def test_pauli_measurement_list_key(state):
 
 def test_cointoss_circuit_bare_int_and_disabled_measurement():
     state = CoinToss(2, prob=1, seed=42)
-    # KNOWN-WRONG (#1480): CoinToss run_circuit measures despite simulate_gate=False.
+    # Bare zero measures in both routes; disabled measurements validate and skip.
     assert state.run_circuit(_items("Measure -Z", 0)) == {0: 1}
-    assert state.run_circuit(_items("Measure -Z", {1}, simulate_gate=False)) == {1: 1}
+    assert state.run_gate("Measure -Z", 0) == {0: 1}
+    assert state.run_circuit(_items("Measure -Z", {1}, simulate_gate=False)) == {}
 
 
 @pytest.mark.parametrize("state", [*WRAPPERS, "DefaultSimulator"], indirect=True)
@@ -617,7 +617,7 @@ def test_sparse_rotation_location_protocol(symbol, shape, index_scalar):
     assert state.destabs.row_string() == fresh.destabs.row_string()
 
 
-# CoinToss.run_gate is a no-op for every input, so it cannot observe this.
+# CoinToss ignores non-measurement symbols before inspecting locations.
 @pytest.mark.parametrize("state", [*QUANTUM, *PAULI, "DefaultSimulator"], indirect=True)
 def test_zero_dimensional_empty_batch(state, index_scalar):
     assert state.run_gate("unknown-private-gate", index_scalar(0)) == {}
@@ -801,6 +801,9 @@ def test_public_hybrid_engine_call_shapes(state):
     if isinstance(state, PauliProp):
         assert state.faults == {"X": set(), "Y": set(), "Z": {1}}
         assert state.sign == 0
+    elif isinstance(state, CoinToss):
+        # Deliberate #1493 flip: run_gate now returns the coin result.
+        assert state.run_gate("Measure", {1}) == {1: 1}
     else:
         assert state.run_gate("Measure", {1}) == ({1: 0} if type(state).__name__ == "CudaStateVec" else {})
     _prepare_one(state)

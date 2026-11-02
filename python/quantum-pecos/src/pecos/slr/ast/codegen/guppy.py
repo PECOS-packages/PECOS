@@ -265,6 +265,8 @@ class GuppyContext:
     root_allocators: dict[str, int] = field(default_factory=dict)
     child_allocators: set[str] = field(default_factory=set)
     registers: dict[str, RegisterDecl] = field(default_factory=dict)
+    block_name: str | None = None
+    loop_variables: set[str] = field(default_factory=set)
     linearity: GuppyLinearityState | None = None
     temp_counter: int = 0
     # Single namespace-wide slot -> Guppy-local table. Populated
@@ -462,7 +464,7 @@ class AstToGuppy:
         Future iters add qubit/bit bundles and PRODUCED/DROPPED effects.
         """
         saved_context = self.context
-        self.context = GuppyContext()
+        self.context = GuppyContext(block_name=decl.name)
         # Categorize each input. `_validate_block_decl` guarantees the type_expr
         # is one of: bare qubit, array[qubit, N], or bare bit. `size` is the
         # qubit-array length (1 for single qubit, unused for bit).
@@ -796,6 +798,7 @@ class AstToGuppy:
             msg = f"Unsupported Guppy return value {value!r}"
             raise GuppyCodegenError(msg)
 
+        self._render_expression(value)
         if isinstance(value, BitExpr):
             return "bool"
         if isinstance(value, LiteralExpr) and isinstance(value.value, bool):
@@ -1126,6 +1129,8 @@ class AstToGuppy:
         raise GuppyCodegenError(msg)
 
     def _emit_gate(self, node: GateOp) -> list[str]:
+        for param in node.params:
+            self._render_expression(param)
         if node.gate in PARAMETERIZED_FUNCTIONAL_GATES:
             return self._emit_parameterized_gate(node)
 
@@ -1297,10 +1302,89 @@ class AstToGuppy:
         return lines
 
     def _emit_assign(self, node: AssignOp) -> list[str]:
-        is_bit_target = isinstance(node.target, BitRef)
-        target = self._render_bit_ref(node.target) if is_bit_target else str(node.target)
-        value = self._render_expression(node.value, bool_context=is_bit_target)
+        if isinstance(node.target, BitRef):
+            target = self._render_bit_ref(node.target)
+            value = self._render_bit_assignment(node.value)
+        else:
+            target = self._render_classical_reference(node.target, assignment=True)
+            if target in self.context.registers:
+                value = self._render_register_assignment(target, node.value)
+            else:
+                # The converter represents SymbolicBit targets as "register[i]"
+                # strings. These remain single-bit writes, not register writes.
+                value = self._render_bit_assignment(node.value)
         return [f"{self.context.indent()}{target} = {value}"]
+
+    def _render_bit_assignment(self, expr: Expression) -> str:
+        """Render a single-bit write, rejecting values Guppy cannot store in a bool."""
+        if isinstance(expr, VarExpr):
+            is_bit = expr.name not in self.context.loop_variables
+        elif isinstance(expr, LiteralExpr):
+            is_bit = isinstance(expr.value, int)
+        else:
+            is_bit = self._is_bool_expression(expr)
+        if not is_bit or self._reads_whole_register(expr):
+            msg = (
+                f"Unsupported single-bit assignment from {expr!r}. "
+                "Guppy supports 0, 1, single bits and boolean expressions of bits here."
+            )
+            raise GuppyCodegenError(msg)
+        return self._render_expression(expr, bool_context=True)
+
+    def _reads_whole_register(self, expr: Expression) -> bool:
+        if isinstance(expr, VarExpr):
+            return expr.name in self.context.registers
+        if isinstance(expr, BinaryExpr):
+            return self._reads_whole_register(expr.left) or self._reads_whole_register(expr.right)
+        return isinstance(expr, UnaryExpr) and self._reads_whole_register(expr.operand)
+
+    def _render_register_assignment(self, target: str, expr: Expression) -> str:
+        """Keep whole-register writes in the bool-array representation.
+
+        Guppy's int/nat are 64-bit, while QASM expressions retain register
+        widths and signedness. Reject arithmetic until it has a lowering
+        that preserves those semantics, rather than rendering array operands
+        as scalar integers.
+        """
+        decl = self.context.registers[target]
+        if decl.size <= 0:
+            msg = f"Cannot assign to classical register {target!r} with unsupported width {decl.size}"
+            raise GuppyCodegenError(msg)
+        if isinstance(expr, LiteralExpr) and isinstance(expr.value, int):
+            # QASM stores the low N bits, least significant bit first. Expand
+            # in Python so literals need not fit Guppy's fixed-width int.
+            bits = ", ".join(str(bool((expr.value >> index) & 1)) for index in range(decl.size))
+            return f"array({bits})"
+        if (
+            isinstance(expr, VarExpr)
+            and expr.name in self.context.registers
+            and expr.name not in self.context.loop_variables
+        ):
+            source = self.context.registers[expr.name]
+            if source.size != decl.size:
+                msg = (
+                    f"Cannot assign register {expr.name!r} (width {source.size}) to {target!r} "
+                    f"(width {decl.size}): Guppy register copies require equal widths"
+                )
+                raise GuppyCodegenError(msg)
+            # Guppy arrays move on assignment, even when their elements are
+            # bools. An explicit copy leaves the source available to later ops.
+            return f"{expr.name}.copy()"
+        if isinstance(expr, VarExpr):
+            # An unresolved name fails here with the scope-aware message. A
+            # resolved one is a loop variable or a single bit, not a register.
+            source = self._render_classical_reference(expr.name)
+            msg = (
+                f"Unsupported assignment to {target!r}: {source!r} is not a whole classical register. "
+                "Guppy supports integer literals and equal-width register copies here."
+            )
+            raise GuppyCodegenError(msg)
+        msg = (
+            f"Unsupported whole-register assignment to {target!r}: {expr!r}. "
+            "Guppy supports integer literals and equal-width register copies here; "
+            "integer expressions require width-preserving register arithmetic lowering."
+        )
+        raise GuppyCodegenError(msg)
 
     def _emit_barrier(self, _node: BarrierOp) -> list[str]:
         return [f"{self.context.indent()}# barrier"]
@@ -1369,7 +1453,12 @@ class AstToGuppy:
         before = linearity.snapshot()
         lines = [f"{self.context.indent()}{header}"]
         self.context.push_indent()
-        body_lines = self._emit_block(node.body)
+        outer_variables = self.context.loop_variables
+        self.context.loop_variables = outer_variables | {node.variable}
+        try:
+            body_lines = self._emit_block(node.body)
+        finally:
+            self.context.loop_variables = outer_variables
         lines.extend(self._suite(body_lines))
         self.context.pop_indent()
 
@@ -1936,7 +2025,7 @@ class AstToGuppy:
         if isinstance(expr, LiteralExpr):
             return self._render_literal(expr, bool_context=bool_context)
         if isinstance(expr, VarExpr):
-            return expr.name
+            return self._render_classical_reference(expr.name)
         if isinstance(expr, BitExpr):
             return self._render_bit_ref(expr.ref)
         if isinstance(expr, BinaryExpr):
@@ -1944,6 +2033,30 @@ class AstToGuppy:
         if isinstance(expr, UnaryExpr):
             return self._render_unary(expr, bool_context=bool_context)
         msg = f"Unsupported Guppy expression {expr!r}"
+        raise GuppyCodegenError(msg)
+
+    def _render_classical_reference(self, reference: str, *, assignment: bool = False) -> str:
+        """Resolve a register or enclosing loop variable in the current function."""
+        match = re.fullmatch(r"([A-Za-z_]\w*)(?:\[(-?\d+|[A-Za-z_]\w*)\])?", reference)
+        if match is not None:
+            name, index = match.groups()
+            if index is None:
+                if name in self.context.registers or (not assignment and name in self.context.loop_variables):
+                    return reference
+            elif name in self.context.registers and (
+                re.fullmatch(r"-?\d+", index) is not None or index in self.context.loop_variables
+            ):
+                return reference
+        if self.context.block_name is not None:
+            msg = (
+                f"Unresolved classical reference {reference!r} in block {self.context.block_name!r}; "
+                "Guppy block functions cannot capture outer registers or loop variables."
+            )
+        else:
+            msg = (
+                f"Unresolved classical reference {reference!r} in main; "
+                "it names no declared register or enclosing loop variable."
+            )
         raise GuppyCodegenError(msg)
 
     def _render_literal(self, expr: LiteralExpr, *, bool_context: bool = False) -> str:

@@ -32,12 +32,9 @@ def test_numpy_integer_location(state):
     _prepare_one(state)
     location = np.int64(1)
     result = state.run_gate("Measure", [location])
-    if isinstance(state, CoinToss):
-        # CoinToss run_gate assertions are input-independent no-op pins.
-        assert result == {}
-    else:
-        assert result == {1: 1}
-        assert next(iter(result)) is location
+    # Deliberate #1493 flip: CoinToss now returns its measurement, preserving the key.
+    assert result == {1: 1}
+    assert next(iter(result)) is location
 
 
 def test_numpy_bare_integer(state):
@@ -56,14 +53,16 @@ def test_numpy_pair_tuple(state):
     else:
         state.run_gate("X", {0})
     assert state.run_gate("CX", [(np.int64(0), np.int64(1))]) == {}
-    assert state.run_gate("Measure", [0, 1]) == ({} if isinstance(state, CoinToss) else {0: 1, 1: 1})
+    assert state.run_gate("Measure", [0, 1]) == {0: 1, 1: 1}
 
 
 def test_numpy_zero_dimensional_location(state):
     location = np.array(1)
     if isinstance(state, CoinToss):
         assert state.run_gate("X", [location]) == {}
-        assert state.run_gate("Measure", [location]) == {}
+        # Deliberate #1493 flip: measurement validates before drawing coins.
+        with pytest.raises(ValueError, match="Measure: expected a hashable qubit index"):
+            state.run_gate("Measure", [location])
     else:
         # Unhashable qubits are rejected before either mutation or measurement.
         for symbol in ("X", "Measure"):
@@ -99,3 +98,16 @@ def test_numpy_unhashable_pair_tail_is_atomic(name):
 def test_hybrid_numpy_zero_dimensional_zero_raises():
     with pytest.raises(TypeError, match=r"len\(\) of unsized object"):
         pecos.HybridEngine.run_gate(simulators.SparseStabPy(2), {}, "X", np.array(0))
+
+
+@pytest.mark.parametrize("value", [0, 2, -1, 4])
+def test_cointoss_numpy_scalar_measurement(value):
+    state = CoinToss(4, prob=1)
+    location = np.int64(value)
+    if value in (-1, 4):
+        with pytest.raises(ValueError, match=f"MZ: qubit {value} is out of bounds"):
+            state.run_gate("MZ", location)
+    else:
+        result = state.run_gate("MZ", location)
+        assert result == {location: 1}
+        assert next(iter(result)) is location

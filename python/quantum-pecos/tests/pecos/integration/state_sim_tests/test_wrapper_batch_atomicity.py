@@ -442,11 +442,12 @@ def test_cointoss_measurement_predicate(symbol, container, prob):
     assert [state.mz(0) for _ in range(32)] == [fresh.mz(0) for _ in range(32)]
 
 
-def test_cointoss_policy_uses_binding_symbols():
+def test_cointoss_policy_includes_prefix_symbols():
     state = simulators.CoinToss(2, seed=42)
-    # These prefix spellings are not measurement bindings in HybridEngine.
+    # Prefix spellings measure even without an entry in the instance bindings.
     for symbol in ("measure X", "MEASURE custom"):
-        state.validate_gate_batch(symbol, [0, 9])
+        with pytest.raises(ValueError, match=symbol):
+            state.validate_gate_batch(symbol, [0, 9])
 
 
 @pytest.mark.parametrize("pair", [(-1, 1), (4, 1)])

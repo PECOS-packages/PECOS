@@ -25,7 +25,7 @@ before suspension. It rejects null nonempty buffers, oversized lengths (more
 than 1,048,576 bytes), nonbinary data and collection-only execution. As with the
 other native imports, a caller must supply a valid readable pointer. Failed
 calls fail the shot; zero is a valid successful answer, never an error fallback.
-The QIS FFI data ABI is now version 6; rebuild host and FFI artifacts together.
+The QIS FFI data ABI is now version 7; rebuild host and FFI artifacts together.
 
 The returned mask is an XOR update to program-defined frame bits. It is derived
 from standard DEM observable predictions; it is not an arbitrary physical
@@ -116,6 +116,14 @@ continuations, verifies program-only decoder input and feedback, then checks
 recovery from decoder failure and reuse across workers. That test establishes
 execution ordering; it does not derive a Pauli DEM for those noise channels.
 
+The optional [runtime-emitted prefix](runtime-decoder-contract.md#runtime-emitted-prefixes-opt-in)
+now supplies bounded batch intervals to observed-read providers on the ordinary
+native path. It exposes timing, normalized operations and source measurement IDs
+without simulator truth. The additional [compiler-owned control opt-in](runtime-decoder-contract.md#compiler-owned-llvm-control-opt-in)
+records actual LLVM branch outcomes, loop progress and scalar input sites for a
+strict subset. It remains separate from declared semantic context. Full JIT,
+exact HUGR mapping and physical-operation attribution are still follow-ups.
+
 ## Follow-up: providers driven by emitted physical batches
 
 Keep full JIT compilation separate from this supplied-model milestone. The [v1 provider contract](runtime-decoder-contract.md) adds immutable
@@ -137,9 +145,9 @@ A future compiler/runtime provenance record must include:
 - Detector and output schema versions and instance relabelings, incoming boundary
   state and outgoing port obligations, with a declared correlation horizon.
 
-Current traces capture concrete QIS operations, named results and physical
-lowering provenance. They do **not** supply this complete branch/loop dependency
-record. Do not infer unrecorded branch sites from the trace's Boolean values.
+Ordinary traces capture concrete QIS operations, named results and physical
+lowering provenance. The compiler opt-in adds bounded LLVM control intervals,
+but neither supplies the complete cross-layer record above. Do not infer unrecorded branch sites from the trace's Boolean values.
 The new Decode operation records request IDs and observed bytes in operation
 traces; it is not a control-flow certificate.
 

@@ -132,11 +132,11 @@ def test_symbolic_permute_index_has_actionable_error(backend, classical) -> None
         getattr(SlrConverter(program), backend)()
 
 
-def test_stim_local_classical_permute_points_to_main_scope() -> None:
+def test_stim_local_classical_permute_matches_main_scope() -> None:
     q, loc = QReg("q", 2), CReg("loc", 2)
     program = Main(q, Block(loc, qb.Measure(q) > loc, Permute([loc[0], loc[1]], [loc[1], loc[0]])))
-    with pytest.raises(NotImplementedError, match=r"Permute.*loc\[0\].*block-local.*1511.*Main scope"):
-        SlrConverter(program).stim()
+    outer = Main(q, loc, qb.Measure(q) > loc, Permute([loc[0], loc[1]], [loc[1], loc[0]]))
+    assert str(SlrConverter(program).stim()) == str(SlrConverter(outer).stim())
 
 
 @pytest.mark.parametrize("parent_first", [False, True])

@@ -161,6 +161,7 @@ from pecos.qec.runtime_decode_context import (
     RuntimeLoopRecord,
     RuntimeRecordRef,
 )
+from pecos.qec.runtime_decode_qis import RuntimeDecodeQisSite
 from pecos.qec.runtime_decoder import (
     RuntimeDecodeBatchRequest,
     RuntimeDecodeControlRequest,
@@ -195,6 +196,7 @@ __all__ = [
     "RuntimeDetectorBinding",
     "RuntimeDecodeSchema",
     "RuntimeDecodeBinding",
+    "RuntimeDecodeQisSite",
     "RuntimeBranchRecord",
     "RuntimeLoopRecord",
     "RuntimeInputDependency",

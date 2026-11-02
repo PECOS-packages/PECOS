@@ -88,7 +88,7 @@ pub(crate) fn instrument(source: &str) -> Result<(String, ControlManifest), Inte
     ));
     let label = re(r"^([-a-zA-Z$._0-9]+):(?:\s*;.*)?$");
     let global = re(
-        r#"^@([-a-zA-Z$._0-9]+) = private (?:unnamed_addr )?constant \[([0-9]+) x i8\] c"(?:[^"\\]|\\[0-9A-Fa-f]{2})*"(?:, align [0-9]+)?$"#,
+        r#"^@([-a-zA-Z$._0-9]+) = private (?:unnamed_addr )?constant \[([0-9]+) x i8\] c"(?:[^"\\]|\\[0-9A-Fa-f]{2}|\\\\)*"(?:, align [0-9]+)?$"#,
     );
     let decl = re(r"^declare (void|i1|i64) @([-a-zA-Z$._0-9]+)\(([^()]*)\)$");
     let mut globals = BTreeMap::<String, usize>::new();
@@ -743,6 +743,12 @@ mod tests {
                 .to_string()
                 .contains("preexisting")
         );
+    }
+    #[test]
+    fn control_compiler_accepts_canonical_backslash_constants() {
+        // llvm-dis prints a backslash byte as \\, not the input's hex escape.
+        let escaped = source().replace(r#"c"{}""#, r#"c"\5C\22""#);
+        instrument(&escaped).unwrap();
     }
     #[test]
     fn control_compiler_rejects_unsupported_or_unresolved_provenance() {

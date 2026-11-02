@@ -205,13 +205,25 @@ class QisEngineBuilder:
         )
         return self
 
-    def runtime_decoder(self, factory: object, *, capture_batches: bool = False) -> Self:
+    def runtime_decoder(
+        self,
+        factory: object,
+        *,
+        capture_batches: bool = False,
+        capture_control_flow: bool = False,
+    ) -> Self:
         """Configure shot-local decoding, optionally with bounded emitted batches.
 
         ``capture_batches`` requires observed native decode calls and ordinary
         transport. The provider sees runtime timing/operations, never noise truth.
+        ``capture_control_flow`` additionally instruments a strict LLVM text
+        subset and requires batch capture; unsupported programs reject.
         """
-        self._builder = self._builder.runtime_decoder(factory, capture_batches=capture_batches)
+        self._builder = self._builder.runtime_decoder(
+            factory,
+            capture_batches=capture_batches,
+            capture_control_flow=capture_control_flow,
+        )
         return self
 
     def interface(self, builder: object) -> Self:

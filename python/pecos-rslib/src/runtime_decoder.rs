@@ -42,6 +42,46 @@ impl RuntimeDecoderSession for PythonDecoderSession {
         .map_err(callback_error)
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn decode_observed_with_control_v1(
+        &mut self,
+        window: u64,
+        instance: u64,
+        syndrome: &[u8],
+        context: &[u8],
+        reads: &[pecos_qis::runtime_decoder::RuntimeObservedRead],
+        prefix: &pecos_qis::decoder_batches::DecoderBatchPrefix,
+        control: &pecos_qis::control_provenance::ControlSnapshot,
+    ) -> Result<u64, PecosError> {
+        let _scope = CallbackScope::enter();
+        let observations: Vec<_> = reads
+            .iter()
+            .map(|r| (r.name.clone(), r.occurrence, r.source_id, r.value))
+            .collect();
+        let encoded =
+            serde_json::to_vec(prefix).map_err(|e| PecosError::Processing(e.to_string()))?;
+        let control =
+            serde_json::to_vec(control).map_err(|e| PecosError::Processing(e.to_string()))?;
+        Python::attach(|py| {
+            self.0
+                .call_method1(
+                    py,
+                    "decode_observed_with_control_v1",
+                    (
+                        window,
+                        instance,
+                        syndrome.to_vec(),
+                        context.to_vec(),
+                        observations,
+                        pyo3::types::PyBytes::new(py, &encoded),
+                        pyo3::types::PyBytes::new(py, &control),
+                    ),
+                )?
+                .extract(py)
+        })
+        .map_err(callback_error)
+    }
+
     fn decode_observed_with_batches_v1(
         &mut self,
         window: u64,

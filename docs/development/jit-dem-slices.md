@@ -454,3 +454,10 @@ The [versioned contract](runtime-decoder-contract.md#observed-native-reads-opt-i
 also offers an opt-in native read/source check: supplied measurement occurrence
 expectations and detector parities are checked against actual getter results.
 This does not certify branch declarations or adaptive DEM soundness.
+
+The [compiler control opt-in](runtime-decoder-contract.md#compiler-owned-llvm-control-opt-in)
+adds actual LLVM branch outcomes, loop progress and conservative input-site
+dependencies for a strict, bounded subset, joined to emitted-batch intervals.
+Full physical-fragment JIT, exact HUGR/source-to-gate mapping and adaptive-model
+admission remain separate; existing boundary and unsupported-model failures stay
+in force.

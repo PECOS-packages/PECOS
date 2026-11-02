@@ -209,7 +209,8 @@ def test_session_rejects_repeated_prefix_before_provider_and_latches():
 
 
 @pytest.mark.parametrize("runtime", ["selene_simple_runtime", "selene_soft_rz_runtime"])
-def test_empty_live_prefix_does_not_force_an_unread_future(runtime):
+@pytest.mark.parametrize("control", [False, True])
+def test_empty_live_prefix_does_not_force_an_unread_future(runtime, control):
     from qec.test_runtime_decode_context import binding
 
     definition = checked_window()
@@ -234,6 +235,7 @@ entry:
   %data = alloca i8
   store i8 1, ptr %data
   %f0 = call i64 @pecos_runtime_decode_observed_v1(i64 7, i64 0, ptr %data, i64 1, ptr @ctx, i64 {len(envelope)})
+  store i8 1, ptr %data
   %f1 = call i64 @pecos_runtime_decode_observed_v1(i64 7, i64 1, ptr %data, i64 1, ptr @ctx, i64 {len(envelope)})
   %value = call i1 @___read_future_bool(i64 %m)
   call void @___dec_future_refcount(i64 %m)
@@ -255,6 +257,7 @@ attributes #0 = {{ "EntryPoint" }}
                 selene_engine(runtime).runtime_decoder(
                     RuntimeDecoder(provider_factory=lambda: provide) if capture else RuntimeDecoder({7: definition}),
                     capture_batches=capture,
+                    capture_control_flow=control and capture,
                 ),
             )
             .qubits(1)

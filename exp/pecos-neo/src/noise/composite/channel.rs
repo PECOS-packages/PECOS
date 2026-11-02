@@ -15,6 +15,10 @@
 //! This module provides `CompositeChannel`, an adapter that wraps a composite `Primitive`
 //! and implements the `NoiseChannel` trait, allowing composite-based noise models
 //! to be used with the existing `ComposableNoiseModel`.
+//!
+//! Noiseless operation events return before primitives run, including direct
+//! context mutations such as `leak()` and `unleak()`. `BeforeGate` is exempt
+//! because it decides suppression: even a fault primitive on that event runs.
 
 use super::Primitive;
 use super::batch::GeometricSampler;
@@ -474,6 +478,10 @@ impl<P: Primitive + Clone + 'static> NoiseChannel for CompositeChannel<P> {
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> NoiseResponse {
+        // BeforeGate decides suppression; its primitives must still run.
+        if !matches!(event, NoiseEvent::BeforeGate { .. }) && ctx.is_noiseless_operation(event) {
+            return NoiseResponse::None;
+        }
         let qubits = event.qubits();
         let suppressed = event.leaked_suppressed();
         if qubits.is_empty() && suppressed.is_empty() {
@@ -985,6 +993,10 @@ impl<P: Primitive + Clone + 'static> NoiseChannel for BatchCompositeChannel<P> {
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> NoiseResponse {
+        // BeforeGate decides suppression; its primitives must still run.
+        if !matches!(event, NoiseEvent::BeforeGate { .. }) && ctx.is_noiseless_operation(event) {
+            return NoiseResponse::None;
+        }
         let qubits = event.qubits();
         let suppressed = event.leaked_suppressed();
         if qubits.is_empty() && suppressed.is_empty() {
@@ -1297,6 +1309,10 @@ impl<P: Primitive + Clone + 'static> NoiseChannel for CompositeCrosstalkChannel<
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> NoiseResponse {
+        // BeforeGate decides suppression; its primitives must still run.
+        if !matches!(event, NoiseEvent::BeforeGate { .. }) && ctx.is_noiseless_operation(event) {
+            return NoiseResponse::None;
+        }
         let gated_qubits = event.gated_qubits();
         let targets = self.get_targets(&gated_qubits, ctx);
 
@@ -1648,6 +1664,7 @@ mod tests {
         let qubits = [QubitId(0)];
         let outcomes = [false];
         let event = NoiseEvent::AfterMeasurement {
+            gate_type: GateType::MZ,
             qubits: &qubits,
             outcomes: &outcomes,
         };
@@ -1763,7 +1780,10 @@ mod tests {
         ctx.mark_prepared(QubitId(2));
 
         let qubits = [QubitId(0)];
-        let event = NoiseEvent::AfterPreparation { qubits: &qubits };
+        let event = NoiseEvent::AfterPreparation {
+            gate_type: GateType::PZ,
+            qubits: &qubits,
+        };
 
         // Run many times and count how often qubit 1 is affected
         let mut affected_count = 0;
@@ -1816,6 +1836,7 @@ mod tests {
         let qubits = [QubitId(0)];
         let outcomes = [false];
         let event = NoiseEvent::AfterMeasurement {
+            gate_type: GateType::MZ,
             qubits: &qubits,
             outcomes: &outcomes,
         };
@@ -1847,6 +1868,7 @@ mod tests {
         let qubits = [QubitId(0)];
         let outcomes = [false];
         let event = NoiseEvent::AfterMeasurement {
+            gate_type: GateType::MZ,
             qubits: &qubits,
             outcomes: &outcomes,
         };
@@ -2340,6 +2362,7 @@ mod tests {
 
         // Should NOT respond to preparation
         let prep_event = NoiseEvent::AfterPreparation {
+            gate_type: GateType::PZ,
             qubits: &[QubitId(0)],
         };
         assert!(!NoiseChannel::responds_to(&channel, &prep_event));

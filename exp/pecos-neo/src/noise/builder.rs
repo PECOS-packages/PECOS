@@ -417,6 +417,12 @@ impl NoiseModelBuilder {
     }
 
     /// Mark specific gate types as noiseless.
+    ///
+    /// Suppresses faults from these operations, including preparation, readout,
+    /// crosstalk and idle-after-two-qubit noise. Leakage suppression, preparation
+    /// clearing and lifecycle tracking still run. Scheduled idle is unaffected.
+    /// Custom channels must honor the setting; a fault primitive attached to a
+    /// `BeforeGate` composite still runs because that event decides suppression.
     #[must_use]
     pub fn with_noiseless_gate(mut self, gate_type: GateType) -> Self {
         self.noiseless_gates.push(gate_type);
@@ -424,6 +430,12 @@ impl NoiseModelBuilder {
     }
 
     /// Mark multiple gate types as noiseless.
+    ///
+    /// Suppresses faults from these operations, including preparation, readout,
+    /// crosstalk and idle-after-two-qubit noise. Leakage suppression, preparation
+    /// clearing and lifecycle tracking still run. Scheduled idle is unaffected.
+    /// Custom channels must honor the setting; a fault primitive attached to a
+    /// `BeforeGate` composite still runs because that event decides suppression.
     #[must_use]
     pub fn with_noiseless_gates(mut self, gate_types: impl IntoIterator<Item = GateType>) -> Self {
         self.noiseless_gates.extend(gate_types);
@@ -686,11 +698,8 @@ impl NoiseModelBuilder {
             );
         }
 
-        // Add leakage channel (if scale differs from default of 1.0)
-        if (self.leakage_scale - 1.0).abs() > f64::EPSILON {
-            let channel = LeakageChannel::new().with_scale(self.leakage_scale)?;
-            model = model.add_channel(channel);
-        }
+        // Always suppress gates on leaked operands, including custom leakage.
+        model = model.add_channel(LeakageChannel::new().with_scale(self.leakage_scale)?);
 
         // Add all custom channels
         for channel in self.custom_channels {
@@ -777,7 +786,7 @@ mod tests {
             .unwrap()
             .build()
             .unwrap();
-        assert_eq!(model.channel_names(), ["IdleChannel"]);
+        assert_eq!(model.channel_names(), ["IdleChannel", "LeakageChannel"]);
 
         let qubits = [QubitId(0), QubitId(1)];
         let event = NoiseEvent::AfterGate {
@@ -861,7 +870,7 @@ mod tests {
             .unwrap()
             .build()
             .unwrap();
-        assert_eq!(model.channel_names(), ["IdleChannel"]);
+        assert_eq!(model.channel_names(), ["IdleChannel", "LeakageChannel"]);
 
         let qubits = [QubitId(0), QubitId(1)];
         let event = NoiseEvent::AfterGate {
@@ -886,7 +895,7 @@ mod tests {
             .unwrap()
             .build()
             .unwrap();
-        assert_eq!(model.channel_names(), ["IdleChannel"]);
+        assert_eq!(model.channel_names(), ["IdleChannel", "LeakageChannel"]);
 
         let qubits = [QubitId(0)];
         let event = NoiseEvent::IdleTime {

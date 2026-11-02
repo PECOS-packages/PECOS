@@ -18,13 +18,16 @@ pub(super) fn representative(kind: NoiseEventKind) -> NoiseEvent<'static> {
         NoiseEventKind::BeforeGate => NoiseEvent::before_gate(GateType::H, &[QubitId(0)], &[]),
         NoiseEventKind::AfterGate => NoiseEvent::after_gate(GateType::H, &[QubitId(0)], &[]),
         NoiseEventKind::BeforeMeasurement => NoiseEvent::BeforeMeasurement {
+            gate_type: GateType::MZ,
             qubits: &[QubitId(0)],
         },
         NoiseEventKind::AfterMeasurement => NoiseEvent::AfterMeasurement {
+            gate_type: GateType::MZ,
             qubits: &[QubitId(0)],
             outcomes: &[true],
         },
         NoiseEventKind::AfterPreparation => NoiseEvent::AfterPreparation {
+            gate_type: GateType::PZ,
             qubits: &[QubitId(0)],
         },
         NoiseEventKind::IdleTime => NoiseEvent::IdleTime {
@@ -151,9 +154,14 @@ fn builtin_channel_kind_declarations_have_positive_witnesses() {
             gates,
         ),
         (Box::new(TwoQubitChannel::depolarizing(0.2).unwrap()), gates),
+        (Box::new(LeakageChannel::new()), EventKinds::of(BeforeGate)),
         (
-            Box::new(LeakageChannel::new()),
-            gates.with(BeforeMeasurement),
+            Box::new(
+                LeakageChannel::new()
+                    .with_partner_pauli_probability(1.0)
+                    .unwrap(),
+            ),
+            gates,
         ),
         (
             Box::new(MeasurementChannel::symmetric(0.2).unwrap()),

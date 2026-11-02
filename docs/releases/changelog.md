@@ -6,6 +6,18 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Breaking:** pecos-neo always suppresses gates on leaked operands in all three
+  noise builders, including noiseless gates and models with no configured leak
+  source (#1574, #1575). Noiseless operations suppress faults, including composite,
+  preparation, measurement, crosstalk and idle-after-two-qubit noise, while
+  preparation clearing, lifecycle tracking and leaked readout still run.
+  Scheduled idle and `BeforeGate` composite primitives remain active.
+  `LeakageChannel` partner Pauli noise is now opt-in with
+  `with_partner_pauli_probability` (default 0), and the channel no longer flips
+  an earlier measurement record before leaked readout. Seeded results shift.
+  `NoiseEvent::AfterPreparation`, `BeforeMeasurement` and `AfterMeasurement`
+  gained a `gate_type` field holding the scheduled operation.
+
 - **Breaking:** pecos-neo single- and two-qubit gate channels now discard a
   seeping qubit's state with an independent uniform I/X/Y/Z twirl (#1570),
   including seepage after leaked-suppressed gates. The marginal seepage rate

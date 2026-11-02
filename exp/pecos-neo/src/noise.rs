@@ -283,21 +283,33 @@ pub enum NoiseEvent<'a> {
 
     /// Emitted before measurement.
     ///
-    /// Used for pre-measurement effects like leaked qubit handling.
-    BeforeMeasurement { qubits: &'a [QubitId] },
+    /// Used for physical state-flip faults before readout. The gate type identifies
+    /// the scheduled operation for noiseless selection.
+    BeforeMeasurement {
+        gate_type: GateType,
+        qubits: &'a [QubitId],
+    },
 
     /// Emitted after measurement results are available.
     ///
     /// Channels can respond with `FlipOutcomes` to apply readout errors.
+    /// `gate_type` is the scheduled operation, so noiseless `MZ` and `MeasureLeaked`
+    /// declarations are distinct.
     AfterMeasurement {
+        gate_type: GateType,
         qubits: &'a [QubitId],
         outcomes: &'a [bool],
     },
 
     /// Emitted after state preparation.
     ///
-    /// Channels can respond with bit-flip errors or leakage.
-    AfterPreparation { qubits: &'a [QubitId] },
+    /// Channels can respond with bit-flip errors or leakage. `gate_type` is the
+    /// scheduled operation, so noiseless `PZ` and `QAlloc` declarations are distinct.
+    /// Preparation still clears prior leakage and updates lifecycle when noiseless.
+    AfterPreparation {
+        gate_type: GateType,
+        qubits: &'a [QubitId],
+    },
 
     /// Emitted for idle time on qubits.
     ///
@@ -489,9 +501,9 @@ impl<'a> NoiseEvent<'a> {
         match self {
             Self::BeforeGate { qubits, .. }
             | Self::AfterGate { qubits, .. }
-            | Self::BeforeMeasurement { qubits }
+            | Self::BeforeMeasurement { qubits, .. }
             | Self::AfterMeasurement { qubits, .. }
-            | Self::AfterPreparation { qubits }
+            | Self::AfterPreparation { qubits, .. }
             | Self::IdleTime { qubits, .. }
             | Self::AfterReset { qubits }
             | Self::BetweenLayers { qubits, .. } => qubits,
@@ -641,7 +653,7 @@ impl<'a> NoiseEvent<'a> {
     /// Events have inherent meaning independent of noise.
     pub fn apply_state_updates(&self, ctx: &mut NoiseContext) {
         match self {
-            Self::AfterPreparation { qubits } | Self::AfterReset { qubits } => {
+            Self::AfterPreparation { qubits, .. } | Self::AfterReset { qubits } => {
                 for &qubit in *qubits {
                     ctx.mark_prepared(qubit);
                 }

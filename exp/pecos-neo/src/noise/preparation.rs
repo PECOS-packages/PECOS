@@ -101,10 +101,13 @@ impl NoiseChannel for PreparationChannel {
     fn apply(
         &self,
         event: &NoiseEvent<'_>,
-        _ctx: &mut NoiseContext,
+        ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> NoiseResponse {
-        let NoiseEvent::AfterPreparation { qubits } = event else {
+        if ctx.is_noiseless_operation(event) {
+            return NoiseResponse::None;
+        }
+        let NoiseEvent::AfterPreparation { qubits, .. } = event else {
             return NoiseResponse::None;
         };
 
@@ -157,7 +160,10 @@ mod tests {
         let channel = PreparationChannel::new(1.0).unwrap(); // Always error
 
         let qubits = [QubitId(0)];
-        let event = NoiseEvent::AfterPreparation { qubits: &qubits };
+        let event = NoiseEvent::AfterPreparation {
+            gate_type: GateType::PZ,
+            qubits: &qubits,
+        };
 
         assert!(channel.responds_to(&event));
 
@@ -186,7 +192,10 @@ mod tests {
         let channel = PreparationChannel::new(0.0).unwrap(); // No error
 
         let qubits = [QubitId(0)];
-        let event = NoiseEvent::AfterPreparation { qubits: &qubits };
+        let event = NoiseEvent::AfterPreparation {
+            gate_type: GateType::PZ,
+            qubits: &qubits,
+        };
 
         let mut ctx = NoiseContext::new();
         // State updates are handled by event.apply_state_updates()
@@ -207,7 +216,10 @@ mod tests {
             .unwrap(); // Always leak
 
         let qubits = [QubitId(0)];
-        let event = NoiseEvent::AfterPreparation { qubits: &qubits };
+        let event = NoiseEvent::AfterPreparation {
+            gate_type: GateType::PZ,
+            qubits: &qubits,
+        };
 
         let mut ctx = NoiseContext::new();
         let mut rng = PecosRng::seed_from_u64(42);

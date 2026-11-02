@@ -285,6 +285,9 @@ impl NoiseChannel for CrosstalkChannel {
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> NoiseResponse {
+        if ctx.is_noiseless_operation(event) {
+            return NoiseResponse::None;
+        }
         let gated_qubits = event.gated_qubits();
 
         let mut responses: Vec<NoiseResponse> = Vec::new();
@@ -380,7 +383,10 @@ mod tests {
         let channel = CrosstalkChannel::global_only(0.1).unwrap();
 
         let qubits = [QubitId(0)];
-        let event = NoiseEvent::AfterPreparation { qubits: &qubits };
+        let event = NoiseEvent::AfterPreparation {
+            gate_type: GateType::PZ,
+            qubits: &qubits,
+        };
 
         assert!(channel.responds_to(&event));
 
@@ -409,7 +415,10 @@ mod tests {
         let channel = CrosstalkChannel::global_only(1.0).unwrap(); // 100% rate
 
         let qubits = [QubitId(0)];
-        let event = NoiseEvent::AfterPreparation { qubits: &qubits };
+        let event = NoiseEvent::AfterPreparation {
+            gate_type: GateType::PZ,
+            qubits: &qubits,
+        };
 
         // Create context where qubit 1 is measured (inactive)
         let mut ctx = NoiseContext::new();
@@ -446,7 +455,10 @@ mod tests {
             .with_neighbor_function(neighbors);
 
         let qubits = [QubitId(5)];
-        let event = NoiseEvent::AfterPreparation { qubits: &qubits };
+        let event = NoiseEvent::AfterPreparation {
+            gate_type: GateType::PZ,
+            qubits: &qubits,
+        };
 
         // Prepare qubits 0-10
         let mut ctx = NoiseContext::new();
@@ -485,7 +497,10 @@ mod tests {
             .unwrap();
 
         let qubits = [QubitId(0)];
-        let event = NoiseEvent::AfterPreparation { qubits: &qubits };
+        let event = NoiseEvent::AfterPreparation {
+            gate_type: GateType::PZ,
+            qubits: &qubits,
+        };
 
         let mut ctx = NoiseContext::new();
         ctx.mark_prepared(QubitId(0));
@@ -520,7 +535,10 @@ mod tests {
             .unwrap();
 
         let qubits = [QubitId(0)];
-        let event = NoiseEvent::AfterPreparation { qubits: &qubits };
+        let event = NoiseEvent::AfterPreparation {
+            gate_type: GateType::PZ,
+            qubits: &qubits,
+        };
 
         let mut ctx = NoiseContext::new();
         ctx.mark_prepared(QubitId(0));

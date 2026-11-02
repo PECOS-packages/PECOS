@@ -156,12 +156,21 @@ impl BlockExecutor {
                 }
             }
             Operation::QuantumOp {
-                qop, angles, args, ..
+                qop,
+                angles,
+                args,
+                returns,
+                ..
             } => {
                 debug!("Processing quantum operation: {qop}");
                 let (gate_type, qubit_args, angle_args) =
                     self.processor
                         .process_quantum_op(qop, angles.as_ref(), args)?;
+
+                if qop == "Measure" {
+                    self.processor
+                        .record_measurement_returns(qubit_args.len(), returns)?;
+                }
 
                 // Add to byte message builder if we have one
                 if let Some(builder) = &mut self.builder {
@@ -503,6 +512,10 @@ impl BlockExecutor {
     ) -> Result<(), PecosError> {
         let operations: Vec<_> = program.into_iter().collect();
         self.processor.environment.exports = super::exports::collect(operations.iter().copied())?;
+        super::exports::prepare_results(
+            operations.iter().copied(),
+            &mut self.processor.environment,
+        )?;
         if self.processor.environment.exports.is_some() {
             for op in super::exports::declarations(operations.iter().copied(), true) {
                 if let Operation::VariableDefinition {
@@ -833,7 +846,8 @@ mod tests {
         // Define measurement results
         let measurements = vec![1]; // Index 0, value 1
 
-        // Handle measurements
+        // Queue the measurement before delivering its positional outcome.
+        executor.process_operation(&operations[0]).unwrap();
         let result = executor.handle_measurements(&measurements, &operations);
         assert!(result.is_ok());
 

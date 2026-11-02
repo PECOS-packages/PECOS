@@ -197,11 +197,15 @@ impl ImprovedConverter {
 
         let mut instructions = Vec::new();
         let exports = super::exports::collect_json(ops)?;
+        self.prepare_result_storage(ops, &mut instructions)?;
         let mut export_names = Vec::new();
 
         // Convert operations in source order, flushing measurements before Result copies.
         for op in ops {
-            if op.get("data").and_then(Value::as_str) == Some("cvar_export") {
+            if matches!(
+                op.get("data").and_then(Value::as_str),
+                Some("cvar_export" | "cvar_define" | "qvar_define")
+            ) {
                 continue;
             }
             if let Some(cop) = op
@@ -285,6 +289,50 @@ impl ImprovedConverter {
         }
 
         Ok(instructions)
+    }
+
+    /// Declarations and Result-created registers have storage before any copy executes.
+    fn prepare_result_storage(
+        &mut self,
+        ops: &[Value],
+        instructions: &mut Vec<Instruction>,
+    ) -> Result<(), PecosError> {
+        let mut operations = Vec::new();
+        for op in ops {
+            let declaration = matches!(
+                op.get("data").and_then(Value::as_str),
+                Some("cvar_define" | "qvar_define")
+            );
+            if declaration || op.get("cop").and_then(Value::as_str) == Some("Result") {
+                operations.push(
+                    serde_json::from_value::<super::ast::Operation>(op.clone())
+                        .map_err(|error| PecosError::Input(error.to_string()))?,
+                );
+            }
+            if declaration && let Some(instruction) = self.convert_operation(op)? {
+                instructions.push(instruction);
+            }
+        }
+        super::exports::prepare_results(&operations, &mut self.environment)?;
+        let destinations: Vec<_> = self
+            .environment
+            .result_destinations
+            .iter()
+            .filter(|name| !self.variable_map.contains_key(*name))
+            .cloned()
+            .collect();
+        for name in destinations {
+            let info = self.environment.classical_info(&name)?;
+            let value_type = Self::storage_type(info);
+            let zero = if info.data_type == DataType::Bool {
+                ClassicalOp::ConstBool(false)
+            } else {
+                ClassicalOp::ConstInt(0)
+            };
+            let value = self.append_classical(zero, vec![], &value_type, instructions)?;
+            self.variable_map.insert(name, value.id);
+        }
+        Ok(())
     }
 
     fn register_width(info: &VariableInfo) -> usize {
@@ -513,7 +561,9 @@ impl ImprovedConverter {
         use super::ast::{Operation as JsonOperation, QubitArg};
         use pecos_core::gate_type::GateType;
         let mut quantum_fields = obj.clone();
-        quantum_fields.remove("returns");
+        if qop != "Measure" {
+            quantum_fields.remove("returns");
+        }
         let ast: JsonOperation = serde_json::from_value(Value::Object(quantum_fields))
             .map_err(|error| PecosError::Input(format!("Invalid {qop} operation {obj:?}: {error}; supply valid PHIR arguments and angles")))?;
         let JsonOperation::QuantumOp { angles, args, .. } = ast else {

@@ -258,7 +258,10 @@ unknown sources. Measurement destinations must be declared classical registers,
 and their bit indices must be below the declared size (excluding the sign bit).
 JSON-to-module conversion, which supports only straight-line programs, checks each
 measurement destination when it compiles. Native execution and both interpreters
-check destinations when the measurement runs.
+check destinations when the measurement runs. Every runner rejects a Measure with
+missing returns or different argument/return counts at load time. Each measured
+qubit needs an explicit destination; no register name is invented. Measurement
+writeback includes user registers beginning with `__`; exports control reporting.
 All classical storage types (`i8`–`i64`, `u8`–`u64`, and `bool`) support
 measurements. Declaration sizes use one shared Rust decoder: only an absent
 field means omitted. JSON null, negative, string, fractional and boolean size
@@ -272,8 +275,8 @@ before destination-width masking, independently of the source backing type,
 matching `=`. Malformed Result entries report the offending JSON value; Python
 uses TypeError for wrong types and ValueError for invalid integer indices.
 Rust classifies these as `PecosError::Input`. The Python interpreter validates
-Result reference syntax and declarations at load. It checks Result counts when
-that Result executes, like native and the Rust interpreter, and caches successful
+Result references, counts and destination types at load, including unexecuted
+branches, like native and the Rust interpreter. It caches execution-time
 reference decoding until the next init or full reset. Result arguments and returns
 are treated as immutable after first execution. Successful decoding holds each
 executed Result operation until the next init or full reset. Later shots do not
@@ -285,17 +288,37 @@ that are not finite JSON scalars use a bounded non-string stand-in for named
 Rust diagnostics; int, str and float subclasses are normalized and accepted. Invalid declaration-name and size
 values are rendered with at most 80 characters, including an ellipsis.
 Exports use U32 through 32 bits and U64 for wider registers.
-Without `cvar_export` or Result mappings, all declared classical registers are exported.
+Without `cvar_export`, the native engine and module converter report only Result
+destinations when any exist; otherwise they report every classical variable.
+Quantum registers are never reported, and classical names have no prefix filter.
 CPhase is not a PHIR v0.1 gate and must be lowered before emitting PHIR JSON.
 
 `cvar_export` selects the reported classical variables, optionally renaming them
 positionally with `to`. Every directive contributes to a static union, including
 directives in unexecuted branches in runners that support blocks. Values and
 widths come from the source registers at the end of the shot. With any directive
-present, even an empty `variables` list, only these outputs and executed Result
-destinations are reported. Invalid sources, renames, conflicting output names,
-and the reserved `_width_` prefix are rejected at load time. Without a directive,
-each runner retains its existing selection behavior, including native filters.
+present, even an empty `variables` list, only these outputs and every static Result
+destination are reported. Each Result destination appears in every shot, including
+shots where its Result does not execute. Its value is the destination's final value;
+all classical storage starts each shot at zero. Declared destinations retain their
+width and signedness regardless of source types. For a new destination, whole-register
+sources contribute their size and signedness and indexed sources contribute one bit.
+Its size is the largest contribution across the entire program. Whole-register
+copies retain their common source data type; differing whole-source data types
+use `u64` or `i64` storage according to signedness. Any indexed write to
+an undeclared destination uses unsigned 64-bit storage, with size at least
+`max(32, largest destination index + 1)`. Only conflicting signedness between
+whole-register sources of an undeclared destination is a load-time error; declare
+the destination to choose its type explicitly. Result-created names are hoisted
+at load just like declarations, even if their Result is in an unexecuted branch.
+Other operations may read or write them before that Result; reads see zero until
+something writes the name. Invalid sources, renames, conflicting output names,
+and the reserved `_width_` prefix are rejected at load time.
+Without a directive, native and module output is limited to the static Result
+destinations when any exist. HybridEngine retains its existing rule of reporting
+every classical variable plus Result destinations. With neither exports nor
+Results, all runners report every classical variable, including `measurement_`-
+prefixed names, and exclude quantum registers.
 A Result destination may also be exported under its own name; an alias of a
 different source cannot use that destination name. Declarations inside blocks
 require a program with `cvar_export`; otherwise move them to the top level.

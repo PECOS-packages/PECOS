@@ -32,6 +32,31 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   never fired, and changes `active()` conditions and seeded results. This crosstalk
   does not measure the affected qubit, so it differs from `GeneralNoiseModel`.
 
+- **Breaking:** PHIR runner results now have a consistent set of keys across shots.
+  Every `Result` destination is reported in every shot, including when its Result
+  never runs: its final value is reported, initially zero unless another operation
+  writes it. Result-created names are hoisted at load like declarations, so other
+  operations may read or write them before their Result executes, including when
+  that Result is in an unexecuted branch. Declared destinations keep their width
+  and signedness without restrictions on source types. An undeclared destination
+  takes the largest width contributed by its sources (a whole-register source's
+  size, or one bit for an indexed source). Indexed destination writes use unsigned
+  64-bit storage, sized to at least `max(32, largest destination index + 1)` across
+  the program. Whole-register copies to an undeclared destination keep their
+  common source data type, such as `bool` or `i8`; differing source data types use
+  `u64` or `i64` according to signedness. Conflicting signedness between
+  whole-register sources of an undeclared destination is a load-time error naming
+  the destination and sources.
+  The native `measurement_` name filter is removed, and quantum registers are
+  no longer reported by its all-variables fallback. `HybridEngine` writes
+  measurements into user registers beginning with `__`, keeps noise-only
+  measurements internal, and raises
+  a named shot/key error instead of accumulating ragged columns. Every runner,
+  including the native engine, rejects `Measure` without `returns` or with a
+  different number of destinations than measured qubits at load time; grouped
+  arguments are flattened before counting. Implicit measurement destinations
+  (`measurement_N` and `m`) have been removed.
+
 - **Breaking:** `QuantumCircuit.to_phir_json()` handles a measurement with no
   destination (#1497), such as SLR `qb.Measure(q[1])` with no `> c`. It used to
   emit a PHIR `Measure` without `returns`. PHIR validation and `HybridEngine`
@@ -84,8 +109,8 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 - **Breaking:** PHIR `cvar_export` selects the reported classical variables in
   every PECOS runner (#1323): the native PHIR-JSON engine (`sim(PhirJson(...))`),
   the Rust and Python classical interpreters behind `HybridEngine`, and
-  `phir_json_to_module`, which used to reject it. Before, every runner ignored it
-  and reported all classical variables. The export set is the union of every
+  `phir_json_to_module`, which used to reject it. Before, runners ignored it
+  and used their default output selection. The export set is the union of every
   `cvar_export` in the program, including unexecuted branches; values are read at
   the end of the shot; `to` renames positionally. Programs with exports no longer
   report unexported variables, and an explicitly exported `measurement_*`
@@ -95,8 +120,9 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   destination under its own name is allowed), and the reserved `_width_`
   prefix. A `cvar_define` or `qvar_define` inside a block is supported only in
   programs that use `cvar_export`; elsewhere it is a load-time error. `qc2phir`
-  drops exports of size-0 registers it does not declare. Programs without
-  `cvar_export` report what they did before.
+  drops exports of size-0 registers it does not declare. Without `cvar_export`,
+  the native engine and module converter retain Result-only output selection
+  when Results exist; HybridEngine continues to report all classical variables.
 
 - `belief_find` now gives its Union Find fallback the raw BP log-probability
   ratios. It previously passed a transform that reversed their order, so on

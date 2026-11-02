@@ -1,4 +1,4 @@
-use crate::v0_1::ast::{ArgItem, Expression, MEASUREMENT_PREFIX, Operation, QubitArg};
+use crate::v0_1::ast::{ArgItem, Expression, Operation, QubitArg};
 use crate::v0_1::environment::{DataType, Environment};
 use crate::v0_1::expression::ExpressionEvaluator;
 use crate::v0_1::foreign_objects::ForeignObject;
@@ -7,6 +7,16 @@ use pecos_core::errors::PecosError;
 use pecos_core::{Angle64, Gate, gate_type::GateType};
 use pecos_engines::byte_message::builder::ByteMessageBuilder;
 use std::collections::{BTreeMap, BTreeSet};
+
+/// Require one explicit return destination per measured qubit.
+pub(crate) fn validate_measurement_counts(args: usize, returns: usize) -> Result<(), PecosError> {
+    if args != returns || returns == 0 {
+        return Err(PecosError::Input(format!(
+            "Measure: invalid counts {args} args and {returns} returns; give each measured qubit a destination"
+        )));
+    }
+    Ok(())
+}
 
 /// Validate the one-to-one, nonempty mapping of a PHIR Result operation.
 ///
@@ -269,21 +279,8 @@ pub struct OperationProcessor {
     pub foreign_object: Option<Box<dyn ForeignObject>>,
     /// Current operation index being processed
     current_op: usize,
-    /// Return register for each qubit measured in the current batch, in the
-    /// order the simulator emits outcomes -- one slot per measured qubit, so
-    /// `outcome[i]` maps to `pending_measurements[i]`. `None` marks a measured
-    /// qubit with no return register (handled by the fallback). Populated as
-    /// `Measure` ops are queued (including from inside blocks) and consumed by
-    /// `handle_measurements`.
-    pending_measurements: Vec<Option<(String, usize)>>,
-    /// Absolute count of measurement outcomes applied so far in the current
-    /// shot, accumulated across batches and reset per shot in `reset()`. Gives
-    /// the legacy `measurement_N` variables and the no-return `m` fallback a
-    /// stable absolute bit position even when a shot's measurements are split
-    /// across batches (`MAX_BATCH_SIZE` or a deferral). The primary
-    /// explicit-return path indexes `pending_measurements` batch-locally and is
-    /// unaffected.
-    measurements_applied: usize,
+    /// Explicit destination for each measurement in the current batch, in queue order.
+    pending_measurements: Vec<(String, usize)>,
 }
 
 impl Default for OperationProcessor {
@@ -300,7 +297,6 @@ impl Clone for OperationProcessor {
             foreign_object: self.foreign_object.as_ref().map(|fo| fo.clone_box()),
             current_op: self.current_op,
             pending_measurements: self.pending_measurements.clone(),
-            measurements_applied: self.measurements_applied,
         }
         // All data including mappings is now in the environment
     }
@@ -315,14 +311,13 @@ impl OperationProcessor {
             foreign_object: None,
             current_op: 0,
             pending_measurements: Vec::new(),
-            measurements_applied: 0,
         }
     }
 
     /// Record the return registers of a queued `Measure` op so
     /// `handle_measurements` can map positional outcomes back to them. The
     /// simulator emits one outcome per measured qubit, so we record one slot
-    /// per qubit to keep outcomes aligned even across a no-return measure.
+    /// per qubit to keep outcomes aligned.
     ///
     /// # Errors
     /// Returns an error if a Measure has return registers that do not match its
@@ -332,20 +327,8 @@ impl OperationProcessor {
         qubit_count: usize,
         returns: &[(String, usize)],
     ) -> Result<(), PecosError> {
-        if returns.is_empty() {
-            // No-return measure: reserve a placeholder per qubit so a later
-            // measurement's outcomes stay positionally aligned.
-            self.pending_measurements
-                .extend((0..qubit_count).map(|_| None));
-        } else if returns.len() == qubit_count {
-            self.pending_measurements
-                .extend(returns.iter().map(|r| Some(r.clone())));
-        } else {
-            return Err(PecosError::Input(format!(
-                "Measure op measures {qubit_count} qubit(s) but has {} return register(s); they must match one-to-one",
-                returns.len()
-            )));
-        }
+        validate_measurement_counts(qubit_count, returns.len())?;
+        self.pending_measurements.extend_from_slice(returns);
         Ok(())
     }
 
@@ -417,7 +400,6 @@ impl OperationProcessor {
         self.environment.reset_values();
         // Environment reset_values now also clears mappings
         self.pending_measurements.clear();
-        self.measurements_applied = 0;
 
         // We deliberately don't clear variable definitions or foreign_object
         // so that we preserve the structure of the program while resetting state
@@ -1628,10 +1610,7 @@ impl OperationProcessor {
 
     /// Handle incoming measurements from quantum operations and store results
     ///
-    /// This method processes measurement results and stores them in:
-    /// 1. The environment (single source of truth for all variables)
-    /// 2. Standard measurement variables (e.g., "`measurement_0`")
-    /// 3. Named variables from the program (e.g., "m")
+    /// Store each outcome in its explicitly declared destination.
     ///
     /// # Errors
     /// Returns an error if variable creation or value setting fails.
@@ -1642,41 +1621,17 @@ impl OperationProcessor {
     ) -> Result<(), PecosError> {
         log::debug!("PHIR: Handling {} measurement results", measurements.len());
 
-        for (index, outcome) in measurements.iter().enumerate() {
-            // Absolute position across batches, for the legacy `measurement_N`
-            // variable and the no-return `m` fallback. The explicit-return path
-            // below stays batch-local (it indexes this batch's
-            // `pending_measurements`).
-            let abs_index = self.measurements_applied + index;
-            let result_id = u32::try_from(abs_index).unwrap_or(u32::MAX);
-            log::debug!("PHIR: Received measurement index={abs_index}, outcome={outcome}");
-
-            // Store in the standard measurement variable name (e.g., "measurement_0")
-            let prefixed_name = format!("{MEASUREMENT_PREFIX}{result_id}");
-            if !self.environment.has_variable(&prefixed_name) {
-                self.environment
-                    .ensure_classical_variable(&prefixed_name, DataType::I32, 31)?;
-            }
-            self.environment.set(&prefixed_name, u64::from(*outcome))?;
-            log::debug!("Stored measurement result: {prefixed_name} = {outcome}");
-
-            // Map the outcome to the return register recorded when this
-            // measurement was queued (queue-order positional). This works for
-            // measurements queued from inside blocks too, which a scan of the
-            // top-level ops would miss.
-            if let Some(Some((var_name, var_idx))) = self.pending_measurements.get(index).cloned() {
-                self.store_measurement_result(&var_name, var_idx, *outcome)?;
-            } else if self.environment.has_variable("m") {
-                // Fallback for a measured qubit with no recorded return register
-                // (e.g. Bell-state test programs that measure without returns).
-                self.store_measurement_result("m", abs_index, *outcome)?;
-                log::debug!(
-                    "PHIR: Auto-mapped measurement result {abs_index} to m[{abs_index}] = {outcome}"
-                );
-            }
+        if measurements.len() != self.pending_measurements.len() {
+            return Err(PecosError::Input(format!(
+                "Measure: received {} outcomes for {} destinations; give each measured qubit a destination and return one outcome per qubit",
+                measurements.len(),
+                self.pending_measurements.len()
+            )));
         }
-
-        self.measurements_applied += measurements.len();
+        let destinations = std::mem::take(&mut self.pending_measurements);
+        for ((name, index), outcome) in destinations.into_iter().zip(measurements) {
+            self.store_measurement_result(&name, index, *outcome)?;
+        }
 
         // Log mappings for debugging purposes
         // The environment automatically manages and uses these mappings
@@ -1701,90 +1656,15 @@ impl OperationProcessor {
     /// and provides a clean, simple approach to gathering exported values.
     #[must_use]
     pub fn process_export_mappings(&self) -> BTreeMap<String, u64> {
-        if let Some(outputs) = self.environment.selected_outputs() {
-            return outputs
-                .into_iter()
-                .filter_map(|(output, source)| {
-                    self.environment
-                        .get(&source)
-                        .map(|value| (output, value.as_u64()))
-                })
-                .collect();
-        }
-        let mut exported_values = BTreeMap::new();
-        log::debug!("Processing export mappings using environment as source of truth");
-
-        // Get all mappings from the environment
-        let mappings = self.environment.get_mappings();
-
-        if !mappings.is_empty() {
-            log::debug!(
-                "Processing {} explicit mappings from environment",
-                mappings.len()
-            );
-
-            // Process all explicit mappings first
-            for (source_register, export_name) in mappings {
-                // Skip if we already have this export (in case of duplicates)
-                if exported_values.contains_key(export_name) {
-                    log::debug!("Skipping already processed export: {export_name}");
-                    continue;
-                }
-
-                log::debug!("Processing export mapping: {source_register} -> {export_name}");
-
-                // Primary approach: Direct lookup in environment
-                if self.environment.has_variable(source_register) {
-                    if let Some(value) = self.environment.get(source_register) {
-                        log::debug!("Using value from environment: {source_register} = {value}");
-                        exported_values.insert(export_name.clone(), value.as_u64());
-                    } else {
-                        log::debug!(
-                            "Variable {source_register} exists in environment but has no value"
-                        );
-                    }
-                } else {
-                    // If the source doesn't exist, log but don't use fallbacks since environment
-                    // is the single source of truth
-                    log::warn!(
-                        "Source variable '{source_register}' for export '{export_name}' not found in environment"
-                    );
-                }
-            }
-        }
-
-        // If no explicit mappings or we didn't find any values, include all variables with values
-        if mappings.is_empty() || exported_values.is_empty() {
-            log::debug!("Adding automatic mappings for all variables with values");
-
-            for var_info in self.environment.get_all_variables() {
-                // Skip variables we've already exported
-                if exported_values.contains_key(&var_info.name) {
-                    continue;
-                }
-                // Skip quantum variables and internal measurement variables
-                if var_info.data_type == DataType::Qubits {
-                    continue;
-                }
-                if var_info.name.starts_with("measurement_") {
-                    continue;
-                }
-
-                // Include any variable that has a value
-                if let Some(val) = self.environment.get(&var_info.name) {
-                    log::debug!("Adding variable: {} = {}", var_info.name, val);
-                    exported_values.insert(var_info.name.clone(), val.as_u64());
-                }
-            }
-        }
-
-        // Log summary of what we're exporting
-        log::debug!("Exporting {} values:", exported_values.len());
-        for (name, value) in &exported_values {
-            log::debug!("  {name} = {value}");
-        }
-
-        exported_values
+        self.environment
+            .output_sources()
+            .into_iter()
+            .filter_map(|(output, source)| {
+                self.environment
+                    .get(&source)
+                    .map(|value| (output, value.as_u64()))
+            })
+            .collect()
     }
 }
 
@@ -1889,32 +1769,27 @@ mod tests {
         assert!(err.to_string().contains("cannot redeclare as quantum"));
     }
 
-    // Issue #345 finding 3: no-return measurements split across batches must not
-    // alias onto m[0..] -- the fallback position is absolute across batches, not
-    // batch-local.
     #[test]
-    fn test_measurement_index_is_absolute_across_batches() {
+    fn test_measurement_destinations_across_batches() {
         let mut processor = OperationProcessor::new();
         processor.add_classical_variable("m", "u64", 8).unwrap();
-
-        // Batch 1: two no-return measures -> m[0]=1, m[1]=0.
-        processor.record_measurement_returns(2, &[]).unwrap();
+        processor
+            .record_measurement_returns(2, &[("m".into(), 0), ("m".into(), 1)])
+            .unwrap();
         processor.handle_measurements(&[1, 0], &[]).unwrap();
         processor.clear_pending_measurements();
-
-        // Batch 2: two more. The batch-local index restarts at 0, but the
-        // absolute position must continue at m[2], m[3] rather than overwrite
-        // m[0..]. Old (batch-local) behaviour gave m = 0b0011 = 3.
-        processor.record_measurement_returns(2, &[]).unwrap();
-        processor.handle_measurements(&[1, 1], &[]).unwrap();
-
-        let m = processor
-            .evaluate_expression(&Expression::Variable("m".to_string()))
+        processor
+            .record_measurement_returns(2, &[("m".into(), 2), ("m".into(), 3)])
             .unwrap();
+        processor.handle_measurements(&[1, 1], &[]).unwrap();
         assert_eq!(
-            m, 0b1101,
-            "no-return measurements across batches must not alias m[0..]"
+            processor
+                .evaluate_expression(&Expression::Variable("m".into()))
+                .unwrap(),
+            0b1101
         );
+        assert!(processor.record_measurement_returns(1, &[]).is_err());
+        assert!(!processor.environment.has_variable("measurement_0"));
     }
 
     #[test]

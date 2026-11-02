@@ -1805,12 +1805,12 @@ def test_unexecuted_result_count_mismatch_matches_native(validate: bool) -> None
             },
         ],
     )
-    native = run_phir_sim(json.dumps(source))
+    with pytest.raises(ValueError, match="Result: invalid counts"):
+        run_phir_sim(json.dumps(source))
     for interpreter in (RustPhirClassicalInterpreter(), PhirClassicalInterpreter()):
         interpreter.phir_validate = validate
-        actual = HybridEngine(cinterp=interpreter).run(source, return_int=True)
-        assert actual == {"a": [0]}
-        assert actual == {name: [int(value) for value in values] for name, values in native.items()}
+        with pytest.raises(ValueError, match="Result: invalid counts"):
+            interpreter.init(source)
 
 
 @pytest.mark.parametrize("method", ["handle_cops", "execute"])

@@ -127,7 +127,11 @@ fn all_quantum_paths_reject_duplicate_qubits_identically() {
         ("Measure", json!([["q", 1], ["q", 1]])),
         ("CX", json!([[["q", 0], ["q", 1]], [["q", 1], ["q", 2]]])),
     ] {
-        let source = program(&json!({"qop":name,"args":args}));
+        let mut op = json!({"qop":name,"args":args});
+        if name == "Measure" {
+            op["returns"] = json!([["m", 0], ["m", 1]]);
+        }
+        let source = program(&op);
         let error = native_error(&source);
         assert_eq!(error, interpreter_error(&source));
         assert_eq!(error, phir_json_to_module(&source).unwrap_err().to_string());

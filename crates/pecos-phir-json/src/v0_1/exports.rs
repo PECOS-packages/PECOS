@@ -241,3 +241,240 @@ pub(crate) fn collect_json(ops: &[Value]) -> Result<Option<ExportMap>, PecosErro
     visit(ops, false, &mut collector)?;
     collector.finish()
 }
+
+/// Allocate every Result destination before execution, resolving chains of copies.
+/// Declarations supply the type; inferred storage includes every copy contribution.
+pub(crate) fn prepare_results<'a>(
+    ops: impl IntoIterator<Item = &'a Operation>,
+    environment: &mut super::environment::Environment,
+) -> Result<(), PecosError> {
+    use super::environment::{Environment, ResultReference};
+    let ops = walk_operations(ops);
+    let mut types = Environment::new();
+    let mut pairs = Vec::new();
+    let mut declared = BTreeSet::new();
+    for (op, _) in &ops {
+        match op {
+            Operation::VariableDefinition {
+                data,
+                data_type,
+                variable,
+                size,
+            } => {
+                let size = super::ast::declaration_size(data, data_type, variable, *size)?;
+                if data == "cvar_define" {
+                    declared.insert(variable.clone());
+                    types.add_classical_variable(variable, data_type.parse()?, size)?;
+                } else if data == "qvar_define" {
+                    types.add_quantum_register(variable, size)?;
+                }
+            }
+            Operation::ClassicalOp {
+                cop, args, returns, ..
+            } if cop == "Result" => {
+                super::operations::validate_result_counts(args.len(), returns.len())?;
+                for (source, destination) in args.iter().zip(returns) {
+                    pairs.push((
+                        ResultReference::from_arg(source, "args")?,
+                        ResultReference::from_arg(destination, "returns")?,
+                    ));
+                }
+            }
+            Operation::QuantumOp {
+                qop, args, returns, ..
+            } if qop == "Measure" => {
+                super::classical_validation::validate_measure_args(args, returns)?;
+            }
+            _ => {}
+        }
+    }
+    infer_result_types(&pairs, &declared, &mut types)?;
+    for (source, destination) in pairs {
+        types.validate_result_index(&source)?;
+        types.validate_result_index(&destination)?;
+        let info = types.classical_info(&destination.name)?;
+        if !declared.contains(&destination.name) {
+            environment.ensure_classical_variable(
+                &destination.name,
+                info.data_type.clone(),
+                info.size,
+            )?;
+        }
+        environment.result_destinations.insert(destination.name);
+    }
+    Ok(())
+}
+
+/// Propagate widths and whole-source signedness through the Result graph to a fixed point.
+/// Indexed destinations retain the legacy unsigned 64-bit storage rule.
+fn infer_result_types(
+    pairs: &[(
+        super::environment::ResultReference,
+        super::environment::ResultReference,
+    )],
+    declared: &BTreeSet<String>,
+    types: &mut super::environment::Environment,
+) -> Result<(), PecosError> {
+    use super::environment::DataType;
+    let mut widths = BTreeMap::new();
+    let mut data_types = BTreeMap::new();
+    // Signedness is a bit set: 1 for unsigned sources, 2 for signed sources.
+    let mut signs = BTreeMap::new();
+    let indexed: BTreeSet<_> = pairs
+        .iter()
+        .filter(|(_, dest)| dest.index.is_some())
+        .map(|(_, dest)| dest.name.clone())
+        .collect();
+    let whole: BTreeSet<_> = pairs
+        .iter()
+        .filter(|(source, _)| source.index.is_none())
+        .map(|(_, dest)| dest.name.clone())
+        .collect();
+    for name in declared {
+        let info = types.classical_info(name)?;
+        widths.insert(name.clone(), info.size);
+        data_types.insert(name.clone(), info.data_type.clone());
+        signs.insert(
+            name.clone(),
+            if info.data_type.is_signed() { 2u8 } else { 1u8 },
+        );
+    }
+    for (source, dest) in pairs {
+        // Existing quantum names must fail before any inferred storage is allocated.
+        types.validate_result_destination_name(&dest.name)?;
+        if declared.contains(&dest.name) {
+            continue;
+        }
+        if let Some(index) = dest.index {
+            // Validate against the backing width before allocating storage.
+            if index >= 64 {
+                types.validate_result_index(dest)?;
+            }
+            let size = (index as usize + 1).max(32);
+            let width = widths.entry(dest.name.clone()).or_insert(0);
+            *width = (*width).max(size);
+        }
+        if source.index.is_some() {
+            widths.entry(dest.name.clone()).or_insert(1);
+        }
+        if indexed.contains(&dest.name) || !whole.contains(&dest.name) {
+            signs.insert(dest.name.clone(), 1);
+            data_types.insert(dest.name.clone(), DataType::U64);
+        }
+    }
+    propagate_result_types(
+        pairs,
+        declared,
+        &indexed,
+        &mut widths,
+        &mut signs,
+        &mut data_types,
+    );
+    // Resolve anchored types first, then default unanchored cycles. Propagate
+    // again so those defaults can widen downstream mixed-type copies.
+    for (_, dest) in pairs {
+        if signs.get(&dest.name).copied().unwrap_or(0) == 0 {
+            signs.insert(dest.name.clone(), 1);
+        }
+        data_types.entry(dest.name.clone()).or_insert_with(|| {
+            if signs.get(&dest.name) == Some(&2) {
+                DataType::I64
+            } else {
+                DataType::U64
+            }
+        });
+    }
+    propagate_result_types(
+        pairs,
+        declared,
+        &indexed,
+        &mut widths,
+        &mut signs,
+        &mut data_types,
+    );
+    for (source, _) in pairs {
+        if !widths.contains_key(&source.name) {
+            types.classical_info(&source.name)?;
+        }
+    }
+    for (_, dest) in pairs {
+        if declared.contains(&dest.name) {
+            continue;
+        }
+        let mut sources = BTreeMap::new();
+        for (other, target) in pairs {
+            if target.name == dest.name && other.index.is_none() {
+                let sign = signs.get(&other.name).copied().unwrap_or(1);
+                sources.insert(other.name.clone(), sign);
+            }
+        }
+        let signed = sources.iter().find(|(_, sign)| **sign & 2 != 0);
+        let unsigned = sources
+            .iter()
+            .find(|(name, sign)| **sign & 1 != 0 && signed.is_none_or(|(other, _)| *name != other));
+        if let (Some((a, _)), Some((b, _))) = (signed, unsigned) {
+            return Err(PecosError::Input(format!(
+                "Result: destination {:?} has conflicting signedness from sources {a:?} and {b:?}; declare the destination or use whole-register sources with the same signedness",
+                dest.name
+            )));
+        }
+        let dtype = data_types.get(&dest.name).expect(
+            "Result type invariant: every destination has a type after propagation and defaults",
+        );
+        let width = widths.get(&dest.name).expect(
+            "Result width invariant: every source has a width after unknown-source validation, so every destination has a propagated width",
+        );
+        types.ensure_classical_variable(&dest.name, dtype.clone(), *width)?;
+    }
+    Ok(())
+}
+
+fn propagate_result_types(
+    pairs: &[(
+        super::environment::ResultReference,
+        super::environment::ResultReference,
+    )],
+    declared: &BTreeSet<String>,
+    indexed: &BTreeSet<String>,
+    widths: &mut BTreeMap<String, usize>,
+    signs: &mut BTreeMap<String, u8>,
+    data_types: &mut BTreeMap<String, super::environment::DataType>,
+) {
+    loop {
+        let mut changed = false;
+        for (source, dest) in pairs {
+            if declared.contains(&dest.name) {
+                continue;
+            }
+            if let Some(size) = widths.get(&source.name).copied() {
+                let size = if source.index.is_some() { 1 } else { size };
+                let width = widths.entry(dest.name.clone()).or_insert(0);
+                changed |= *width < size;
+                *width = (*width).max(size);
+            }
+            if source.index.is_none() && !indexed.contains(&dest.name) {
+                let sign = signs.get(&source.name).copied().unwrap_or(0);
+                let previous = signs.entry(dest.name.clone()).or_insert(0);
+                changed |= *previous | sign != *previous;
+                *previous |= sign;
+                if let Some(mut dtype) = data_types.get(&source.name).cloned() {
+                    if data_types
+                        .get(&dest.name)
+                        .is_some_and(|previous| *previous != dtype)
+                    {
+                        dtype = if *previous == 2 {
+                            super::environment::DataType::I64
+                        } else {
+                            super::environment::DataType::U64
+                        };
+                    }
+                    changed |= data_types.get(&dest.name) != Some(&dtype);
+                    data_types.insert(dest.name.clone(), dtype);
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+}

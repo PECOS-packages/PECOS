@@ -73,7 +73,11 @@ def test_measurement_sequence(pre: tuple[int, ...], p: float, expected: list) ->
 def test_neither_returns_none() -> None:
     """Leakage outside the batch does not replace the original measurement."""
     machine = FakeMachine((9,))
-    result = noise_meas_bitflip_leakage(QOp("Measure", [0, 1, 2, 3]), 0.0, machine)
+    result = noise_meas_bitflip_leakage(
+        QOp("Measure", [0, 1, 2, 3], returns=[["m", i] for i in range(4)]),
+        0.0,
+        machine,
+    )
     assert result is None
     assert machine.meas_leaked_calls == []
 

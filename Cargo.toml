@@ -1,5 +1,6 @@
 [workspace]
 resolver = "2"
+exclude = ["vendor/ndarray-npy"]
 members = [
   "python/pecos-rslib",
   "python/pecos-rslib-exp",
@@ -337,3 +338,8 @@ overflow-checks = false
 # Replace mwpf's vendored HiGHS wrapper with a pure-Rust LP shim so the mwpf feature does not require cmake.
 [patch."https://github.com/yuewuo/mwpf"]
 highs = { path = "crates/pecos-highs-shim" }
+
+# Keep relay-bp on ndarray 0.16 while backporting upstream's ZIP 9 security update.
+# Remove when relay-bp accepts an ndarray-npy release using ZIP >= 9.
+[patch.crates-io]
+ndarray-npy = { path = "vendor/ndarray-npy" }

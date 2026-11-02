@@ -19,6 +19,11 @@ thiserror.workspace = true
 relay-bp.workspace = true
 sprs.workspace = true
 
+[dev-dependencies]
+# A direct path also includes the backport in Maturin source distributions.
+ndarray-npy = { version = "0.9.1", path = "../../vendor/ndarray-npy" }
+tempfile.workspace = true
+
 [lib]
 name = "pecos_relay_bp"
 

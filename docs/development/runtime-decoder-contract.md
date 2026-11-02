@@ -317,14 +317,45 @@ RXY/RZ, measurement, Boolean read, refcount and printing imports, and observed
 decoding. Scalar `i1`/`i8`/`i64` PHI, add/sub/mul/and/or/xor, comparisons,
 zext/trunc and select are supported. Branches must form a reachable reducible
 CFG with properly nested natural loops; only `br` and `ret i64 0` terminate blocks.
-Gate angles are constants. Each syndrome uses one entry-block `alloca i8`, an
-immediately preceding same-block store to that cell, and length one. Context,
-read-name and print-label lengths are nonzero constants within their constant
-byte globals. This restriction establishes initialization and readable extents
-without claiming general pointer/dataflow analysis.
+Gate angles are constants. Syndrome storage is an entry-block `alloca i8` or
+`alloca [N x i8]` with constant positive `N`. Entry-block byte pointers may also
+use `getelementptr inbounds [N x i8], ptr %allocation, i64 0, i64 K`, where the
+base is the allocation itself, `N` matches its extent and constant `K` is in
+`0..N`. Pointer chains, dynamic offsets, and one-past-the-end pointers reject.
+Decode takes a constant positive byte count wholly inside that allocation,
+starting at the supplied pointer. A subrange need not initialize unread bytes.
+
+Every decoded byte must have a scalar `store i8` in the consecutive run of stores
+immediately before that decode in the same block. Aliases resolve to allocation
+and byte offset; storing twice to one byte does not initialize another. Any
+intervening non-store instruction ends this run. Stores in predecessors, earlier
+loop iterations or previous decode calls do not establish initialization. Compute
+values and pointers before the store run; repeat the stores on every execution.
+For example, a two-detector call can use the allocation base and its second byte:
+
+```llvm
+; In the entry block:
+%data = alloca [2 x i8]
+%second = getelementptr inbounds [2 x i8], ptr %data, i64 0, i64 1
+; At a decode site, after computing both i8 values:
+store i8 %first_bit, ptr %data
+store i8 %second_bit, ptr %second
+%frame = call i64 @pecos_runtime_decode_observed_v1(i64 7, i64 %instance, ptr %data, i64 2, ptr @ctx, i64 128)
+```
+
+The context global and its exact byte length must match the caller's serialized
+schema; `128` above is illustrative. Context, read-name and print-label lengths
+are nonzero constants within their constant byte globals. These restrictions
+establish initialization and readable extents without general pointer/dataflow
+analysis. The existing observed-read source and detector-parity checks still
+apply to every byte, and decoder output mappings still control the returned frame.
+No ABI or control wire-format change is needed: instrumenter
+`pecos-qis-control-v1` retains its instrumentation semantics; new source modules
+receive their own module hashes.
 
 Extra function definitions, arbitrary callees, mutable globals, pointer loads or
-arithmetic, memory-based classical inputs, unsupported scalar operations,
+arithmetic beyond the bounded byte pointers above, memory-based classical inputs,
+unsupported scalar operations,
 exceptional/indirect control flow, irreducible loops, preexisting protected hooks
 or `pecos.ctrl.` names, and non-observed decode imports reject. The entry function
 allows only its `EntryPoint` attribute group. Text input is supported; this opt-in
@@ -332,8 +363,9 @@ does not add a bitcode or HUGR frontend. It does not relax `from_guppy` rejectio
 or infer HUGR node identities from decorative metadata. A future frontend must
 supply a revision-bound QIS-to-HUGR mapping through a checked compiler seam.
 
-Limits are 4 MiB source, 256 blocks, 4,096 sites and scalar values, and 65,536
-static dependency entries. At most 4,096 generated events may accumulate between
+Limits are 4 MiB source, 256 blocks, 4,096 sites and scalar values, 4,096 total
+syndrome allocation bytes, 4,096 syndrome pointers (including allocation bases),
+and 65,536 static dependency entries. At most 4,096 generated events may accumulate between
 decode fences, including before the first and after the last decode. The pending
 FFI operation queue also has a 4,096-entry guard when recording an event, so a
 pure classical loop cannot grow indefinitely without yielding. Limit violations

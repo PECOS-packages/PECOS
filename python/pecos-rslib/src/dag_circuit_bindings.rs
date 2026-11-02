@@ -2975,9 +2975,17 @@ impl PyTickCircuit {
     /// stabilizer simulators may reject the circuit.
     ///
     /// Modifies the circuit in place.
-    fn lower_clifford_rotations(&mut self) {
-        use pecos_quantum::pass::{CircuitPass, SimplifyRotations};
-        SimplifyRotations.apply_tick(&mut self.inner);
+    /// Set `preserve_gate_arity=True` when preparing noise analysis to retain
+    /// two-qubit half-turns as physical two-qubit locations. The default also
+    /// decomposes those rotations into independent one-qubit Pauli gates.
+    #[pyo3(signature = (*, preserve_gate_arity=false))]
+    fn lower_clifford_rotations(&mut self, preserve_gate_arity: bool) {
+        use pecos_quantum::pass;
+        if preserve_gate_arity {
+            pass::lower_clifford_rotations_preserving_arity(&mut self.inner);
+        } else {
+            pass::lower_clifford_rotations(&mut self.inner);
+        }
     }
 
     /// Remove unitary identity gates (`I` and zero-angle rotations).

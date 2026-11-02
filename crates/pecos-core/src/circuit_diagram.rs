@@ -15,7 +15,70 @@
 //! Produces horizontal qubit-wire diagrams with gate columns, used by
 //! [`UnitaryRep`](crate::UnitaryRep), [`TickCircuit`], and [`DagCircuit`].
 
+use std::collections::BTreeMap;
 use std::fmt::Write;
+
+/// Escape plain text in SVG element content (not attributes).
+fn escape_svg_text(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+fn svg_operation_start(out: &mut String, id: &str) {
+    let id = escape_svg_text(id).replace('"', "&quot;");
+    writeln!(out, "<g data-pecos-operation=\"{id}\">").unwrap();
+}
+
+/// Escape a quoted Graphviz label, including its escape sequences.
+fn escape_dot_text(text: &str) -> String {
+    text.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\r', "\\r")
+        .replace('\n', "\\n")
+}
+
+/// Keep the declared wire order within a DOT rank.
+fn dot_row_order(out: &mut String, num_rows: usize, suffix: &str) {
+    for row in 1..num_rows {
+        writeln!(
+            out,
+            "    r{}{suffix} -> r{row}{suffix} [style=invis, weight=1000];",
+            row - 1
+        )
+        .unwrap();
+    }
+}
+
+/// Place a connector label in the central gap, never on an uninvolved wire.
+#[allow(clippy::cast_precision_loss)]
+fn connector_label_row(top: usize, bottom: usize) -> f64 {
+    if bottom > top {
+        (top + (bottom - top - 1) / 2) as f64 + 0.5
+    } else {
+        top as f64
+    }
+}
+
+/// Encode a plain-text diagram label for a `TikZ` text node.
+fn escape_tikz_text(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for ch in text.chars() {
+        match ch {
+            '\\' => escaped.push_str("\\textbackslash{}"),
+            '{' | '}' | '$' | '&' | '#' | '%' | '_' => {
+                escaped.push('\\');
+                escaped.push(ch);
+            }
+            '^' => escaped.push_str("\\textasciicircum{}"),
+            '~' => escaped.push_str("\\textasciitilde{}"),
+            'π' => escaped.push_str("\\ensuremath{\\pi}"),
+            '\n' | '\r' | '\t' => escaped.push(' '),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
+}
 
 // --- Types ---
 
@@ -308,6 +371,7 @@ impl ColorPalette {
 /// Controls text symbol set, color modes, dash patterns, and the color palette.
 /// Use [`DiagramStyle::builder()`] for convenient construction.
 #[derive(Clone, Debug)]
+#[allow(clippy::struct_excessive_bools)] // Independent formatting choices, not mutually exclusive states.
 pub struct DiagramStyle {
     pub symbols: SymbolSet,
     /// Whether to emit ANSI color codes in text output.
@@ -319,6 +383,9 @@ pub struct DiagramStyle {
     pub show_dashes: bool,
     /// How to display rotation angles in gate labels.
     pub angle_unit: AngleUnit,
+    /// Include stored measurement identities in circuit-generated gate labels.
+    /// Missing result identities are shown as `m?`; no identities are assigned.
+    pub show_measurement_ids: bool,
     pub palette: ColorPalette,
 }
 
@@ -330,6 +397,7 @@ impl Default for DiagramStyle {
             color: true,
             show_dashes: true,
             angle_unit: AngleUnit::Radians,
+            show_measurement_ids: false,
             palette: ColorPalette::default(),
         }
     }
@@ -530,6 +598,16 @@ impl DiagramStyleBuilder {
         self
     }
 
+    /// Include stored measurement identities in circuit-generated labels.
+    ///
+    /// Defaults to false. This affects circuit-to-diagram conversion; it does
+    /// not annotate manually constructed cells in a [`CircuitDiagram`].
+    #[must_use]
+    pub fn show_measurement_ids(mut self, show: bool) -> Self {
+        self.style.show_measurement_ids = show;
+        self
+    }
+
     /// Build the final `DiagramStyle`.
     #[must_use]
     pub fn build(self) -> DiagramStyle {
@@ -563,6 +641,23 @@ impl<'a> DiagramRenderer<'a> {
             header,
             style,
         }
+    }
+
+    /// Prepend a panel title while retaining the circuit and range description.
+    ///
+    /// Whitespace is collapsed to keep the header on one line. Output formats
+    /// escape the title as ordinary text. An empty title leaves it unchanged.
+    #[must_use]
+    pub fn with_title(mut self, title: &str) -> Self {
+        let title = title.split_whitespace().collect::<Vec<_>>().join(" ");
+        if !title.is_empty() {
+            self.header = if self.header.is_empty() {
+                title
+            } else {
+                format!("{title} | {}", self.header)
+            };
+        }
+        self
     }
 
     /// Render as a text wire diagram using the style's symbol set.
@@ -638,6 +733,9 @@ pub struct CircuitDiagram {
     connector_spans: Vec<(usize, usize, usize, Option<String>)>,
     /// Groups of columns representing a single logical tick: `(label, start_col, end_col)`.
     column_groups: Vec<(String, usize, usize)>,
+    active_operation: Option<String>,
+    cell_operations: BTreeMap<(usize, usize), String>,
+    connector_operations: BTreeMap<usize, String>,
 }
 
 impl CircuitDiagram {
@@ -651,6 +749,9 @@ impl CircuitDiagram {
             current_col: 0,
             connector_spans: Vec::new(),
             column_groups: Vec::new(),
+            active_operation: None,
+            cell_operations: BTreeMap::new(),
+            connector_operations: BTreeMap::new(),
         }
     }
 
@@ -664,6 +765,9 @@ impl CircuitDiagram {
             current_col: 0,
             connector_spans: Vec::new(),
             column_groups: Vec::new(),
+            active_operation: None,
+            cell_operations: BTreeMap::new(),
+            connector_operations: BTreeMap::new(),
         }
     }
 
@@ -679,8 +783,19 @@ impl CircuitDiagram {
         self.current_col
     }
 
+    /// Associate subsequently placed gate symbols and connectors with an opaque
+    /// inspection ID. SVG emits escaped `data-pecos-operation` groups; other
+    /// formats and layout are unchanged. Wires and crossings never own an ID.
+    pub fn set_operation_id(&mut self, id: Option<&str>) {
+        self.active_operation = id.map(str::to_owned);
+    }
+
     /// Register a group of columns that represent a single logical tick.
     pub fn add_column_group(&mut self, label: String, start: usize, end: usize) {
+        while self.columns.len() <= end {
+            self.columns
+                .push(vec![(DiagramCell::Wire, CellColor::None); self.num_rows()]);
+        }
         self.column_groups.push((label, start, end));
     }
 
@@ -695,6 +810,13 @@ impl CircuitDiagram {
     pub fn set_cell(&mut self, row: usize, cell: DiagramCell, color: CellColor) {
         self.ensure_column();
         if row < self.num_rows() {
+            self.cell_operations.remove(&(self.current_col, row));
+            if matches!(cell, DiagramCell::Gate(..) | DiagramCell::Control)
+                && let Some(id) = &self.active_operation
+            {
+                self.cell_operations
+                    .insert((self.current_col, row), id.clone());
+            }
             self.columns[self.current_col][row] = (cell, color);
         }
     }
@@ -722,10 +844,12 @@ impl CircuitDiagram {
         } else {
             (bottom, top)
         };
+        self.record_connector_operation();
         self.connector_spans.push((self.current_col, lo, hi, None));
         for row in (lo + 1)..hi {
             if row < self.num_rows() {
                 // All rows in CircuitDiagram are qubit wires -> Crossing.
+                self.cell_operations.remove(&(self.current_col, row));
                 self.columns[self.current_col][row] = (DiagramCell::Crossing, color);
             }
         }
@@ -741,7 +865,15 @@ impl CircuitDiagram {
         } else {
             (bottom, top)
         };
+        self.record_connector_operation();
         self.connector_spans.push((self.current_col, lo, hi, None));
+    }
+
+    fn record_connector_operation(&mut self) {
+        if let Some(id) = &self.active_operation {
+            self.connector_operations
+                .insert(self.connector_spans.len(), id.clone());
+        }
     }
 
     /// Record a labeled vertical connector span without setting intermediate cells.
@@ -754,6 +886,7 @@ impl CircuitDiagram {
         } else {
             (bottom, top)
         };
+        self.record_connector_operation();
         self.connector_spans
             .push((self.current_col, lo, hi, Some(label)));
     }
@@ -803,6 +936,12 @@ impl CircuitDiagram {
                 if *col < col_widths.len() {
                     col_widths[*col] = col_widths[*col].max(text_len);
                 }
+            }
+        }
+
+        for (label, start, end) in &self.column_groups {
+            if start == end && *start < num_cols {
+                col_widths[*start] = col_widths[*start].max(label.chars().count() + 1);
             }
         }
 
@@ -958,13 +1097,28 @@ impl CircuitDiagram {
         let num_rows = self.num_rows();
         let num_cols = self.effective_columns();
 
+        // Short circuits can be narrower than their title. Include both
+        // margins and a conservative monospace advance in the SVG viewport.
+        let header_width = header.chars().count() as f64 * CHAR_WIDTH + 20.0;
+        let label_margin = LABEL_MARGIN.max(
+            self.labels
+                .iter()
+                .map(|label| label.chars().count())
+                .max()
+                .unwrap_or(0) as f64
+                * CHAR_WIDTH
+                + 12.0,
+        );
+
+        let header = escape_svg_text(header);
         if num_rows == 0 || num_cols == 0 {
             return if header.is_empty() {
-                "<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>".to_string()
+                "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1\" height=\"1\" viewBox=\"0 0 1 1\"></svg>".to_string()
             } else {
                 format!(
-                    "<svg xmlns=\"http://www.w3.org/2000/svg\">\
-                     <text x=\"10\" y=\"20\" font-family=\"monospace\" font-size=\"14\">{header}</text>\
+                    "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{header_width}\" height=\"30\" viewBox=\"0 0 {header_width} 30\">\
+                     <rect width=\"100%\" height=\"100%\" fill=\"white\"/>\
+                     <text x=\"10\" y=\"20\" font-family=\"monospace\" font-size=\"14\" fill=\"#333\">{header}</text>\
                      </svg>"
                 )
             };
@@ -1016,20 +1170,20 @@ impl CircuitDiagram {
 
         // Column center x-positions, placed edge-to-edge.
         let mut col_cx: Vec<f64> = Vec::with_capacity(num_cols);
-        let mut x_cursor = LABEL_MARGIN;
+        let mut x_cursor = label_margin;
         for &spacing in &col_spacings {
             col_cx.push(x_cursor + spacing / 2.0);
             x_cursor += spacing;
         }
 
         let header_offset: f64 = if header.is_empty() { 0.0 } else { 30.0 };
-        let svg_width = x_cursor + 20.0;
+        let svg_width = (x_cursor + 20.0).max(header_width);
         let svg_height = header_offset + (num_rows as f64) * ROW_SPACING + ROW_SPACING * 0.5;
 
         let mut out = String::new();
         writeln!(
             out,
-            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{svg_width}\" height=\"{svg_height}\">"
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{svg_width}\" height=\"{svg_height}\" viewBox=\"0 0 {svg_width} {svg_height}\">"
         )
         .unwrap();
         writeln!(out, "<rect width=\"100%\" height=\"100%\" fill=\"white\"/>").unwrap();
@@ -1047,8 +1201,9 @@ impl CircuitDiagram {
             if *start >= num_cols || *end >= num_cols {
                 continue;
             }
-            let x1 = col_cx[*start] - col_spacings[*start] / 2.0;
-            let x2 = col_cx[*end] + col_spacings[*end] / 2.0;
+            // Separate adjacent ticks even when every selected tick is grouped.
+            let x1 = col_cx[*start] - col_spacings[*start] / 2.0 + 2.0;
+            let x2 = col_cx[*end] + col_spacings[*end] / 2.0 - 2.0;
             let y1 = header_offset + ROW_SPACING * 0.5 - ROW_SPACING * 0.4;
             let y2 =
                 header_offset + ROW_SPACING * ((num_rows - 1) as f64 + 0.5) + ROW_SPACING * 0.4;
@@ -1062,6 +1217,7 @@ impl CircuitDiagram {
             .unwrap();
             let lx = f64::midpoint(x1, x2);
             let ly = y1 - 2.0;
+            let label = escape_svg_text(label);
             writeln!(
                 out,
                 "<text x=\"{lx}\" y=\"{ly}\" font-family=\"monospace\" font-size=\"10\" \
@@ -1077,25 +1233,30 @@ impl CircuitDiagram {
                 out,
                 "<text x=\"{x}\" y=\"{ty}\" font-family=\"monospace\" font-size=\"{FONT_SIZE}\" \
                  text-anchor=\"end\" dominant-baseline=\"middle\" fill=\"#333\">{label}</text>",
-                x = LABEL_MARGIN - 6.0,
+                x = label_margin - 6.0,
                 ty = y,
-                label = self.labels[row],
+                label = escape_svg_text(&self.labels[row]),
             )
             .unwrap();
             writeln!(
                 out,
-                "<line x1=\"{LABEL_MARGIN}\" y1=\"{y}\" x2=\"{x_cursor}\" y2=\"{y}\" stroke=\"#222222\" stroke-width=\"1\"/>",
+                "<line x1=\"{label_margin}\" y1=\"{y}\" x2=\"{x_cursor}\" y2=\"{y}\" stroke=\"#222222\" stroke-width=\"1\"/>",
             )
             .unwrap();
         }
 
         // Layer 2: Vertical connector lines (drawn before gates so gates sit on top).
-        for (col, top, bottom, label) in &self.connector_spans {
+        for (connector_index, (col, top, bottom, label)) in self.connector_spans.iter().enumerate()
+        {
             let col = *col;
             let top = *top;
             let bottom = *bottom;
             if col >= num_cols {
                 continue;
+            }
+            let operation = self.connector_operations.get(&connector_index);
+            if let Some(id) = operation {
+                svg_operation_start(&mut out, id);
             }
             let cx = col_cx[col];
             let y1 = header_offset + ROW_SPACING * (top as f64 + 0.5);
@@ -1116,7 +1277,7 @@ impl CircuitDiagram {
             .unwrap();
             // Render label on the midpoint of the connector line.
             if let Some(text) = label {
-                let mid_y = f64::midpoint(y1, y2);
+                let mid_y = header_offset + ROW_SPACING * (connector_label_row(top, bottom) + 0.5);
                 let lbl_color = self.columns[col][top].1;
                 let t = style.triplet(lbl_color);
                 let char_count = text.chars().count();
@@ -1143,10 +1304,14 @@ impl CircuitDiagram {
                     out,
                     "<text x=\"{cx}\" y=\"{mid_y}\" font-family=\"monospace\" font-size=\"{fs}\" \
                      text-anchor=\"middle\" dominant-baseline=\"middle\" fill=\"{fill}\">{text}</text>",
+                    text = escape_svg_text(text),
                     fs = FONT_SIZE - 1.0,
                     fill = t.text,
                 )
                 .unwrap();
+            }
+            if operation.is_some() {
+                writeln!(out, "</g>").unwrap();
             }
         }
 
@@ -1156,8 +1321,16 @@ impl CircuitDiagram {
                 let cy = header_offset + ROW_SPACING * (row as f64 + 0.5);
                 let (ref cell, color) = self.columns[col_idx][row];
 
+                let operation = self.cell_operations.get(&(col_idx, row));
+                if let Some(id) = operation {
+                    svg_operation_start(&mut out, id);
+                }
                 match cell {
-                    DiagramCell::Wire | DiagramCell::LabeledConnector(_) => {}
+                    // Crossing wires do not add controls; connectors are drawn below.
+                    DiagramCell::Wire
+                    | DiagramCell::LabeledConnector(_)
+                    | DiagramCell::Crossing
+                    | DiagramCell::Connector => {}
                     DiagramCell::Gate(s, family) => {
                         let t = style.triplet(color);
                         // Per-gate width: sized to its own label, centered in the column.
@@ -1219,6 +1392,7 @@ impl CircuitDiagram {
                             out,
                             "<text x=\"{cx}\" y=\"{cy}\" font-family=\"monospace\" font-size=\"{FONT_SIZE}\" \
                              text-anchor=\"middle\" dominant-baseline=\"middle\" fill=\"{fill}\">{s}</text>",
+                            s = escape_svg_text(s),
                             fill = t.text,
                         )
                         .unwrap();
@@ -1239,13 +1413,9 @@ impl CircuitDiagram {
                         )
                         .unwrap();
                     }
-                    DiagramCell::Crossing | DiagramCell::Connector => {
-                        writeln!(
-                            out,
-                            "<circle cx=\"{cx}\" cy=\"{cy}\" r=\"2\" fill=\"#222\"/>",
-                        )
-                        .unwrap();
-                    }
+                }
+                if operation.is_some() {
+                    writeln!(out, "</g>").unwrap();
                 }
             }
         }
@@ -1259,7 +1429,7 @@ impl CircuitDiagram {
     /// Render the diagram as a `TikZ` `tikzpicture` environment.
     ///
     /// Requires only `\usepackage{tikz}` -- no quantikz. If `header` is
-    /// non-empty it is emitted as a `TikZ` comment.
+    /// non-empty it is rendered above the circuit and retained as a source comment.
     #[must_use]
     pub fn render_tikz(&self, header: &str) -> String {
         self.render_tikz_with(header, &DiagramStyle::default())
@@ -1270,7 +1440,9 @@ impl CircuitDiagram {
     #[allow(clippy::cast_precision_loss)] // TikZ coordinate calculations use index as f64
     pub fn render_tikz_with(&self, header: &str, style: &DiagramStyle) -> String {
         const ROW_STEP: f64 = 0.8;
-        const COL_STEP: f64 = 1.2;
+        const COL_PAD: f64 = 0.5;
+        // Conservative advance for footnotesize monospace text, in cm.
+        const CHAR_W: f64 = 0.18;
         const GATE_W: f64 = 0.7;
         const GATE_H: f64 = 0.5;
         const CTRL_R: f64 = 0.08;
@@ -1280,11 +1452,21 @@ impl CircuitDiagram {
 
         let mut out = String::new();
 
-        if !header.is_empty() {
-            writeln!(out, "% {header}").unwrap();
+        for line in header.lines() {
+            writeln!(out, "% {line}").unwrap();
         }
 
         writeln!(out, "\\begin{{tikzpicture}}").unwrap();
+
+        if !header.is_empty() {
+            let title = header.split_whitespace().collect::<Vec<_>>().join(" ");
+            writeln!(
+                out,
+                "  \\node[anchor=west, font=\\footnotesize\\ttfamily] at (-0.65,1.0) {{{}}};",
+                escape_tikz_text(&title),
+            )
+            .unwrap();
+        }
 
         // Color definitions from the style palette.
         for &c in &[
@@ -1331,13 +1513,40 @@ impl CircuitDiagram {
             return out;
         }
 
+        let label_width = |text: &str| (text.chars().count() as f64 * CHAR_W + 0.12).max(GATE_W);
+        let mut gate_widths = vec![GATE_W; num_cols];
+        for (col, cells) in self.columns.iter().take(num_cols).enumerate() {
+            for (cell, _) in cells {
+                if let DiagramCell::Gate(text, _) = cell {
+                    gate_widths[col] = gate_widths[col].max(label_width(text));
+                }
+            }
+        }
+        for (col, _, _, label) in &self.connector_spans {
+            if let Some(text) = label
+                && *col < num_cols
+            {
+                gate_widths[*col] = gate_widths[*col].max(label_width(text));
+            }
+        }
+        let mut x_cursor = 0.0;
+        let column_x: Vec<f64> = gate_widths
+            .iter()
+            .map(|width| {
+                let span = width + COL_PAD;
+                let center = x_cursor + span / 2.0;
+                x_cursor += span;
+                center
+            })
+            .collect();
+
         // Column group backgrounds.
         for (label, start, end) in &self.column_groups {
             if *start >= num_cols || *end >= num_cols {
                 continue;
             }
-            let x1 = (*start as f64 + 0.5) * COL_STEP - GATE_W / 2.0 - 0.1;
-            let x2 = (*end as f64 + 0.5) * COL_STEP + GATE_W / 2.0 + 0.1;
+            let x1 = column_x[*start] - gate_widths[*start] / 2.0 - 0.1;
+            let x2 = column_x[*end] + gate_widths[*end] / 2.0 + 0.1;
             let y1 = ROW_STEP * 0.3;
             let y2 = -((num_rows - 1) as f64) * ROW_STEP - ROW_STEP * 0.3;
             writeln!(
@@ -1347,6 +1556,7 @@ impl CircuitDiagram {
             .unwrap();
             let mid_x = f64::midpoint(x1, x2);
             let label_y = y1 + 0.2;
+            let label = escape_tikz_text(label);
             writeln!(
                 out,
                 "  \\node[font=\\tiny\\ttfamily, gray] at ({mid_x:.2},{label_y:.2}) {{{label}}};",
@@ -1358,7 +1568,7 @@ impl CircuitDiagram {
         for row in 0..num_rows {
             let y = -(row as f64) * ROW_STEP;
             let x_start = -0.5;
-            let x_end = (num_cols as f64) * COL_STEP + 0.3;
+            let x_end = x_cursor + 0.3;
             writeln!(
                 out,
                 "  \\draw[gray] ({x_start:.2},{y:.2}) -- ({x_end:.2},{y:.2});",
@@ -1368,15 +1578,36 @@ impl CircuitDiagram {
                 out,
                 "  \\node[anchor=east, font=\\footnotesize\\ttfamily] at ({lx:.2},{y:.2}) {{{label}}};",
                 lx = x_start - 0.15,
-                label = self.labels[row],
+                label = escape_tikz_text(&self.labels[row]),
             )
             .unwrap();
         }
 
-        // Gates, controls, connectors.
-        for col_idx in 0..num_cols {
-            let x = (col_idx as f64 + 0.5) * COL_STEP;
+        // Draw connector lines before opaque gate nodes so they cannot strike
+        // through the target symbols or labels.
+        for (col, top, bottom, label) in &self.connector_spans {
+            if *col >= num_cols {
+                continue;
+            }
+            let x = column_x[*col];
+            let y1 = -(*top as f64) * ROW_STEP;
+            let y2 = -(*bottom as f64) * ROW_STEP;
+            let color = if style.color && label.is_some() {
+                self.columns[*col][*top].1
+            } else {
+                CellColor::ControlDot
+            };
+            let name = color.tikz_name();
+            writeln!(
+                out,
+                "  \\draw[{name}Stroke] ({x:.2},{y1:.2}) -- ({x:.2},{y2:.2});",
+            )
+            .unwrap();
+        }
 
+        // Gates and controls. A crossing is only an intersection of wires,
+        // not a control dot.
+        for (col_idx, &x) in column_x.iter().enumerate() {
             for row in 0..num_rows {
                 let y = -(row as f64) * ROW_STEP;
                 let (ref cell, color) = self.columns[col_idx][row];
@@ -1385,8 +1616,12 @@ impl CircuitDiagram {
                 let name = effective.tikz_name();
 
                 match cell {
-                    DiagramCell::Wire | DiagramCell::LabeledConnector(_) => {}
+                    DiagramCell::Wire
+                    | DiagramCell::LabeledConnector(_)
+                    | DiagramCell::Crossing
+                    | DiagramCell::Connector => {}
                     DiagramCell::Gate(s, family) => {
+                        let s = escape_tikz_text(s);
                         let dash = style.tikz_dash(*family);
                         let dash_opt = if dash.is_empty() {
                             String::new()
@@ -1412,18 +1647,11 @@ impl CircuitDiagram {
                         )
                         .unwrap();
                     }
-                    DiagramCell::Crossing | DiagramCell::Connector => {
-                        writeln!(
-                            out,
-                            "  \\node[circle, fill=gray, inner sep=0pt, minimum size=0.06cm] at ({x:.2},{y:.2}) {{}};",
-                        )
-                        .unwrap();
-                    }
                 }
             }
         }
 
-        // Vertical connector lines (from explicit spans).
+        // Connector labels are also opaque nodes above the connector lines.
         for (col, top, bottom, label) in &self.connector_spans {
             let col = *col;
             let top = *top;
@@ -1431,24 +1659,10 @@ impl CircuitDiagram {
             if col >= num_cols {
                 continue;
             }
-            let x = (col as f64 + 0.5) * COL_STEP;
-            let y1 = -(top as f64) * ROW_STEP;
-            let y2 = -(bottom as f64) * ROW_STEP;
-            let conn_color = if !style.color {
-                CellColor::ControlDot
-            } else if label.is_some() {
-                self.columns[col][top].1
-            } else {
-                CellColor::ControlDot
-            };
-            let conn_name = conn_color.tikz_name();
-            writeln!(
-                out,
-                "  \\draw[{conn_name}Stroke] ({x:.2},{y1:.2}) -- ({x:.2},{y2:.2});",
-            )
-            .unwrap();
+            let x = column_x[col];
             if let Some(text) = label {
-                let mid_y = f64::midpoint(y1, y2);
+                let text = escape_tikz_text(text);
+                let mid_y = -connector_label_row(top, bottom) * ROW_STEP;
                 let lbl_color = self.columns[col][top].1;
                 let effective = if style.color {
                     lbl_color
@@ -1480,15 +1694,22 @@ impl CircuitDiagram {
 
     /// Render the diagram as a Graphviz DOT `digraph` using a full [`DiagramStyle`].
     #[must_use]
+    #[allow(clippy::cast_precision_loss)] // DOT label widths are measured in inches.
     pub fn render_dot_with(&self, header: &str, style: &DiagramStyle) -> String {
         let num_rows = self.num_rows();
         let num_cols = self.effective_columns();
 
+        let header = escape_dot_text(header);
         let mut out = String::new();
         writeln!(out, "digraph circuit {{").unwrap();
         writeln!(out, "  rankdir=LR;").unwrap();
+        writeln!(out, "  splines=line;").unwrap();
         writeln!(out, "  node [fontname=\"Courier\", fontsize=11];").unwrap();
-        writeln!(out, "  edge [arrowhead=none];").unwrap();
+        writeln!(
+            out,
+            "  edge [arrowhead=none, weight=1000, fontname=\"Courier\", fontsize=11];"
+        )
+        .unwrap();
 
         if !header.is_empty() {
             writeln!(out, "  label=\"{header}\";").unwrap();
@@ -1508,11 +1729,12 @@ impl CircuitDiagram {
         for row in 0..num_rows {
             writeln!(
                 out,
-                "    r{row}_in [label=\"{label}\", shape=plaintext];",
-                label = self.labels[row],
+                "    r{row}_in [group=wire{row}, label=\"{label}\", shape=plaintext];",
+                label = escape_dot_text(&self.labels[row]),
             )
             .unwrap();
         }
+        dot_row_order(&mut out, num_rows, "_in");
         writeln!(out, "  }}").unwrap();
 
         // Output nodes (invisible).
@@ -1521,10 +1743,11 @@ impl CircuitDiagram {
         for row in 0..num_rows {
             writeln!(
                 out,
-                "    r{row}_out [label=\"\", shape=none, width=0, height=0];",
+                "    r{row}_out [group=wire{row}, label=\"\", shape=none, width=0, height=0];",
             )
             .unwrap();
         }
+        dot_row_order(&mut out, num_rows, "_out");
         writeln!(out, "  }}").unwrap();
 
         // Gate columns.
@@ -1534,13 +1757,18 @@ impl CircuitDiagram {
             for row in 0..num_rows {
                 let (ref cell, color) = self.columns[col_idx][row];
                 let node_id = format!("r{row}c{col_idx}");
+                writeln!(out, "    {node_id} [group=wire{row}];").unwrap();
 
                 match cell {
-                    DiagramCell::Wire => {
-                        writeln!(out, "    {node_id} [label=\"\", shape=point, width=0.01];")
-                            .unwrap();
+                    DiagramCell::Wire | DiagramCell::Crossing | DiagramCell::Connector => {
+                        writeln!(
+                            out,
+                            "    {node_id} [label=\"\", shape=point, width=0, style=invis];"
+                        )
+                        .unwrap();
                     }
                     DiagramCell::Gate(s, family) => {
+                        let s = escape_dot_text(s);
                         let t = style.triplet(color);
                         let dot_style = style.dot_style(*family);
                         let style_val = if dot_style.is_empty() {
@@ -1568,11 +1796,8 @@ impl CircuitDiagram {
                         )
                         .unwrap();
                     }
-                    DiagramCell::Crossing | DiagramCell::Connector => {
-                        writeln!(out, "    {node_id} [label=\"\", shape=point, width=0.05];")
-                            .unwrap();
-                    }
                     DiagramCell::LabeledConnector(s) => {
+                        let s = escape_dot_text(s);
                         writeln!(
                             out,
                             "    {node_id} [label=\"{s}\", shape=box, style=filled, fillcolor=white, fontsize=10];",
@@ -1580,6 +1805,27 @@ impl CircuitDiagram {
                         .unwrap();
                     }
                 }
+            }
+            dot_row_order(&mut out, num_rows, &format!("c{col_idx}"));
+            // Edge labels do not reserve column width in DOT. Add an invisible
+            // spacer to prevent labels on adjacent interactions from colliding.
+            let label_chars = self
+                .connector_spans
+                .iter()
+                .filter(|(col, _, _, _)| *col == col_idx)
+                .filter_map(|(_, _, _, label)| label.as_ref())
+                .map(|label| label.chars().count())
+                .max()
+                .unwrap_or(0);
+            if label_chars > 0 {
+                let width = label_chars as f64 * 0.095 + 0.3;
+                writeln!(out, "    spacer{col_idx} [label=\"\", shape=box, height=0, margin=0, width={width:.3}, style=invis];").unwrap();
+                writeln!(
+                    out,
+                    "    r{}c{col_idx} -> spacer{col_idx} [style=invis, weight=1000];",
+                    num_rows - 1
+                )
+                .unwrap();
             }
             writeln!(out, "  }}").unwrap();
         }
@@ -1593,6 +1839,7 @@ impl CircuitDiagram {
             writeln!(out, "    style=filled;").unwrap();
             writeln!(out, "    color=\"#D0D8E0\";").unwrap();
             writeln!(out, "    fillcolor=\"#D0D8E080\";").unwrap();
+            let label = escape_dot_text(label);
             writeln!(out, "    label=\"{label}\";").unwrap();
             writeln!(out, "    fontname=\"Courier\";").unwrap();
             writeln!(out, "    fontsize=9;").unwrap();
@@ -1619,7 +1866,7 @@ impl CircuitDiagram {
 
         // Vertical connector edges (from explicit spans).
         writeln!(out, "  // Vertical connectors").unwrap();
-        for (col, top, bottom, _label) in &self.connector_spans {
+        for (col, top, bottom, label) in &self.connector_spans {
             let col = *col;
             let top = *top;
             let bottom = *bottom;
@@ -1628,11 +1875,15 @@ impl CircuitDiagram {
             }
             // Connect top to bottom through all intermediate non-Wire rows.
             let mut prev_row = top;
+            let mut pending_label = label.as_deref();
             for row in (top + 1)..=bottom {
                 if row < num_rows && !matches!(self.columns[col][row].0, DiagramCell::Wire) {
+                    let label_attr = pending_label.take().map_or_else(String::new, |text| {
+                        format!(", label=\"{}\"", escape_dot_text(text))
+                    });
                     writeln!(
                         out,
-                        "  r{prev_row}c{col} -> r{row}c{col} [style=dashed, dir=none, constraint=false];",
+                        "  r{prev_row}c{col} -> r{row}c{col} [style=dashed, dir=none, constraint=false{label_attr}];",
                     )
                     .unwrap();
                     prev_row = row;
@@ -1647,7 +1898,13 @@ impl CircuitDiagram {
     /// Count effective columns (strip trailing all-Wire columns).
     fn effective_columns(&self) -> usize {
         let mut n = self.columns.len();
-        while n > 0 {
+        let retained = self
+            .column_groups
+            .iter()
+            .map(|(_, _, end)| end + 1)
+            .max()
+            .unwrap_or(0);
+        while n > retained {
             let all_wire = self.columns[n - 1]
                 .iter()
                 .all(|(cell, _)| matches!(cell, DiagramCell::Wire));
@@ -2365,6 +2622,130 @@ mod tests {
         assert!(out.contains("My Circuit"));
     }
 
+    #[test]
+    fn interaction_labels_stay_between_qubit_wires() {
+        for (bottom, svg_y, tikz_y) in [
+            (1, 40.0, -0.4),
+            (2, 40.0, -0.4),
+            (3, 80.0, -1.2),
+            (4, 80.0, -1.2),
+            (5, 120.0, -2.0),
+        ] {
+            let mut d = CircuitDiagram::new(6);
+            d.add_control(0);
+            d.add_control(bottom);
+            d.add_labeled_connector(0, bottom, "RZZ".into());
+            let svg = d.render_svg("");
+            let line = svg
+                .lines()
+                .find(|line| line.contains(">RZZ</text>"))
+                .unwrap();
+            let y: f64 = line
+                .split(" y=\"")
+                .nth(1)
+                .unwrap()
+                .split('"')
+                .next()
+                .unwrap()
+                .parse()
+                .unwrap();
+            assert_eq!(y, svg_y);
+            let tikz = d.render_tikz("");
+            assert!(
+                tikz.lines()
+                    .any(|line| line.contains("{\\footnotesize RZZ}")
+                        && line.contains(&format!(",{tikz_y:.2})")))
+            );
+        }
+    }
+
+    #[test]
+    fn svg_escapes_every_text_label() {
+        let mut d = CircuitDiagram::with_labels(vec!["q<&>".into(), "other".into()]);
+        d.add_gate(0, "A<&>", CellColor::None, GateFamily::Default);
+        d.add_control(1);
+        d.add_labeled_connector(0, 1, "B<&>".into());
+        d.add_column_group("t<&>".into(), 0, 0);
+        let svg = d.render_svg("title<&>");
+        for label in ["q", "A", "B", "t", "title"] {
+            assert!(svg.contains(&format!("{label}&lt;&amp;&gt;")));
+        }
+        assert!(
+            CircuitDiagram::new(0)
+                .render_svg("empty<&>")
+                .contains("empty&lt;&amp;&gt;")
+        );
+    }
+
+    #[test]
+    fn dot_preserves_interaction_labels_and_escapes_text() {
+        let mut d = CircuitDiagram::with_labels(vec!["q\"\\".into(), "other".into()]);
+        d.add_control(0);
+        d.add_control(1);
+        d.add_labeled_connector(0, 1, "RZZ(π/4)".into());
+        let dot = d.render_dot("title\"\\");
+        assert!(dot.contains("label=\"RZZ(π/4)\""));
+        assert!(dot.contains("label=\"q\\\"\\\\\""));
+        assert!(dot.contains("label=\"title\\\"\\\\\""));
+    }
+
+    #[test]
+    fn svg_reserves_space_for_long_wire_labels() {
+        let mut diagram = CircuitDiagram::with_labels(vec!["q123456789".to_string()]);
+        diagram.add_gate(0, "H", CellColor::XZMix, GateFamily::Default);
+        let svg = diagram.render_svg("");
+        let label = svg
+            .lines()
+            .find(|line| line.contains(">q123456789</text>"))
+            .unwrap();
+        let x: f64 = label
+            .split("x=\"")
+            .nth(1)
+            .unwrap()
+            .split('"')
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!(
+            x >= 80.0,
+            "the right-aligned ten-character label must fit left of x"
+        );
+    }
+
+    #[test]
+    fn svg_wire_crossing_is_not_a_control_dot() {
+        let mut diagram = CircuitDiagram::new(3);
+        diagram.add_control(0);
+        diagram.add_gate(2, "X", CellColor::XAxis, GateFamily::Default);
+        diagram.connect_vertical(0, 2, CellColor::None);
+        assert_eq!(diagram.render_svg("").matches("<circle").count(), 1);
+    }
+
+    #[test]
+    fn svg_viewport_fits_header_for_short_and_empty_circuits() {
+        let header = "TickCircuit: 2 qubits, 4 ticks";
+        let empty = CircuitDiagram::new(0);
+        let mut short = CircuitDiagram::new(1);
+        short.add_gate(0, "H", CellColor::XZMix, GateFamily::Default);
+        for diagram in [empty, short] {
+            let svg = diagram.render_svg(header);
+            let width: f64 = svg
+                .split("width=\"")
+                .nth(1)
+                .expect("standalone SVG needs an explicit width")
+                .split('"')
+                .next()
+                .unwrap()
+                .parse()
+                .unwrap();
+            // A 14px monospace heading needs at least 8px per character,
+            // plus its left and right margins, even for a one-column circuit.
+            assert!(width >= 8.0 * f64::from(u32::try_from(header.len()).unwrap()) + 20.0);
+            assert!(svg.contains("viewBox=\""));
+        }
+    }
+
     // --- TikZ tests ---
 
     #[test]
@@ -2401,10 +2782,116 @@ mod tests {
     }
 
     #[test]
-    fn tikz_header_as_comment() {
+    fn tikz_header_is_visible_even_for_empty_circuit() {
         let d = CircuitDiagram::new(0);
         let out = d.render_tikz("My Circuit");
         assert!(out.contains("% My Circuit"));
+        assert!(out.contains("at (-0.65,1.0) {My Circuit}"));
+    }
+
+    #[test]
+    fn renderer_title_preserves_provenance_and_escapes_per_format() {
+        let style = DiagramStyle::default();
+        let renderer =
+            DiagramRenderer::new(CircuitDiagram::new(0), "ticks 2..4 of 8".into(), &style)
+                .with_title(" Round <1> & 50%\n data_0 ");
+        assert!(
+            renderer
+                .ascii()
+                .starts_with("Round <1> & 50% data_0 | ticks 2..4 of 8")
+        );
+        assert!(
+            renderer
+                .svg()
+                .contains("Round &lt;1&gt; &amp; 50% data_0 | ticks 2..4 of 8")
+        );
+        assert!(
+            renderer
+                .tikz()
+                .contains(r"Round <1> \& 50\% data\_0 | ticks 2..4 of 8")
+        );
+        assert_eq!(renderer.ascii(), renderer.with_title("  ").ascii());
+    }
+
+    #[test]
+    fn tikz_escapes_text_and_rotation_angles() {
+        assert_eq!(
+            escape_tikz_text("\\{}$&#%_^~π"),
+            "\\textbackslash{}\\{\\}\\$\\&\\#\\%\\_\\textasciicircum{}\\textasciitilde{}\\ensuremath{\\pi}"
+        );
+        let mut d = CircuitDiagram::with_labels(vec!["data_0".into(), "anc&1".into()]);
+        d.add_gate(0, "RZ(π/2)", CellColor::ZAxis, GateFamily::Default);
+        d.add_labeled_connector(0, 1, "phase%".into());
+        d.add_column_group("tick#0".into(), 0, 0);
+        let out = d.render_tikz("first\nsecond");
+        for expected in [
+            "{data\\_0}",
+            "{anc\\&1}",
+            "{RZ(\\ensuremath{\\pi}/2)}",
+            "{\\footnotesize phase\\%}",
+            "{tick\\#0}",
+            "% first\n% second\n",
+        ] {
+            assert!(out.contains(expected), "missing {expected}: {out}");
+        }
+        assert!(!out.contains('π'));
+    }
+
+    #[test]
+    fn tikz_long_gate_and_connector_labels_expand_columns() {
+        fn gate_xs(tikz: &str) -> Vec<f64> {
+            tikz.lines()
+                .filter(|line| line.contains("\\node[gate"))
+                .map(|line| {
+                    line.split(" at (")
+                        .nth(1)
+                        .unwrap()
+                        .split(',')
+                        .next()
+                        .unwrap()
+                        .parse()
+                        .unwrap()
+                })
+                .collect()
+        }
+
+        let long_label = "U(0.1234,0.2345,0.3456)";
+        let mut d = CircuitDiagram::new(1);
+        d.add_gate(0, long_label, CellColor::None, GateFamily::Default);
+        d.advance();
+        d.add_gate(0, long_label, CellColor::None, GateFamily::Default);
+        let positions = gate_xs(&d.render_tikz(""));
+        // At footnotesize, this 23-character label is over 3 cm wide.
+        // Two such nodes must not retain the original 1.2 cm spacing.
+        assert!(positions[1] - positions[0] > 4.0);
+
+        let mut d = CircuitDiagram::new(2);
+        d.add_control(0);
+        d.add_control(1);
+        d.add_labeled_connector(0, 1, long_label.into());
+        d.advance();
+        d.add_gate(0, "H", CellColor::None, GateFamily::Default);
+        let positions = gate_xs(&d.render_tikz(""));
+        // Ordinary nodes precede connector-label nodes in the output.
+        assert!(positions[0] - positions[1] > 2.5);
+    }
+
+    #[test]
+    fn tikz_connectors_are_behind_targets_and_crossings_have_no_dots() {
+        let mut d = CircuitDiagram::new(3);
+        d.add_control(0);
+        d.set_cell(1, DiagramCell::Crossing, CellColor::None);
+        d.add_gate(2, "X", CellColor::XAxis, GateFamily::Default);
+        d.add_connector(0, 2);
+        let out = d.render_tikz("");
+        let connector = out.find("\\draw[cellCtrlStroke]").unwrap();
+        let target = out.find("\\node[gate").unwrap();
+        assert!(connector < target, "connector must be behind target: {out}");
+        assert_eq!(out.matches("\\node[ctrl").count(), 1);
+        assert!(
+            !out.contains("\\node[circle"),
+            "crossing is not a dot: {out}"
+        );
     }
 
     // --- DOT tests ---

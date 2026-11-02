@@ -24,6 +24,7 @@
 
 use crate::dtypes::AngleParam;
 use crate::gate_registry_bindings::PyGateRegistry;
+use pecos_core::circuit_diagram::{AngleUnit, DiagramRenderer, DiagramStyle};
 use pecos_core::{Angle64, ChannelExpr, GateQubits, GateSignature, Pauli, TimeUnits};
 use pecos_qec::fault_tolerance::circuit_definitions::{
     definitions_from_tick_circuit, tick_circuit_measurement_emission,
@@ -40,6 +41,127 @@ use pyo3::types::{PyBool, PyDict, PyInt, PyList};
 use std::collections::BTreeSet;
 
 type PyMixedPauliTerm = (f64, Vec<(String, usize)>);
+
+fn diagram_style(
+    color: bool,
+    angle_unit: &str,
+    show_measurement_ids: bool,
+) -> PyResult<DiagramStyle> {
+    let angle_unit = match angle_unit {
+        "radians" => AngleUnit::Radians,
+        "turns" => AngleUnit::Turns,
+        _ => {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "angle_unit must be 'radians' or 'turns'",
+            ));
+        }
+    };
+    Ok(DiagramStyle::builder()
+        .color(color)
+        .angle_unit(angle_unit)
+        .show_measurement_ids(show_measurement_ids)
+        .build())
+}
+
+fn diagram_range(
+    start: Option<isize>,
+    stop: Option<isize>,
+    len: usize,
+) -> PyResult<Option<std::ops::Range<usize>>> {
+    if start.is_none() && stop.is_none() {
+        return Ok(None);
+    }
+    let bound = |value: Option<isize>, default: usize| -> PyResult<usize> {
+        value.map_or(Ok(default), |value| {
+            usize::try_from(value).map_err(|_| {
+                pyo3::exceptions::PyValueError::new_err("diagram range bounds must be non-negative")
+            })
+        })
+    };
+    Ok(Some(bound(start, 0)?..bound(stop, len)?))
+}
+
+fn render_diagram(renderer: &DiagramRenderer<'_>, format: &str) -> PyResult<String> {
+    match format {
+        "ascii" => Ok(renderer.ascii()),
+        "unicode" => Ok(renderer.unicode()),
+        "svg" => Ok(renderer.svg()),
+        "tikz" => Ok(renderer.tikz()),
+        "dot" => Ok(renderer.dot()),
+        _ => Err(pyo3::exceptions::PyValueError::new_err(
+            "format must be 'ascii', 'unicode', 'svg', 'tikz', or 'dot'",
+        )),
+    }
+}
+
+fn inspection_to_py(
+    py: Python<'_>,
+    snapshot: &pecos_quantum::CircuitInspection,
+    include_html: bool,
+) -> PyResult<Py<PyDict>> {
+    let result = PyDict::new(py);
+    result.set_item("format", "pecos_circuit_inspection_v1")?;
+    result.set_item("svg", snapshot.svg())?;
+    if include_html {
+        result.set_item("html", snapshot.to_html())?;
+    }
+    let operations = PyList::empty(py);
+    for operation in snapshot.operations() {
+        let record = PyDict::new(py);
+        record.set_item("id", &operation.id)?;
+        let source = PyDict::new(py);
+        match operation.source {
+            pecos_quantum::InspectionSource::TickBatch { tick, batch } => {
+                source.set_item("kind", "tick_batch")?;
+                source.set_item("tick", tick)?;
+                source.set_item("batch", batch)?;
+            }
+            pecos_quantum::InspectionSource::DagNode { node } => {
+                source.set_item("kind", "dag_node")?;
+                source.set_item("node", node)?;
+            }
+        }
+        record.set_item("source", source)?;
+        let gate = &operation.gate;
+        record.set_item("gate_type", gate.gate_type.to_string())?;
+        record.set_item(
+            "qubits",
+            gate.qubits.iter().map(|q| q.0).collect::<Vec<_>>(),
+        )?;
+        record.set_item(
+            "measurement_ids",
+            gate.meas_ids
+                .iter()
+                .map(|id| id.index())
+                .collect::<Vec<_>>(),
+        )?;
+        record.set_item(
+            "angles_radians",
+            gate.angles
+                .iter()
+                .map(pecos_core::Angle::to_radians)
+                .collect::<Vec<_>>(),
+        )?;
+        // Decimal strings preserve the fixed-point u64 values in browser JSON.
+        record.set_item(
+            "angle_turn_fractions",
+            gate.angles
+                .iter()
+                .map(|angle| angle.fraction().to_string())
+                .collect::<Vec<_>>(),
+        )?;
+        record.set_item("params", gate.params.to_vec())?;
+        record.set_item("has_channel_payload", gate.channel.is_some())?;
+        let metadata = PyDict::new(py);
+        for (key, value) in &operation.metadata {
+            metadata.set_item(key, attribute_to_py(py, value))?;
+        }
+        record.set_item("metadata", metadata)?;
+        operations.append(record)?;
+    }
+    result.set_item("operations", operations)?;
+    Ok(result.unbind())
+}
 
 fn pauli_string_terms(pauli: &pecos_core::PauliString) -> Vec<(String, usize)> {
     pauli
@@ -1875,6 +1997,97 @@ impl PyDagCircuit {
         }
     }
 
+    /// Render a wire diagram in dependency layers, not physical time.
+    ///
+    /// Formats: ascii, unicode, svg, tikz, dot. Color affects graphical
+    /// formats only; text output contains no ANSI escape sequences.
+    #[pyo3(signature = (format="svg", *, color=true, angle_unit="radians", start=None, stop=None, title=None, show_measurement_ids=false))]
+    fn render(
+        &self,
+        format: &str,
+        color: bool,
+        angle_unit: &str,
+        start: Option<isize>,
+        stop: Option<isize>,
+        title: Option<&str>,
+        show_measurement_ids: bool,
+    ) -> PyResult<String> {
+        let style = diagram_style(color, angle_unit, show_measurement_ids)?;
+        let length = if start.is_some() && stop.is_none() {
+            self.inner.layers().count()
+        } else {
+            0
+        };
+        let range = diagram_range(start, stop, length)?;
+        let renderer = if let Some(range) = range {
+            self.inner
+                .render_range(range, &style)
+                .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?
+        } else {
+            self.inner.render_with(&style)
+        };
+        let renderer = if let Some(title) = title {
+            renderer.with_title(title)
+        } else {
+            renderer
+        };
+        render_diagram(&renderer, format)
+    }
+
+    /// Return an owned inspection snapshot, optionally including standalone HTML.
+    #[pyo3(signature = (*, color=true, angle_unit="radians", start=None, stop=None, show_measurement_ids=false, include_html=false))]
+    fn inspect(
+        &self,
+        py: Python<'_>,
+        color: bool,
+        angle_unit: &str,
+        start: Option<isize>,
+        stop: Option<isize>,
+        show_measurement_ids: bool,
+        include_html: bool,
+    ) -> PyResult<Py<PyDict>> {
+        let style = diagram_style(color, angle_unit, show_measurement_ids)?;
+        let length = self.inner.layers().count();
+        let snapshot = if let Some(range) = diagram_range(start, stop, length)? {
+            self.inner
+                .inspect_range(range, &style)
+                .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?
+        } else {
+            self.inner.inspect(&style)
+        };
+        inspection_to_py(py, &snapshot, include_html)
+    }
+
+    /// Return an ASCII wire diagram in dependency layers.
+    fn to_ascii(&self) -> String {
+        self.inner.to_ascii()
+    }
+
+    /// Return a Unicode wire diagram in dependency layers.
+    fn to_unicode(&self) -> String {
+        self.inner.to_unicode()
+    }
+
+    /// Return an SVG wire diagram in dependency layers.
+    fn to_svg(&self) -> String {
+        self.inner.to_svg()
+    }
+
+    /// Return TikZ source; no TeX compiler is invoked.
+    fn to_tikz(&self) -> String {
+        self.inner.to_tikz()
+    }
+
+    /// Return DOT source for the wire diagram, not the original DAG edges.
+    fn to_dot(&self) -> String {
+        self.inner.to_dot()
+    }
+
+    /// Display the circuit as SVG in notebooks.
+    fn _repr_svg_(&self) -> String {
+        self.inner.to_svg()
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "DagCircuit(gates={}, wires={}, depth={}, width={})",
@@ -3217,6 +3430,97 @@ impl PyTickCircuit {
         self.inner.import_signatures(&sigs);
     }
 
+    /// Render a wire diagram preserving explicit ticks, not physical time.
+    ///
+    /// Formats: ascii, unicode, svg, tikz, dot. Color affects graphical
+    /// formats only; text output contains no ANSI escape sequences.
+    #[pyo3(signature = (format="svg", *, color=true, angle_unit="radians", start=None, stop=None, title=None, show_measurement_ids=false))]
+    fn render(
+        &self,
+        format: &str,
+        color: bool,
+        angle_unit: &str,
+        start: Option<isize>,
+        stop: Option<isize>,
+        title: Option<&str>,
+        show_measurement_ids: bool,
+    ) -> PyResult<String> {
+        let style = diagram_style(color, angle_unit, show_measurement_ids)?;
+        let length = if start.is_some() && stop.is_none() {
+            self.inner.num_ticks()
+        } else {
+            0
+        };
+        let range = diagram_range(start, stop, length)?;
+        let renderer = if let Some(range) = range {
+            self.inner
+                .render_range(range, &style)
+                .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?
+        } else {
+            self.inner.render_with(&style)
+        };
+        let renderer = if let Some(title) = title {
+            renderer.with_title(title)
+        } else {
+            renderer
+        };
+        render_diagram(&renderer, format)
+    }
+
+    /// Return an owned inspection snapshot, optionally including standalone HTML.
+    #[pyo3(signature = (*, color=true, angle_unit="radians", start=None, stop=None, show_measurement_ids=false, include_html=false))]
+    fn inspect(
+        &self,
+        py: Python<'_>,
+        color: bool,
+        angle_unit: &str,
+        start: Option<isize>,
+        stop: Option<isize>,
+        show_measurement_ids: bool,
+        include_html: bool,
+    ) -> PyResult<Py<PyDict>> {
+        let style = diagram_style(color, angle_unit, show_measurement_ids)?;
+        let length = self.inner.num_ticks();
+        let snapshot = if let Some(range) = diagram_range(start, stop, length)? {
+            self.inner
+                .inspect_range(range, &style)
+                .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?
+        } else {
+            self.inner.inspect(&style)
+        };
+        inspection_to_py(py, &snapshot, include_html)
+    }
+
+    /// Return an ASCII wire diagram preserving explicit ticks.
+    fn to_ascii(&self) -> String {
+        self.inner.to_ascii()
+    }
+
+    /// Return a Unicode wire diagram preserving explicit ticks.
+    fn to_unicode(&self) -> String {
+        self.inner.to_unicode()
+    }
+
+    /// Return an SVG wire diagram preserving explicit ticks.
+    fn to_svg(&self) -> String {
+        self.inner.to_svg()
+    }
+
+    /// Return TikZ source; no TeX compiler is invoked.
+    fn to_tikz(&self) -> String {
+        self.inner.to_tikz()
+    }
+
+    /// Return DOT source for the wire diagram.
+    fn to_dot(&self) -> String {
+        self.inner.to_dot()
+    }
+
+    /// Display the circuit as SVG in notebooks.
+    fn _repr_svg_(&self) -> String {
+        self.inner.to_svg()
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "TickCircuit(ticks={}, gates={})",
@@ -3467,6 +3771,61 @@ impl PyTickHandle {
         } else {
             Ok(0)
         }
+    }
+    fn add_measurement_with_ids(
+        &mut self,
+        py: Python<'_>,
+        mut gate: Gate,
+        meas_ids: &[usize],
+    ) -> PyResult<usize> {
+        if meas_ids.len() != gate.qubits.len() {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "meas_ids length {} != qubits length {}",
+                meas_ids.len(),
+                gate.qubits.len()
+            )));
+        }
+        // A `MeasId` names one measurement, so a repeat inside a single call is
+        // never meaningful: stamped-id resolution would bind to whichever
+        // occurrence came first. This checks only the current call; audited
+        // trace replay additionally checks uniqueness across the whole stream.
+        let mut seen = BTreeSet::new();
+        for &mid in meas_ids {
+            if !seen.insert(mid) {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "meas_ids repeats MeasId({mid}); each measurement needs a unique id"
+                )));
+            }
+        }
+        // The highest id has to leave room for a successor, or the record counter
+        // cannot advance past it. With no ids there is nothing to make room for --
+        // treating an empty list as id 0 reserved a record for a measurement that
+        // does not exist.
+        let past_highest = match meas_ids.iter().copied().max() {
+            Some(highest) => Some(highest.checked_add(1).ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(
+                    "meas_ids contains the largest representable id, leaving no room for a later id",
+                )
+            })?),
+            None => None,
+        };
+        for &mid in meas_ids {
+            gate.meas_ids.push(pecos_core::MeasId::from_raw(mid));
+        }
+        let gate_idx = self.add_gate_get_idx(py, gate)?;
+        // Committed only once the gate is in, so a failed add leaves the counter
+        // where it was.
+        if let Some(past_highest) = past_highest {
+            let mut circuit = self.circuit.borrow_mut(py);
+            let current = circuit.inner.num_measurements();
+            if past_highest > current {
+                circuit
+                    .inner
+                    .try_advance_meas_counter(past_highest - current)
+                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+            }
+        }
+        Ok(gate_idx)
     }
 }
 
@@ -4274,57 +4633,29 @@ impl PyTickHandle {
         qubits: Vec<usize>,
         meas_ids: Vec<usize>,
     ) -> PyResult<Vec<(usize, usize, usize)>> {
-        if meas_ids.len() != qubits.len() {
-            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "meas_ids length {} != qubits length {}",
-                meas_ids.len(),
-                qubits.len()
-            )));
-        }
-        // A `MeasId` names one measurement, so a repeat inside a single call is
-        // never meaningful: stamped-id resolution would bind to whichever
-        // occurrence came first. Duplicates spread across calls are caught
-        // later, when the circuit is converted to a `DagCircuit`.
-        let mut seen = BTreeSet::new();
-        for &mid in &meas_ids {
-            if !seen.insert(mid) {
-                return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "meas_ids repeats MeasId({mid}); each measurement needs a unique id"
-                )));
-            }
-        }
-        // The highest id has to leave room for a successor, or the record counter
-        // cannot advance past it. With no ids there is nothing to make room for --
-        // treating an empty list as id 0 reserved a record for a measurement that
-        // does not exist.
-        let past_highest = match meas_ids.iter().copied().max() {
-            Some(highest) => Some(highest.checked_add(1).ok_or_else(|| {
-                pyo3::exceptions::PyValueError::new_err(
-                    "meas_ids contains the largest representable id, leaving no room for a later id",
-                )
-            })?),
-            None => None,
-        };
         let mut handle = slf.borrow_mut(py);
-        let mut gate = Gate::mz(&qubits);
-        for &mid in &meas_ids {
-            gate.meas_ids.push(pecos_core::MeasId::from_raw(mid));
-        }
-        let gate_idx = handle.add_gate_get_idx(py, gate)?;
-        // Committed only once the gate is in, so a failed add leaves the counter
-        // where it was.
-        if let Some(past_highest) = past_highest {
-            let mut circuit = handle.circuit.borrow_mut(py);
-            let current = circuit.inner.num_measurements();
-            if past_highest > current {
-                circuit
-                    .inner
-                    .try_advance_meas_counter(past_highest - current)
-                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
-            }
-        }
+        let gate_idx = handle.add_measurement_with_ids(py, Gate::mz(&qubits), &meas_ids)?;
         let tick_idx = handle.tick_idx;
         Ok(qubits.iter().map(|&q| (tick_idx, gate_idx, q)).collect())
+    }
+
+    /// Insert a leakage-aware Z measurement with externally assigned result IDs.
+    ///
+    /// Outcomes can be 0, 1, or 2 (leaked). Supplied IDs are reserved so later
+    /// automatic IDs cannot reuse them. Returns this handle for gate metadata;
+    /// these are not Boolean detector-annotation references.
+    fn measure_leaked_with_ids(
+        slf: Py<Self>,
+        py: Python<'_>,
+        qubits: Vec<usize>,
+        meas_ids: Vec<usize>,
+    ) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py).add_measurement_with_ids(
+            py,
+            Gate::measure_leaked(&qubits),
+            &meas_ids,
+        )?;
+        Ok(slf)
     }
 
     /// Measure and free qubits (destructive measurement).

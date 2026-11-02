@@ -29,6 +29,7 @@ ANCIENT = "2026-09-25T11:59:59Z"
 BASE = "repos/{owner}/{repo}"
 WORKFLOWS = (
     "cargo-deny.yml",
+    "circuit-inspector.yml",
     "codeql.yml",
     "cuda-build-check.yml",
     "dependency-integrity-check.yml",
@@ -51,6 +52,7 @@ WORKFLOWS = (
 )
 DAILY = (
     "cargo-deny.yml",
+    "circuit-inspector.yml",
     "codeql.yml",
     "cuda-build-check.yml",
     "dependency-integrity-check.yml",

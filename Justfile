@@ -319,6 +319,11 @@ rslib-rust-test:
       LD_LIBRARY_PATH="$LIBDIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
       cargo test --locked -p pecos-rslib --lib
 
+# Inspector DOM checks (install npm dependencies as described in the test README).
+[group('test')]
+test-inspector:
+    npm test --prefix crates/pecos-quantum/tests/inspector
+
 # Fast Python validation for PR CI. Selene plugin coverage stays in its own workflow.
 [group('test')]
 pytest-ci-core:

@@ -1522,7 +1522,7 @@ impl CircuitPass for CompactTicks {
                 .map(|q| qubit_ready.get(q).copied().unwrap_or(0))
                 .max()
                 .unwrap_or(0);
-            if gate.gate_type.consumes_measurement_record() {
+            if crate::tick_circuit::is_measurement_for_scheduling(gate.gate_type) {
                 earliest = earliest.max(last_measurement_tick);
                 last_measurement_tick = earliest;
             }

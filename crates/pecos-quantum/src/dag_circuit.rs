@@ -1994,14 +1994,70 @@ impl DagCircuit {
         style: &'a pecos_core::circuit_diagram::DiagramStyle,
     ) -> pecos_core::circuit_diagram::DiagramRenderer<'a> {
         let (header, layers) = self.diagram_parts();
-        let diagram = crate::circuit_display::build_diagram_or_empty(&layers, style.angle_unit);
+        let diagram = crate::circuit_display::build_diagram_or_empty(&layers, style, "l");
         pecos_core::circuit_diagram::DiagramRenderer::new(diagram, header, style)
     }
 
-    fn diagram_parts(&self) -> (String, Vec<Vec<&Gate>>) {
-        let layers: Vec<Vec<&Gate>> = self
+    /// Render a checked half-open range of dependency layers.
+    ///
+    /// Every selected layer is labeled with its original index, and qubit rows
+    /// retain the full circuit's context. Layers are computed from dependencies;
+    /// they need not match the ticks of a circuit converted to this DAG.
+    /// An empty interval renders only the header. The circuit is not changed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::DiagramRangeError`] if `start > end` or `end` exceeds
+    /// the number of dependency layers. Bounds are never clamped.
+    pub fn render_range<'a>(
+        &self,
+        range: std::ops::Range<usize>,
+        style: &'a pecos_core::circuit_diagram::DiagramStyle,
+    ) -> Result<pecos_core::circuit_diagram::DiagramRenderer<'a>, crate::DiagramRangeError> {
+        let (_, layers) = self.diagram_parts();
+        crate::circuit_display::validate_diagram_range(&range, layers.len())?;
+        let mut qubits = self.qubits();
+        qubits.sort_unstable();
+        let header = format!(
+            "DagCircuit: {} qubit{}, layers {}..{} of {}",
+            qubits.len(),
+            if qubits.len() == 1 { "" } else { "s" },
+            range.start,
+            range.end,
+            layers.len(),
+        );
+        let diagram = crate::circuit_display::build_diagram_with_context(
+            &layers[range.clone()],
+            &qubits,
+            style,
+            "l",
+            range.start,
+            true,
+        );
+        Ok(pecos_core::circuit_diagram::DiagramRenderer::new(
+            diagram, header, style,
+        ))
+    }
+
+    fn diagram_parts(&self) -> (String, Vec<Vec<crate::circuit_display::DiagramGate<'_>>>) {
+        let layers: Vec<_> = self
             .layers()
-            .map(|node_ids| node_ids.iter().filter_map(|&id| self.gate(id)).collect())
+            .map(|node_ids| {
+                node_ids
+                    .iter()
+                    .filter_map(|&id| {
+                        self.gate(id).map(|gate| {
+                            crate::circuit_display::DiagramGate::new(
+                                gate,
+                                self.get_gate_attr(id, "_symbol"),
+                            )
+                            .with_operation_id(
+                                self.get_gate_attr(id, crate::circuit_inspection::OPERATION_ID_KEY),
+                            )
+                        })
+                    })
+                    .collect()
+            })
             .collect();
         let num_qubits = self.qubits().len();
         let num_layers = layers.len();

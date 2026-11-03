@@ -4404,6 +4404,10 @@ def scheduled_idle_z(
 class ScheduledEventBatch:
     """Read-only original native batch supplied to a scheduled adapter."""
 
+    def to_bytes(self) -> bytes:
+        """Owned checked v7 message containing this one batch; may raise ValueError."""
+        ...
+
     @property
     def runtime_shot_id(self) -> int: ...
     @property

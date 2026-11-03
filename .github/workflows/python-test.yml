@@ -154,9 +154,12 @@ jobs:
     # and the lockfile checks from python-lint.
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    # The full post-merge core suite passed at ~40m in late June and has since
-    # grown past 45m (timing out at ~83% of the suite on every dev push since
-    # 2026-07-07). 75m restores the original ~35% headroom.
+    # Use the same complete partition as the PR gate: the unsharded suite
+    # exceeds 75 minutes on trunk. Keep every shard running after a failure.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [qec-surface-harvest, qec-surface, qec-guppy, rest]
     timeout-minutes: 75
     steps:
     - name: Harden the runner (egress audit)
@@ -200,7 +203,8 @@ jobs:
       with:
         cache-bin: false
         prefix-key: v1-rust-no-bin
-        save-if: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
+        save-if: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) && matrix.shard == 'rest' }}
+        # All shards share the same build; only rest publishes its cache.
         # The cache saved here is what pr-core-python (pr-core-gate.yml)
         # restores on every PR. The default (root) workspace is the right one:
         # the rslib crates are members of the root Cargo workspace and build
@@ -224,9 +228,11 @@ jobs:
         path: ~/.pecos/deps/llvm-21.1
         key: ${{ steps.cache-llvm.outputs.cache-primary-key }}
 
-    - name: Run core Python tests
-      if: github.event_name != 'pull_request'
-      run: just python-ci-core
+    - name: Build the Python packages the core lane needs
+      run: just python-ci-build-test
+
+    - name: Run core Python tests (${{ matrix.shard }} shard)
+      run: just pytest-ci-core-shard ${{ matrix.shard }}
 
   python-compat-smoke-build:
     runs-on: ${{ matrix.os }}

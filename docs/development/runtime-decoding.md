@@ -8,6 +8,10 @@ windows, possibly assembled with `DemSliceRoundSchedule` and cached slices.
 `RuntimeDecoder` accepts either a collection indexed by window ID or a factory
 of shot-local providers. It uses `DetectorErrorModel.build_decoder`, including
 its existing structured windowed-decoder path and unsupported-model checks.
+
+The [Guppy admission probe](runtime-decoding-guppy.md) records real-frontend
+feedback experiments and the remaining compiler/control-provenance blockers.
+It does not expose a production Guppy decoder primitive.
 It does not compile a DEM from runtime operations.
 
 The program calls this C ABI (LLVM declaration shown):

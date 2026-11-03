@@ -3295,17 +3295,21 @@ def tick_circuit_to_stim(
         if gate_name == "Fdg":
             return [("H", qubits), ("S", qubits)], "single"
 
-        if gate_name == "RZZ":
+        if gate_name in ("RXX", "RYY", "RZZ"):
             if not gate.angles:
                 return [], None
             angle = float(gate.angles[0])
+            axis = gate_name[-1]
             if _is_close_turn(angle, 0.0):
-                return [], None
+                return [("I", qubits)], "two"
+            if _is_close_turn(angle, math.pi):
+                # The ideal action factors, but this was one physical 2q gate.
+                return [(axis, qubits)], "two"
             if _is_close_turn(angle, math.pi / 2):
-                return [("SQRT_ZZ", qubits)], "two"
+                return [(f"SQRT_{axis}{axis}", qubits)], "two"
             if _is_close_turn(angle, 3 * math.pi / 2):
-                return [("SQRT_ZZ_DAG", qubits)], "two"
-            msg = f"Unsupported traced Clifford RZZ angle: {angle!r}"
+                return [(f"SQRT_{axis}{axis}_DAG", qubits)], "two"
+            msg = f"Unsupported traced Clifford {gate_name} angle: {angle!r}"
             raise ValueError(msg)
 
         if gate_name == "RXY1Q":

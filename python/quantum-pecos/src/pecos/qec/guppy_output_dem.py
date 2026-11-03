@@ -167,7 +167,12 @@ def infer_guppy_dem_annotations(
         max_hosted_tick_separation=max_hosted_tick_separation,
         context="infer_guppy_dem_annotations",
     )
-    normalize_traced_tick_circuit(circuit, context="infer_guppy_dem_annotations")
+    # Preserve the runtime's physical gates: each carries an independent noise site.
+    normalize_traced_tick_circuit(
+        circuit,
+        context="infer_guppy_dem_annotations",
+        simplify_single_qubit_clifford_chains=False,
+    )
     raw_ids = list(evidence["raw_measurement_ids"])
     detector_labels = tuple((tag, element) for tag, element in evidence["detector_outputs"])
     observable_labels = tuple((tag, element) for tag, element in evidence["observable_outputs"])

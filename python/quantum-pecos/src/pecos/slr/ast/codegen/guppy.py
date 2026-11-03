@@ -20,6 +20,7 @@ which local owns each logical slot while recursive descent emits statements.
 from __future__ import annotations
 
 import math
+import numbers
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -249,8 +250,14 @@ BINARY_OP_TO_PYTHON: dict[BinaryOp, str] = {
     BinaryOp.RSHIFT: ">>",
 }
 
-BOOL_OPERAND_BINARY_OPS = {BinaryOp.AND, BinaryOp.OR, BinaryOp.XOR}
-BOOL_COMPARISON_OPS = {BinaryOp.EQ, BinaryOp.NE}
+ARITHMETIC_OPS = {BinaryOp.ADD, BinaryOp.SUB, BinaryOp.MUL, BinaryOp.DIV}
+EQUALITY_OPS = {BinaryOp.EQ, BinaryOp.NE}
+ORDERING_OPS = {BinaryOp.LT, BinaryOp.LE, BinaryOp.GT, BinaryOp.GE}
+LOGICAL_OPS = {BinaryOp.AND, BinaryOp.OR}
+SHIFT_OPS = {BinaryOp.LSHIFT, BinaryOp.RSHIFT}
+NUMERIC_TYPES = {"int", "float"}
+# Guppy's int is a signed 64-bit value, and a packed register is non-negative.
+MAX_PACKED_REGISTER_WIDTH = 63
 
 
 class GuppyCodegenError(LinearityError):
@@ -1317,26 +1324,14 @@ class AstToGuppy:
 
     def _render_bit_assignment(self, expr: Expression) -> str:
         """Render a single-bit write, rejecting values Guppy cannot store in a bool."""
-        if isinstance(expr, VarExpr):
-            is_bit = expr.name not in self.context.loop_variables
-        elif isinstance(expr, LiteralExpr):
-            is_bit = isinstance(expr.value, int)
-        else:
-            is_bit = self._is_bool_expression(expr)
-        if not is_bit or self._reads_whole_register(expr):
+        is_literal = isinstance(expr, LiteralExpr) and isinstance(expr.value, numbers.Integral)
+        if not is_literal and self._expression_type(expr) != "bool":
             msg = (
                 f"Unsupported single-bit assignment from {expr!r}. "
-                "Guppy supports 0, 1, single bits and boolean expressions of bits here."
+                "Guppy supports 0, 1, single bits and boolean expressions here."
             )
             raise GuppyCodegenError(msg)
         return self._render_expression(expr, bool_context=True)
-
-    def _reads_whole_register(self, expr: Expression) -> bool:
-        if isinstance(expr, VarExpr):
-            return expr.name in self.context.registers
-        if isinstance(expr, BinaryExpr):
-            return self._reads_whole_register(expr.left) or self._reads_whole_register(expr.right)
-        return isinstance(expr, UnaryExpr) and self._reads_whole_register(expr.operand)
 
     def _render_register_assignment(self, target: str, expr: Expression) -> str:
         """Keep whole-register writes in the bool-array representation.
@@ -1355,11 +1350,7 @@ class AstToGuppy:
             # in Python so literals need not fit Guppy's fixed-width int.
             bits = ", ".join(str(bool((expr.value >> index) & 1)) for index in range(decl.size))
             return f"array({bits})"
-        if (
-            isinstance(expr, VarExpr)
-            and expr.name in self.context.registers
-            and expr.name not in self.context.loop_variables
-        ):
+        if self._is_whole_register(expr):
             source = self.context.registers[expr.name]
             if source.size != decl.size:
                 msg = (
@@ -1404,7 +1395,7 @@ class AstToGuppy:
         linearity = self._linearity()
         before = linearity.snapshot()
 
-        cond = self._render_expression(node.condition, bool_context=True)
+        cond = self._render_condition(node.condition)
         lines = [f"{self.context.indent()}if {cond}:"]
 
         self.context.push_indent()
@@ -1442,10 +1433,10 @@ class AstToGuppy:
 
     def _emit_for(self, node: ForStmt) -> list[str]:
         linearity = self._linearity()
-        start = self._render_expression(node.start)
-        stop = self._render_expression(node.stop)
+        start = self._render_loop_bound(node.start)
+        stop = self._render_loop_bound(node.stop)
         if node.step is not None:
-            step = self._render_expression(node.step)
+            step = self._render_loop_bound(node.step)
             header = f"for {node.variable} in range({start}, {stop}, {step}):"
         else:
             header = f"for {node.variable} in range({start}, {stop}):"
@@ -2060,14 +2051,22 @@ class AstToGuppy:
         raise GuppyCodegenError(msg)
 
     def _render_literal(self, expr: LiteralExpr, *, bool_context: bool = False) -> str:
-        if isinstance(expr.value, bool):
-            return "True" if expr.value else "False"
-        if bool_context and isinstance(expr.value, int):
-            if expr.value in {0, 1}:
-                return "True" if expr.value else "False"
-            msg = f"Cannot render integer literal {expr.value!r} as a Guppy bool"
+        value = expr.value
+        if isinstance(value, bool):
+            return "True" if value else "False"
+        if isinstance(value, numbers.Integral):
+            if bool_context:
+                if value in {0, 1}:
+                    return "True" if value else "False"
+                msg = f"Cannot render integer literal {value!r} as a Guppy bool"
+                raise GuppyCodegenError(msg)
+            if not -(2**63) <= value < 2**63:
+                msg = f"Integer literal {value!r} does not fit Guppy's signed 64-bit int"
+                raise GuppyCodegenError(msg)
+        elif isinstance(value, numbers.Real) and not math.isfinite(value):
+            msg = f"Guppy has no literal for {value!r}"
             raise GuppyCodegenError(msg)
-        return str(expr.value)
+        return str(value)
 
     def _render_binary(self, expr: BinaryExpr) -> str:
         op = BINARY_OP_TO_PYTHON.get(expr.op)
@@ -2075,15 +2074,44 @@ class AstToGuppy:
             msg = f"Unsupported Guppy binary op {expr.op.name}"
             raise GuppyCodegenError(msg)
 
-        compares_bool_expression = expr.op in BOOL_COMPARISON_OPS and (
-            self._is_bool_expression(expr.left) or self._is_bool_expression(expr.right)
-        )
-        operand_bool_context = expr.op in BOOL_OPERAND_BINARY_OPS or compares_bool_expression
-        left = self._render_expression(expr.left, bool_context=operand_bool_context)
-        right = self._render_expression(expr.right, bool_context=operand_bool_context)
+        operand_type, result_type = self._binary_types(expr)
+        left = self._render_operand(expr.left, bool_context=operand_type == "bool")
+        right = self._render_operand(expr.right, bool_context=operand_type == "bool")
+        if expr.op == BinaryOp.DIV and result_type == "int":
+            op = "//"
         return f"({left} {op} {right})"
 
+    def _render_operand(self, expr: Expression, *, bool_context: bool) -> str:
+        if self._is_whole_register(expr):
+            return self._render_packed_register(expr.name)
+        return self._render_expression(expr, bool_context=bool_context)
+
+    def _render_packed_register(self, name: str) -> str:
+        """Render a register as the unsigned integer that the QIR backend also compares."""
+        size = self.context.registers[name].size
+        if not 0 < size <= MAX_PACKED_REGISTER_WIDTH:
+            msg = (
+                f"Cannot compare classical register {name!r} of width {size}: "
+                f"Guppy integer comparisons support widths from 1 to {MAX_PACKED_REGISTER_WIDTH}"
+            )
+            raise GuppyCodegenError(msg)
+        bits = [f"({1 << index} if {name}[{index}] else 0)" for index in range(size)]
+        return f"({' + '.join(bits)})"
+
+    def _render_condition(self, expr: Expression) -> str:
+        if self._expression_type(expr) not in {"bool", *NUMERIC_TYPES}:
+            msg = f"Unsupported condition {expr!r}: use a boolean expression, or compare a register, such as c == 0."
+            raise GuppyCodegenError(msg)
+        return self._render_expression(expr, bool_context=True)
+
+    def _render_loop_bound(self, expr: Expression) -> str:
+        if self._expression_type(expr) != "int":
+            msg = f"Unsupported For bound {expr!r}: Guppy range() bounds are integers."
+            raise GuppyCodegenError(msg)
+        return self._render_expression(expr)
+
     def _render_unary(self, expr: UnaryExpr, *, bool_context: bool = False) -> str:
+        self._expression_type(expr)
         operand = self._render_expression(expr.operand, bool_context=bool_context or expr.op == UnaryOp.NOT)
         if expr.op == UnaryOp.NOT:
             return f"(not {operand})"
@@ -2092,24 +2120,101 @@ class AstToGuppy:
         msg = f"Unsupported Guppy unary op {expr.op.name}"
         raise GuppyCodegenError(msg)
 
-    def _is_bool_expression(self, expr: Expression) -> bool:
-        if isinstance(expr, BitExpr):
-            return True
+    def _is_whole_register(self, expr: Expression) -> bool:
+        """Report a register read. A loop variable of the same name shadows the register."""
+        return (
+            isinstance(expr, VarExpr)
+            and expr.name in self.context.registers
+            and expr.name not in self.context.loop_variables
+        )
+
+    def _expression_type(self, expr: Expression) -> str:
+        """Return bool, int, float or register, raising if Guppy would reject the operands."""
         if isinstance(expr, LiteralExpr):
-            return isinstance(expr.value, bool)
+            from pecos.slr.angle import Angle  # noqa: PLC0415  (avoid import cycle)
+
+            if isinstance(expr.value, bool):
+                return "bool"
+            if isinstance(expr.value, numbers.Integral):
+                return "int"
+            if isinstance(expr.value, Angle):
+                return "angle"
+            # A NumPy bool is the one literal that is not a numbers.Number.
+            return "float" if isinstance(expr.value, numbers.Number) else "bool"
+        if isinstance(expr, BitExpr):
+            self._render_bit_ref(expr.ref)
+            return "bool"
+        if isinstance(expr, VarExpr):
+            self._render_classical_reference(expr.name)
+            if expr.name in self.context.loop_variables:
+                return "int"
+            return "register" if expr.name in self.context.registers else "bool"
         if isinstance(expr, UnaryExpr):
-            return expr.op == UnaryOp.NOT
-        return isinstance(expr, BinaryExpr) and expr.op in {
-            BinaryOp.AND,
-            BinaryOp.OR,
-            BinaryOp.XOR,
-            BinaryOp.EQ,
-            BinaryOp.NE,
-            BinaryOp.LT,
-            BinaryOp.LE,
-            BinaryOp.GT,
-            BinaryOp.GE,
-        }
+            return self._unary_type(expr)
+        if isinstance(expr, BinaryExpr):
+            return self._binary_types(expr)[1]
+        msg = f"Unsupported Guppy expression {expr!r}"
+        raise GuppyCodegenError(msg)
+
+    def _unary_type(self, expr: UnaryExpr) -> str:
+        operand = self._expression_type(expr.operand)
+        if expr.op == UnaryOp.NOT and operand in {"bool", *NUMERIC_TYPES}:
+            return "bool"
+        if expr.op == UnaryOp.NEG and (operand in NUMERIC_TYPES or self._is_bit_literal(expr.operand)):
+            return "float" if operand == "float" else "int"
+        msg = f"Guppy operator {expr.op.name} does not accept a {operand} operand in {expr!r}"
+        raise GuppyCodegenError(msg)
+
+    def _binary_types(self, expr: BinaryExpr) -> tuple[str, str]:
+        """Return the operand and result types of a binary expression."""
+        left = self._expression_type(expr.left)
+        right = self._expression_type(expr.right)
+        # An integer literal is a bit beside a bool, as in `c[0] == 1`.
+        bit_literals = expr.op == BinaryOp.XOR and self._is_bit_literal(expr.left) and self._is_bit_literal(expr.right)
+        logical = expr.op in LOGICAL_OPS or bit_literals
+        if left == "int" and isinstance(expr.left, LiteralExpr) and (logical or right == "bool"):
+            left = "bool"
+        if right == "int" and isinstance(expr.right, LiteralExpr) and (logical or left == "bool"):
+            right = "bool"
+        types = {left, right}
+        comparison = expr.op in EQUALITY_OPS or expr.op in ORDERING_OPS
+        if comparison and "register" in types and types <= {"register", "int"}:
+            self._check_register_comparison(expr)
+            return "int", "bool"
+        result = None
+        if types <= NUMERIC_TYPES:
+            if expr.op in ARITHMETIC_OPS:
+                result = "float" if "float" in types else "int"
+            elif comparison:
+                result = "bool"
+            elif types == {"int"} and (expr.op in SHIFT_OPS or expr.op == BinaryOp.XOR):
+                result = "int"
+        elif types == {"bool"} and (expr.op in EQUALITY_OPS or expr.op in LOGICAL_OPS or expr.op == BinaryOp.XOR):
+            result = "bool"
+        if result is None:
+            msg = f"Guppy operator {expr.op.name} does not accept {left} and {right} operands in {expr!r}"
+            raise GuppyCodegenError(msg)
+        return left, result
+
+    def _is_bit_literal(self, expr: Expression) -> bool:
+        return isinstance(expr, LiteralExpr) and isinstance(expr.value, numbers.Integral) and expr.value in {0, 1}
+
+    def _check_register_comparison(self, expr: BinaryExpr) -> None:
+        """Keep Guppy's signed comparison equal to the unsigned one QIR makes."""
+        for operand in (expr.left, expr.right):
+            if isinstance(operand, LiteralExpr):
+                if not 0 <= operand.value < 2**MAX_PACKED_REGISTER_WIDTH:
+                    msg = (
+                        f"Cannot compare a classical register to {operand.value!r}: "
+                        f"registers compare as unsigned integers below 2**{MAX_PACKED_REGISTER_WIDTH}"
+                    )
+                    raise GuppyCodegenError(msg)
+            elif not self._is_whole_register(operand) and (expr.op in ORDERING_OPS or not isinstance(operand, VarExpr)):
+                msg = (
+                    f"Unsupported register comparison in {expr!r}: compare to a register or a non-negative "
+                    "literal, because Guppy's computed integers are signed and registers are unsigned."
+                )
+                raise GuppyCodegenError(msg)
 
     def _parse_indexed_ref(self, ref: str) -> tuple[str, int] | None:
         match = re.fullmatch(r"([A-Za-z_]\w*)\[(\d+)\]", ref)

@@ -2221,6 +2221,21 @@ fn validate_qis_dialect(bytes: &[u8], format: ProgramFormat) -> Result<(), Inter
         return Ok(());
     }
 
+    canonical_qis_ir(bytes, format)?;
+    cache
+        .lock()
+        .map_err(|error| {
+            InterfaceError::LoadError(format!("Failed to lock validation cache: {error}"))
+        })?
+        .insert(digest);
+    Ok(())
+}
+
+/// Canonical LLVM text verified through the same CLI boundary as execution.
+pub(crate) fn canonical_qis_ir(
+    bytes: &[u8],
+    format: ProgramFormat,
+) -> Result<String, InterfaceError> {
     // Use the compiler's LLVM installation even without optional LLVM bindings.
     // File input avoids blocking on simultaneous child stdin/stdout pipe traffic.
     let mut input = NamedTempFile::new().map_err(|error| {
@@ -2299,13 +2314,7 @@ fn validate_qis_dialect(bytes: &[u8], format: ProgramFormat) -> Result<(), Inter
             "QIS input contains {reason}; convert QIR to QIS first"
         )));
     }
-    cache
-        .lock()
-        .map_err(|error| {
-            InterfaceError::LoadError(format!("Failed to lock validation cache: {error}"))
-        })?
-        .insert(digest);
-    Ok(())
+    Ok(ir)
 }
 
 impl QisInterface for QisHeliosInterface {

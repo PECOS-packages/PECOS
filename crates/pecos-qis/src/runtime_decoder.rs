@@ -54,6 +54,25 @@ pub trait RuntimeDecoderSession: Send + Sync {
         ))
     }
 
+    /// Decode with compiler-owned control events and the corresponding batch interval.
+    /// # Errors
+    /// Unsupported sessions must reject without falling back.
+    #[allow(clippy::too_many_arguments)]
+    fn decode_observed_with_control_v1(
+        &mut self,
+        _window_id: u64,
+        _instance_id: u64,
+        _syndrome: &[u8],
+        _context: &[u8],
+        _reads: &[RuntimeObservedRead],
+        _prefix: &crate::decoder_batches::DecoderBatchPrefix,
+        _control: &crate::control_provenance::ControlSnapshot,
+    ) -> Result<u64, PecosError> {
+        Err(PecosError::Input(
+            "decoder session does not support compiler control provenance".into(),
+        ))
+    }
+
     /// Check observed read sources and parities before decoding. No fallback.
     ///
     /// # Errors

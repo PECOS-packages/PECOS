@@ -31,6 +31,19 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   `AdaptedOp::Gate`, or as a queued QFree, through an override or decomposition,
   and it draws from the RNG.
 
+- **Breaking:** Guppy code generation checks classical expression types (#1569).
+  An operand Guppy cannot accept, such as `d[0] ^ 1.5`, `d[0] < d[1]` or a whole
+  register in arithmetic, a condition that is not a boolean or a number, a `For`
+  bound that is not an integer, and a literal Guppy cannot write now raise
+  `GuppyCodegenError` at `.guppy()`, naming the expression. Before, `.guppy()`
+  returned source that failed at `.hugr()`. `&` and `|` on a loop variable also
+  raise: they compiled as logical `and` and `or`, which is not what they mean in
+  SLR. `d[i] == 1` now compiles, and integer division renders as `//`, like the
+  QIR backend's on non-negative values. A whole-register comparison such as
+  `If(c == 5)` or `If(c < d)` compiles to the unsigned register value for widths
+  up to 63 bits. The other side must be a register or a non-negative literal, or
+  a loop variable for `==` and `!=`, because computed Guppy integers are signed.
+
 - **Breaking:** pecos-neo single- and two-qubit gate channels now discard a
   seeping qubit's state with an independent uniform I/X/Y/Z twirl (#1570),
   including seepage after leaked-suppressed gates. The marginal seepage rate

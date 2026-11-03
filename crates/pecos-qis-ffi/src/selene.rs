@@ -1647,3 +1647,34 @@ mod tests {
         assert_eq!(offset_of!(SeleneString, owned), 16);
     }
 }
+
+/// Compiler-generated scalar control event. This queues no physical operation.
+/// # Safety
+/// Must execute under the same nonnested execution guard as native QIS imports.
+#[unsafe(no_mangle)]
+pub unsafe extern "C-unwind" fn pecos_runtime_control_v1(site: u64, value: u64) {
+    if unsafe { ffi::cancellation_checkpoint() } {
+        return;
+    }
+    let queued = crate::with_interface(|interface| {
+        if interface.operations.len() >= 4096 {
+            return false;
+        }
+        interface.queue_operation(Operation::TraceMetadata {
+            metadata: std::collections::BTreeMap::from([(
+                "__pecos_control_v1__".into(),
+                format!("{site}:{value}"),
+            )]),
+            qubit: None,
+        });
+        true
+    });
+    if !queued {
+        unsafe {
+            ffi::fatal_ffi_input(
+                "pecos_runtime_control_v1",
+                "control event pending queue limit exceeded".into(),
+            );
+        };
+    }
+}

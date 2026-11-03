@@ -132,6 +132,14 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   `ExecutionError::HandlerLeakageWithoutNoise` variant; exhaustive error matches
   must handle it.
 
+- **Breaking:** `bb_memory_circuit` and `coloration_memory_circuit` `detectors`
+  metadata no longer contains `fault_sector`. Callers of
+  `with_detectors_json(circuit.get_meta("detectors"))` must use
+  `with_circuit_metadata(circuit)` in Python, or also supply `measurement_classes`
+  in influence-map record order with `with_measurement_classes_json` (Rust callers
+  can use `DemBuilder::from_tick_circuit`). Without this change the DEM builds
+  with no labels and no error.
+
 - **Breaking:** PHIR `cvar_export` selects the reported classical variables in
   every PECOS runner (#1323): the native PHIR-JSON engine (`sim(PhirJson(...))`),
   the Rust and Python classical interpreters behind `HybridEngine`, and
@@ -674,6 +682,15 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   attempts; detailed direct calls retain full results. Defaults and provider
   protocol v1 remain unchanged.
 
+- Circuits can supply typed `measurement_classes` metadata to derive detector
+  `fault_sector` labels from parity-reduced record support, with explicit-label
+  agreement checks during definition resolution and DEM construction. Resolved
+  circuit definitions carry the effective labels. Rust CSS memory builders emit
+  these classes; Python `DemBuilder.with_circuit_metadata` copies all four DEM
+  metadata attributes, checks detectors, observables and the count against the
+  circuit, and rejects an influence map whose measurement records differ from the
+  circuit's. Manual Rust and Python DEM builders accept class JSON in influence-map
+  record order; Guppy builders do not accept positional classes.
 - `LogicalCircuitBuilder` detector `fault_sector` labels follow the code's
   stabilizer family across a transversal H; previously post-H detectors were
   labelled with the measured family, which made graph decoders' labelled

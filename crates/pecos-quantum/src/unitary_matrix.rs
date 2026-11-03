@@ -154,13 +154,23 @@ impl UnitaryMatrix {
         self.0
     }
 
-    /// Returns `true` if this matrix is unitary (U * U† = I) within tolerance.
+    /// Returns `true` if this matrix is square and the Frobenius norm of
+    /// `U * U† - I` is strictly less than the default tolerance, `1e-10`.
+    ///
+    /// Non-square matrices return `false`. See
+    /// [`Self::is_unitary_with_tolerance`] to supply a custom tolerance.
     #[must_use]
     pub fn is_unitary(&self) -> bool {
         self.is_unitary_with_tolerance(1e-10)
     }
 
-    /// Returns `true` if this matrix is unitary within the given tolerance.
+    /// Returns `true` if this matrix is square and the Frobenius norm of
+    /// `U * U† - I` is strictly less than `tol`.
+    ///
+    /// The Frobenius norm is the square root of the sum of the squared
+    /// magnitudes of all entries in the residual matrix. Non-square matrices
+    /// return `false`; a residual norm equal to `tol` also returns `false`.
+    /// [`Self::is_unitary`] uses a default tolerance of `1e-10`.
     #[must_use]
     pub fn is_unitary_with_tolerance(&self, tol: f64) -> bool {
         let n = self.nrows();
@@ -184,14 +194,73 @@ impl UnitaryMatrix {
 
     /// Attempts to identify this matrix as a [`Unitary`] gate descriptor.
     ///
-    /// Named gates are identified up to any nonzero scalar (so `2*H` matches `H`).
-    /// Rotation extraction (RX, RY, RZ, RXY1Q, RXX, RYY, RZZ) requires the
-    /// matrix to be unitary -- scaled matrices like `3*RZ(0.5)` will not match.
+    /// This method performs identification, not unitarity validation. Named
+    /// gates are identified up to any nonzero scalar, subject to the numerical
+    /// checks below: `2*H` intentionally identifies as `H`. Rotation extraction
+    /// (RX, RY, RZ, RXY1Q, RXX, RYY, RZZ) requires the matrix to be unitary;
+    /// scaled matrices like `3*RZ(0.5)` will not match.
+    ///
+    /// To require a valid unitary, first check [`Self::is_unitary`], then call
+    /// this method. Identification can still return `None` for a valid unitary:
+    /// only dimensions 2, 4, and 8 are considered, and identification need not
+    /// succeed for every unitary within those dimensions.
+    ///
+    /// # Numerical checks
+    ///
+    /// Named matching canonicalizes the input by dividing every entry by the
+    /// first entry in row-major order whose complex magnitude is strictly
+    /// greater than `1e-14`. It returns `None` if no such pivot exists, if an
+    /// input entry is nonfinite, or if division produces a nonfinite entry.
+    /// A named match requires equal dimensions and a finite complex distance
+    /// at most `1e-8` between each pair of corresponding canonicalized entries.
+    /// This comparison is distinct from the strict Frobenius residual threshold
+    /// of `1e-10` used by [`Self::is_unitary`].
     ///
     /// The returned `Unitary` can be further queried with `is_pauli()`,
     /// `is_clifford()`, `try_to_pauli()`, etc.
     ///
     /// For self-inverse named gates, the non-dagger variant is returned.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use num_complex::Complex64;
+    /// use pecos_core::gate_type::GateType;
+    /// use pecos_core::unitary::H;
+    /// use pecos_core::unitary_rep::{Unitary, UnitaryRep};
+    /// use pecos_quantum::unitary_matrix::{ToMatrix, UnitaryMatrix};
+    ///
+    /// fn validate_then_identify(matrix: &UnitaryMatrix) -> Option<Unitary> {
+    ///     if !matrix.is_unitary() {
+    ///         return None;
+    ///     }
+    ///     matrix.try_to_unitary()
+    /// }
+    ///
+    /// let h = H(0).to_matrix();
+    /// let expected = Some(Unitary::named(GateType::H));
+    /// assert!(h.is_unitary());
+    /// assert_eq!(h.try_to_unitary(), expected);
+    /// assert_eq!(validate_then_identify(&h), expected);
+    ///
+    /// // A unit-magnitude global phase preserves unitarity.
+    /// let i_h = &h * Complex64::new(0.0, 1.0);
+    /// assert!(i_h.is_unitary());
+    /// assert_eq!(i_h.try_to_unitary(), expected);
+    /// assert_eq!(validate_then_identify(&i_h), expected);
+    ///
+    /// // Direct identification intentionally accepts a non-unitary scale.
+    /// let two_h = &h * 2.0;
+    /// assert!(!two_h.is_unitary());
+    /// assert_eq!(two_h.try_to_unitary(), expected);
+    /// assert_eq!(validate_then_identify(&two_h), None);
+    ///
+    /// // Validation can succeed even when identification is unsupported.
+    /// let identity = UnitaryMatrix::identity(16);
+    /// assert!(identity.is_unitary());
+    /// assert_eq!(identity.try_to_unitary(), None);
+    /// assert_eq!(validate_then_identify(&identity), None);
+    /// ```
     #[must_use]
     pub fn try_to_unitary(&self) -> Option<Unitary> {
         // First: try named gate table (works up to arbitrary scalar via canonicalization)

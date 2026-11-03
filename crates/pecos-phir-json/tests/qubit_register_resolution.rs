@@ -41,48 +41,57 @@ fn program(registers: &[(&str, usize)], gates: Vec<Value>) -> Value {
     json!({"format":"PHIR/JSON", "version":"0.1.0", "ops":ops})
 }
 
+fn measured_program(registers: &[(&str, usize)], gates: Vec<Value>) -> Value {
+    let mut source = program(registers, gates);
+    source["ops"].as_array_mut().unwrap().insert(
+        registers.len(),
+        json!({"data":"cvar_define","data_type":"u32","variable":"m","size":2}),
+    );
+    source
+}
+
 // Expected flat IDs are explicit oracle inputs, never derived from the resolver.
 fn equivalent_programs() -> Vec<(Value, Value)> {
     vec![
         (
-            program(
+            measured_program(
                 &[("a", 2), ("b", 2)],
                 vec![
                     json!({"qop":"X", "args":[["b",0]], "returns":[]}),
                     json!({"qop":"X", "args":[["a",1]], "returns":[]}),
                     json!({"qop":"H", "args":[["b",1]], "returns":[]}),
                     json!({"qop":"CX", "args":[[["b",0],["a",1]]], "returns":[]}),
-                    json!({"qop":"Measure", "args":[["b",1]], "returns":[]}),
+                    json!({"qop":"Measure", "args":[["b",1]], "returns":[["m",0]]}),
                 ],
             ),
-            program(
+            measured_program(
                 &[("q", 4)],
                 vec![
                     json!({"qop":"X", "args":[["q",2]], "returns":[]}),
                     json!({"qop":"X", "args":[["q",1]], "returns":[]}),
                     json!({"qop":"H", "args":[["q",3]], "returns":[]}),
                     json!({"qop":"CX", "args":[[["q",2],["q",1]]], "returns":[]}),
-                    json!({"qop":"Measure", "args":[["q",3]], "returns":[]}),
+                    json!({"qop":"Measure", "args":[["q",3]], "returns":[["m",0]]}),
                 ],
             ),
         ),
         (
-            program(
+            measured_program(
                 &[("x", 1), ("y", 3), ("z", 2)],
                 vec![
                     json!({"qop":"X", "args":[["y",2]], "returns":[]}),
                     json!({"qop":"H", "args":[["z",1]], "returns":[]}),
                     json!({"qop":"CX", "args":[[["z",0],["x",0]],[["y",0],["z",1]]], "returns":[]}),
-                    json!({"qop":"Measure", "args":[["z",0],["y",1]], "returns":[]}),
+                    json!({"qop":"Measure", "args":[["z",0],["y",1]], "returns":[["m",0],["m",1]]}),
                 ],
             ),
-            program(
+            measured_program(
                 &[("q", 6)],
                 vec![
                     json!({"qop":"X", "args":[["q",3]], "returns":[]}),
                     json!({"qop":"H", "args":[["q",5]], "returns":[]}),
                     json!({"qop":"CX", "args":[[["q",4],["q",0]],[["q",1],["q",5]]], "returns":[]}),
-                    json!({"qop":"Measure", "args":[["q",4],["q",2]], "returns":[]}),
+                    json!({"qop":"Measure", "args":[["q",4],["q",2]], "returns":[["m",0],["m",1]]}),
                 ],
             ),
         ),
@@ -103,10 +112,29 @@ fn equivalent_programs() -> Vec<(Value, Value)> {
 fn executable_module(program: &Value) -> Module {
     let mut module = phir_json_to_module(&program.to_string()).unwrap();
     // The declarations necessarily differ. Compare the entire remaining module,
-    // including quantum instructions, operands, results, types, and attributes.
+    // including quantum instructions, operands, results, types, and attributes,
+    // up to SSA renaming (different declaration counts allocate different IDs).
     module.body.blocks[0]
         .operations
         .retain(|op| !matches!(op.operation, Operation::Builtin(BuiltinOp::VarDefine(_))));
+    let qubits = program["ops"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|op| op["data"] == "qvar_define")
+        .map(|op| u32::try_from(op["size"].as_u64().unwrap()).unwrap())
+        .sum::<u32>();
+    let mut ids: std::collections::BTreeMap<_, _> = (0..qubits).map(|id| (id, id)).collect();
+    let mut next = qubits;
+    for op in &mut module.body.blocks[0].operations {
+        for value in op.operands.iter_mut().chain(&mut op.results) {
+            value.id = *ids.entry(value.id).or_insert_with(|| {
+                let id = next;
+                next += 1;
+                id
+            });
+        }
+    }
     module
 }
 

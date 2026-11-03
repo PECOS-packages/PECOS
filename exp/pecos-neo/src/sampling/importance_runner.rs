@@ -489,7 +489,7 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
             // Preparation
             GateType::PZ | GateType::QAlloc => {
                 self.simulator.pz(qubits);
-                self.emit_after_preparation(qubits);
+                self.emit_after_preparation(command.gate_type, qubits);
             }
 
             // Measurement
@@ -695,9 +695,9 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
     }
 
     /// Emit an after-preparation noise event.
-    fn emit_after_preparation(&mut self, qubits: &[QubitId]) {
+    fn emit_after_preparation(&mut self, gate_type: GateType, qubits: &[QubitId]) {
         if let Some(ref mut noise) = self.noise {
-            let event = NoiseEvent::AfterPreparation { qubits };
+            let event = NoiseEvent::AfterPreparation { gate_type, qubits };
             let response = noise.emit(&event, &mut self.rng);
             self.apply_noise_response(response);
         }
@@ -1067,7 +1067,7 @@ where
             // Preparation
             GateType::PZ | GateType::QAlloc => {
                 self.simulator.pz(qubits);
-                self.emit_after_preparation(qubits);
+                self.emit_after_preparation(command.gate_type, qubits);
             }
 
             // Measurement with outcome biasing
@@ -1321,7 +1321,7 @@ mod tests {
             _ctx: &mut NoiseContext,
             _rng: &mut PecosRng,
         ) -> NoiseResponse {
-            let NoiseEvent::AfterPreparation { qubits } = event else {
+            let NoiseEvent::AfterPreparation { qubits, .. } = event else {
                 return NoiseResponse::None;
             };
             NoiseResponse::inject_gate(GateCommand::new(self.0, smallvec::smallvec![qubits[0]]))
@@ -1350,7 +1350,7 @@ mod tests {
             _ctx: &mut NoiseContext,
             rng: &mut PecosRng,
         ) -> NoiseResponse {
-            let NoiseEvent::AfterPreparation { qubits } = event else {
+            let NoiseEvent::AfterPreparation { qubits, .. } = event else {
                 return NoiseResponse::None;
             };
             let gate_type = match rng.random_range(0..3) {

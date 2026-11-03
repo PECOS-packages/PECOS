@@ -6,6 +6,18 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Breaking:** pecos-neo always suppresses gates on leaked operands in all three
+  noise builders, including noiseless gates and models with no configured leak
+  source (#1574, #1575). Noiseless operations suppress faults, including composite,
+  preparation, measurement, crosstalk and idle-after-two-qubit noise, while
+  preparation clearing, lifecycle tracking and leaked readout still run.
+  Scheduled idle and `BeforeGate` composite primitives remain active.
+  `LeakageChannel` partner Pauli noise is now opt-in with
+  `with_partner_pauli_probability` (default 0), and the channel no longer flips
+  an earlier measurement record before leaked readout. Seeded results shift.
+  `NoiseEvent::AfterPreparation`, `BeforeMeasurement` and `AfterMeasurement`
+  gained a `gate_type` field holding the scheduled operation.
+
 - **Breaking:** pecos-neo validates operand counts per operation and groups native
   batches by quantum arity (#1442). `AdaptedOp::Gate` execution and batching now
   reject repeated qubits, including `H([q0, q0])`, which previously ran twice.
@@ -32,6 +44,31 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   and measurement crosstalk on other active, non-leaked qubits, which previously
   never fired, and changes `active()` conditions and seeded results. This crosstalk
   does not measure the affected qubit, so it differs from `GeneralNoiseModel`.
+
+- **Breaking:** PHIR runner results now have a consistent set of keys across shots.
+  Every `Result` destination is reported in every shot, including when its Result
+  never runs: its final value is reported, initially zero unless another operation
+  writes it. Result-created names are hoisted at load like declarations, so other
+  operations may read or write them before their Result executes, including when
+  that Result is in an unexecuted branch. Declared destinations keep their width
+  and signedness without restrictions on source types. An undeclared destination
+  takes the largest width contributed by its sources (a whole-register source's
+  size, or one bit for an indexed source). Indexed destination writes use unsigned
+  64-bit storage, sized to at least `max(32, largest destination index + 1)` across
+  the program. Whole-register copies to an undeclared destination keep their
+  common source data type, such as `bool` or `i8`; differing source data types use
+  `u64` or `i64` according to signedness. Conflicting signedness between
+  whole-register sources of an undeclared destination is a load-time error naming
+  the destination and sources.
+  The native `measurement_` name filter is removed, and quantum registers are
+  no longer reported by its all-variables fallback. `HybridEngine` writes
+  measurements into user registers beginning with `__`, keeps noise-only
+  measurements internal, and raises
+  a named shot/key error instead of accumulating ragged columns. Every runner,
+  including the native engine, rejects `Measure` without `returns` or with a
+  different number of destinations than measured qubits at load time; grouped
+  arguments are flattened before counting. Implicit measurement destinations
+  (`measurement_N` and `m`) have been removed.
 
 - **Breaking:** `QuantumCircuit.to_phir_json()` handles a measurement with no
   destination (#1497), such as SLR `qb.Measure(q[1])` with no `> c`. It used to
@@ -85,8 +122,8 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 - **Breaking:** PHIR `cvar_export` selects the reported classical variables in
   every PECOS runner (#1323): the native PHIR-JSON engine (`sim(PhirJson(...))`),
   the Rust and Python classical interpreters behind `HybridEngine`, and
-  `phir_json_to_module`, which used to reject it. Before, every runner ignored it
-  and reported all classical variables. The export set is the union of every
+  `phir_json_to_module`, which used to reject it. Before, runners ignored it
+  and used their default output selection. The export set is the union of every
   `cvar_export` in the program, including unexecuted branches; values are read at
   the end of the shot; `to` renames positionally. Programs with exports no longer
   report unexported variables, and an explicitly exported `measurement_*`
@@ -96,8 +133,9 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   destination under its own name is allowed), and the reserved `_width_`
   prefix. A `cvar_define` or `qvar_define` inside a block is supported only in
   programs that use `cvar_export`; elsewhere it is a load-time error. `qc2phir`
-  drops exports of size-0 registers it does not declare. Programs without
-  `cvar_export` report what they did before.
+  drops exports of size-0 registers it does not declare. Without `cvar_export`,
+  the native engine and module converter retain Result-only output selection
+  when Results exist; HybridEngine continues to report all classical variables.
 
 - `belief_find` now gives its Union Find fallback the raw BP log-probability
   ratios. It previously passed a transform that reversed their order, so on
@@ -129,6 +167,20 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   `QuantumCircuitGenerator` raises on classical `SET`, `Print` and standalone
   classical expressions instead of silently dropping them.
 
+- `SlrConverter.from_quantum_circuit` keeps the qubit register names that
+  SLR -> QuantumCircuit records in `qvars` and `qvar_spec` (#1498), so a round
+  trip reproduces `qreg data[2]; qreg anc[1];` instead of one `q` register.
+  Without that metadata the single `q` register stays. Supplying only one of
+  `qvars` and `qvar_spec`, a gate qubit missing from `qvars`, an out-of-range or
+  duplicate mapping, or a classical register sharing a quantum register's name
+  raises `ValueError`; a non-mapping `qvars` or `qvar_spec` raises `TypeError`.
+  With `qvars` and `qvar_spec` present, unused declared quantum registers
+  survive, JSON string keys are accepted, and a classical register named `q`
+  is accepted when no quantum register is named `q`.
+  A bool is no longer accepted as a `cvar_spec` width, a `var`/`var_output`
+  index or a qubit location in tuple-tick input; previously `False` and `True`
+  counted as 0 and 1.
+
 - The PECOS QASM parser accepts a `//` line comment that ends at end of input
   without a newline (#1518). Before, such a program failed with a syntax error,
   which included SLR-generated QASM ending in a `Comment`.
@@ -148,6 +200,11 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   `While` inside a `Parallel` as control flow, like `If` and `Repeat`. Before, it
   flattened their bodies into the parallel group and dropped iterations:
   `Parallel(For("i", 0, 2).Do(X(q[0])), ...)` applied `X` once instead of twice.
+
+- `QuantumCircuit.from_json_str` restores the integer qubit ids and
+  `(register, index)` tuples in `qvars`. Before, they came back as strings and
+  lists, and `to_phir_dict` on the restored circuit failed with "Couldn't find
+  qsym for qid". A malformed `qvars` raises an error naming the bad value.
 
 - **Breaking:** Python simulator wrappers and the public `pecos.HybridEngine`
   validate whole known-gate batches per `run_gate` call and per circuit item

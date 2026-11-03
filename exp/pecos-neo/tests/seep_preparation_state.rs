@@ -133,15 +133,20 @@ fn check_crosstalk(kind: &str) {
     let mut rng = PecosRng::seed_from_u64(42);
     model.emit(
         &NoiseEvent::AfterPreparation {
+            gate_type: GateType::PZ,
             qubits: &[QubitId(1)],
         },
         &mut rng,
     );
     let source = [QubitId(0)];
     let trigger = if kind == "prep" {
-        NoiseEvent::AfterPreparation { qubits: &source }
+        NoiseEvent::AfterPreparation {
+            gate_type: GateType::PZ,
+            qubits: &source,
+        }
     } else {
         NoiseEvent::AfterMeasurement {
+            gate_type: GateType::MZ,
             qubits: &source,
             outcomes: &[false],
         }
@@ -151,6 +156,7 @@ fn check_crosstalk(kind: &str) {
     assert_eq!(gates[0].qubits.as_slice(), &[QubitId(1)]);
     model.emit(
         &NoiseEvent::AfterMeasurement {
+            gate_type: GateType::MZ,
             qubits: &[QubitId(1)],
             outcomes: &[false],
         },
@@ -159,6 +165,7 @@ fn check_crosstalk(kind: &str) {
     assert_eq!(injected(model.emit(&trigger, &mut rng)), vec![]);
     model.emit(
         &NoiseEvent::AfterPreparation {
+            gate_type: GateType::PZ,
             qubits: &[QubitId(1)],
         },
         &mut rng,
@@ -258,6 +265,7 @@ fn same_event_preparation_leak_sticks() {
     model.context_mut().mark_leaked(QubitId(0));
     model.emit(
         &NoiseEvent::AfterPreparation {
+            gate_type: GateType::PZ,
             qubits: &[QubitId(0)],
         },
         &mut PecosRng::seed_from_u64(42),
@@ -293,7 +301,13 @@ fn composite_active_condition_and_queries_follow_lifecycle() {
         angles: &[],
     };
     assert_eq!(injected(model.emit(&gate, &mut rng)), vec![]);
-    model.emit(&NoiseEvent::AfterPreparation { qubits: &qubits }, &mut rng);
+    model.emit(
+        &NoiseEvent::AfterPreparation {
+            gate_type: GateType::PZ,
+            qubits: &qubits,
+        },
+        &mut rng,
+    );
     assert_eq!(model.context().active_count(), 1);
     assert_eq!(model.context().other_active_qubits(&[]), qubits);
     assert!(model.context().exists(QubitId(0)));
@@ -305,6 +319,7 @@ fn composite_active_condition_and_queries_follow_lifecycle() {
     assert_eq!(injected(model.emit(&gate, &mut rng)).len(), 1);
     model.emit(
         &NoiseEvent::AfterMeasurement {
+            gate_type: GateType::MZ,
             qubits: &qubits,
             outcomes: &[false],
         },

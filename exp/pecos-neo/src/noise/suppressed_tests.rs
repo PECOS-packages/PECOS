@@ -176,11 +176,12 @@ fn suppressed_leakage_partner_noise() {
             vec![]
         };
         let event = after(&executed, &[QubitId(0), QubitId(1)]);
-        let gates = injected(LeakageChannel::new().apply(
-            &event,
-            &mut ctx,
-            &mut PecosRng::seed_from_u64(42),
-        ));
+        let gates = injected(
+            LeakageChannel::new()
+                .with_partner_pauli_probability(1.0)
+                .unwrap()
+                .apply(&event, &mut ctx, &mut PecosRng::seed_from_u64(42)),
+        );
         assert_eq!(gates.len(), 1);
         assert_eq!(gates[0].qubits.as_slice(), &[QubitId(1)]);
     }
@@ -762,7 +763,10 @@ fn nested_composite_keeps_non_gate_operands_for_every_member() {
     for channel in nested_channels(&probe) {
         probe.0.lock().unwrap().clear();
         channel.apply(
-            &NoiseEvent::AfterPreparation { qubits: &qubits },
+            &NoiseEvent::AfterPreparation {
+                gate_type: GateType::PZ,
+                qubits: &qubits,
+            },
             &mut NoiseContext::new(),
             &mut PecosRng::seed_from_u64(42),
         );
@@ -858,7 +862,10 @@ fn composite_skips_empty_selections() {
             let mut control_rng = rng.clone();
             for event in [
                 after(&[], &[]),
-                NoiseEvent::BeforeMeasurement { qubits: &[] },
+                NoiseEvent::BeforeMeasurement {
+                    gate_type: GateType::MZ,
+                    qubits: &[],
+                },
             ] {
                 assert!(matches!(
                     channel.apply(&event, &mut ctx, &mut rng),
@@ -1024,6 +1031,7 @@ fn composite_linear_two_stage_seeded_draw_order() {
     );
     assert_eq!(
         observe(&NoiseEvent::AfterMeasurement {
+            gate_type: GateType::MZ,
             qubits: &qubits,
             outcomes: &[true, false, true, false],
         }),
@@ -1199,7 +1207,10 @@ fn composite_non_gate_context_linear_and_two_pass() {
                 let mut ctx = NoiseContext::new();
                 ctx.mark_leaked(qubits[0]);
                 let gates = injected(channel.apply(
-                    &NoiseEvent::AfterPreparation { qubits: &qubits },
+                    &NoiseEvent::AfterPreparation {
+                        gate_type: GateType::PZ,
+                        qubits: &qubits,
+                    },
                     &mut ctx,
                     &mut PecosRng::seed_from_u64(42),
                 ));
@@ -1212,7 +1223,10 @@ fn composite_non_gate_context_linear_and_two_pass() {
                         make_channel(probe.clone(), batch, threshold)
                     };
                     channel.apply(
-                        &NoiseEvent::AfterPreparation { qubits: &qubits },
+                        &NoiseEvent::AfterPreparation {
+                            gate_type: GateType::PZ,
+                            qubits: &qubits,
+                        },
                         &mut ctx,
                         &mut PecosRng::seed_from_u64(42),
                     );

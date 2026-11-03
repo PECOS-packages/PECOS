@@ -579,6 +579,12 @@ impl GeneralNoiseModelBuilder {
     // ========================================================================
 
     /// Mark a gate type as noiseless.
+    ///
+    /// Suppresses faults from these operations, including preparation, readout,
+    /// crosstalk and idle-after-two-qubit noise. Leakage suppression, preparation
+    /// clearing and lifecycle tracking still run. Scheduled idle is unaffected.
+    /// Custom channels must honor the setting; a fault primitive attached to a
+    /// `BeforeGate` composite still runs because that event decides suppression.
     #[must_use]
     pub fn with_noiseless_gate(mut self, gate_type: GateType) -> Self {
         self.noiseless_gates.push(gate_type);
@@ -586,6 +592,12 @@ impl GeneralNoiseModelBuilder {
     }
 
     /// Mark multiple gate types as noiseless.
+    ///
+    /// Suppresses faults from these operations, including preparation, readout,
+    /// crosstalk and idle-after-two-qubit noise. Leakage suppression, preparation
+    /// clearing and lifecycle tracking still run. Scheduled idle is unaffected.
+    /// Custom channels must honor the setting; a fault primitive attached to a
+    /// `BeforeGate` composite still runs because that event decides suppression.
     #[must_use]
     pub fn with_noiseless_gates(mut self, gate_types: &[GateType]) -> Self {
         self.noiseless_gates.extend_from_slice(gate_types);
@@ -725,23 +737,6 @@ impl GeneralNoiseModelBuilder {
         Ok(())
     }
 
-    /// Check if any configured parameters can cause leakage.
-    fn has_leakage_potential(&self) -> bool {
-        self.p_prep_leak_ratio > 0.0
-            || self.p1_emission_ratio > 0.0
-            || self.p2_emission_ratio > 0.0
-            || self
-                .p_meas_crosstalk_transitions
-                .as_ref()
-                .is_some_and(|t| t.zero_leak > 0.0 || t.one_leak > 0.0)
-            || self
-                .p_idle_sin_squared
-                .as_ref()
-                .is_some_and(|(rate, model)| {
-                    *rate > 0.0 && model.get("L").is_some_and(|multiplier| *multiplier > 0.0)
-                })
-    }
-
     /// Build the configured noise model.
     ///
     /// Returns a [`ComposableNoiseModel`] with all the configured channels.
@@ -803,10 +798,8 @@ impl GeneralNoiseModelBuilder {
             model = model.with_noiseless_gate(*gate_type);
         }
 
-        // Leakage channel (handles leaked qubit effects) - only add if leakage is possible
-        if self.leakage_scale > 0.0 && self.has_leakage_potential() {
-            model = model.add_channel(LeakageChannel::new().with_scale(self.leakage_scale)?);
-        }
+        // Suppression also covers leakage introduced by custom channels.
+        model = model.add_channel(LeakageChannel::new().with_scale(self.leakage_scale)?);
 
         // Preparation channel
         if self.p_prep > 0.0 {
@@ -950,7 +943,7 @@ mod tests {
         let model = GeneralNoiseModelBuilder::new().build().unwrap();
         // Should have CorePlugin's handlers but no noise channels
         assert_eq!(model.event_handler_count(), 2); // Prep + Meas handlers
-        assert_eq!(model.channel_count(), 0);
+        assert_eq!(model.channel_count(), 1);
     }
 
     #[test]
@@ -1005,8 +998,7 @@ mod tests {
             .build()
             .unwrap();
 
-        // Should have single-qubit and two-qubit channels
-        assert_eq!(model.channel_count(), 2);
+        assert_eq!(model.channel_count(), 3);
     }
 
     #[test]
@@ -1019,7 +1011,7 @@ mod tests {
             .unwrap()
             .build()
             .unwrap();
-        assert_eq!(model.channel_names(), ["IdleChannel"]);
+        assert_eq!(model.channel_names(), ["LeakageChannel", "IdleChannel"]);
 
         let qubits = [QubitId(0), QubitId(1)];
         let event = NoiseEvent::AfterGate {
@@ -1045,7 +1037,7 @@ mod tests {
             .unwrap()
             .build()
             .unwrap();
-        assert_eq!(model.channel_names(), ["IdleChannel"]);
+        assert_eq!(model.channel_names(), ["LeakageChannel", "IdleChannel"]);
 
         let qubits = [QubitId(0), QubitId(1)];
         let event = NoiseEvent::AfterGate {
@@ -1334,8 +1326,7 @@ mod tests {
             .build()
             .unwrap();
 
-        // Just crosstalk channel (no leakage potential)
-        assert_eq!(model.channel_count(), 1);
+        assert_eq!(model.channel_count(), 2);
     }
 
     #[test]
@@ -1369,7 +1360,7 @@ mod tests {
 
         // Should have created an idle channel
         let model = builder.build();
-        assert_eq!(model.unwrap().channel_count(), 1);
+        assert_eq!(model.unwrap().channel_count(), 2);
     }
 
     #[test]
@@ -1415,8 +1406,7 @@ mod tests {
             .build()
             .unwrap();
 
-        // 1Q + Meas + Custom 2Q = 3 channels
-        assert_eq!(model.channel_count(), 3);
+        assert_eq!(model.channel_count(), 4);
     }
 
     #[test]
@@ -1433,8 +1423,7 @@ mod tests {
             .build()
             .unwrap();
 
-        // 1Q + 2Q + Meas = 3 channels
-        assert_eq!(model.channel_count(), 3);
+        assert_eq!(model.channel_count(), 4);
     }
 
     #[test]

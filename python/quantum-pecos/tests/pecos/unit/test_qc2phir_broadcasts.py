@@ -172,3 +172,10 @@ def test_zero_target_quantum_operations_are_omitted(cinterp: str) -> None:
     assert all(op["args"] for op in source["ops"] if "qop" in op)
     result = HybridEngine(cinterp=cinterp, qsim="stabilizer").run(qc, return_int=True)
     assert result["m"] == [1]
+
+
+@pytest.mark.parametrize("key", ["qvar_spec", "cvar_spec"])
+@pytest.mark.parametrize("size", [True, False])
+def test_bool_register_size_rejected(key: str, size: bool) -> None:
+    with pytest.raises(ValueError, match=rf"{key}\['r'\] has invalid size {size}"):
+        pc.QuantumCircuit(**{key: {"r": size}}).to_phir_dict()

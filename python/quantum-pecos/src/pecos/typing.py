@@ -30,6 +30,9 @@ from phir.model import (
     Barrier as _Barrier,
 )
 from phir.model import (
+    Bit as _Bit,
+)
+from phir.model import (
     Comment as _Comment,
 )
 from phir.model import (
@@ -74,6 +77,7 @@ from phir.model import (
 from pydantic import model_validator
 
 from pecos._phir_declarations import validate_classical_inputs, validate_declaration_names
+from pecos._phir_exports import validate_declaration_placement, validate_measure_returns
 
 
 class _PecosCVarDefine(_CVarDefine):
@@ -155,26 +159,45 @@ class RXYXY2QOp(_TQOp):
         raise ValueError(msg)
 
 
-_PecosOpType: TypeAlias = _FFCall | _COp | ResultCOp | RXYXY2QOp | _QOp | _MOpType | _Barrier
+_PecosMeasureArgs: TypeAlias = list[_Bit | list[_Bit]]
+
+
+class _PecosMeasOp(_Op):
+    """Measure accepts grouped qubits with one return per flattened qubit."""
+
+    qop: Literal["Measure"]
+    args: _PecosMeasureArgs
+    returns: list[_Bit]
+
+    @model_validator(mode="before")
+    @classmethod
+    def check_measure(cls, value: dict) -> dict:
+        """Keep malformed fields and flattened counts in the shared diagnostic."""
+        if isinstance(value, dict) and value.get("qop") == "Measure":
+            validate_measure_returns("Measure", value.get("args"), value.get("returns"))
+        return value
+
+
+_PecosOpType: TypeAlias = _FFCall | _COp | ResultCOp | RXYXY2QOp | _PecosMeasOp | _QOp | _MOpType | _Barrier
 
 
 class _PecosSeqBlock(_SeqBlock):
-    """SeqBlock extended with PECOS-specific classical operations."""
+    """SeqBlock with PECOS operations and program-wide data directives."""
 
-    ops: list[_PecosOpType | _PecosBlockType]  # type: ignore[assignment]
+    ops: list[_PecosOpType | _PecosBlockType | _PecosDataMgmt]  # type: ignore[assignment]
 
 
 class _PecosIfBlock(_IfBlock):
-    """IfBlock extended with PECOS-specific classical operations."""
+    """IfBlock with PECOS operations and program-wide data directives."""
 
-    true_branch: list[_PecosOpType | _PecosBlockType]  # type: ignore[assignment]
-    false_branch: list[_PecosOpType | _PecosBlockType] | None = None  # type: ignore[assignment]
+    true_branch: list[_PecosOpType | _PecosBlockType | _PecosDataMgmt]  # type: ignore[assignment]
+    false_branch: list[_PecosOpType | _PecosBlockType | _PecosDataMgmt] | None = None  # type: ignore[assignment]
 
 
 class _PecosQParBlock(_QParBlock):
-    """QParBlock extended with PECOS-specific quantum operations."""
+    """QParBlock with PECOS quantum operations and static export directives."""
 
-    ops: list[_QOp | RXYXY2QOp]
+    ops: list[_QOp | RXYXY2QOp | _PecosMeasOp | _ExportVar]
 
 
 _PecosBlockType: TypeAlias = _PecosSeqBlock | _PecosQParBlock | _PecosIfBlock
@@ -200,7 +223,9 @@ class PhirModel(_PHIRModel):
     @model_validator(mode="after")
     def _check_declaration_names(self) -> PhirModel:
         """Enforce PHIR-JSON v0.1's unique-name rule for both declaration kinds."""
-        validate_declaration_names(self.model_dump()["ops"])
+        operations = self.model_dump()["ops"]
+        validate_declaration_names(operations)
+        validate_declaration_placement(operations)
         return self
 
 

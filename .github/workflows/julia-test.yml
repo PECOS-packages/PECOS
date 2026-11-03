@@ -18,6 +18,7 @@ env:
   TRIGGER_ON_PR_PUSH: true  # Set to true to enable triggers on PR pushes
   RUSTFLAGS: -C debuginfo=0
   RUST_BACKTRACE: 1
+  CARGO_NET_RETRY: "10"
 
 on:
   # Merges into the main branches always run Julia CI, whatever they touch.

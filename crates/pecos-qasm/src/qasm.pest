@@ -1,6 +1,7 @@
 // OpenQASM 2.0 Grammar, supporting classical operations
 WHITESPACE = _{ " " | "\t" | "\n" | "\r" }
-COMMENT = _{ "//" ~ (!"\n" ~ ANY)* ~ "\n" }
+// A line comment runs to the end of the line or input; WHITESPACE consumes the newline.
+COMMENT = _{ "//" ~ (!"\n" ~ ANY)* }
 
 // Top level program
 program = { SOI ~ oqasm? ~ statement* ~ EOI }

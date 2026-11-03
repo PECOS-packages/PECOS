@@ -61,7 +61,7 @@
 
 use crate::command::{CommandQueue, GateCommand, GateType};
 use crate::noise::validation::{ValidationError, ValidationResult, validate_probability};
-use crate::noise::{ComposableNoiseModel, NoiseEvent, NoiseResponse, surviving_gate_qubits};
+use crate::noise::{ComposableNoiseModel, NoiseEvent, NoiseResponse, partition_gate_qubits};
 use crate::outcome::{MeasurementOutcome, MeasurementOutcomes};
 use crate::sampling::importance::ImportanceConfig;
 use crate::sampling::weight::SampleWeight;
@@ -463,8 +463,13 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
     /// Execute a single command with importance-weighted noise.
     fn execute_command(&mut self, command: &GateCommand) -> Result<(), ImportanceSamplingError> {
         let skipped = self.emit_before_gate(command);
-        let surviving =
-            surviving_gate_qubits(&command.qubits, command.gate_type.quantum_arity(), &skipped);
+        let surviving = partition_gate_qubits(
+            &command.qubits,
+            crate::noise::gate_group_size(command.gate_type.quantum_arity(), command.qubits.len()),
+            &skipped,
+            None,
+        )
+        .executed;
         if !command.qubits.is_empty() && surviving.is_empty() {
             return Ok(());
         }
@@ -484,7 +489,7 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
             // Preparation
             GateType::PZ | GateType::QAlloc => {
                 self.simulator.pz(qubits);
-                self.emit_after_preparation(qubits);
+                self.emit_after_preparation(command.gate_type, qubits);
             }
 
             // Measurement
@@ -690,9 +695,9 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
     }
 
     /// Emit an after-preparation noise event.
-    fn emit_after_preparation(&mut self, qubits: &[QubitId]) {
+    fn emit_after_preparation(&mut self, gate_type: GateType, qubits: &[QubitId]) {
         if let Some(ref mut noise) = self.noise {
-            let event = NoiseEvent::AfterPreparation { qubits };
+            let event = NoiseEvent::AfterPreparation { gate_type, qubits };
             let response = noise.emit(&event, &mut self.rng);
             self.apply_noise_response(response);
         }
@@ -1036,8 +1041,13 @@ where
         command: &GateCommand,
     ) -> Result<(), ImportanceSamplingError> {
         let skipped = self.emit_before_gate(command);
-        let surviving =
-            surviving_gate_qubits(&command.qubits, command.gate_type.quantum_arity(), &skipped);
+        let surviving = partition_gate_qubits(
+            &command.qubits,
+            crate::noise::gate_group_size(command.gate_type.quantum_arity(), command.qubits.len()),
+            &skipped,
+            None,
+        )
+        .executed;
         if !command.qubits.is_empty() && surviving.is_empty() {
             return Ok(());
         }
@@ -1057,7 +1067,7 @@ where
             // Preparation
             GateType::PZ | GateType::QAlloc => {
                 self.simulator.pz(qubits);
-                self.emit_after_preparation(qubits);
+                self.emit_after_preparation(command.gate_type, qubits);
             }
 
             // Measurement with outcome biasing
@@ -1311,7 +1321,7 @@ mod tests {
             _ctx: &mut NoiseContext,
             _rng: &mut PecosRng,
         ) -> NoiseResponse {
-            let NoiseEvent::AfterPreparation { qubits } = event else {
+            let NoiseEvent::AfterPreparation { qubits, .. } = event else {
                 return NoiseResponse::None;
             };
             NoiseResponse::inject_gate(GateCommand::new(self.0, smallvec::smallvec![qubits[0]]))
@@ -1340,7 +1350,7 @@ mod tests {
             _ctx: &mut NoiseContext,
             rng: &mut PecosRng,
         ) -> NoiseResponse {
-            let NoiseEvent::AfterPreparation { qubits } = event else {
+            let NoiseEvent::AfterPreparation { qubits, .. } = event else {
                 return NoiseResponse::None;
             };
             let gate_type = match rng.random_range(0..3) {

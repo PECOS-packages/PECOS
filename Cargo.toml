@@ -1,5 +1,6 @@
 [workspace]
 resolver = "2"
+exclude = ["vendor/ndarray-npy"]
 members = [
   "python/pecos-rslib",
   "python/pecos-rslib-exp",
@@ -174,6 +175,13 @@ proptest = "1"
 # --- ZX calculus ---
 quizx = "0.3"
 
+# --- Source-distribution inputs ---
+# Maturin follows explicit path dependencies, including dev-dependencies, but
+# does not discover root [patch] targets. Keep these as dev-only inputs in each
+# Maturin package so extracted sdists can resolve both patches and their closure.
+highs = { path = "crates/pecos-highs-shim" }
+ndarray-npy = { version = "0.9.1", path = "vendor/ndarray-npy" }
+
 # --- Decoder libraries ---
 fusion-blossom = "0.2"
 mwpf = { git = "https://github.com/yuewuo/mwpf", rev = "b8444428f999457208c4b0956f3f1c745a0ec2d5", default-features = false, features = [
@@ -338,3 +346,8 @@ overflow-checks = false
 # Replace mwpf's vendored HiGHS wrapper with a pure-Rust LP shim so the mwpf feature does not require cmake.
 [patch."https://github.com/yuewuo/mwpf"]
 highs = { path = "crates/pecos-highs-shim" }
+
+# Keep relay-bp on ndarray 0.16 while backporting upstream's ZIP 9 security update.
+# Remove when relay-bp accepts an ndarray-npy release using ZIP >= 9.
+[patch.crates-io]
+ndarray-npy = { path = "vendor/ndarray-npy" }

@@ -41,6 +41,7 @@ use super::channel::{
 };
 use super::prelude::*;
 use crate::command::GateType;
+use crate::noise::plugins::CorePlugin;
 use crate::noise::two_qubit::AngleScaling;
 use crate::noise::validation::{
     ValidationError, ValidationResult, validate_angle_rate, validate_duration,
@@ -206,10 +207,11 @@ impl CompositeNoiseModelBuilder {
         Ok(self)
     }
 
-    /// Set the seepage probability for leaked qubits during single-qubit gates.
+    /// Set seepage probability conditional on an emission fault on a leaked qubit.
     ///
-    /// When a leaked qubit undergoes a single-qubit gate, with probability `p`
-    /// it seeps back to the computational basis (with a random Pauli applied).
+    /// The per-qubit marginal rate is `p1 * emission_ratio * seepage`, with
+    /// angle scaling included in `p1` where configured. Leakage scale does not
+    /// enter this product.
     ///
     /// # Errors
     /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
@@ -293,7 +295,11 @@ impl CompositeNoiseModelBuilder {
         Ok(self)
     }
 
-    /// Set the seepage probability for leaked qubits during two-qubit gates.
+    /// Set seepage probability conditional on an emission fault on a leaked qubit.
+    ///
+    /// The per-qubit marginal rate is `p2 * emission_ratio * seepage`, with
+    /// angle scaling included in `p2` where configured. Leakage scale does not
+    /// enter this product.
     ///
     /// # Errors
     /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
@@ -553,7 +559,11 @@ impl CompositeNoiseModelBuilder {
     ///
     /// When not set, crosstalk uses uniform random Pauli errors.
     ///
-    /// This matches `GeneralNoiseModel`'s `p_meas_crosstalk_model`.
+    /// The transition table has the same shape as `GeneralNoiseModel`'s
+    /// `p_meas_crosstalk_model`, but the source of the state differs. Neo crosstalk
+    /// does not measure the affected qubit, so unless an outcome is in context the
+    /// state is drawn uniformly, and an asymmetric table does not depend on the
+    /// qubit's real state.
     ///
     /// # Example
     ///
@@ -715,7 +725,7 @@ impl CompositeNoiseModelBuilder {
     /// Set leakage and seepage probabilities for all gate types.
     ///
     /// - `p_leak`: Fraction of errors that cause leakage
-    /// - `p_seep`: Probability of seepage when a leaked qubit is gated
+    /// - `p_seep`: Seepage probability conditional on an emission fault on a leaked qubit
     ///
     /// # Errors
     /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
@@ -750,6 +760,12 @@ impl CompositeNoiseModelBuilder {
     // --- Noiseless gates ---
 
     /// Mark a gate type as noiseless.
+    ///
+    /// Suppresses faults from these operations, including preparation, readout,
+    /// crosstalk and idle-after-two-qubit noise. Leakage suppression, preparation
+    /// clearing and lifecycle tracking still run. Scheduled idle is unaffected.
+    /// Custom channels must honor the setting; a fault primitive attached to a
+    /// `BeforeGate` composite still runs because that event decides suppression.
     #[must_use]
     pub fn with_noiseless_gate(mut self, gate_type: GateType) -> Self {
         self.noiseless_gates.push(gate_type);
@@ -757,6 +773,12 @@ impl CompositeNoiseModelBuilder {
     }
 
     /// Mark multiple gate types as noiseless.
+    ///
+    /// Suppresses faults from these operations, including preparation, readout,
+    /// crosstalk and idle-after-two-qubit noise. Leakage suppression, preparation
+    /// clearing and lifecycle tracking still run. Scheduled idle is unaffected.
+    /// Custom channels must honor the setting; a fault primitive attached to a
+    /// `BeforeGate` composite still runs because that event decides suppression.
     #[must_use]
     pub fn with_noiseless_gates(mut self, gate_types: &[GateType]) -> Self {
         self.noiseless_gates.extend_from_slice(gate_types);
@@ -867,7 +889,7 @@ impl CompositeNoiseModelBuilder {
         if let Some(scaling) = self.p2_angle_scaling {
             scaling.validate_for_probability(self.p2)?;
         }
-        let mut model = ComposableNoiseModel::new();
+        let mut model = ComposableNoiseModel::new().add_plugin(&CorePlugin);
 
         // Set time scale if configured
         if let Some(scale) = self.time_scale {
@@ -981,11 +1003,8 @@ impl CompositeNoiseModelBuilder {
             );
         }
 
-        // Before-gate channel for skip logic (if leakage is enabled)
-        if self.has_leakage() {
-            let skip_channel = CompositeChannelBuilder::before_gate("flow_skip", skip_if_leaked());
-            model = model.add_channel(skip_channel);
-        }
+        // Suppress leaked operands independently of configured fault rates.
+        model = model.add_channel(crate::noise::LeakageChannel::new());
 
         // MeasureLeaked handling: return outcome 2 for leaked qubits
         if self.handle_measure_leaked {
@@ -1001,15 +1020,6 @@ impl CompositeNoiseModelBuilder {
         }
 
         Ok(model)
-    }
-
-    /// Check if any leakage is configured (accounting for `leakage_scale`).
-    fn has_leakage(&self) -> bool {
-        // Only consider leakage if leakage_scale > 0
-        let effective_p1_leak = self.p1_emission_ratio * self.leakage_scale;
-        let effective_p2_leak = self.p2_emission_ratio * self.leakage_scale;
-        // Prep leakage is not affected by leakage_scale in this implementation
-        effective_p1_leak > 0.0 || effective_p2_leak > 0.0 || self.p_prep_leak_ratio > 0.0
     }
 
     /// Build crosstalk noise primitive.
@@ -1073,7 +1083,7 @@ impl CompositeNoiseModelBuilder {
                 self.p1,
                 when_leaked(
                     // Leaked qubit: seepage with probability
-                    prob(self.p1_seepage, seep())?,
+                    prob(self.p1_emission_ratio * self.p1_seepage, seep())?,
                     // Not leaked: emission (scaled) or pauli
                     if effective_leak > 0.0 {
                         sample![
@@ -1177,7 +1187,7 @@ impl CompositeNoiseModelBuilder {
             seq![prob(
                 self.p2,
                 when_leaked(
-                    prob(self.p2_seepage, seep())?,
+                    prob(self.p2_emission_ratio * self.p2_seepage, seep())?,
                     if effective_leak > 0.0 {
                         sample![
                             (effective_leak, emission_action),
@@ -1263,10 +1273,10 @@ impl CompositeNoiseModelBuilder {
     {
         let base_p2 = self.p2;
         scaling.validate_for_probability(base_p2)?;
-        let seepage = self.p2_seepage;
+        let seepage = self.p2_emission_ratio * self.p2_seepage;
 
         // Different code paths based on whether we have leakage/seepage
-        Ok(if seepage > 0.0 || effective_leak > 0.0 {
+        Ok(if self.p2_seepage > 0.0 || effective_leak > 0.0 {
             // With leakage/seepage: use complex inner structure
             seq![prob_fn(
                 move |gate| {
@@ -1355,7 +1365,7 @@ mod tests {
     #[test]
     fn test_empty_builder() {
         let model = CompositeNoiseModelBuilder::new().build().unwrap();
-        assert_eq!(model.channel_count(), 0);
+        assert_eq!(model.channel_count(), 1);
     }
 
     #[test]
@@ -1368,8 +1378,7 @@ mod tests {
             .build()
             .unwrap();
 
-        // Should have single-qubit and two-qubit channels
-        assert_eq!(model.channel_count(), 2);
+        assert_eq!(model.channel_count(), 3);
     }
 
     #[test]
@@ -1382,7 +1391,7 @@ mod tests {
             .build()
             .unwrap();
 
-        // Should have: SQ channel + skip channel
+        // Should have: SQ channel + LeakageChannel
         assert_eq!(model.channel_count(), 2);
     }
 
@@ -1404,7 +1413,7 @@ mod tests {
             .build()
             .unwrap();
 
-        // SQ + TQ + Prep + Meas + Crosstalk + Skip = 6 channels
+        // SQ + TQ + Prep + Meas + Crosstalk + LeakageChannel = 6 channels
         assert_eq!(model.channel_count(), 6);
     }
 
@@ -1514,8 +1523,7 @@ mod tests {
             .build()
             .unwrap();
 
-        // Should have 1 idle channel
-        assert_eq!(model.channel_count(), 1);
+        assert_eq!(model.channel_count(), 2);
     }
 
     #[test]
@@ -1526,7 +1534,7 @@ mod tests {
             .build()
             .unwrap();
 
-        assert_eq!(model.channel_count(), 1);
+        assert_eq!(model.channel_count(), 2);
     }
 
     #[test]
@@ -1539,7 +1547,7 @@ mod tests {
             .build()
             .unwrap();
 
-        assert_eq!(model.channel_count(), 1);
+        assert_eq!(model.channel_count(), 2);
     }
 
     #[test]
@@ -1550,7 +1558,7 @@ mod tests {
             .build()
             .unwrap();
 
-        assert_eq!(model.channel_count(), 1);
+        assert_eq!(model.channel_count(), 2);
     }
 
     #[test]
@@ -1569,8 +1577,7 @@ mod tests {
             .build()
             .unwrap();
 
-        // SQ + TQ + Prep + Meas + Idle = 5 channels
-        assert_eq!(model.channel_count(), 5);
+        assert_eq!(model.channel_count(), 6);
     }
 
     #[test]
@@ -1588,8 +1595,7 @@ mod tests {
             .build()
             .unwrap();
 
-        // Should have SQ + TQ channels
-        assert_eq!(model.channel_count(), 2);
+        assert_eq!(model.channel_count(), 3);
     }
 
     #[test]
@@ -1602,8 +1608,7 @@ mod tests {
             .build()
             .unwrap();
 
-        // Should have Prep + Prep crosstalk = 2 channels
-        assert_eq!(model.channel_count(), 2);
+        assert_eq!(model.channel_count(), 3);
     }
 
     #[test]
@@ -1617,8 +1622,7 @@ mod tests {
             .build()
             .unwrap();
 
-        // Meas + Crosstalk = 2 channels
-        assert_eq!(model1.channel_count(), 2);
+        assert_eq!(model1.channel_count(), 3);
 
         // Test with_p_meas_crosstalk
         let model2 = CompositeNoiseModelBuilder::new()
@@ -1629,8 +1633,8 @@ mod tests {
             .build()
             .unwrap();
 
-        // Meas + Global Crosstalk = 2 channels
-        assert_eq!(model2.channel_count(), 2);
+        // Meas + Global Crosstalk + LeakageChannel = 3 channels
+        assert_eq!(model2.channel_count(), 3);
     }
 
     #[test]
@@ -1644,7 +1648,7 @@ mod tests {
             .unwrap()
             .build()
             .unwrap();
-        assert_eq!(model.channel_names(), ["IdleChannel"]);
+        assert_eq!(model.channel_names(), ["IdleChannel", "LeakageChannel"]);
 
         let qubits = [QubitId(0), QubitId(1)];
         let event = NoiseEvent::AfterGate {
@@ -1652,6 +1656,8 @@ mod tests {
             qubits: &qubits,
             angles: &[],
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::CX.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
         let gates = collect_gates(model.emit(&event, &mut PecosRng::seed_from_u64(73)));
 
@@ -1668,7 +1674,7 @@ mod tests {
             .unwrap()
             .build()
             .unwrap();
-        assert_eq!(model.channel_names(), ["IdleChannel"]);
+        assert_eq!(model.channel_names(), ["IdleChannel", "LeakageChannel"]);
 
         let qubits = [QubitId(0), QubitId(1)];
         let event = NoiseEvent::AfterGate {
@@ -1676,6 +1682,8 @@ mod tests {
             qubits: &qubits,
             angles: &[],
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::CX.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
         let gates = collect_gates(model.emit(&event, &mut PecosRng::seed_from_u64(79)));
 
@@ -1690,7 +1698,7 @@ mod tests {
             .unwrap()
             .build()
             .unwrap();
-        assert_eq!(model.channel_names(), ["IdleChannel"]);
+        assert_eq!(model.channel_names(), ["IdleChannel", "LeakageChannel"]);
     }
 
     // Note: CompositeNoiseModelBuilder no longer implements Clone because it can hold
@@ -1708,8 +1716,7 @@ mod tests {
             .build()
             .unwrap();
 
-        // Should have TQ channel
-        assert_eq!(model.channel_count(), 1);
+        assert_eq!(model.channel_count(), 2);
     }
 
     #[test]
@@ -1823,7 +1830,7 @@ mod tests {
             .build()
             .unwrap();
 
-        // Should have TQ channel + skip channel (for leakage)
+        // Should have TQ channel + LeakageChannel
         assert_eq!(model.channel_count(), 2);
     }
 
@@ -1838,7 +1845,7 @@ mod tests {
             .build()
             .unwrap();
 
-        // Should have SQ channel + skip channel (for leakage)
+        // Should have SQ channel + LeakageChannel
         assert_eq!(model_full_leak.channel_count(), 2);
 
         // With leakage_scale = 0.0, no leakage (emission becomes depolarizing)
@@ -1852,8 +1859,7 @@ mod tests {
             .build()
             .unwrap();
 
-        // Should have only SQ channel (no skip channel needed)
-        assert_eq!(model_no_leak.channel_count(), 1);
+        assert_eq!(model_no_leak.channel_count(), 2);
     }
 
     #[test]
@@ -1869,7 +1875,7 @@ mod tests {
             .build()
             .unwrap();
 
-        // Should have SQ channel + skip channel (some leakage exists)
+        // Should have SQ channel + LeakageChannel
         assert_eq!(model.channel_count(), 2);
     }
 
@@ -1884,8 +1890,7 @@ mod tests {
             .build()
             .unwrap();
 
-        // Should have 1 idle channel
-        assert_eq!(model.channel_count(), 1);
+        assert_eq!(model.channel_count(), 2);
     }
 
     #[test]
@@ -1901,8 +1906,7 @@ mod tests {
             .build()
             .unwrap();
 
-        // Should have 1 idle channel
-        assert_eq!(model.channel_count(), 1);
+        assert_eq!(model.channel_count(), 2);
     }
 
     // --- Builder Comparison Tests ---
@@ -2153,8 +2157,7 @@ mod tests {
             .build()
             .unwrap();
 
-        // Should have: global crosstalk + local crosstalk = 2 channels
-        assert_eq!(model.channel_count(), 2);
+        assert_eq!(model.channel_count(), 3);
     }
 
     #[test]
@@ -2189,8 +2192,7 @@ mod tests {
             .build()
             .unwrap();
 
-        // Should have 1 crosstalk channel
-        assert_eq!(model.channel_count(), 1);
+        assert_eq!(model.channel_count(), 2);
     }
 
     #[test]
@@ -2200,8 +2202,7 @@ mod tests {
             .build()
             .unwrap();
 
-        // Should have 1 channel for MeasureLeaked handling
-        assert_eq!(model.channel_count(), 1);
+        assert_eq!(model.channel_count(), 2);
     }
 
     #[test]
@@ -2215,7 +2216,7 @@ mod tests {
             .build()
             .unwrap();
 
-        // Should have: SQ channel + skip channel + MeasureLeaked channel = 3 channels
+        // Should have: SQ channel + LeakageChannel + MeasureLeaked channel = 3 channels
         assert_eq!(model.channel_count(), 3);
     }
 
@@ -2249,8 +2250,7 @@ mod tests {
             .build()
             .unwrap();
 
-        // SQ + TQ + Meas + Global Crosstalk + Local Crosstalk + MeasureLeaked = 6 channels
-        assert_eq!(model.channel_count(), 6);
+        assert_eq!(model.channel_count(), 7);
     }
 
     // --- TimeScale Tests ---
@@ -2289,7 +2289,7 @@ mod tests {
 
         // Should have created an idle channel
         let model = builder.build().unwrap();
-        assert_eq!(model.channel_count(), 1);
+        assert_eq!(model.channel_count(), 2);
         // Should have time scale set
         assert!(model.time_scale().is_some());
     }
@@ -2307,8 +2307,7 @@ mod tests {
             .build()
             .unwrap();
 
-        // SQ + TQ + Idle = 3 channels
-        assert_eq!(model.channel_count(), 3);
+        assert_eq!(model.channel_count(), 4);
         assert!(model.time_scale().is_some());
     }
 
@@ -2386,7 +2385,7 @@ mod tests {
             .build()
             .unwrap();
 
-        // Should have SQ channel + skip channel (for leakage)
+        // Should have SQ channel + LeakageChannel
         assert_eq!(model.channel_count(), 2);
     }
 
@@ -2407,7 +2406,7 @@ mod tests {
             .build()
             .unwrap();
 
-        // Should have TQ channel + skip channel (for leakage)
+        // Should have TQ channel + LeakageChannel
         assert_eq!(model.channel_count(), 2);
     }
 
@@ -2476,8 +2475,7 @@ mod tests {
             .build()
             .unwrap();
 
-        // Should have TQ channel
-        assert_eq!(model.channel_count(), 1);
+        assert_eq!(model.channel_count(), 2);
     }
 
     #[test]
@@ -2497,7 +2495,7 @@ mod tests {
             .build()
             .unwrap();
 
-        // Should have TQ channel + skip channel (for leakage)
+        // Should have TQ channel + LeakageChannel
         assert_eq!(model.channel_count(), 2);
     }
 
@@ -2516,8 +2514,7 @@ mod tests {
             .build()
             .unwrap();
 
-        // Model should build successfully
-        assert_eq!(model.channel_count(), 1);
+        assert_eq!(model.channel_count(), 2);
     }
 
     // --- Statistical Comparison: Emission Models ---

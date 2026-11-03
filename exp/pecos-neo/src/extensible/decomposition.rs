@@ -173,6 +173,8 @@ pub(crate) enum GroupInstantiationError {
     QubitArity { arity: usize, got: usize },
     /// A decomposition operation refers to an operand index outside its group.
     IndexOutOfRange { index: usize, group_size: usize },
+    /// A decomposition angle source refers to a missing input angle.
+    AngleIndexOutOfRange { index: usize, angle_count: usize },
 }
 
 /// Split `qubits` into the operand groups a decomposition is instantiated over.
@@ -216,6 +218,16 @@ pub(crate) fn instantiate_per_group(
                     index: usize::from(index),
                     group_size: group.len(),
                 });
+            }
+            for source in &op.angles {
+                if let AngleSource::Input(index) | AngleSource::NegInput(index) = *source
+                    && usize::from(index) >= angles.len()
+                {
+                    return Err(GroupInstantiationError::AngleIndexOutOfRange {
+                        index: usize::from(index),
+                        angle_count: angles.len(),
+                    });
+                }
             }
             instantiated.push(op.instantiate(group, angles));
         }
@@ -615,6 +627,12 @@ pub enum ResolutionError {
         arity: usize,
         got: usize,
     },
+    /// A decomposition angle source refers to a missing input angle.
+    AngleIndexOutOfRange {
+        gate: GateId,
+        index: usize,
+        angle_count: usize,
+    },
     /// A decomposition operation refers to an operand index outside its group.
     IndexOutOfRange {
         gate: GateId,
@@ -649,6 +667,14 @@ impl std::fmt::Display for ResolutionError {
                 f,
                 "Gate {gate:?} received {got} targets, which is not a nonzero multiple of its \
                  qubit arity {arity}"
+            ),
+            Self::AngleIndexOutOfRange {
+                gate,
+                index,
+                angle_count,
+            } => write!(
+                f,
+                "Decomposition of gate {gate:?} uses angle index {index}, but only {angle_count} input angles were supplied"
             ),
             Self::IndexOutOfRange {
                 gate,
@@ -958,6 +984,13 @@ impl<'a> CircuitResolver<'a> {
                     arity,
                     got,
                 },
+                GroupInstantiationError::AngleIndexOutOfRange { index, angle_count } => {
+                    ResolutionError::AngleIndexOutOfRange {
+                        gate: gate_id,
+                        index,
+                        angle_count,
+                    }
+                }
                 GroupInstantiationError::IndexOutOfRange { index, group_size } => {
                     ResolutionError::IndexOutOfRange {
                         gate: gate_id,

@@ -655,6 +655,44 @@ Both results expose `.projection`. It is `None` when no projection was needed or
 when a composition without a shared policy projects inside its members and has
 no shared report. Text input has no fault-sector labels.
 
+Circuits can supply the string attribute `measurement_classes`: a JSON list with
+one entry per absolute measurement record in emission order. Each entry is `null`
+(unclassed), or an object with required `block`, `family`, and `round` keys.
+`block` is a non-empty opaque code-block name; `family` is a non-empty opaque base
+check-family name or `null` (classified but untyped); `round` is an integer global
+epoch and may be negative. Unknown object keys are ignored. For example:
+`[{"block":"memory","family":"X","round":-1}, null]`.
+The base family identifies the stabilizer register before logical frame changes:
+after a transversal H the register keeps its family although its physical
+measurement basis flips. Block and round are currently validated only.
+
+With classes present, `circuit_definitions()` and DEM construction resolve each
+detector's references to absolute records, cancel even multiplicities, and derive
+the common family of the remaining records. Empty support, an unclassed or
+untyped remaining record, or differing families gives `None`. Cancelled records
+do not contribute.
+An explicit non-null detector `fault_sector` must equal the derived label,
+including when derivation gives `None`; disagreement is an error. An absent or
+null explicit label takes the derived value. Without classes, explicit labels
+pass through unchanged. Empty explicit labels remain invalid.
+The Rust and Python `DemBuilder.with_measurement_classes_json` manual route takes
+classes in influence-map record order, which need not be stamped measurement-ID
+order. The final measurement count must match the list length.
+
+The normal manual Python route is `DemBuilder(map).with_circuit_metadata(circuit)`:
+it copies detectors, observables, classes and the measurement count together.
+It copies attributes only, after checking them against the circuit: ids must be
+unique, references must resolve, and attributes must agree with any annotations on
+ids, measurements and labels. The influence map must hold the measurement records
+of `circuit.to_dag_circuit()`, so build it from that DAG. Use
+`DetectorErrorModel.from_circuit` for circuits defined by annotation alone.
+Resolved `circuit_definitions()` detector dictionaries carry the effective labels,
+including derived labels when explicit metadata is absent or null; disagreement
+fails during definition resolution. A caller passing only
+`with_detectors_json(circuit.get_meta("detectors"))` for a circuit whose labels
+come from classes gets a DEM with no labels and no error. Pass the circuit metadata
+instead, or supply the classes separately in the influence map's record order.
+
 The default `irreducible="refuse"` rejects faults that cannot be decomposed and
 reports their count and input indices. To remove those faults from the decoder's
 model explicitly, use `pymatching(correlated=True, irreducible="drop")` or the

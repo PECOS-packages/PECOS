@@ -185,9 +185,6 @@ name = "arbitrary"
 version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d036a3c4ab069c7b410a2ce876bd74808d2d0888a82667669f8e783a898bf1"
-dependencies = [
- "derive_arbitrary",
-]
 
 [[package]]
 name = "arrayvec"
@@ -1607,17 +1604,6 @@ name = "derive-where"
 version = "1.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d08b3a0bcc0d079199cd476b2cae8435016ec11d1c0986c6901c5ac223041534"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.118",
-]
-
-[[package]]
-name = "derive_arbitrary"
-version = "1.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e567bd82dcff979e4b03460c307b3cdc9e96fde3d73bed1496d2bc75d9dd62a"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3698,15 +3684,13 @@ dependencies = [
 [[package]]
 name = "ndarray-npy"
 version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b313788c468c49141a9d9b6131fc15f403e6ef4e8446a0b2e18f664ddb278a9"
 dependencies = [
  "byteorder",
  "ndarray 0.16.1",
  "num-complex 0.4.6",
  "num-traits",
  "py_literal",
- "zip 2.4.2",
+ "zip",
 ]
 
 [[package]]
@@ -4162,7 +4146,7 @@ dependencies = [
  "toml 1.1.2+spec-1.1.0",
  "toml_edit 0.25.12+spec-1.1.0",
  "xz2",
- "zip 9.0.5",
+ "zip",
  "zstd",
 ]
 
@@ -4680,6 +4664,7 @@ dependencies = [
  "pecos-selene-runtime-plugin",
  "pecos-simulators",
  "rand 0.10.2",
+ "regex",
  "selene-core",
  "selene-simple-runtime",
  "selene-soft-rz-runtime",
@@ -4747,9 +4732,11 @@ version = "0.2.0-dev.0"
 dependencies = [
  "ndarray 0.16.1",
  "ndarray 0.17.2",
+ "ndarray-npy",
  "pecos-decoder-core",
  "relay-bp",
  "sprs",
+ "tempfile",
  "thiserror 2.0.18",
 ]
 
@@ -4768,9 +4755,11 @@ dependencies = [
 name = "pecos-rslib"
 version = "0.2.0-dev.0"
 dependencies = [
+ "highs",
  "log",
  "nalgebra",
  "ndarray 0.17.2",
+ "ndarray-npy",
  "num-complex 0.4.6",
  "parking_lot",
  "pecos",
@@ -4805,7 +4794,9 @@ name = "pecos-rslib-cuda"
 version = "0.2.0-dev.0"
 dependencies = [
  "env_logger",
+ "highs",
  "log",
+ "ndarray-npy",
  "pecos-build",
  "pecos-core",
  "pecos-cuquantum",
@@ -4817,6 +4808,8 @@ dependencies = [
 name = "pecos-rslib-exp"
 version = "0.2.0-dev.0"
 dependencies = [
+ "highs",
+ "ndarray-npy",
  "num-complex 0.4.6",
  "pecos-build",
  "pecos-core",
@@ -4841,8 +4834,10 @@ dependencies = [
 name = "pecos-rslib-llvm"
 version = "0.2.0-dev.0"
 dependencies = [
+ "highs",
  "inkwell",
  "log",
+ "ndarray-npy",
  "pecos-build",
  "pecos-llvm",
  "pyo3",
@@ -9113,23 +9108,6 @@ dependencies = [
 
 [[package]]
 name = "zip"
-version = "2.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fabe6324e908f85a1c52063ce7aa26b68dcb7eb6dbc83a2d148403c9bc3eba50"
-dependencies = [
- "arbitrary",
- "crc32fast",
- "crossbeam-utils",
- "displaydoc",
- "flate2",
- "indexmap 2.14.0",
- "memchr",
- "thiserror 2.0.18",
- "zopfli",
-]
-
-[[package]]
-name = "zip"
 version = "9.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6e04976da629d3b04204ba8105b396a193af8ad2583b2c79bfb3ab8af580a11e"
@@ -9179,6 +9157,8 @@ dependencies = [
 name = "zluppy-python"
 version = "0.2.0-dev.0"
 dependencies = [
+ "highs",
+ "ndarray-npy",
  "pyo3",
  "serde_json",
  "zlup",

@@ -24,6 +24,7 @@ on:
       - 'python/**'
       - 'examples/**'
       - 'crates/**'
+      - 'vendor/**'
       - 'exp/zlup/**'
       - 'exp/zluppy/**'
       - 'Cargo.toml'
@@ -42,6 +43,7 @@ on:
       - 'python/**'
       - 'examples/**'
       - 'crates/**'
+      - 'vendor/**'
       - 'exp/zlup/**'
       - 'exp/zluppy/**'
       - 'Cargo.toml'
@@ -140,6 +142,9 @@ jobs:
 
     - name: Sync Python dependencies
       run: just python-ci-sync-lint
+
+    - name: Verify Rust source distributions
+      run: uv run --frozen --no-sync python scripts/ci/check_rust_sdists.py
 
     - name: Run linting
       run: just python-ci-lint

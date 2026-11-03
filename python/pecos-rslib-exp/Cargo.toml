@@ -49,3 +49,8 @@ pecos-build = { workspace = true }
 
 [lints]
 workspace = true
+
+# Include root Cargo patch sources in Maturin sdists (no runtime dependencies).
+[dev-dependencies]
+highs.workspace = true
+ndarray-npy.workspace = true

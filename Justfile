@@ -326,7 +326,7 @@ pytest-ci-core:
     uv run --frozen pytest -n auto python/quantum-pecos/tests -m "not slow"
     uv run --frozen pytest -n auto python/pecos-rslib-exp/tests
 
-# One shard of `pytest-ci-core`, for the pr-core-python matrix. The four shards
+# One shard of `pytest-ci-core`, shared by PR, trunk, and nightly CI. The four shards
 # partition the lane: `qec-surface-harvest` owns one file, `qec-surface` the
 # rest of that directory, `qec-guppy` the rest of qec/ plus guppy/, and `rest`
 # is everything else, ignoring exactly the paths the other shards own. Keep
@@ -356,8 +356,8 @@ pytest-ci-core-shard shard:
       rest)
         # pecos-rslib's own Rust unit tests ride this shard: it is a required
         # check that runs on pull requests and has already built the crate, so
-        # the marginal cost is the test run. `python-ci-core` runs them again
-        # post-merge; its heavy step skips on a pull request.
+        # the marginal cost is the test run. Trunk and nightly CI use this
+        # same shard, so they retain these tests too.
         just rslib-rust-test
         uv run --frozen pytest -n auto python/pecos-rslib/tests -m "not performance"
         uv run --frozen pytest -n auto "$QP" --ignore="$QP/qec" --ignore="$QP/guppy" -m "$CORE_MARKERS"

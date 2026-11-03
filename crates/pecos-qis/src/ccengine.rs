@@ -1189,14 +1189,19 @@ impl QisEngine {
                     "decoder request requires dynamic execution".into(),
                 ));
             };
-            if *id != pecos_qis_ffi_types::RUNTIME_REQUEST_RESULT_ID
-                || *instance_id != self.next_decode_instance
-                || syndrome.len() > pecos_qis_ffi_types::MAX_RUNTIME_DETECTORS
+            if *id != pecos_qis_ffi_types::RUNTIME_REQUEST_RESULT_ID {
+                return Err(PecosError::Input("invalid decoder response slot".into()));
+            }
+            if *instance_id != self.next_decode_instance {
+                return Err(PecosError::Input(format!(
+                    "invalid decoder instance sequence: expected {}, received {instance_id}",
+                    self.next_decode_instance
+                )));
+            }
+            if syndrome.len() > pecos_qis_ffi_types::MAX_RUNTIME_DETECTORS
                 || syndrome.iter().any(|&bit| bit > 1)
             {
-                return Err(PecosError::Input(
-                    "invalid decoder response slot, instance sequence or syndrome".into(),
-                ));
+                return Err(PecosError::Input("invalid decoder syndrome".into()));
             }
             if let Some(context) = context
                 && (context.is_empty()

@@ -76,6 +76,25 @@ pub fn lower_clifford_rotations(circuit: &mut TickCircuit) {
     SimplifyRotations.apply_tick(circuit);
 }
 
+/// Lower Clifford rotations without splitting physical gate locations.
+///
+/// Named conversions such as `RZZ(pi/2)` to `SZZ` retain their arity. Half-turn
+/// two-qubit rotations stay parameterized: fault analysis resolves their ideal
+/// per-qubit Pauli action separately from their scheduled two-qubit noise site.
+/// Zero-angle rotations, gate order, batching, and attributes are retained.
+///
+/// # Panics
+///
+/// Panics if a lowered gate batch fails validation when written back to its tick.
+pub fn lower_clifford_rotations_preserving_arity(circuit: &mut TickCircuit) {
+    for tick in circuit.ticks_mut() {
+        for gate_idx in 0..tick.len() {
+            tick.update_gate_batch(gate_idx, simplify_gate_in_place)
+                .unwrap_or_else(|err| panic!("{err}"));
+        }
+    }
+}
+
 /// Insert Idle gates after each two-qubit gate on both of its qubits.
 ///
 /// Adds Idle(duration) on both qubits of each 2q gate. Models idle noise
@@ -4494,5 +4513,45 @@ mod tests {
         tc.tick().try_add_gate(idless).expect("gate is valid");
 
         assign_missing_meas_ids(&mut tc);
+    }
+}
+
+#[cfg(test)]
+mod arity_preservation_tests {
+    use super::*;
+    use pecos_core::Angle64;
+
+    #[test]
+    fn half_turns_retain_two_qubit_batches() {
+        let mut tc = TickCircuit::new();
+        tc.tick().rxx(Angle64::HALF_TURN, &[(0, 1), (2, 3)]);
+        tc.tick().ryy(Angle64::HALF_TURN, &[(3, 2)]);
+        tc.tick().rzz(Angle64::HALF_TURN, &[(1, 0)]);
+        let before = tc.clone();
+        lower_clifford_rotations_preserving_arity(&mut tc);
+        assert_eq!(tc.num_ticks(), before.num_ticks());
+        for (actual, expected) in tc.ticks().iter().zip(before.ticks()) {
+            assert_eq!(actual.gate_batches(), expected.gate_batches());
+        }
+    }
+
+    #[test]
+    fn named_rotations_lower_without_decomposing_other_sites() {
+        let mut tc = TickCircuit::new();
+        tc.tick().rzz(Angle64::QUARTER_TURN, &[(0, 1)]);
+        tc.tick().rz(Angle64::HALF_TURN, &[0]);
+        tc.tick().rzz(Angle64::ZERO, &[(0, 1)]);
+        tc.tick().rzz(Angle64::from_turn_ratio(1, 8), &[(0, 1)]);
+        lower_clifford_rotations_preserving_arity(&mut tc);
+        let kinds: Vec<_> = tc
+            .ticks()
+            .iter()
+            .flat_map(Tick::gate_batches)
+            .map(|gate| gate.gate_type)
+            .collect();
+        assert_eq!(
+            kinds,
+            [GateType::SZZ, GateType::Z, GateType::RZZ, GateType::RZZ]
+        );
     }
 }

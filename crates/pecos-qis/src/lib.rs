@@ -76,6 +76,8 @@ pub mod prelude;
 // Core interface and runtime traits
 // ============================================================================
 
+pub mod control_provenance;
+pub mod decoder_batches;
 pub mod qis_interface;
 pub mod runtime;
 pub mod runtime_decoder;
@@ -232,6 +234,9 @@ pub fn selene_soft_rz_engine() -> Result<QisEngineBuilder, RuntimeFetchError> {
         .runtime(selene_soft_rz_runtime()?)
         .interface(helios_interface_builder()))
 }
+
+#[cfg(all(test, feature = "selene"))]
+pub(crate) mod selene_test_ir;
 
 #[cfg(all(test, feature = "selene"))]
 pub(crate) mod test_env {

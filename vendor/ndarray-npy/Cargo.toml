@@ -1,0 +1,35 @@
+# PECOS: ZIP 9 security backport; see PECOS-PATCH.md.
+[package]
+name = "ndarray-npy"
+version = "0.9.1"
+authors = ["Jim Turner <ndarray-npy@turner.link>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/jturner314/ndarray-npy"
+documentation = "https://docs.rs/ndarray-npy"
+description = ".npy and .npz file format support for ndarray"
+keywords = ["npy", "npz", "ndarray", "numpy", "array"]
+categories = ["parser-implementations", "encoding", "science"]
+readme = "README.md"
+edition = "2021"
+rust-version = "1.88"
+
+[dependencies]
+byteorder = "1.3.2"
+ndarray = "0.16"
+num-complex-0_4 = { package = "num-complex", version = "0.4", optional = true }
+num-traits = "0.2"
+py_literal = "0.4"
+zip = { version = "9", default-features = false, optional = true }
+
+[features]
+default = ["compressed_npz", "num-complex-0_4"]
+npz = ["zip"]
+compressed_npz = ["npz", "zip/deflate"]
+
+[dev-dependencies]
+memmap2 = "0.9"
+tempfile = "3.2"
+
+[[example]]
+name = "simple_npz"
+required-features = ["npz"]

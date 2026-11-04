@@ -2408,12 +2408,42 @@ impl PyTickCircuit {
             .collect()
     }
 
-    /// Resolve detector and observable definitions to absolute emission positions.
+    /// Return measurement-readout definitions resolved to absolute emission positions.
+    ///
+    /// Detector dictionaries always include the effective `fault_sector` (an opaque
+    /// non-empty string, or `None` when unknown). With `measurement_classes`, labels
+    /// are derived from parity-reduced support and explicit labels must agree; the
+    /// result also includes the validated classes in emission order. Without classes,
+    /// explicit labels pass through unchanged.
+    /// Observable dictionaries include `reference` (integer 0 or 1) when
+    /// metadata supplies a noiseless value, or `None` when absent.
     fn circuit_definitions(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
         let definitions = definitions_from_tick_circuit(&self.inner)
             .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
         let result = PyDict::new(py);
         result.set_item("num_measurements", definitions.num_measurements)?;
+        let classes = definitions
+            .measurement_classes
+            .map(|classes| {
+                classes
+                    .into_iter()
+                    .map(|class| {
+                        class
+                            .map(|class| {
+                                let entry = PyDict::new(py);
+                                entry.set_item("block", class.block)?;
+                                entry.set_item("family", class.family)?;
+                                entry.set_item("round", class.round)?;
+                                Ok::<_, PyErr>(entry)
+                            })
+                            .transpose()
+                    })
+                    .collect::<PyResult<Vec<_>>>()
+            })
+            .transpose()?;
+        if let Some(classes) = classes {
+            result.set_item("measurement_classes", classes)?;
+        }
         let detectors = PyList::empty(py);
         for detector in definitions.detectors {
             let entry = PyDict::new(py);
@@ -2975,9 +3005,17 @@ impl PyTickCircuit {
     /// stabilizer simulators may reject the circuit.
     ///
     /// Modifies the circuit in place.
-    fn lower_clifford_rotations(&mut self) {
-        use pecos_quantum::pass::{CircuitPass, SimplifyRotations};
-        SimplifyRotations.apply_tick(&mut self.inner);
+    /// Set `preserve_gate_arity=True` when preparing noise analysis to retain
+    /// two-qubit half-turns as physical two-qubit locations. The default also
+    /// decomposes those rotations into independent one-qubit Pauli gates.
+    #[pyo3(signature = (*, preserve_gate_arity=false))]
+    fn lower_clifford_rotations(&mut self, preserve_gate_arity: bool) {
+        use pecos_quantum::pass;
+        if preserve_gate_arity {
+            pass::lower_clifford_rotations_preserving_arity(&mut self.inner);
+        } else {
+            pass::lower_clifford_rotations(&mut self.inner);
+        }
     }
 
     /// Remove unitary identity gates (`I` and zero-angle rotations).

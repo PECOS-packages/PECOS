@@ -602,6 +602,42 @@ pub fn encode_timed_batches(batches: &[TimedBatch]) -> Result<ByteMessage, Pecos
     if size > MAX_SCHEDULE_BYTES {
         return Err(error("schedule transport size limit"));
     }
+    let mut bytes = frame_bytes(size, batches.len())?;
+    for batch in batches {
+        write_batch(
+            &mut bytes,
+            [
+                batch.runtime_shot_id,
+                batch.batch_index,
+                batch.start_nanos,
+                batch.duration_nanos,
+            ],
+            batch.gates.len(),
+            batch.gates.iter(),
+        )?;
+    }
+    Ok(ByteMessage::new(&bytes))
+}
+
+// The event envelope needs nested v6 bytes, not an aligned message or owned gates.
+pub(crate) fn encode_borrowed_batch<'a>(
+    metadata: [u64; 4],
+    gates: impl Iterator<Item = &'a Gate> + Clone,
+) -> Result<Vec<u8>, PecosError> {
+    let count = gates.clone().count();
+    let size = count
+        .checked_mul(40)
+        .and_then(|n| n.checked_add(56))
+        .ok_or_else(|| error("schedule size overflow"))?;
+    if size > MAX_SCHEDULE_BYTES {
+        return Err(error("schedule transport size limit"));
+    }
+    let mut bytes = frame_bytes(size, 1)?;
+    write_batch(&mut bytes, metadata, count, gates)?;
+    Ok(bytes)
+}
+
+fn frame_bytes(size: usize, count: usize) -> Result<Vec<u8>, PecosError> {
     let mut bytes = Vec::new();
     bytes
         .try_reserve_exact(size)
@@ -614,7 +650,7 @@ pub fn encode_timed_batches(batches: &[TimedBatch]) -> Result<ByteMessage, Pecos
         0,
     ]);
     bytes.extend_from_slice(
-        &u32::try_from(batches.len())
+        &u32::try_from(count)
             .map_err(|_| error("batch count overflow"))?
             .to_le_bytes(),
     );
@@ -623,25 +659,27 @@ pub fn encode_timed_batches(batches: &[TimedBatch]) -> Result<ByteMessage, Pecos
             .map_err(|_| error("size overflow"))?
             .to_le_bytes(),
     );
-    for batch in batches {
-        for v in [
-            batch.runtime_shot_id,
-            batch.batch_index,
-            batch.start_nanos,
-            batch.duration_nanos,
-            batch.gates.len() as u64,
-        ] {
+    Ok(bytes)
+}
+
+fn write_batch<'a>(
+    bytes: &mut Vec<u8>,
+    metadata: [u64; 4],
+    count: usize,
+    gates: impl Iterator<Item = &'a Gate>,
+) -> Result<(), PecosError> {
+    for v in metadata.into_iter().chain(std::iter::once(count as u64)) {
+        bytes.extend_from_slice(&v.to_le_bytes());
+    }
+    for gate in gates {
+        let (op, q0, q1, theta, phi) = fields(gate)?;
+        for v in [op, q0, q1, theta, phi] {
             bytes.extend_from_slice(&v.to_le_bytes());
         }
-        for gate in &batch.gates {
-            let (op, q0, q1, theta, phi) = fields(gate)?;
-            for v in [op, q0, q1, theta, phi] {
-                bytes.extend_from_slice(&v.to_le_bytes());
-            }
-        }
     }
-    Ok(ByteMessage::new(&bytes))
+    Ok(())
 }
+
 fn word(bytes: &[u8], offset: usize) -> u64 {
     u64::from_le_bytes(
         bytes[offset..offset + 8]
@@ -683,7 +721,12 @@ pub(crate) fn validate_scheduled_header(
 }
 
 pub(crate) fn decode(input: &ByteMessage) -> Result<Vec<TimedBatch>, PecosError> {
-    let bytes = input.as_bytes();
+    decode_bytes(input.as_bytes())
+}
+
+// Nested frames can start at any byte offset after an opaque event payload.
+// Read little-endian words from slices; do not require ByteMessage alignment.
+pub(crate) fn decode_bytes(bytes: &[u8]) -> Result<Vec<TimedBatch>, PecosError> {
     validate_scheduled_header(
         bytes,
         u32::from(crate::byte_message::protocol::SCHEDULED_FRAME_VERSION),
@@ -968,6 +1011,30 @@ mod timing_tests {
             old[4] = 3;
             assert!(decode(&ByteMessage::new(&old)).is_err());
         }
+    }
+
+    #[test]
+    fn borrowed_decoder_accepts_unaligned_frames_and_rejects_truncation() {
+        let gates = vec![Gate::rxy1q(Angle64::new(1), Angle64::new(u64::MAX), &[2])];
+        let encoded = encode_timed_batches(&[batch(0, 0, 0, gates.clone())]).unwrap();
+        for offset in 0..8 {
+            let mut storage = vec![0xff; offset];
+            storage.extend_from_slice(encoded.as_bytes());
+            let input = &storage[offset..];
+            assert_eq!(decode_bytes(input).unwrap()[0].gates, gates);
+            for end in 0..input.len() {
+                assert!(decode_bytes(&input[..end]).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn borrowed_encoder_checks_size_before_allocating_and_checks_fields() {
+        let gate = Gate::pz(&[0]);
+        let too_many = std::iter::repeat_n(&gate, MAX_SCHEDULE_BYTES / 40);
+        let err = encode_borrowed_batch([0; 4], too_many).unwrap_err();
+        assert!(err.to_string().contains("schedule transport size limit"));
+        assert!(encode_borrowed_batch([0; 4], std::iter::once(&Gate::x(&[0]))).is_err());
     }
 
     fn config() -> ScheduledNoise {

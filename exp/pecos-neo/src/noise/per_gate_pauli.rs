@@ -380,10 +380,16 @@ impl NoiseChannel for PerGatePauliChannel {
                 ctx,
                 rng,
             ),
-            NoiseEvent::BeforeMeasurement { qubits } => {
+            NoiseEvent::BeforeMeasurement { gate_type, qubits } => {
+                if ctx.is_noiseless(*gate_type) {
+                    return NoiseResponse::None;
+                }
                 self.apply_before_measurement(qubits, ctx, rng)
             }
-            NoiseEvent::AfterPreparation { qubits } => {
+            NoiseEvent::AfterPreparation { gate_type, qubits } => {
+                if ctx.is_noiseless(*gate_type) {
+                    return NoiseResponse::None;
+                }
                 self.apply_after_preparation(qubits, ctx, rng)
             }
             _ => NoiseResponse::None,
@@ -437,6 +443,11 @@ mod tests {
                     qubits: pair_batch,
                     angles: &[],
                     gate_id: None,
+                    group_size: crate::noise::gate_group_size(
+                        GateType::CX.quantum_arity(),
+                        (pair_batch).len(),
+                    ),
+                    leaked_suppressed: &[],
                 };
                 batched_gates.extend(collect_gates(channel.apply(&event, &mut ctx, &mut rng)));
             }
@@ -452,6 +463,11 @@ mod tests {
                     qubits: pair,
                     angles: &[],
                     gate_id: None,
+                    group_size: crate::noise::gate_group_size(
+                        GateType::CX.quantum_arity(),
+                        pair.len(),
+                    ),
+                    leaked_suppressed: &[],
                 };
                 separate_gates.extend(collect_gates(channel.apply(
                     &event,

@@ -277,7 +277,7 @@ impl PyPhirClassicalInterpreter {
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Lock error: {e}")))?;
         inner
             .init(&json_str, rust_foreign)
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{e}")))
+            .map_err(pecos_error_to_pyerr)
     }
 
     /// Reset to initial state.
@@ -398,14 +398,8 @@ impl PyPhirClassicalInterpreter {
             .map_err(pecos_error_to_pyerr)
     }
 
-    /// Extract measurement bits, optionally filtering private variables.
-    #[pyo3(signature = (bits, *, filter_private=true))]
-    fn result_bits(
-        &self,
-        py: Python<'_>,
-        bits: &Bound<'_, PyAny>,
-        filter_private: bool,
-    ) -> PyResult<Py<PyAny>> {
+    /// Extract all requested measurement bits.
+    fn result_bits(&self, py: Python<'_>, bits: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         let inner = self
             .inner
             .lock()
@@ -422,9 +416,6 @@ impl PyPhirClassicalInterpreter {
                 let tuple = key.cast::<PyTuple>()?;
                 let name: String = tuple.get_item(0)?.extract()?;
                 let idx: usize = tuple.get_item(1)?.extract()?;
-                if filter_private && name.starts_with("__") {
-                    continue;
-                }
                 let v: i64 = val.extract()?;
                 meas.insert((name, idx), v);
             }
@@ -457,7 +448,7 @@ impl PyPhirClassicalInterpreter {
             .inner
             .lock()
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Lock error: {e}")))?;
-        let results = inner.results(return_int);
+        let results = inner.results(return_int).map_err(pecos_error_to_pyerr)?;
 
         let dict = PyDict::new(py);
         if return_int {

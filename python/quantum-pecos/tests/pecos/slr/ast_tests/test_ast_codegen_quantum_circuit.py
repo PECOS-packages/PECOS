@@ -507,15 +507,15 @@ def test_measurement_results_reach_phir(measurement_program, optimize_parallel) 
     # PHIR otherwise assigns new qubit indices in first-use order.
     circuit.metadata["qvars"] = {qubit: ("q", qubit) for qubit in circuit.qudits}
     operations = json.loads(circuit.to_phir_json())["ops"]
+    # PHIR requires returns, so a bare measurement writes to an internal scratch variable (#1497).
+    user_registers = set(circuit.metadata.get("cvar_spec", {}))
     measurements = []
     for op in operations:
         if op.get("qop") == "Measure":
-            results = op.get("returns", [None] * len(op["args"]))
             assert "var_output" not in op.get("metadata", {})
-            measurements.extend(
-                (qubit[1], tuple(bit) if bit is not None else None)
-                for qubit, bit in zip(op["args"], results, strict=True)
-            )
+            for qubit, bit in zip(op["args"], op["returns"], strict=True):
+                assert bit[0] in user_registers or bit[0].startswith("__pecos_scratch")
+                measurements.append((qubit[1], tuple(bit) if bit[0] in user_registers else None))
     _assert_measurements_match(measurements, _qasm_measurements(qasm))
 
 
@@ -605,7 +605,7 @@ def test_aliased_parallel_targets_stay_sequential() -> None:
 
     program = Program(
         name="aliased_parallel",
-        declarations=(AllocatorDecl(name="q", capacity=2), AllocatorDecl(name="a", capacity=1, parent="q")),
+        declarations=(AllocatorDecl(name="q", capacity=2), AllocatorDecl(name="a", capacity=1, parent="q", offset=0)),
         body=(
             ParallelBlock(
                 body=tuple(GateOp(gate=GateKind.H, targets=(SlotRef(allocator=name, index=0),)) for name in ("q", "a")),
@@ -802,8 +802,8 @@ def test_qubit_metadata_resolves_child_allocators() -> None:
         name="children",
         declarations=(
             AllocatorDecl(name="data", capacity=4),
-            AllocatorDecl(name="padding", capacity=1, parent="data"),
-            AllocatorDecl(name="child", capacity=2, parent="data"),
+            AllocatorDecl(name="padding", capacity=1, parent="data", offset=0),
+            AllocatorDecl(name="child", capacity=2, parent="data", offset=1),
         ),
         body=(GateOp(gate=GateKind.X, targets=(SlotRef(allocator="child", index=1),)),),
     )
@@ -828,7 +828,7 @@ def test_block_local_classical_permute_is_rejected(whole_register) -> None:
             super().__init__(qb.Measure(q[0]) > c[0], permutation)
 
     ref = "local" if whole_register else r"local\[0\]"
-    with pytest.raises(NotImplementedError, match=rf"Permute.*{ref}.*declare.*qubit"):
+    with pytest.raises(ValueError, match=rf"Permute.*{ref}.*declare.*qubit"):
         SlrConverter(Main(q, LocalBits())).quantum_circuit()
 
 
@@ -837,5 +837,5 @@ def test_prepare_all_requires_declared_allocator() -> None:
     from pecos.slr.ast.nodes import PrepareOp, Program
 
     program = Program(name="missing_allocator", body=(PrepareOp(allocator="missing"),))
-    with pytest.raises(NotImplementedError, match=r"prepare_all.*missing.*declare.*allocator"):
+    with pytest.raises(ValueError, match=r"prepare_all.*missing.*declare.*allocator"):
         ast_to_quantum_circuit(program)

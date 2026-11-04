@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 from pecos.slr._qubit_args import expand_qubit_args, qubit_key
 from pecos.slr.block import Block
 from pecos.slr.cond_block import If, Repeat
-from pecos.slr.loop_block import For
+from pecos.slr.loop_block import For, While
 from pecos.slr.main import Main
 from pecos.slr.misc import Parallel
 from pecos.slr.vars import CReg, SymbolicBit, SymbolicElem
@@ -36,7 +36,7 @@ class ParallelOptimizer:
     that act on disjoint sets of qubits can be grouped together for parallel execution.
 
     The optimizer is conservative and will not optimize Parallel blocks containing
-    control flow (If/Repeat blocks) to ensure correctness.
+    control flow (If/Repeat/For/While blocks) to ensure correctness.
     """
 
     def transform(self, block: Block) -> Block:
@@ -81,12 +81,13 @@ class ParallelOptimizer:
             if new_ops:
                 new_block.block(*new_ops)
         elif isinstance(block, For):
-            # Create new For block preserving loop variable and iteration
-            variable = block.var.name if block.var_is_string else block.var
+            # Create new For block preserving the loop variable object (the body
+            # refers to it by identity), its string-label flag, and iteration
             if block.iterable is not None:
-                new_block = For(variable, block.iterable)
+                new_block = For(block.var, block.iterable)
             else:
-                new_block = For(variable, block.start, block.stop, block.step)
+                new_block = For(block.var, block.start, block.stop, block.step)
+            new_block.var_is_string = block.var_is_string
             if new_ops:
                 new_block.Do(*new_ops)
         # Only reconstruct certain block types
@@ -162,20 +163,36 @@ class ParallelOptimizer:
             else:
                 new_ops.append(Parallel(*group))
 
-        # Return a Block containing the optimized structure
-        return Block(*new_ops)
+        # Keep storage in its original block order even when executable ops
+        # are flattened and regrouped. QAllocs are declarations, not gates.
+        declarations = self._declaration_block(parallel)
+        return Block(*([declarations] if declarations is not None else []), *new_ops)
+
+    def _declaration_block(self, block: Block) -> Block | None:
+        """Retain the declaration tree of a region whose operations are flattened."""
+        declarations = Block()
+        declarations.vars = block.vars
+        declarations.ops = [op for op in block.ops if type(op).__name__ == "QAlloc"]
+        for op in block.ops:
+            if isinstance(op, Block):
+                child = self._declaration_block(op)
+                if child is not None:
+                    declarations.ops.append(child)
+        if not declarations.vars.vars and not declarations.ops:
+            return None
+        return declarations
 
     def _can_optimize_parallel(self, parallel: Parallel) -> bool:
         """Check if a Parallel block can be safely optimized.
 
-        Returns False if the block contains control flow (If/Repeat) or any
+        Returns False if the block contains control flow (If/Repeat/For/While) or any
         converted Block (a Block subclass with class-level `block_inputs`).
         Splatting a converted Block's body into the surrounding Parallel
         would destroy its scope boundary -- the BlockCall lowering needs the
         Block to remain a single op in the AST.
         """
         for op in parallel.ops:
-            if isinstance(op, If | Repeat):
+            if isinstance(op, If | Repeat | For | While):
                 return False
             if isinstance(op, Block):
                 if hasattr(type(op), "block_inputs"):
@@ -199,7 +216,7 @@ class ParallelOptimizer:
     def _contains_control_flow(self, block: Block) -> bool:
         """Check if a block contains any control flow operations."""
         for op in block.ops:
-            if isinstance(op, If | Repeat):
+            if isinstance(op, If | Repeat | For | While):
                 return True
             if isinstance(op, Block) and self._contains_control_flow(op):
                 return True
@@ -207,16 +224,7 @@ class ParallelOptimizer:
 
     def _collect_operations(self, parallel: Parallel) -> list[Node]:
         """Recursively collect all operations from a Parallel block."""
-        operations = []
-
-        for op in parallel.ops:
-            if isinstance(op, Block):
-                # Recursively collect from nested blocks
-                operations.extend(self._collect_from_block(op))
-            else:
-                operations.append(op)
-
-        return operations
+        return self._collect_from_block(parallel)
 
     def _collect_from_block(self, block: Block) -> list[Node]:
         """Recursively collect all operations from a Block."""
@@ -225,7 +233,7 @@ class ParallelOptimizer:
         for op in block.ops:
             if isinstance(op, Block):
                 operations.extend(self._collect_from_block(op))
-            else:
+            elif type(op).__name__ != "QAlloc":
                 operations.append(op)
 
         return operations

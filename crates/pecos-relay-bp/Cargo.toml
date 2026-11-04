@@ -19,6 +19,10 @@ thiserror.workspace = true
 relay-bp.workspace = true
 sprs.workspace = true
 
+[dev-dependencies]
+ndarray-npy.workspace = true
+tempfile.workspace = true
+
 [lib]
 name = "pecos_relay_bp"
 

@@ -129,6 +129,7 @@ pub fn sim(py: Python, program: Py<PyAny>) -> PyResult<PySimBuilder> {
 
         Ok(PySimBuilder {
             inner: SimBuilderInner::QisControl(PyQisControlSimBuilder {
+                python_worker_context: false,
                 engine_builder: Arc::new(Mutex::new(None)),
                 seed: None,
                 workers: None,
@@ -292,6 +293,24 @@ impl PySimBuilder {
                 }
             }
         })
+    }
+
+    /// Opt into a persistent Python context for each QIS Monte Carlo worker job.
+    ///
+    /// The default is false. When true, threading.local and ContextVar values
+    /// can persist across callbacks and shots on that logical worker, but not
+    /// across runs. Rust work runs with the GIL released. Only QIS is supported.
+    #[pyo3(signature = (enabled=true))]
+    fn python_worker_context(&mut self, enabled: bool) -> PyResult<Self> {
+        match &mut self.inner {
+            SimBuilderInner::QisControl(builder) => builder.python_worker_context = enabled,
+            _ => {
+                return Err(PyValueError::new_err(
+                    "python_worker_context is supported only for QIS simulations",
+                ));
+            }
+        }
+        Ok(self.clone())
     }
 
     /// Set random seed
@@ -664,7 +683,17 @@ impl PySimBuilder {
                         "capture_operation_trace shots must be greater than zero",
                     ));
                 }
-                py.detach(|| sim_builder.run(shots)).map_err(|e| {
+                py.detach(|| {
+                    let mut engine = sim_builder.build()?;
+                    let workers = engine.default_workers;
+                    crate::python_worker_context::run(
+                        &mut engine,
+                        shots,
+                        workers,
+                        builder.python_worker_context,
+                    )
+                })
+                .map_err(|e| {
                     crate::errors::simulation_error(e, "Trace capture simulation failed")
                 })?;
 
@@ -851,7 +880,18 @@ impl PySimBuilder {
                     })?;
                 }
 
-                match Python::attach(|py| py.detach(move || sim_builder.run(shots))) {
+                match Python::attach(|py| {
+                    py.detach(move || {
+                        let mut engine = sim_builder.build()?;
+                        let workers = engine.default_workers;
+                        crate::python_worker_context::run(
+                            &mut engine,
+                            shots,
+                            workers,
+                            builder.python_worker_context,
+                        )
+                    })
+                }) {
                     Ok(shot_vec) => Ok(PyShotVec::new(shot_vec)),
                     Err(e) => Err(crate::errors::simulation_error(e, "Simulation failed")),
                 }
@@ -1313,6 +1353,7 @@ impl PySimBuilder {
                     Ok(Py::new(
                         py,
                         crate::engine_builders::PyQisControlSimulation {
+                            python_worker_context: builder.python_worker_context,
                             inner: Arc::new(Mutex::new(engine)),
                             temp_dir,
                             operation_trace_dir: builder.operation_trace_dir.clone(),
@@ -1502,6 +1543,7 @@ impl Clone for SimBuilderInner {
             }),
             SimBuilderInner::QisControl(builder) => {
                 SimBuilderInner::QisControl(PyQisControlSimBuilder {
+                    python_worker_context: builder.python_worker_context,
                     engine_builder: builder.engine_builder.clone(),
                     seed: builder.seed,
                     workers: builder.workers,
@@ -1567,11 +1609,54 @@ mod preflight_tests {
     }
 
     #[test]
+    fn python_worker_context_defaults_rejects_unsupported_and_survives_builder_clones() {
+        Python::initialize();
+        Python::attach(|py| {
+            let mut empty = sim_builder();
+            assert_input_error(py, empty.python_worker_context(true), "only for QIS");
+            let program = Py::new(
+                py,
+                PyQis {
+                    inner: pecos_programs::Qis::from_string(""),
+                },
+            )
+            .unwrap()
+            .into_any();
+            let mut builder = sim(py, program).unwrap();
+            let SimBuilderInner::QisControl(ref b) = builder.inner else {
+                panic!()
+            };
+            assert!(!b.python_worker_context);
+            let enabled = builder
+                .python_worker_context(true)
+                .unwrap()
+                .seed(17)
+                .unwrap()
+                .qubits(2)
+                .unwrap();
+            let SimBuilderInner::QisControl(ref b) = enabled.inner else {
+                panic!()
+            };
+            assert!(b.python_worker_context);
+            let disabled = builder.python_worker_context(false).unwrap();
+            let SimBuilderInner::QisControl(ref b) = disabled.inner else {
+                panic!()
+            };
+            assert!(!b.python_worker_context);
+            let SimBuilderInner::QisControl(ref b) = enabled.inner else {
+                panic!()
+            };
+            assert!(b.python_worker_context);
+        });
+    }
+
+    #[test]
     fn qis_missing_count_is_value_error_on_every_entry_point() {
         pyo3::Python::initialize();
         Python::attach(|py| {
             let builder = PySimBuilder {
                 inner: SimBuilderInner::QisControl(PyQisControlSimBuilder {
+                    python_worker_context: false,
                     // No cached engine or program: attempting engine resolution would fail.
                     // Missing count must be rejected before any native runtime is needed.
                     engine_builder: Arc::new(Mutex::new(None)),

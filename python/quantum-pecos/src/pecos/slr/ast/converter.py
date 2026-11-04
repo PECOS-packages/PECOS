@@ -32,6 +32,7 @@ Example:
 from __future__ import annotations
 
 from dataclasses import replace
+from numbers import Integral, Real
 from typing import TYPE_CHECKING, Any
 
 from pecos.slr._qubit_args import expand_qubit_args, gate_target_groups, iter_qubit_args
@@ -77,7 +78,7 @@ from pecos.slr.ast.nodes import (
     WhileStmt,
 )
 from pecos.slr.main import Main
-from pecos.slr.vars import SymbolicBit
+from pecos.slr.vars import LoopVar, SymbolicBit
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -196,6 +197,8 @@ class SlrToAst:
         # position/count (a single final root ReturnOp can come from a qeclib
         # block, e.g. `Main(q, EncodingCircuit(q))`).
         self._in_flattened_block = False
+        # LoopVars of the For loops being converted; one used elsewhere is unbound.
+        self._loop_vars: list[LoopVar] = []
 
     def convert(self, block: Main | Block) -> Program:
         """Convert an SLR Main/Block to an AST Program.
@@ -228,11 +231,7 @@ class SlrToAst:
         allocator = None
         for var in block.vars:
             if hasattr(var, "capacity"):  # QAlloc detection
-                allocator = AllocatorDecl(
-                    name=var.name,
-                    capacity=var.capacity,
-                    parent=var.parent.name if var.parent else None,
-                )
+                allocator = self._convert_var_to_declaration(var)
                 break
 
         return Program(
@@ -295,31 +294,67 @@ class SlrToAst:
             self._check_loop_variables(child, names)
 
     def _convert_declarations(self, block: Block) -> list:
-        """Convert block variables to AST declarations.
+        """Collect ordinary storage before checking function-local declarations.
 
-        This scans both block.vars (for traditional QReg/CReg declarations)
-        and block.ops (for QAllocs created with walrus operator).
+        The root is always inlined. Nested function blocks may repeat ordinary
+        declarations or their own bound inputs, but cannot introduce local storage.
         """
-        declarations = []
-        seen_names: set[str] = set()
+        declarations: dict[str, RegisterDecl | AllocatorDecl] = {}
+        entries: list[tuple[Block, Block | None]] = []
 
-        # First, scan block.vars for declarations
-        for var in block.vars:
-            decl = self._convert_var_to_declaration(var)
-            if decl is not None:
-                declarations.append(decl)
-                seen_names.add(decl.name)
+        def walk(current: Block, function: Block | None = None) -> None:
+            entries.append((current, function))
+            for child in _nested_blocks(current):
+                walk(child, child if _has_block_inputs(child) else function)
 
-        # Also scan block.ops for QAllocs (they end up in ops when using walrus operator)
-        for op in block.ops:
-            # Only add if QAlloc and not already seen (avoid duplicates)
-            if op.__class__.__name__ == "QAlloc" and op.name not in seen_names:
-                decl = self._convert_var_to_declaration(op)
+        def variables(current: Block) -> Iterator[RegisterDecl | AllocatorDecl]:
+            for var in [*current.vars, *(op for op in current.ops if type(op).__name__ == "QAlloc")]:
+                decl = self._convert_var_to_declaration(var)
                 if decl is not None:
-                    declarations.append(decl)
-                    seen_names.add(decl.name)
+                    yield decl
 
-        return declarations
+        def add(decl: RegisterDecl | AllocatorDecl) -> None:
+            previous = declarations.get(decl.name)
+            if previous is not None:
+                size = decl.size if isinstance(decl, RegisterDecl) else decl.capacity
+                previous_size = previous.size if isinstance(previous, RegisterDecl) else previous.capacity
+                if size != previous_size:
+                    msg = (
+                        f"Register {decl.name!r} has conflicting sizes {previous_size} and {size}; "
+                        "rename one or use one size."
+                    )
+                    raise ValueError(msg)
+                if decl != previous:
+                    msg = (
+                        f"Register {decl.name!r} is declared twice as different storage "
+                        f"({previous!r} and {decl!r}); rename one."
+                    )
+                    raise ValueError(msg)
+            else:
+                declarations[decl.name] = decl
+
+        walk(block)
+        for current, function in entries:
+            if function is None:
+                for decl in variables(current):
+                    add(decl)
+        ordinary = dict(declarations)
+        for current, function in entries:
+            if function is None:
+                continue
+            bound = [
+                self._convert_var_to_declaration(getattr(function, name, None)) for name in type(function).block_inputs
+            ]
+            for decl in variables(current):
+                if decl.name not in ordinary and decl not in bound:
+                    msg = (
+                        f"Block {type(function).__name__!r} declares register {decl.name!r}; "
+                        "blocks with block_inputs cannot declare registers yet: "
+                        "declare it in Main or in an ordinary Block."
+                    )
+                    raise ValueError(msg)
+                add(decl)
+        return list(declarations.values())
 
     def _convert_return_types(self, block: Block) -> tuple[TypeExpr, ...]:
         """Convert block return type annotations to AST TypeExpr nodes.
@@ -393,7 +428,8 @@ class SlrToAst:
             return AllocatorDecl(
                 name=var.name,
                 capacity=var.capacity,
-                parent=var.parent.name if var.parent else None,
+                parent=var.parent.name if var.parent is not None else None,
+                offset=var.parent_offset,
             )
 
         # Unknown variable type - skip
@@ -650,6 +686,7 @@ class SlrToAst:
         # `_decl_counter` so nested converted Blocks get globally-unique names.
         sub = SlrToAst()
         sub._decl_counter = self._decl_counter  # type: ignore[attr-defined]
+        sub._loop_vars = list(self._loop_vars)
         sub_body = sub._convert_statements(block.ops, remap)  # type: ignore[attr-defined]
         self._decl_counter = sub._decl_counter  # type: ignore[attr-defined]
         rewritten_body = tuple(sub_body)
@@ -840,7 +877,11 @@ class SlrToAst:
             stop = self._convert_expression(op.stop)
             step = self._convert_expression(op.step) if op.step is not None and op.step != 1 else None
 
-        body = tuple(self._convert_statements(op.ops, remap))
+        self._loop_vars.append(op.var)
+        try:
+            body = tuple(self._convert_statements(op.ops, remap))
+        finally:
+            self._loop_vars.pop()
 
         return ForStmt(variable=variable, start=start, stop=stop, step=step, body=body)
 
@@ -1022,8 +1063,21 @@ class SlrToAst:
             return LiteralExpr(value=expr)
 
         # Literal values
-        if isinstance(expr, bool | int | float):
+        if isinstance(expr, bool):
             return LiteralExpr(value=expr)
+        if isinstance(expr, Integral):
+            return LiteralExpr(value=int(expr))
+        if isinstance(expr, Real):
+            return LiteralExpr(value=float(expr))
+
+        if isinstance(expr, LoopVar):
+            if not any(var is expr for var in self._loop_vars):
+                msg = (
+                    f"LoopVar {expr.name!r} is used outside the For loop that binds it; "
+                    "use it only inside that loop's body, and pass this LoopVar object to For(...) to bind it."
+                )
+                raise ValueError(msg)
+            return VarExpr(name=expr.name)
 
         expr_class = expr.__class__.__name__
 

@@ -97,6 +97,8 @@ class PhirClassicalInterpreter:
         self.csym2id = None
         self.cvar_meta = None
         self._result_references = {}
+        self._result_destinations = set()
+        self._exports = None
 
         self.phir_validate = True
 
@@ -111,6 +113,8 @@ class PhirClassicalInterpreter:
         self.program = None
         self.foreign_obj = None
         self._result_references = {}
+        self._result_destinations = set()
+        self._exports = None
         self._reset_env()
 
     def init(
@@ -157,6 +161,8 @@ class PhirClassicalInterpreter:
 
         self.check_ffc(self.program.foreign_func_calls, self.foreign_obj)
 
+        self._exports = self.program.export_selection()
+        self._result_destinations = set()
         self.csym2id = dict(self.program.csym2id)
         self.cvar_meta = list(self.program.cvar_meta)
         self._result_references = {}
@@ -165,6 +171,9 @@ class PhirClassicalInterpreter:
             self._check_register_width(cvar.variable, cvar.data_type, cvar.size, dtype.itemsize * 8)
 
         self.initialize_cenv()
+        for name, (dtype, size) in self.program.result_types().items():
+            self.add_cvar(name, data_type_map[dtype], size)
+            self._result_destinations.add(name)
 
         return self.program.num_qubits
 
@@ -281,6 +290,9 @@ class PhirClassicalInterpreter:
 
             elif isinstance(op, pt.opt.MOp):
                 op_buffer.append(op)
+
+            elif isinstance(op, pt.data.ExportVar):
+                continue
 
             elif op is None:
                 # TODO: Make it so None ops are not included
@@ -532,8 +544,8 @@ class PhirClassicalInterpreter:
             # After first execution, mutating op.args or op.returns is unsupported.
             decoded = self._result_references.get(op)
             if decoded is None:
-                # Counts depend on execution, like native PHIR. Cache only a
-                # successful decode, including for COp objects supplied directly.
+                # Also validate COp objects supplied directly after program loading.
+                # Cache only a successful decode.
                 validate_phir_result_counts(len(op.args), len(op.returns or []))
                 sources = tuple(self._result_reference(ref, "args") for ref in op.args)
                 destinations = tuple(self._result_reference(ref, "returns") for ref in op.returns)
@@ -557,14 +569,17 @@ class PhirClassicalInterpreter:
                 if source_index is not None:
                     value = (value >> source_index) & 1
                 if destination not in self.csym2id:
-                    if destination_index is None:
+                    if destination_index is not None:
+                        self.add_cvar(destination, data_type_map["u64"], max(32, destination_index + 1))
+                    elif source_index is not None:
+                        self.add_cvar(destination, data_type_map["u64"], 1)
+                    else:
                         meta = self._classical_meta(source)
                         self.add_cvar(destination, data_type_map[meta.data_type], meta.size)
-                    else:
-                        self.add_cvar(destination, data_type_map["u64"], max(32, destination_index + 1))
                 self._check_result_index(destination, destination_index)
                 target = destination if destination_index is None else (destination, destination_index)
                 self.assign_int(target, value)
+                self._result_destinations.add(destination)
 
         elif isinstance(op, pt.opt.FFCall):
             args = []
@@ -610,13 +625,13 @@ class PhirClassicalInterpreter:
         return validate_phir_result_reference(json.dumps(reference), field)
 
     def _check_result_index(self, name: str, index: int | None) -> None:
-        """Check an indexed Result against declared storage or a new u64 destination."""
+        """Check an indexed Result against its resolved storage width."""
         size = self._classical_meta(name).size if name in self.csym2id else 64
         if index is not None and not 0 <= index < size:
             msg = (
                 f"PHIR interpreter failed: Result: bit index {index} is invalid for register "
                 f"{json.dumps(name, ensure_ascii=False)} "
-                f"of declared size {size}; use an index below {size}"
+                f"of size {size}; use an index below {size}"
             )
             raise ValueError(msg)
 
@@ -652,7 +667,14 @@ class PhirClassicalInterpreter:
     def results(self, *, return_int: bool = True) -> dict:
         """Dumps program final results."""
         result = {}
-        for csym, cid in self.csym2id.items():
+        outputs = (
+            {name: name for name in self.csym2id}
+            if self._exports is None
+            else self._exports | {name: name for name in self._result_destinations}
+        )
+        # Preserve declaration/storage order; aliases of one source retain directive order.
+        for csym, source in sorted(outputs.items(), key=lambda item: self.csym2id[item[1]]):
+            cid = self.csym2id[source]
             cval = self.cenv[cid]
             if not return_int:
                 meta = self.cvar_meta[cid]
@@ -672,8 +694,6 @@ class PhirClassicalInterpreter:
     def result_bits(
         self,
         bits: Iterable[tuple[str, int]],
-        *,
-        filter_private: bool = True,
     ) -> dict[tuple[str, int], int]:
         """Get a dictionary of bit values given an iterable of bits.
 
@@ -684,7 +704,5 @@ class PhirClassicalInterpreter:
             for m, i in b:
                 m: str
                 i: int
-                if filter_private and m.startswith("__"):
-                    continue
                 send_meas[m, i] = self.get_bit(m, i)
         return send_meas

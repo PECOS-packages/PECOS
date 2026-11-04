@@ -269,6 +269,8 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: Some(gates::H),
+            group_size: crate::noise::gate_group_size(GateType::H.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         let response = channel.apply(&h_event, &mut ctx, &mut rng);
@@ -297,6 +299,8 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: Some(gates::CX),
+            group_size: crate::noise::gate_group_size(GateType::CX.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         let response = channel.apply(&cx_event, &mut ctx, &mut rng);
@@ -331,6 +335,8 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: Some(my_gate),
+            group_size: crate::noise::gate_group_size(GateType::I.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         let response = channel.apply(&event, &mut ctx, &mut rng);
@@ -355,6 +361,8 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: Some(gates::H),
+            group_size: crate::noise::gate_group_size(GateType::H.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         // Without definitions, should return None (can't determine category)

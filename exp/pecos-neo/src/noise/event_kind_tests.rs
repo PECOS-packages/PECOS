@@ -185,8 +185,16 @@ fn builtin_channel_kind_declarations_have_positive_witnesses() {
             EventKinds::of(IdleTime).with(AfterGate),
         ),
         (
-            Box::new(CrosstalkChannel::global_only(0.2).unwrap()),
-            after_gate.with(AfterPreparation).with(AfterMeasurement),
+            Box::new(CrosstalkChannel::preparation(0.2).unwrap()),
+            EventKinds::of(AfterPreparation),
+        ),
+        (
+            Box::new(
+                CrosstalkChannel::measurement()
+                    .with_global_rate(0.2)
+                    .unwrap(),
+            ),
+            EventKinds::of(AfterMeasurement),
         ),
         (
             Box::new(CorrelatedNoiseChannel::new(0.2, 0.5).unwrap()),

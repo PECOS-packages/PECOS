@@ -122,22 +122,20 @@ CompositeNoiseModelBuilder::new()
 
 #### Crosstalk
 
+Preparation crosstalk fires only after noisy `PZ`, at its own global rate.
+Measurement crosstalk fires after measurement, at independent local/global rates.
+Both default to Z with probability 1/2 per fired target. Source operands and leaked
+qubits are excluded; other qubits prepared this shot remain targets after measurement,
+including noiselessly prepared and `QAlloc` qubits. Presets and user-composed composite
+channels retain their chosen primitives. Tables retain their sampled-state behavior.
+
 ```rust
 CompositeNoiseModelBuilder::new()
-    // Measurement-induced crosstalk
-    .with_p_meas_crosstalk(
-        0.001,  // Global probability (affects all other qubits)
-        0.01,   // Local probability (affects nearby qubits)
-    ).unwrap()
-
-    // Custom neighbor function
-    .with_crosstalk_neighbors(|q1, q2| distance(q1, q2) < 3)
-
-    // Crosstalk transition probabilities by outcome
-    .with_crosstalk_transitions(CrosstalkTransitions {
-        outcome_0: TransitionProbs { nothing: 0.9, flip: 0.05, leak: 0.05 },
-        outcome_1: TransitionProbs { nothing: 0.85, flip: 0.10, leak: 0.05 },
-    })
+    .with_p_prep_crosstalk(0.001)?
+    .with_p_meas_crosstalk(0.001, 0.01)?
+    .with_p_meas_crosstalk_local_fn(neighbors)
+    .with_p_meas_crosstalk_model(CrosstalkTransitions::symmetric_with_leakage())?
+    .build()?;
 ```
 
 ## Using Noise with CircuitRunner
@@ -296,9 +294,9 @@ adapted execution does not invoke user gate handlers.
 Gate-error channels use `qubits`. Seepage channels explicitly read suppressed
 groups. `LeakageChannel` applies partner noise there only when explicitly enabled
 with `with_partner_pauli_probability(p)` (default 0). On noisy operations, idle-after-two-qubit
-noise acts on healthy members of executed and suppressed groups; crosstalk uses
-both as sources and exclusions. Dropped groups get neither effect, but can be
-crosstalk targets. `gated_qubits()` returns both slices without allocating when
+noise acts on healthy members of executed and suppressed groups. Dropped groups
+do not receive this idle noise. Crosstalk has no gate-event sources.
+`gated_qubits()` returns both slices without allocating when
 there are no suppressed groups.
 
 `group_size` on before/after events is a `NonZeroUsize`. Queue commands use
@@ -328,9 +326,10 @@ a handler mark returns `ExecutionError::HandlerLeakageWithoutNoise`.
 register `CorePlugin` automatically. Its `AfterPreparation` handler marks qubits
 active and clears previous leakage before preparation noise runs, so a new leak
 from that same preparation remains. Its `AfterMeasurement` handler marks qubits
-inactive without clearing leakage. Thus crosstalk targets other prepared,
-unmeasured, non-leaked qubits, and custom `active()` conditions follow this
-lifecycle. A bare `ComposableNoiseModel` needs `.add_plugin(&CorePlugin)` for
+inactive without clearing leakage. Crosstalk targets other non-leaked qubits
+prepared this shot, including measured, noiselessly prepared and `QAlloc` qubits.
+Custom `active()` conditions still exclude measured qubits. A bare
+`ComposableNoiseModel` needs `.add_plugin(&CorePlugin)` for
 these preparation and measurement state updates.
 
 `SingleQubitChannel` and `TwoQubitChannel` discard a seeping qubit's state by
@@ -469,7 +468,7 @@ let noise = GeneralNoiseModelBuilder::new()
     .with_p2(0.01)
     .build()?
     // Add custom channels
-    .add_channel(CrosstalkChannel::new()
+    .add_channel(CrosstalkChannel::measurement()
         .with_global_rate(0.001)?
         .with_transitions(CrosstalkTransitions::symmetric_with_leakage())?);
 ```

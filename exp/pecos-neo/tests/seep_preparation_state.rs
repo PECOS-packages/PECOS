@@ -98,46 +98,35 @@ fn crosstalk_builder(kind: &str) -> CompositeNoiseModelBuilder {
 }
 
 fn check_crosstalk(kind: &str) {
-    let mut circuit = CommandBuilder::new().pz(&[1]);
-    circuit = if kind == "prep" {
-        circuit.pz(&[0])
-    } else {
-        circuit.pz(&[0]).mz(&[0])
-    };
-    // Once q1 is measured, a second source event must leave its state alone.
-    circuit = circuit.mz(&[1]);
-    circuit = if kind == "prep" {
-        circuit.pz(&[0])
-    } else {
-        circuit.mz(&[0])
-    };
-    let circuit = circuit.mz(&[1]).build();
-    let ones = (0..1000)
-        .filter(|&seed| {
-            let outcomes = run(crosstalk_builder(kind).build().unwrap(), &circuit, seed);
-            let spectator = outcomes.get_all(QubitId(1));
-            assert_eq!(spectator.len(), 2);
-            assert_eq!(
-                spectator[0].outcome, spectator[1].outcome,
-                "{kind}: measured spectator changed at seed {seed}"
-            );
-            spectator[0].outcome
-        })
-        .count();
-    // X and Y flip |0>; Z does not. Five-sigma interval around 2/3.
-    assert!((592..=741).contains(&ones), "{kind}: {ones}/1000 flips");
+    for measured in [false, true] {
+        let mut circuit = CommandBuilder::new().pz(&[0, 1]);
+        if measured {
+            circuit = circuit.mz(&[1]);
+        }
+        circuit = circuit.h(&[1]);
+        circuit = if kind == "prep" {
+            circuit.pz(&[0])
+        } else {
+            circuit.mz(&[0])
+        };
+        let circuit = circuit.h(&[1]).mz(&[1]).build();
+        let ones = (0..1000)
+            .filter(|&seed| {
+                let outcomes = run(crosstalk_builder(kind).build().unwrap(), &circuit, seed);
+                outcomes.get_all(QubitId(1)).last().unwrap().outcome
+            })
+            .count();
+        assert!(
+            (421..=579).contains(&ones),
+            "{kind}, measured={measured}: {ones}/1000 flips"
+        );
+    }
 
-    // Also test lifecycle directly so a no-op crosstalk channel cannot pass
-    // the measured-target exclusion merely by never targeting anything.
+    // Aggregate direct emissions, checking the effect and source exclusions too.
     let mut model = crosstalk_builder(kind).build().unwrap();
     let mut rng = PecosRng::seed_from_u64(42);
-    model.emit(
-        &NoiseEvent::AfterPreparation {
-            gate_type: GateType::PZ,
-            qubits: &[QubitId(1)],
-        },
-        &mut rng,
-    );
+    model.context_mut().mark_prepared(QubitId(0));
+    model.context_mut().mark_prepared(QubitId(1));
     let source = [QubitId(0)];
     let trigger = if kind == "prep" {
         NoiseEvent::AfterPreparation {
@@ -151,28 +140,27 @@ fn check_crosstalk(kind: &str) {
             outcomes: &[false],
         }
     };
-    let gates = injected(model.emit(&trigger, &mut rng));
-    assert_eq!(gates.len(), 1);
-    assert_eq!(gates[0].qubits.as_slice(), &[QubitId(1)]);
-    model.emit(
-        &NoiseEvent::AfterMeasurement {
-            gate_type: GateType::MZ,
-            qubits: &[QubitId(1)],
-            outcomes: &[false],
-        },
-        &mut rng,
-    );
-    assert_eq!(injected(model.emit(&trigger, &mut rng)), vec![]);
-    model.emit(
-        &NoiseEvent::AfterPreparation {
-            gate_type: GateType::PZ,
-            qubits: &[QubitId(1)],
-        },
-        &mut rng,
-    );
-    assert_eq!(injected(model.emit(&trigger, &mut rng)).len(), 1);
+    for measured in [false, true] {
+        if measured {
+            model.context_mut().mark_measured(QubitId(1));
+        }
+        let mut count = 0;
+        for _ in 0..1000 {
+            for gate in injected(model.emit(&trigger, &mut rng)) {
+                assert_eq!(gate.qubits.as_slice(), &[QubitId(1)]);
+                assert_eq!(gate.gate_type, GateType::Z);
+                count += 1;
+            }
+        }
+        assert!(
+            (421..=579).contains(&count),
+            "{kind}, measured={measured}: {count}"
+        );
+    }
     model.context_mut().mark_leaked(QubitId(1));
-    assert_eq!(injected(model.emit(&trigger, &mut rng)), vec![]);
+    for _ in 0..1000 {
+        assert_eq!(injected(model.emit(&trigger, &mut rng)), vec![]);
+    }
 }
 
 #[test]

@@ -452,10 +452,10 @@ impl CompositeNoiseModelBuilder {
         Ok(self)
     }
 
-    /// Set preparation crosstalk probability.
+    /// Set global crosstalk probability after noisy `PZ` preparation.
+    /// Each fired non-leaked target prepared this shot receives Z with probability 1/2.
     ///
-    /// With probability `p`, each other active qubit receives a random Pauli
-    /// error during preparation.
+    /// Measured qubits remain eligible; source operands are excluded.
     ///
     /// # Errors
     /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
@@ -494,7 +494,9 @@ impl CompositeNoiseModelBuilder {
 
     /// Set global crosstalk probability during measurements.
     ///
-    /// With probability `p`, each other active qubit receives a random Pauli error.
+    /// With probability `p`, each other existing, non-leaked qubit is affected,
+    /// including measured qubits: without a table, Z with probability 1/2;
+    /// with `with_p_meas_crosstalk_model` set, the table is used instead.
     /// This is a convenience method equivalent to `with_p_meas_crosstalk(p, 0.0)`.
     ///
     /// # Errors
@@ -506,8 +508,11 @@ impl CompositeNoiseModelBuilder {
 
     /// Set measurement crosstalk probabilities.
     ///
-    /// - `global`: Probability of error on any other active qubit
-    /// - `local`: Probability of error on neighboring qubits only
+    /// - `global`: Probability of firing on any other existing, non-leaked qubit
+    /// - `local`: Probability of firing on existing, non-leaked neighbors only
+    ///
+    /// Measured targets remain eligible. Without a table, each fired target
+    /// receives Z with probability 1/2.
     ///
     /// Note: Local crosstalk requires a neighbor function to be provided
     /// via `with_p_meas_crosstalk_local_fn`.
@@ -557,7 +562,7 @@ impl CompositeNoiseModelBuilder {
     /// - Given qubit is in |0⟩: probability to stay, flip, or leak
     /// - Given qubit is in |1⟩: probability to stay, flip, or leak
     ///
-    /// When not set, crosstalk uses uniform random Pauli errors.
+    /// When not set, crosstalk uses dephasing (Z with probability 1/2 per fired target).
     ///
     /// The transition table has the same shape as `GeneralNoiseModel`'s
     /// `p_meas_crosstalk_model`, but the source of the state differs. Neo crosstalk
@@ -963,7 +968,7 @@ impl CompositeNoiseModelBuilder {
 
         // Preparation crosstalk
         if self.p_prep_crosstalk > 0.0 {
-            let crosstalk_noise = prob(self.p_prep_crosstalk, pauli())?;
+            let crosstalk_noise = prob(self.p_prep_crosstalk, prob(0.5, inject_z())?)?;
             let channel = CompositeCrosstalkChannel::new("flow_prep_crosstalk", crosstalk_noise)
                 .responds_to_preparation()
                 .global();
@@ -1024,14 +1029,14 @@ impl CompositeNoiseModelBuilder {
 
     /// Build crosstalk noise primitive.
     ///
-    /// Uses the transition model if configured, otherwise uses uniform Pauli errors.
+    /// Uses the transition model if configured, otherwise uses dephasing.
     fn build_crosstalk_noise(&self, probability: f64) -> ValidationResult<BoxSeq> {
         Ok(match self.p_meas_crosstalk_model {
             Some(transitions) => {
                 seq![prob(probability, crosstalk_transitions(transitions)?)?,]
             }
             None => {
-                seq![prob(probability, pauli())?,]
+                seq![prob(probability, prob(0.5, inject_z())?)?,]
             }
         })
     }

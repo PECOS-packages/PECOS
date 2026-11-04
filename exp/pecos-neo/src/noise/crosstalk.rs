@@ -18,7 +18,7 @@
 //! ## Crosstalk Types
 //!
 //! - **Local crosstalk**: Affects only qubits near the gated qubits (e.g., nearest neighbors)
-//! - **Global crosstalk**: Affects all other active qubits in the system
+//! - **Global crosstalk**: Affects other non-leaked qubits prepared this shot, measured or not
 //!
 //! ## Physical Motivation
 //!
@@ -33,7 +33,7 @@
 //! use pecos_neo::noise::crosstalk::CrosstalkChannel;
 //!
 //! // Create a crosstalk channel with different local and global rates
-//! let crosstalk = CrosstalkChannel::new()
+//! let crosstalk = CrosstalkChannel::measurement()
 //!     .with_local_rate(0.01)?    // 1% chance per local qubit
 //!     .with_global_rate(0.001); // 0.1% chance per global qubit
 //! # Ok::<(), Box<dyn std::error::Error>>(())
@@ -43,7 +43,7 @@ use super::{
     CrosstalkResult, CrosstalkTransitions, NoiseChannel, NoiseContext, NoiseEvent, NoiseResponse,
 };
 use crate::command::{GateCommand, GateType};
-use crate::noise::validation::{ValidationResult, validate_probability};
+use crate::noise::validation::{ValidationError, ValidationResult, validate_probability};
 use pecos_core::QubitId;
 use pecos_random::PecosRng;
 use rand::RngExt;
@@ -53,8 +53,14 @@ use smallvec::SmallVec;
 ///
 /// Applies errors to qubits that are not directly involved in an operation
 /// but may be affected due to physical proximity or shared resources.
+/// Targets exist this shot and are not leaked; measurement does not remove them.
+/// Each channel subscribes to either preparation (noisy `PZ` only) or measurement.
+/// Without a transition table, a fired target receives Z with probability 1/2,
+/// after the optional leakage draw. Tables retain uniform sampled input states.
 #[derive(Debug, Clone)]
 pub struct CrosstalkChannel {
+    kind: CrosstalkKind,
+
     /// Probability of crosstalk error per local (neighbor) qubit.
     local_rate: f64,
 
@@ -72,9 +78,8 @@ pub struct CrosstalkChannel {
 
     /// State-dependent transition probabilities for measurement crosstalk.
     ///
-    /// When set, crosstalk during measurements uses this model which
-    /// accounts for the target qubit's current state. When None, uses
-    /// simple random Pauli + leakage model.
+    /// When set, measurement crosstalk samples a state uniformly for this table.
+    /// When None, uses the dephasing + leakage model.
     transitions: Option<CrosstalkTransitions>,
 }
 
@@ -93,16 +98,10 @@ impl std::fmt::Debug for NeighborFunction {
     }
 }
 
-impl Default for CrosstalkChannel {
-    fn default() -> Self {
-        Self {
-            local_rate: 0.0,
-            global_rate: 0.0,
-            neighbor_fn: None,
-            leakage_probability: 0.0,
-            transitions: None,
-        }
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CrosstalkKind {
+    Preparation,
+    Measurement,
 }
 
 impl CrosstalkChannel {
@@ -130,17 +129,51 @@ impl CrosstalkChannel {
         &self.transitions
     }
 
-    /// Create a new crosstalk channel with default (zero) rates.
+    /// Create global crosstalk triggered only by noisy `PZ` preparation.
+    ///
+    /// # Errors
+    /// Returns an error if `rate` is not a valid probability.
+    pub fn preparation(rate: f64) -> ValidationResult<Self> {
+        validate_probability(rate, "rate")?;
+        Ok(Self {
+            kind: CrosstalkKind::Preparation,
+            global_rate: rate,
+            ..Self::measurement()
+        })
+    }
+
+    /// Create measurement crosstalk with zero local and global rates.
     #[must_use]
-    pub fn new() -> Self {
-        Self::default()
+    pub fn measurement() -> Self {
+        Self {
+            kind: CrosstalkKind::Measurement,
+            local_rate: 0.0,
+            global_rate: 0.0,
+            neighbor_fn: None,
+            leakage_probability: 0.0,
+            transitions: None,
+        }
+    }
+
+    fn require_measurement(&self, field: &str) -> ValidationResult<()> {
+        if self.kind == CrosstalkKind::Preparation {
+            return Err(ValidationError::new(
+                field,
+                "the engines have no local or table-driven preparation crosstalk",
+            )
+            .with_suggestion(
+                "Use CrosstalkChannel::measurement() for local, neighbor-function or table-driven crosstalk",
+            ));
+        }
+        Ok(())
     }
 
     /// Set the local crosstalk rate (affects neighbor qubits).
     ///
     /// # Errors
-    /// Returns an error for invalid probabilities or weights.
+    /// Returns an error for invalid probabilities or a preparation channel.
     pub fn with_local_rate(mut self, rate: f64) -> ValidationResult<Self> {
+        self.require_measurement("local_rate")?;
         validate_probability(rate, "rate")?;
         self.local_rate = rate;
         Ok(self)
@@ -159,14 +192,22 @@ impl CrosstalkChannel {
     /// Set the function that determines neighbor qubits.
     ///
     /// Without this, all non-gated qubits are treated as global.
-    #[must_use]
-    pub fn with_neighbor_function(mut self, func: fn(&[QubitId]) -> Vec<QubitId>) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for a preparation channel: engines have no local preparation crosstalk.
+    pub fn with_neighbor_function(
+        mut self,
+        func: fn(&[QubitId]) -> Vec<QubitId>,
+    ) -> ValidationResult<Self> {
+        self.require_measurement("neighbor_function")?;
         self.neighbor_fn = Some(NeighborFunction { func });
-        self
+        Ok(self)
     }
 
     /// Set the probability that a crosstalk error causes leakage.
     ///
+    /// After the target fires at its rate, draw leakage first. If it does not
+    /// leak, draw an independent fair coin: apply Z on heads, otherwise nothing.
     /// This is used with the simple crosstalk model. For state-dependent
     /// transitions (including state-dependent leakage), use `with_transitions`.
     ///
@@ -181,7 +222,7 @@ impl CrosstalkChannel {
     /// Set state-dependent transition probabilities for measurement crosstalk.
     ///
     /// The transition model specifies what happens based on the target qubit's
-    /// current state (0 or 1):
+    /// sampled state (0 or 1), currently drawn uniformly rather than measured:
     /// - Stay at current value
     /// - Flip to opposite value
     /// - Leak out of computational subspace
@@ -189,23 +230,12 @@ impl CrosstalkChannel {
     /// When this is set, the simple `leakage_probability` is ignored.
     ///
     /// # Errors
-    /// Returns an error for invalid probabilities or weights.
+    /// Returns an error for an invalid table or a preparation channel.
     pub fn with_transitions(mut self, transitions: CrosstalkTransitions) -> ValidationResult<Self> {
+        self.require_measurement("transitions")?;
         transitions.validate()?;
         self.transitions = Some(transitions);
         Ok(self)
-    }
-
-    /// Create a simple crosstalk channel with uniform global rate.
-    ///
-    /// # Errors
-    /// Returns an error for invalid probabilities or weights.
-    pub fn global_only(rate: f64) -> ValidationResult<Self> {
-        validate_probability(rate, "rate")?;
-        Ok(Self {
-            global_rate: rate,
-            ..Default::default()
-        })
     }
 
     /// Get the neighbor qubits for a set of gated qubits.
@@ -218,8 +248,8 @@ impl CrosstalkChannel {
 
     /// Apply crosstalk to a single qubit.
     ///
-    /// If `known_state` is provided, uses state-dependent transitions.
-    /// Otherwise, uses random Pauli + leakage model.
+    /// With a table, use `known_state` or sample a state uniformly.
+    /// Without a table, draw leakage first and otherwise dephase.
     fn apply_crosstalk_to_qubit(
         &self,
         qubit: QubitId,
@@ -242,41 +272,28 @@ impl CrosstalkChannel {
             };
         }
 
-        // Simple model: random Pauli or leakage
+        // Simple model: leakage first, then dephasing
         if rng.random::<f64>() < self.leakage_probability {
             NoiseResponse::MarkLeaked(smallvec::smallvec![qubit])
+        } else if rng.random::<bool>() {
+            NoiseResponse::inject_gate(GateCommand::new(GateType::Z, smallvec::smallvec![qubit]))
         } else {
-            let pauli = match rng.random_range(0..3) {
-                0 => GateType::X,
-                1 => GateType::Y,
-                _ => GateType::Z,
-            };
-            NoiseResponse::inject_gate(GateCommand::new(pauli, smallvec::smallvec![qubit]))
+            NoiseResponse::None
         }
     }
 }
 
 impl NoiseChannel for CrosstalkChannel {
     fn event_kinds(&self) -> super::EventKinds {
-        super::EventKinds::of(super::NoiseEventKind::AfterPreparation)
-            .with(super::NoiseEventKind::AfterMeasurement)
-            .with(super::NoiseEventKind::AfterGate)
+        super::EventKinds::of(match self.kind {
+            CrosstalkKind::Preparation => super::NoiseEventKind::AfterPreparation,
+            CrosstalkKind::Measurement => super::NoiseEventKind::AfterMeasurement,
+        })
     }
 
     fn responds_to(&self, event: &NoiseEvent<'_>) -> bool {
-        // Only respond if we have non-zero crosstalk rates
-        if self.local_rate <= 0.0 && self.global_rate <= 0.0 {
-            return false;
-        }
-
-        // Respond to preparation and measurement operations
-        // (These are the main sources of crosstalk in ion traps)
-        matches!(
-            event,
-            NoiseEvent::AfterPreparation { .. }
-                | NoiseEvent::AfterMeasurement { .. }
-                | NoiseEvent::AfterGate { .. }
-        )
+        (self.local_rate > 0.0 || self.global_rate > 0.0)
+            && self.event_kinds().contains(event.kind())
     }
 
     fn apply(
@@ -286,6 +303,10 @@ impl NoiseChannel for CrosstalkChannel {
         rng: &mut PecosRng,
     ) -> NoiseResponse {
         if ctx.is_noiseless_operation(event) {
+            return NoiseResponse::None;
+        }
+        if matches!(event, NoiseEvent::AfterPreparation { gate_type, .. } if *gate_type != GateType::PZ)
+        {
             return NoiseResponse::None;
         }
         let gated_qubits = event.gated_qubits();
@@ -313,7 +334,7 @@ impl NoiseChannel for CrosstalkChannel {
 
         // Apply global crosstalk to non-neighbor qubits
         if self.global_rate > 0.0 {
-            // Global targets are all active qubits except gated qubits and neighbors
+            // Global targets are all existing non-leaked qubits except gated qubits and neighbors
             let mut exclude: Vec<QubitId> = gated_qubits.to_vec();
             exclude.extend(neighbors);
 
@@ -346,7 +367,10 @@ impl NoiseChannel for CrosstalkChannel {
     }
 
     fn name(&self) -> &'static str {
-        "CrosstalkChannel"
+        match self.kind {
+            CrosstalkKind::Preparation => "PreparationCrosstalkChannel",
+            CrosstalkKind::Measurement => "MeasurementCrosstalkChannel",
+        }
     }
 
     fn priority(&self) -> i32 {
@@ -365,7 +389,7 @@ mod tests {
 
     #[test]
     fn test_crosstalk_channel_creation() {
-        let channel = CrosstalkChannel::new()
+        let channel = CrosstalkChannel::measurement()
             .with_local_rate(0.01)
             .unwrap()
             .with_global_rate(0.001)
@@ -373,14 +397,18 @@ mod tests {
             .with_leakage(0.1)
             .unwrap();
 
+        assert_ne!(
+            channel.name(),
+            CrosstalkChannel::preparation(0.01).unwrap().name()
+        );
         assert!((channel.local_rate - 0.01).abs() < 1e-10);
         assert!((channel.global_rate - 0.001).abs() < 1e-10);
         assert!((channel.leakage_probability - 0.1).abs() < 1e-10);
     }
 
     #[test]
-    fn test_crosstalk_global_only() {
-        let channel = CrosstalkChannel::global_only(0.1).unwrap();
+    fn test_preparation_crosstalk() {
+        let channel = CrosstalkChannel::preparation(0.1).unwrap();
 
         let qubits = [QubitId(0)];
         let event = NoiseEvent::AfterPreparation {
@@ -411,26 +439,25 @@ mod tests {
     }
 
     #[test]
-    fn test_no_crosstalk_on_inactive_qubits() {
-        let channel = CrosstalkChannel::global_only(1.0).unwrap(); // 100% rate
-
-        let qubits = [QubitId(0)];
+    fn test_measured_targets_remain_but_leaked_targets_do_not() {
+        let channel = CrosstalkChannel::preparation(1.0).unwrap();
         let event = NoiseEvent::AfterPreparation {
             gate_type: GateType::PZ,
-            qubits: &qubits,
+            qubits: &[QubitId(0)],
         };
-
-        // Create context where qubit 1 is measured (inactive)
         let mut ctx = NoiseContext::new();
         ctx.mark_prepared(QubitId(0));
         ctx.mark_prepared(QubitId(1));
-        ctx.mark_measured(QubitId(1)); // Now inactive
-
+        ctx.mark_measured(QubitId(1));
         let mut rng = PecosRng::seed_from_u64(42);
-        let response = channel.apply(&event, &mut ctx, &mut rng);
-
-        // No targets (qubit 1 is inactive), so no crosstalk
-        assert!(response.is_none());
+        let count = (0..1000)
+            .filter(|_| !channel.apply(&event, &mut ctx, &mut rng).is_none())
+            .count();
+        assert!((421..=579).contains(&count), "{count}");
+        ctx.mark_leaked(QubitId(1));
+        for _ in 0..1000 {
+            assert!(channel.apply(&event, &mut ctx, &mut rng).is_none());
+        }
     }
 
     #[test]
@@ -447,17 +474,19 @@ mod tests {
             result
         }
 
-        let channel = CrosstalkChannel::new()
+        let channel = CrosstalkChannel::measurement()
             .with_local_rate(1.0)
             .unwrap() // Always hit local
             .with_global_rate(0.0)
             .unwrap() // Never hit global
-            .with_neighbor_function(neighbors);
+            .with_neighbor_function(neighbors)
+            .unwrap();
 
         let qubits = [QubitId(5)];
-        let event = NoiseEvent::AfterPreparation {
-            gate_type: GateType::PZ,
+        let event = NoiseEvent::AfterMeasurement {
+            gate_type: GateType::MZ,
             qubits: &qubits,
+            outcomes: &[false],
         };
 
         // Prepare qubits 0-10
@@ -466,19 +495,20 @@ mod tests {
             ctx.mark_prepared(QubitId(i));
         }
 
+        ctx.mark_measured(QubitId(4));
+        ctx.mark_leaked(QubitId(6));
         let mut rng = PecosRng::seed_from_u64(42);
-        let response = channel.apply(&event, &mut ctx, &mut rng);
-
-        // Should only affect neighbors (4 and 6)
-        if let NoiseResponse::InjectGates(gates) = response {
-            for gate in gates.iter() {
-                let qubit = gate.qubits[0];
-                assert!(
-                    qubit == QubitId(4) || qubit == QubitId(6),
-                    "Only neighbors should be affected"
-                );
+        let mut count = 0;
+        for _ in 0..1000 {
+            if let NoiseResponse::InjectGates(gates) = channel.apply(&event, &mut ctx, &mut rng) {
+                for gate in gates.iter() {
+                    assert_eq!(gate.qubits.as_slice(), &[QubitId(4)]);
+                    assert_eq!(gate.gate_type, GateType::Z);
+                    count += 1;
+                }
             }
         }
+        assert!((421..=579).contains(&count), "{count}");
     }
 
     #[test]
@@ -490,16 +520,17 @@ mod tests {
         )
         .unwrap();
 
-        let channel = CrosstalkChannel::new()
+        let channel = CrosstalkChannel::measurement()
             .with_global_rate(1.0)
             .unwrap()
             .with_transitions(transitions)
             .unwrap();
 
         let qubits = [QubitId(0)];
-        let event = NoiseEvent::AfterPreparation {
-            gate_type: GateType::PZ,
+        let event = NoiseEvent::AfterMeasurement {
+            gate_type: GateType::MZ,
             qubits: &qubits,
+            outcomes: &[false],
         };
 
         let mut ctx = NoiseContext::new();
@@ -528,16 +559,17 @@ mod tests {
         )
         .unwrap();
 
-        let channel = CrosstalkChannel::new()
+        let channel = CrosstalkChannel::measurement()
             .with_global_rate(1.0)
             .unwrap()
             .with_transitions(transitions)
             .unwrap();
 
         let qubits = [QubitId(0)];
-        let event = NoiseEvent::AfterPreparation {
-            gate_type: GateType::PZ,
+        let event = NoiseEvent::AfterMeasurement {
+            gate_type: GateType::MZ,
             qubits: &qubits,
+            outcomes: &[false],
         };
 
         let mut ctx = NoiseContext::new();
@@ -553,6 +585,50 @@ mod tests {
             assert_eq!(leaked[0], QubitId(1));
         } else {
             panic!("Expected MarkLeaked response, got {response:?}");
+        }
+    }
+
+    #[test]
+    fn leakage_precedes_dephasing_for_fired_targets() {
+        for channel in [
+            CrosstalkChannel::preparation(1.0).unwrap(),
+            CrosstalkChannel::measurement()
+                .with_global_rate(1.0)
+                .unwrap(),
+        ] {
+            let channel = channel.with_leakage(0.25).unwrap();
+            let mut rng = PecosRng::seed_from_u64(42);
+            let mut expected = rng.clone();
+            let mut counts = [0; 3];
+            for _ in 0..1000 {
+                let leaks = expected.random::<f64>() < 0.25;
+                let z = !leaks && expected.random::<bool>();
+                let response = channel.apply_crosstalk_to_qubit(QubitId(1), None, &mut rng);
+                match response {
+                    NoiseResponse::MarkLeaked(qubits) => {
+                        assert!(leaks);
+                        assert_eq!(qubits.as_slice(), &[QubitId(1)]);
+                        counts[0] += 1;
+                    }
+                    NoiseResponse::InjectGates(gates) => {
+                        assert!(z);
+                        for gate in gates.iter() {
+                            assert_eq!(gate.gate_type, GateType::Z);
+                            assert_eq!(gate.qubits.as_slice(), &[QubitId(1)]);
+                            counts[1] += 1;
+                        }
+                    }
+                    NoiseResponse::None => {
+                        assert!(!leaks && !z);
+                        counts[2] += 1;
+                    }
+                    other => panic!("Unexpected response: {other:?}"),
+                }
+            }
+            assert!((180..=320).contains(&counts[0]), "{counts:?}");
+            assert!((298..=452).contains(&counts[1]), "{counts:?}");
+            assert!((298..=452).contains(&counts[2]), "{counts:?}");
+            assert_eq!(rng.random::<u64>(), expected.random::<u64>());
         }
     }
 }

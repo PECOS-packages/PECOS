@@ -13,7 +13,7 @@ produces a `NoiseResponse` when those events fire during simulation.
 | MeasurementChannel | `AfterMeasurement` |
 | PreparationChannel | `AfterPreparation` |
 | IdleChannel | `IdleTime` |
-| CrosstalkChannel | `AfterGate` |
+| CrosstalkChannel | `AfterPreparation` (noisy `PZ`) or `AfterMeasurement`, chosen at construction |
 | LeakageChannel | `BeforeGate`; `AfterGate` only with positive partner Pauli probability |
 | Custom channels | Any event, including `Signal` |
 
@@ -73,9 +73,10 @@ Errors during state preparation -- bit flips or leakage.
 register `CorePlugin` automatically. Its `AfterPreparation` handler marks qubits
 active and clears previous leakage before preparation noise runs, so a new leak
 from that same preparation remains. Its `AfterMeasurement` handler marks qubits
-inactive without clearing leakage. Thus crosstalk targets other prepared,
-unmeasured, non-leaked qubits, and custom `active()` conditions follow this
-lifecycle. A bare `ComposableNoiseModel` needs `.add_plugin(&CorePlugin)` for
+inactive without clearing leakage. Crosstalk targets other non-leaked qubits
+prepared this shot, including measured, noiselessly prepared and `QAlloc` qubits.
+Custom `active()` conditions still exclude measured qubits. A bare
+`ComposableNoiseModel` needs `.add_plugin(&CorePlugin)` for
 these preparation and measurement state updates.
 
 ```rust
@@ -105,13 +106,28 @@ For more specific noise scenarios.
 
 ### CrosstalkChannel
 
-Errors on bystander qubits when gates or measurements happen nearby.
+Crosstalk affects non-leaked bystanders prepared this shot, even after measurement.
+`CrosstalkChannel::preparation(rate)?` responds only to noisy `PZ`, globally.
+`CrosstalkChannel::measurement()` responds to `AfterMeasurement`, with independent
+local and global rates. Preparation channels reject local rates, neighbor functions
+and transition tables. There is no gate-event crosstalk.
+
+Without a table, each fired target receives Z with probability 1/2 (dephasing).
+With `with_leakage`, the leakage draw comes first; a surviving target then gets
+the fair Z coin. Tables retain their current uniformly sampled input state.
+`CompositeNoiseModelBuilder` also defaults to dephasing; presets and user-composed
+composite channels retain their chosen primitives. Source operands are excluded.
 
 ```rust
-CrosstalkChannel::new()
-    .with_global_rate(0.001)?       // Affects all other qubits
-    .with_local_rate(0.01)?         // Affects nearby qubits
+CrosstalkChannel::measurement()
+    .with_global_rate(0.001)? // Non-leaked bystanders outside the neighbor set
+    .with_local_rate(0.01)?   // Non-leaked bystanders in the neighbor set
+    .with_neighbor_function(|_| vec![pecos_core::QubitId(1)])?
 ```
+
+The example uses q1 as the neighbor set. Targets must exist this shot and exclude
+source operands. Without a neighbor function, the local rate has no targets and
+all eligible bystanders are global targets.
 
 ### LeakageChannel
 

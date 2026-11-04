@@ -65,7 +65,7 @@
 //!     .with_p1(0.001)
 //!     .with_p2(0.01)
 //!     .build()?
-//!     .add_channel(CrosstalkChannel::new()
+//!     .add_channel(CrosstalkChannel::measurement()
 //!         .with_global_rate(0.001)?);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```

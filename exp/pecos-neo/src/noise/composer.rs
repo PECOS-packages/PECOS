@@ -1264,7 +1264,6 @@ mod tests {
             )
             .add_channel(
                 CompositeCrosstalkChannel::new("crosstalk", pauli())
-                    .responds_to_gates()
                     .responds_to_measurement()
                     .responds_to_preparation(),
             )

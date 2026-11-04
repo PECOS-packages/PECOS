@@ -223,9 +223,9 @@ adapted execution does not invoke user gate handlers.
 Gate-error channels use `qubits`. Seepage channels explicitly read suppressed
 groups. `LeakageChannel` applies partner noise there only when explicitly enabled
 with `with_partner_pauli_probability(p)` (default 0). On noisy operations, idle-after-two-qubit
-noise acts on healthy members of executed and suppressed groups; crosstalk uses
-both as sources and exclusions. Dropped groups get neither effect, but can be
-crosstalk targets. `gated_qubits()` returns both slices without allocating when
+noise acts on healthy members of executed and suppressed groups. Dropped groups
+do not receive this idle noise. Crosstalk has no gate-event sources.
+`gated_qubits()` returns both slices without allocating when
 there are no suppressed groups.
 
 Handler leakage marks require a noise model and notify its observers once per

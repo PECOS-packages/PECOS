@@ -30,7 +30,7 @@
 //!
 //! The context supports two types of crosstalk targeting:
 //! - **Local**: Affects only qubits near the gated qubits (specified by the device)
-//! - **Global**: Affects all other active qubits in the system
+//! - **Global**: Affects all other qubits prepared this shot and not leaked, measured or not
 //!
 //! ## Performance
 //!
@@ -687,7 +687,7 @@ impl NoiseContext {
 
     /// Get all active qubits except those in the given set.
     ///
-    /// Useful for crosstalk - only active qubits should receive crosstalk errors.
+    /// Measurement removes qubits from this active-only query, but not from crosstalk targets.
     #[must_use]
     pub fn other_active_qubits(&self, exclude: &[QubitId]) -> Vec<QubitId> {
         self.active
@@ -697,19 +697,19 @@ impl NoiseContext {
             .collect()
     }
 
-    /// Get all active, non-leaked qubits except those in the given set.
+    /// Get non-leaked qubits prepared since the last reset, except the given set.
     ///
-    /// This is the typical set of qubits that should receive crosstalk errors.
+    /// Measured qubits remain targets, including noiselessly prepared and `QAlloc` qubits.
     #[must_use]
     pub fn crosstalk_targets(&self, exclude: &[QubitId]) -> Vec<QubitId> {
-        self.active
+        self.exists
             .and_not_iter(&self.leaked)
             .filter(|&idx| !exclude.iter().any(|q| q.0 == idx))
             .map(QubitId)
             .collect()
     }
 
-    /// Get crosstalk targets for global crosstalk (all active qubits not in gate).
+    /// Get existing, non-leaked targets outside the source, including measured qubits.
     #[must_use]
     pub fn global_crosstalk_targets(&self, gated_qubits: &[QubitId]) -> Vec<QubitId> {
         self.crosstalk_targets(gated_qubits)
@@ -717,6 +717,7 @@ impl NoiseContext {
 
     /// Get crosstalk targets for local crosstalk (only specified neighbors).
     ///
+    /// Targets must exist this shot and not be leaked; measured qubits remain eligible.
     /// The `neighbors` are typically provided by the device topology.
     #[must_use]
     pub fn local_crosstalk_targets(
@@ -726,7 +727,7 @@ impl NoiseContext {
     ) -> Vec<QubitId> {
         neighbors
             .iter()
-            .filter(|q| !gated_qubits.contains(q) && self.is_active(**q) && !self.is_leaked(**q))
+            .filter(|q| !gated_qubits.contains(q) && self.exists(**q) && !self.is_leaked(**q))
             .copied()
             .collect()
     }
@@ -1031,16 +1032,15 @@ mod tests {
         assert_eq!(targets.len(), 3);
         assert!(!targets.contains(&QubitId(0)));
 
-        // Measure one qubit - no longer a crosstalk target
         ctx.mark_measured(QubitId(1));
         let targets = ctx.global_crosstalk_targets(&[QubitId(0)]);
-        assert_eq!(targets.len(), 2);
-        assert!(!targets.contains(&QubitId(1)));
+        assert_eq!(targets.len(), 3);
+        assert!(targets.contains(&QubitId(1)));
 
         // Leak one qubit - no longer a crosstalk target
         ctx.mark_leaked(QubitId(2));
         let targets = ctx.global_crosstalk_targets(&[QubitId(0)]);
-        assert_eq!(targets.len(), 1);
+        assert_eq!(targets.len(), 2);
         assert!(!targets.contains(&QubitId(2)));
         assert!(targets.contains(&QubitId(3)));
     }
@@ -1064,11 +1064,18 @@ mod tests {
         assert!(targets.contains(&QubitId(2)));
         assert!(!targets.contains(&QubitId(3))); // Not a neighbor
 
-        // Measure qubit 1 - no longer a target
+        // Measured neighbors remain targets.
         ctx.mark_measured(QubitId(1));
         let targets = ctx.local_crosstalk_targets(gated, neighbors);
-        assert_eq!(targets.len(), 1);
-        assert!(!targets.contains(&QubitId(1)));
+        assert_eq!(targets.len(), 2);
+        assert!(targets.contains(&QubitId(1)));
+        ctx.mark_leaked(QubitId(2));
+        assert_eq!(
+            ctx.local_crosstalk_targets(gated, neighbors),
+            vec![QubitId(1)]
+        );
+        ctx.reset();
+        assert_eq!(ctx.local_crosstalk_targets(gated, neighbors), vec![]);
     }
 
     #[test]

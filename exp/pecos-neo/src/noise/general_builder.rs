@@ -245,7 +245,8 @@ impl GeneralNoiseModelBuilder {
         self
     }
 
-    /// Set the preparation crosstalk probability.
+    /// Set global crosstalk probability after noisy `PZ` preparation.
+    /// Each fired non-leaked target prepared this shot receives Z with probability 1/2.
     #[must_use]
     pub fn with_p_prep_crosstalk(mut self, p: f64) -> Self {
         self.p_prep_crosstalk = p;
@@ -410,7 +411,10 @@ impl GeneralNoiseModelBuilder {
         self
     }
 
-    /// Set measurement crosstalk probabilities (global and local).
+    /// Set crosstalk probabilities after measurement (global and local).
+    /// Targets include measured qubits prepared this shot, excluding leaked qubits
+    /// and source operands. Without a table, fired targets receive Z with probability 1/2.
+    /// This builder sets no neighbor function, so its local rate has no targets.
     #[must_use]
     pub fn with_p_meas_crosstalk(mut self, global: f64, local: f64) -> Self {
         self.p_meas_crosstalk_global = global;
@@ -844,19 +848,17 @@ impl GeneralNoiseModelBuilder {
             )?);
         }
 
-        // Crosstalk channel (handles both prep and measurement crosstalk)
-        if self.p_meas_crosstalk_global > 0.0
-            || self.p_meas_crosstalk_local > 0.0
-            || self.p_prep_crosstalk > 0.0
-        {
-            let mut crosstalk = CrosstalkChannel::new()
-                .with_global_rate(self.p_meas_crosstalk_global.max(self.p_prep_crosstalk))?
+        // Preparation and measurement crosstalk have independent rates and events.
+        if self.p_prep_crosstalk > 0.0 {
+            model = model.add_channel(CrosstalkChannel::preparation(self.p_prep_crosstalk)?);
+        }
+        if self.p_meas_crosstalk_global > 0.0 || self.p_meas_crosstalk_local > 0.0 {
+            let mut crosstalk = CrosstalkChannel::measurement()
+                .with_global_rate(self.p_meas_crosstalk_global)?
                 .with_local_rate(self.p_meas_crosstalk_local)?;
-
             if let Some(transitions) = self.p_meas_crosstalk_transitions {
                 crosstalk = crosstalk.with_transitions(transitions)?;
             }
-
             model = model.add_channel(crosstalk);
         }
 

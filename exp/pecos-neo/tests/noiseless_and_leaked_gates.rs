@@ -10,7 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! Circuit and channel regressions for #1574 and #1575.
+//! Circuit and channel regressions for #1573, #1574 and #1575.
 use pecos_core::{QubitId, TimeUnits};
 use pecos_neo::command::{CommandBuilder, CommandQueue, GateCommand, GateType};
 use pecos_neo::noise::composite::CompositeNoiseModelBuilder;
@@ -293,7 +293,7 @@ fn noiseless_leaked_readout_keeps_its_result() {
 #[test]
 fn noiseless_operations_are_not_crosstalk_sources() {
     for composite in [false, true] {
-        for prep in [false, true] {
+        for prep in [true, false] {
             let control = match (composite, prep) {
                 (false, true) => GeneralNoiseModelBuilder::new()
                     .with_p_prep_crosstalk(1.0)
@@ -314,11 +314,12 @@ fn noiseless_operations_are_not_crosstalk_sources() {
                     .build()
                     .unwrap(),
             };
-            let start = CommandBuilder::new().pz(&[0, 1]);
+            let start = CommandBuilder::new().pz(&[0, 1]).h(&[1]);
             let circuit = if prep { start.pz(&[0]) } else { start.mz(&[0]) }
+                .h(&[1])
                 .mz(&[1])
                 .build();
-            assert!(ones(&control, &circuit, 1) > 300);
+            assert!((421..=579).contains(&ones(&control, &circuit, 1)));
             let quiet = control.with_noiseless_gate(if prep { GateType::PZ } else { GateType::MZ });
             assert_eq!(ones(&quiet, &circuit, 1), 0);
         }
@@ -744,5 +745,213 @@ fn noiseless_composites_do_not_unleak() {
             );
             assert_eq!(ctx.is_leaked(QubitId(0)), quiet);
         }
+    }
+}
+
+fn preparation_crosstalk_model(composite: bool) -> ComposableNoiseModel {
+    if composite {
+        CompositeNoiseModelBuilder::new()
+            .with_p_prep_crosstalk(1.0)
+            .unwrap()
+            .build()
+            .unwrap()
+    } else {
+        GeneralNoiseModelBuilder::new()
+            .with_p_prep_crosstalk(1.0)
+            .build()
+            .unwrap()
+    }
+}
+
+// Each row uses the last public q1 outcome; hidden engine readouts are excluded.
+fn check_preparation_crosstalk_parity(row: usize) {
+    use pecos_engines::noise::GeneralNoiseModel;
+    use pecos_engines::{ByteMessage, Engine, QuantumSystem, StateVecEngine};
+    let mut circuit = CommandBuilder::new().pz(&[0, 1]);
+    let mut message = ByteMessage::quantum_operations_builder();
+    message.pz(&[0, 1]);
+    if row == 3 {
+        circuit = circuit.mz(&[1]);
+        message.mz(&[1]);
+    }
+    if row != 0 {
+        circuit = circuit.h(&[1]);
+        message.h(&[1]);
+    }
+    if row == 2 {
+        circuit = circuit.x(&[0]);
+        message.x(&[0]);
+    } else {
+        circuit = circuit.pz(&[0]);
+        message.pz(&[0]);
+    }
+    if row != 0 {
+        circuit = circuit.h(&[1]);
+        message.h(&[1]);
+    }
+    let circuit = circuit.mz(&[1]).build();
+    let message = message.mz(&[1]).build();
+    let engines = (0..1000)
+        .filter(|&seed| {
+            let model = GeneralNoiseModel::builder()
+                .with_p_prep_crosstalk(1.0)
+                .with_seed(seed)
+                .build();
+            let mut system = QuantumSystem::new(
+                Box::new(model),
+                Box::new(StateVecEngine::with_seed(2, seed)),
+            );
+            // Match run_general_noise_model: derive independent component seeds.
+            system.set_seed(seed);
+            *system
+                .process(message.clone())
+                .unwrap()
+                .outcomes()
+                .unwrap()
+                .last()
+                .unwrap()
+                == 1
+        })
+        .count();
+    let counts = [
+        engines,
+        ones(&preparation_crosstalk_model(false), &circuit, 1),
+        ones(&preparation_crosstalk_model(true), &circuit, 1),
+    ];
+    eprintln!("preparation parity row {row}: engines/general/composite = {counts:?}");
+    for count in counts {
+        if row == 0 || row == 2 {
+            assert_eq!(count, 0, "row {row}: {counts:?}");
+        } else {
+            // Five standard deviations for Binomial(1000, 0.5): 79.06 shots.
+            assert!((421..=579).contains(&count), "row {row}: {counts:?}");
+        }
+    }
+}
+
+#[test]
+fn preparation_crosstalk_dephases_zero_state() {
+    check_preparation_crosstalk_parity(0);
+}
+
+#[test]
+fn preparation_crosstalk_dephases_superposition() {
+    check_preparation_crosstalk_parity(1);
+}
+
+#[test]
+fn preparation_crosstalk_has_no_gate_sources() {
+    check_preparation_crosstalk_parity(2);
+}
+
+#[test]
+fn preparation_crosstalk_keeps_measured_targets() {
+    check_preparation_crosstalk_parity(3);
+}
+
+#[test]
+fn crosstalk_rates_are_separate() {
+    for preparation_source in [false, true] {
+        let mut circuit = CommandBuilder::new().pz(&[0, 1]).h(&[1]);
+        circuit = if preparation_source {
+            circuit.pz(&[0])
+        } else {
+            circuit.mz(&[0])
+        };
+        let circuit = circuit.h(&[1]).mz(&[1]).build();
+        for source_rate in [0.0, 0.25] {
+            let model = if preparation_source {
+                GeneralNoiseModelBuilder::new()
+                    .with_p_prep_crosstalk(source_rate)
+                    .with_p_meas_crosstalk(1.0, 0.0)
+            } else {
+                GeneralNoiseModelBuilder::new()
+                    .with_p_prep_crosstalk(1.0)
+                    .with_p_meas_crosstalk(source_rate, 0.0)
+            }
+            .build()
+            .unwrap();
+            let count = ones(&model, &circuit, 1);
+            if source_rate == 0.0 {
+                assert_eq!(count, 0, "preparation_source={preparation_source}");
+            } else {
+                // Five sigma around 1000 * 0.25 * 0.5 = 125 flips.
+                assert!(
+                    (73..=177).contains(&count),
+                    "preparation_source={preparation_source}, source_rate={source_rate}: {count}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn qalloc_is_not_a_preparation_crosstalk_source() {
+    let circuit = CommandBuilder::new()
+        .pz(&[0, 1])
+        .h(&[1])
+        .qalloc(&[0])
+        .h(&[1])
+        .mz(&[1])
+        .build();
+    for composite in [false, true] {
+        assert_eq!(
+            ones(&preparation_crosstalk_model(composite), &circuit, 1),
+            0
+        );
+    }
+}
+
+#[test]
+fn crosstalk_targets_include_qalloc_and_noiseless_preparations() {
+    // Deliberate engine deviation: every preparation establishes existence.
+    for composite in [false, true] {
+        let alloc = CommandBuilder::new()
+            .qalloc(&[1])
+            .h(&[1])
+            .pz(&[0])
+            .h(&[1])
+            .mz(&[1])
+            .build();
+        assert!((421..=579).contains(&ones(&preparation_crosstalk_model(composite), &alloc, 1)));
+        let circuit = CommandBuilder::new()
+            .pz(&[0, 1])
+            .h(&[1])
+            .mz(&[0])
+            .h(&[1])
+            .mz(&[1])
+            .build();
+        let model = if composite {
+            CompositeNoiseModelBuilder::new()
+                .with_p_meas_crosstalk(1.0, 0.0)
+                .unwrap()
+                .build()
+                .unwrap()
+        } else {
+            GeneralNoiseModelBuilder::new()
+                .with_p_meas_crosstalk(1.0, 0.0)
+                .build()
+                .unwrap()
+        }
+        .with_noiseless_gate(GateType::PZ);
+        assert!((421..=579).contains(&ones(&model, &circuit, 1)));
+    }
+}
+
+#[test]
+fn measure_free_keeps_crosstalk_target_after_measurement() {
+    let circuit = CommandBuilder::new()
+        .pz(&[0, 1])
+        .gate(GateCommand::new(
+            GateType::MeasureFree,
+            smallvec![QubitId(1)],
+        ))
+        .h(&[1])
+        .pz(&[0])
+        .h(&[1])
+        .mz(&[1])
+        .build();
+    for composite in [false, true] {
+        assert!((421..=579).contains(&ones(&preparation_crosstalk_model(composite), &circuit, 1)));
     }
 }

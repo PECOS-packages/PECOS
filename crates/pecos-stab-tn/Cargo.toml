@@ -1,0 +1,34 @@
+[package]
+name = "pecos-stab-tn"
+version.workspace = true
+edition.workspace = true
+readme.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "hybrid stabilizer + tensor network simulation methods (STN, MAST, CAMPS, etc.)."
+publish = false
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+pecos-core.workspace = true
+pecos-quantum.workspace = true
+pecos-random.workspace = true
+pecos-simulators.workspace = true
+nalgebra.workspace = true
+num-complex.workspace = true
+rayon = "1.10"
+thiserror.workspace = true
+
+[dev-dependencies]
+approx.workspace = true
+paste.workspace = true
+rand_chacha.workspace = true
+
+[lints]
+workspace = true

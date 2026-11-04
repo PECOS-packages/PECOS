@@ -41,6 +41,7 @@ from pecos.slr.ast import (
     ReturnOp,
     WhileStmt,
 )
+from pecos.slr.ast.codegen.guppy import GuppyContext, _TempPrefix
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -87,8 +88,8 @@ def build_no_arg_entry_wrapper(
             instead of `return <tuple>`, and is typed `-> None`. This makes
             Selene key the outputs by CReg name (immune to internal,
             non-returned measurements -- e.g. RUS verify). Default False
-            keeps the production wrapper byte-identical (the `.hugr()` /
-            raw-`measurement_N` consumers must not change).
+            preserves the production wrapper's return behavior for `.hugr()` /
+            raw-`measurement_N` consumers.
 
     Returns:
         A `(source, info)` tuple. `source` is the Guppy snippet defining
@@ -150,8 +151,10 @@ def _walk_for_measure_results(
 
 
 def _render_wrapper(info: EntryWrapperInfo, *, emit_return_result_tags: bool = False) -> str:
+    context = GuppyContext()
     body_lines: list[str] = [
-        f"    {name} = array(qubit() for _ in range({size}))" for name, size in info.allocator_sizes.items()
+        f"    {name} = array(qubit() for {context.temp(_TempPrefix.COMPREHENSION)} in range({size}))"
+        for name, size in info.allocator_sizes.items()
     ]
     call_args = ", ".join(info.allocator_sizes.keys())
     call_expr = f"main({call_args})"

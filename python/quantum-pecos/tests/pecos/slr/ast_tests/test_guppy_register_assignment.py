@@ -293,3 +293,24 @@ def test_loop_indexed_bit_literal_is_a_bool() -> None:
     source = SlrConverter(program).guppy()
     assert "c[i] = True" in source
     assert SlrConverter(program).hugr()
+
+
+@pytest.mark.parametrize("repetitions", [1, 2])
+def test_repeat_counter_preserves_user_underscore_loop(repetitions: int) -> None:
+    q, c, u = QReg("q", 1), CReg("c", 1), LoopVar("_")
+    program = Main(
+        q,
+        c,
+        For(u, 0, 3).Do(
+            Repeat(repetitions).block(),
+            c[0].set(u == 0),
+            If(c[0] == 1).Then(qb.X(q[0])),
+            qb.Measure(q),
+            qb.PZ(q),
+        ),
+    )
+    # QASM cannot bind a referenced LoopVar. Observe each iteration directly in
+    # Selene: only iteration zero should flip the freshly prepared qubit.
+    package = SlrConverter(program).hugr()
+    result = sim(Hugr(package.to_str().encode("utf-8"))).classical(selene_engine()).qubits(1).seed(42).run(2)
+    assert result.to_dict() == {"measurement_0": [1, 1], "measurement_1": [0, 0], "measurement_2": [0, 0]}

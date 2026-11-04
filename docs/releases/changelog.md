@@ -7,15 +7,25 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 ## Unreleased
 
 - **Breaking:** Guppy code generation rejects `For` labels that shadow a register,
-  allocator, block input or generated temporary. Imported names and emitted
-  function names are rejected for loop labels, registers, allocators and block
-  inputs only when the same generated function also references their generated
-  meaning. Harmless shadowing of unused imports or helpers remains supported.
-  These rejected programs previously generated source that could fail at HUGR compilation.
+  allocator, block input or generated temporary. Loop labels, registers,
+  allocators and block inputs are also rejected when the same generated function
+  both binds the name and calls it (including builtins such as `range`). This rule
+  is deliberately conservative: it rejects even when the call comes before the
+  binding, without flow analysis. Shadowing unused imports or helpers remains supported.
   A nested `For` that reuses an enclosing loop variable is now rejected in Guppy:
   Python leaves the variable at the inner loop's last value, silently changing
   subsequent operations in the outer loop. Errors name the collision and ask
-  the user to rename the loop label, register or allocator.
+  the user to rename the loop label, register, allocator or block input.
+
+- Guppy `Repeat` counters and array-comprehension variables use reserved temporary
+  names, preserving user loop variables such as `_`.
+
+- Guppy rejects invalid identifiers and Python keywords used as register,
+  allocator, block input or loop names with a code generation error that names
+  the binding and asks the user to rename it.
+
+- Guppy block input collision errors identify the input and its block, and ask
+  the user to rename the block input.
 
 - QASM code generation renders boolean literals as `1` and `0`, including
   assignments and expressions in the deprecated QASM generator.

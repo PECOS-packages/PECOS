@@ -17,7 +17,7 @@ from dataclasses import replace
 from typing import ClassVar
 
 import pytest
-from pecos.slr import Block, CReg, For, Main, QAlloc, QReg, Return, SlrConverter
+from pecos.slr import Block, CReg, For, Main, QAlloc, QReg, Repeat, Return, SlrConverter
 from pecos.slr.ast import ast_to_guppy, slr_to_ast
 from pecos.slr.ast.codegen.entry_wrapper import build_no_arg_entry_wrapper
 from pecos.slr.ast.codegen.guppy import AstToGuppy, GuppyCodegenError
@@ -50,8 +50,10 @@ def _reproducer(case: str, label: str):
     loop = For(label, 0, 1 if case == "h-after" else 2)
     if case == "h-after":
         operations = [loop.Do(), qb.H(q[0])]
-    elif case == "h-before":
-        operations = [qb.H(q[0]), loop.Do()]
+    elif case == "h-before-conservative":
+        # Deliberate conservative rejection: Guppy can compile this ordering,
+        # but the codegen rule does not perform flow analysis of enclosing loops.
+        operations = [qb.H(q[0]), loop.Do(qb.X(q[0]))]
     elif case == "h-inside":
         operations = [loop.Do(qb.H(q[0]))]
     elif case == "qubit":
@@ -63,7 +65,7 @@ def _reproducer(case: str, label: str):
     return Main(q, c, *operations)
 
 
-@pytest.mark.parametrize("case", ["h-after", "h-before", "h-inside", "qubit", "array", "helper_0"])
+@pytest.mark.parametrize("case", ["h-after", "h-before-conservative", "h-inside", "qubit", "array", "helper_0"])
 @pytest.mark.parametrize("method", ["guppy", "hugr"])
 def test_reported_loop_name_collisions(case: str, method: str) -> None:
     label = "h" if case.startswith("h-") else case
@@ -72,12 +74,15 @@ def test_reported_loop_name_collisions(case: str, method: str) -> None:
         getattr(SlrConverter(_reproducer(case, label)), method)()
 
 
-@pytest.mark.parametrize("case", ["h-after", "h-before", "h-inside", "qubit", "array", "helper_0"])
+@pytest.mark.parametrize("case", ["h-after", "h-before-conservative", "h-inside", "qubit", "array", "helper_0"])
 def test_renamed_loop_reproducers_compile(case: str) -> None:
     assert SlrConverter(_reproducer(case, "iteration")).hugr()
 
 
-@pytest.mark.parametrize("name", ["_measurement_0", "_measurement_future", "_call_ret_0"])
+@pytest.mark.parametrize(
+    "name",
+    ["_measurement_0", "_measurement_future", "_call_ret_0", "_repeat_0", "_comprehension_0"],
+)
 @pytest.mark.parametrize("binding", ["loop", "classical", "quantum", "allocator"])
 def test_temporary_prefixes_are_reserved(name: str, binding: str) -> None:
     declarations = {
@@ -142,7 +147,8 @@ def test_block_input_collision_depends_on_its_own_body(kind: str, *, generated_u
 
     converter = SlrConverter(Main(q, c, qb.H(q[1]), Helper()))
     if generated_use:
-        with pytest.raises(GuppyCodegenError, match=r"'h'.*generated Guppy name 'h'.*Rename the register"):
+        message = "Block input 'h' in block 'helper_0' collides with generated Guppy name 'h'. Rename the block input."
+        with pytest.raises(GuppyCodegenError, match=re.escape(message)):
             converter.guppy()
     else:
         assert converter.hugr()
@@ -236,3 +242,123 @@ def test_unused_helper_name_may_be_bound(binding: str, tmp_path) -> None:
     path = tmp_path / "unused_helper.py"
     path.write_text(source)
     assert _load_and_compile_entry(path, "_slr_unused_helper")
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["classical-for", "classical-repeat", "quantum-for", "allocator-for", "nested-for", "sibling-for"],
+)
+def test_builtin_range_cannot_be_bound_and_called(case: str) -> None:
+    loop = For("i", 0, 1).Do()
+    programs = {
+        "classical-for": Main(CReg("range", 1), loop),
+        "classical-repeat": Main(CReg("range", 1), Repeat(2).block()),
+        "quantum-for": Main(QReg("range", 1), loop),
+        "allocator-for": Main(QAlloc(1, name="range"), loop),
+        "nested-for": Main(For("range", 0, 1).Do(loop)),
+        "sibling-for": Main(For("range", 0, 1).Do(), loop),
+    }
+    with pytest.raises(GuppyCodegenError, match=r"'range'.*generated Guppy name 'range'.*Rename the"):
+        SlrConverter(programs[case]).guppy()
+
+
+def test_builtin_range_in_empty_register_initializer_is_checked() -> None:
+    with pytest.raises(GuppyCodegenError, match=r"Classical register 'range'.*generated Guppy name 'range'"):
+        SlrConverter(Main(CReg("range", 0))).guppy()
+
+
+@pytest.mark.parametrize("name", ["class", "True", "lambda", "a b"])
+@pytest.mark.parametrize("binding", ["classical", "quantum", "allocator", "loop", "implicit-measurement"])
+def test_invalid_user_binding_names_are_codegen_errors(name: str, binding: str) -> None:
+    q = QReg("q", 1)
+    bindings = {
+        "classical": CReg(name, 1),
+        "quantum": QReg(name, 1),
+        "allocator": QAlloc(1, name=name),
+        "loop": For(name, 0, 1).Do(),
+        "implicit-measurement": qb.Measure(q) > CReg(name, 1),
+    }
+    message = f"{name!r} must be a valid identifier that is not a Python keyword. Rename the"
+    with pytest.raises(GuppyCodegenError, match=re.escape(message)):
+        SlrConverter(Main(q, bindings[binding])).guppy()
+
+
+@pytest.mark.parametrize("name", ["class", "True", "lambda", "a b", "_repeat_0", "_comprehension_0"])
+@pytest.mark.parametrize("kind", ["bit", "qubit"])
+def test_block_input_name_validation_reports_its_block(name: str, kind: str) -> None:
+    q, c = QReg("q", 1), CReg("c", 1)
+
+    class Helper(Block):
+        block_inputs: ClassVar[dict[str, str]] = {name: "live_preserved"}
+
+        def __init__(self) -> None:
+            super().__init__()
+            setattr(self, name, c[0] if kind == "bit" else q[0])
+
+    message = f"Block input {name!r} in block 'helper_0'"
+    with pytest.raises(GuppyCodegenError, match=re.escape(message) + r".*Rename the block input"):
+        SlrConverter(Main(q, c, Helper())).guppy()
+
+
+def test_empty_array_comprehensions_use_distinct_temporaries() -> None:
+    c, u = CReg("c", 0), LoopVar("_")
+    converter = SlrConverter(Main(c, For(u, 0, 2).Do(c.set(0)), Return(c)))
+    function = ast.parse(converter.guppy()).body[-1]
+    targets = [node.target.id for node in ast.walk(function) if isinstance(node, ast.comprehension)]
+    assert len(targets) == 2
+    assert len(set(targets)) == 2
+    assert all(name.startswith("_comprehension_") for name in targets)
+    assert converter.hugr()
+
+
+def test_entry_array_comprehensions_use_distinct_temporaries() -> None:
+    program = Main(QReg("_", 1), QReg("q", 1))
+    wrapper, _ = build_no_arg_entry_wrapper(slr_to_ast(program))
+    targets = [node.target.id for node in ast.walk(ast.parse(wrapper)) if isinstance(node, ast.comprehension)]
+    assert len(targets) == 2
+    assert len(set(targets)) == 2
+    assert all(name.startswith("_comprehension_") for name in targets)
+    assert SlrConverter(program).hugr()
+
+
+@pytest.mark.parametrize("kind", ["bit", "qubit"])
+def test_block_input_cannot_shadow_builtin_call(kind: str) -> None:
+    q, c = QReg("q", 1), CReg("c", 1)
+
+    class Helper(Block):
+        block_inputs: ClassVar[dict[str, str]] = {"range": "live_preserved"}
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.range = c[0] if kind == "bit" else q[0]
+            self.extend(For("i", 0, 2).Do())
+
+    message = (
+        "Block input 'range' in block 'helper_0' collides with generated Guppy name 'range'. Rename the block input."
+    )
+    with pytest.raises(GuppyCodegenError, match=re.escape(message)):
+        SlrConverter(Main(q, c, Helper())).guppy()
+
+
+@pytest.mark.parametrize("name", ["range", "match", "case"])
+def test_unused_builtin_and_soft_keywords_can_be_bound(name: str) -> None:
+    c = CReg(name, 1)
+    assert SlrConverter(Main(c, Return(c))).hugr()
+
+
+def test_repeat_temporary_avoids_an_emitted_helper_name() -> None:
+    q = QReg("q", 1)
+
+    class _Repeat(Block):
+        block_inputs: ClassVar[dict[str, str]] = {"data": "live_preserved"}
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.data = q
+            self.extend(qb.H(q[0]))
+
+    converter = SlrConverter(Main(q, Repeat(2).block(), _Repeat()))
+    source = converter.guppy()
+    assert "def _repeat_0(" in source
+    assert "for _repeat_0 in" not in source
+    assert converter.hugr()

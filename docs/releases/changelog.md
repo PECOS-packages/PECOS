@@ -473,9 +473,8 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   using `Standard.run`. Ideal ticks skip per-shot decoding while simulator batch
   validation remains enabled. The d=5, 300-shot code-capacity rate2 reference
   runs 1.88x faster (1.50 s to 0.80 s, release build). With these runners,
-  rate3 now raises `TypeError`
-  during preparation for an `init_circuit` without `iter_ticks`, instead of
-  `AttributeError` on the first shot.
+  rate3 now raises `TypeError` during preparation for an `init_circuit` without
+  `iter_ticks`, instead of `AttributeError` on the first shot.
 
 - `pecos.analysis.circuit_parallelism` measures how densely selected operations
   of an existing `QuantumCircuit` pack into layers that preserve per-qubit and

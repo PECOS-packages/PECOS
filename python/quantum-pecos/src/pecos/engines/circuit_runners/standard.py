@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING
 
 import pecos as pc
 from pecos.engines.std_output import StdOutput
+from pecos.simulators.batch_validation import PreparedCircuit
 
 if TYPE_CHECKING:
     from typing import Any
@@ -60,13 +61,16 @@ class Standard:
     @staticmethod
     def run(
         state: SimulatorProtocol,
-        circuit: QuantumCircuit,
+        circuit: QuantumCircuit | PreparedCircuit,
         error_gen: ParentErrorModel | None = None,
         error_params: dict[str, Any] | None = None,
         error_circuits: ErrorCircuits | dict[Any, Any] | None = None,
         output: StdOutput | None = None,
     ) -> tuple[StdOutput, ErrorCircuits | None]:
         """Run quantum circuit with optional error generation.
+
+        A prepared circuit must come from prepare_circuit for a state of the
+        same type and gate capacity.
 
         Args:
         ----
@@ -78,6 +82,11 @@ class Standard:
             output: Output object to store results.
 
         """
+        prepared = None
+        if isinstance(circuit, PreparedCircuit):
+            circuit.check_state(state)
+            prepared = circuit
+            circuit = prepared.source
         if output is None:
             output = StdOutput()
 
@@ -99,7 +108,12 @@ class Standard:
 
         # run through the circuits...
         # ---------------------------
-        for tick_circuit, time, params in circuit.iter_ticks():
+        # Prepared ticks run from their decoded batches; error models still see the source tick.
+        if prepared is None:
+            ticks = ((tick_circuit, tick_circuit, time, params) for tick_circuit, time, params in circuit.iter_ticks())
+        else:
+            ticks = ((tick, tick.tick, tick.time, tick.params) for tick in prepared.ticks)
+        for ideal_tick, tick_circuit, time, params in ticks:
             # ---------------
             # GENERATE ERRORS
             # ---------------
@@ -127,7 +141,7 @@ class Standard:
 
             # ideal tick circuit
             # ------------------
-            result = state.run_circuit(tick_circuit, removed_locations=removed)
+            result = state.run_circuit(ideal_tick, removed_locations=removed)
             output.record(result, time)
 
             if after_errors:

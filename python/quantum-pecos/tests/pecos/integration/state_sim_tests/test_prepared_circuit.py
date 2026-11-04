@@ -65,7 +65,7 @@ def _shots(cls, circuit, *, prepared, size=4, shots=20, inspector=None, **kwargs
     engine = pecos.HybridEngine(seed=7)
     state = _state(cls, size)
     program = prepare_circuit(state, circuit) if prepared else circuit
-    original_items = deepcopy(tuple(pt.items for pt in program.ticks)) if prepared else None
+    original_items = deepcopy(tuple(pt.batches for pt in program.ticks)) if prepared else None
     results = []
     for i in range(shots):
         if i:
@@ -74,7 +74,7 @@ def _shots(cls, circuit, *, prepared, size=4, shots=20, inspector=None, **kwargs
         results.append(({key: str(value) for key, value in output.items()}, _snapshot(state)))
     assert engine.circuit is circuit
     if prepared:
-        assert tuple(pt.items for pt in program.ticks) == original_items
+        assert tuple(pt.batches for pt in program.ticks) == original_items
     return results
 
 
@@ -349,9 +349,9 @@ def test_frozen_container_retains_shared_leaves():
     assert prepared.source is circuit
     assert prepared.ticks[0].tick is tick
     assert prepared.ticks[0].params is tick_params
-    assert prepared.ticks[0].items[0] is decoded[0]
-    assert prepared.ticks[0].items[0][1] is locations
-    assert prepared.ticks[0].items[0][2] is params
+    assert prepared.ticks[0].batches[0] is decoded[0]
+    assert prepared.ticks[0].batches[0][1] is locations
+    assert prepared.ticks[0].batches[0][2] is params
     with pytest.raises(FrozenInstanceError):
         prepared.source = None
     with pytest.raises(FrozenInstanceError):
@@ -367,6 +367,6 @@ def test_empty_batches_skip_validation_and_rng():
     engine = pecos.HybridEngine(seed=7)
     state = _state(CoinToss)
     prepared = prepare_circuit(state, circuit)
-    assert prepared.ticks[0].items[0][1] == set()
+    assert prepared.ticks[0].batches[0][1] == set()
     engine.run(state, prepared, shot_id=0)
     assert state.run_gate("Measure", {0}) == _state(CoinToss).run_gate("Measure", {0})

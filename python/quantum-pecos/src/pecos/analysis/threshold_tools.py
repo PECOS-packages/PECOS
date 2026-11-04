@@ -30,7 +30,7 @@ from pecos.decoders import MWPM2D
 from pecos.engines import circuit_runners
 from pecos.noise import XModel
 from pecos.qeccs import Surface4444
-from pecos.simulators import SparseStabPy
+from pecos.simulators import SparseStabPy, prepare_circuit
 
 __all__ = [
     "codecapacity_logical_rate",
@@ -311,6 +311,11 @@ def threshold_code_capacity_calc(
     }
 
 
+def _runner_accepts_prepared_circuits(runner: Standard) -> bool:
+    """Whether the runner uses Standard.run without a class or instance override."""
+    return getattr(type(runner), "run", None) is circuit_runners.Standard.run and "run" not in vars(runner)
+
+
 def codecapacity_logical_rate(
     runs: int,
     qecc: QECCProtocol,
@@ -380,6 +385,11 @@ def codecapacity_logical_rate(
         raise Exception(msg)
 
     logical_circ = logical_circ_dict[0][logical_ops_sym[0]]
+
+    if _runner_accepts_prepared_circuits(circuit_runner):
+        preparation_state = SparseStabPy(qecc.num_qudits)
+        initzero = prepare_circuit(preparation_state, initzero)
+        syn_extract = prepare_circuit(preparation_state, syn_extract)
 
     num_failure = 0
 
@@ -483,6 +493,12 @@ def codecapacity_logical_rate2(
 
     if state_sim is None:
         state_sim = SparseStabPy
+
+    if _runner_accepts_prepared_circuits(circuit_runner):
+        preparation_state = state_sim(qecc.num_qudits)
+        initzero = prepare_circuit(preparation_state, initzero)
+        initplus = prepare_circuit(preparation_state, initplus)
+        syn_extract = prepare_circuit(preparation_state, syn_extract)
 
     num_failure = 0
 
@@ -635,6 +651,11 @@ def codecapacity_logical_rate3(
     # Syndrome extraction
     syn_extract = pc.circuits.LogicalCircuit(suppress_warning=True)
     syn_extract.append(qecc.gate("I", num_syn_extract=1))
+
+    if _runner_accepts_prepared_circuits(circuit_runner):
+        preparation_state = state_sim(qecc.num_qudits)
+        init_circuit = prepare_circuit(preparation_state, init_circuit)
+        syn_extract = prepare_circuit(preparation_state, syn_extract)
 
     run_durations = []
 

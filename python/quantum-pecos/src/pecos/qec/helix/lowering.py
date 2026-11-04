@@ -42,7 +42,7 @@ def lower_steps(
 ) -> LoweredHelixCircuit:
     """Pack gates ASAP per physical qubit or emit one gate per tick in step order.
 
-    Every gate step has one slot, except CX and RELABEL, which have two.
+    Every gate step has one slot, except CX, CZ and RELABEL, which have two.
     Measurements carry scalar labels. TICK is a barrier only for ASAP packing;
     neither TICK nor COMMENT emits a gate or tick.
     """
@@ -55,7 +55,17 @@ def lower_steps(
     circuit = TickCircuit()
     layout = list(range(num_slots))
     last = [-1] * num_slots
-    gates = {OpType.PREP: "pz", OpType.H: "h", OpType.X: "x", OpType.Z: "z", OpType.CX: "cx", OpType.MEASURE: "mz"}
+    gates = {
+        OpType.PREP: "pz",
+        OpType.H: "h",
+        OpType.X: "x",
+        OpType.Z: "z",
+        OpType.SZ: "sz",
+        OpType.SZDG: "szdg",
+        OpType.CX: "cx",
+        OpType.CZ: "cz",
+        OpType.MEASURE: "mz",
+    }
     for step in steps:
         op = step.op_type
         if op == OpType.COMMENT:
@@ -68,7 +78,7 @@ def lower_steps(
         elif op not in gates:
             msg = f"Unsupported Helix operation: {op.name} in step {step!r}"
             raise ValueError(msg)
-        arity = 2 if op in {OpType.CX, OpType.RELABEL} else 1
+        arity = 2 if op in {OpType.CX, OpType.CZ, OpType.RELABEL} else 1
         if len(step.qubits) != arity or len(set(step.qubits)) != arity:
             msg = f"Invalid qubits for {op.name} step: {step.qubits!r}"
             raise ValueError(msg)
@@ -84,8 +94,8 @@ def lower_steps(
         while circuit.num_ticks() <= tick_index:
             circuit.tick()
         tick = circuit.tick_at(tick_index)
-        if op == OpType.CX:
-            tick.cx([tuple(qubits)])
+        if op in {OpType.CX, OpType.CZ}:
+            getattr(tick, gates[op])([tuple(qubits)])
         elif op == OpType.MEASURE:
             tick.add_gate("MZ", qubits).metas({"label": step.label})
         else:
@@ -99,7 +109,10 @@ def helix_result_classifier() -> Callable[[str, Callable[[str], object]], Result
     """Create a shared-reader classifier for the complete round-free Helix grammar."""
 
     def classify(label: str, _meta: Callable[[str], object]) -> ResultRef:
-        if re.fullmatch(r"(?:c4[xz]:[0-4]|[xz]8:[0-3]|flag:[xz][0-3]\.[1-3]|data:(?:[0-9]|1[0-9]))", label):
+        if re.fullmatch(
+            r"(?:c4[xz]:[0-4]|[xz]8:[0-3]|flag:[xz][0-3]\.[1-3]|czf:[0-6]\.[xz]|data:(?:[0-9]|1[0-9]))",
+            label,
+        ):
             return ("scalar", label)
         msg = f"Invalid Helix measurement label {label!r}"
         raise ValueError(msg)

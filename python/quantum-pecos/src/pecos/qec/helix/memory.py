@@ -4,7 +4,7 @@
 """C4-Helix memory circuits with discovered detectors (arXiv:2609.03194).
 
 The gadgets select four independent weight-8 checks per type in paper order,
-alternate C4 variants a/b, reserve 62 slots, and leave swap-out corrections
+alternate C4 variants a/b, use 62 of the 76 allocated slots, and leave swap-out corrections
 unapplied. Discovery accounts for their frame and projective preparation signs.
 """
 
@@ -56,6 +56,12 @@ def memory_circuit(basis: str, rounds: int) -> TickCircuit:
     by discovery; detector references must all be zero for this metadata format.
     """
     circuit, found = _memory_discovery(basis, rounds)
+    set_discovered_metadata(circuit, found)
+    return circuit
+
+
+def set_discovered_metadata(circuit: TickCircuit, found: DiscoveredDetectors) -> None:
+    """Write absolute-record parities, rejecting nonzero detector references."""
     detectors = []
     for index, (detector_records, reference) in enumerate(found.detectors):
         if reference != 0:
@@ -74,7 +80,6 @@ def memory_circuit(basis: str, rounds: int) -> TickCircuit:
     )
     circuit.set_meta("num_measurements", str(len(helix_result_refs(circuit))))
     circuit.set_meta("num_detectors", str(len(detectors)))
-    return circuit
 
 
 def memory_definitions(basis: str, rounds: int) -> tuple[list[Detector], list[Observable]]:

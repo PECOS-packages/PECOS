@@ -392,10 +392,20 @@ def test_batch_snapshot_is_read_only_and_lists_are_copies(event_runtime):
         def validate(self, batch):
             with pytest.raises(AttributeError):
                 batch.start_nanos = 123
+            wire = batch.to_bytes()
+            assert isinstance(wire, bytes)
+            assert wire[4] == 7
+            assert int.from_bytes(wire[8:12], "little") == 1
+            assert int.from_bytes(wire[12:16], "little") == len(wire)
+            with pytest.raises(TypeError):
+                wire[0] = 0
             operations = batch.operations
             original_length = len(operations)
             operations.clear()
+            measurements = batch.measurements
+            measurements.clear()
             assert len(batch.operations) == original_length
+            assert batch.to_bytes() == wire
             super().validate(batch)
 
     assert simulation(event_runtime, lambda _: Inspect()).run(1).to_dict()["measurement_0"] == [1]

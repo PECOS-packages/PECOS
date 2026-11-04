@@ -1,9 +1,11 @@
 //! Test-only native descriptor accessor, built by Cargo with the QIS tests.
 
-use std::sync::atomic::{AtomicPtr, Ordering};
+use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
 /// Library basename used to locate the Cargo-built shared library.
 pub const LIBRARY_NAME: &str = "pecos_qis_test_runtime";
+
+static DESCRIPTOR_READS: AtomicUsize = AtomicUsize::new(0);
 
 static DESCRIPTOR: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 
@@ -20,5 +22,12 @@ pub unsafe extern "C" fn set_descriptor(value: *mut ()) {
 /// Return the descriptor installed by the test before plugin initialization.
 #[unsafe(no_mangle)]
 pub extern "C" fn selene_runtime_get_plugin_descriptor_v1() -> *mut () {
+    DESCRIPTOR_READS.fetch_add(1, Ordering::SeqCst);
     DESCRIPTOR.load(Ordering::SeqCst)
+}
+
+/// Number of descriptor accessor calls in this fixture process.
+#[unsafe(no_mangle)]
+pub extern "C" fn descriptor_reads() -> usize {
+    DESCRIPTOR_READS.load(Ordering::SeqCst)
 }

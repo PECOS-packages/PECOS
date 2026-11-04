@@ -10,27 +10,30 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! Leakage plugin providing all leakage-related effects.
+//! Leakage plugin providing unconditional gate suppression.
 //!
 //! This plugin handles:
 //! - Gate skipping when qubits are leaked
-//! - Depolarizing non-leaked partners in two-qubit gates
-//! - Random measurement outcomes for leaked qubits
-//! - Conversion of leakage to depolarizing based on scale factor
+//!
+//! Partner Pauli noise stays off. Opt in with a separately configured
+//! `LeakageChannel::with_partner_pauli_probability` instead of this plugin.
+//! Leaked readout is owned by `CircuitRunner::record_measurements` and reports 1.
+//! The leakage scale setting is retained.
 
 use crate::noise::leakage::LeakageChannel;
 use crate::noise::plugin::{NoiseModelConfig, NoisePlugin};
 use crate::noise::validation::ValidationResult;
 
-/// Plugin that handles all leakage-related effects.
+/// Plugin that suppresses gates on leaked operands, even when noiseless.
 ///
 /// Leakage occurs when qubits leave the computational subspace.
 /// This plugin ensures correct handling of leaked qubits:
 ///
 /// - **Gate skipping**: Gates on leaked qubits are not applied
-/// - **Partner depolarizing**: For two-qubit gates, non-leaked partners
-///   receive random Pauli errors
-/// - **Measurement handling**: Leaked qubits produce random results
+/// - **Partner noise**: Disabled by default, including in this plugin
+/// - **Readout**: Owned by `CircuitRunner::record_measurements`, which reports 1
+///
+/// The plugin never flips an earlier measurement record.
 ///
 /// ## Leakage Scale
 ///

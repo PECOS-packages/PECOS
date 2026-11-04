@@ -1504,7 +1504,12 @@ class GuppyDemBuilder:
                         None if self._max_hosted_tick_separation is _UNSET else self._max_hosted_tick_separation
                     ),
                 )
-            normalize_traced_tick_circuit(circuit, context="GuppyDemBuilder.build")
+            # Preserve the runtime's physical gates: each carries an independent noise site.
+            normalize_traced_tick_circuit(
+                circuit,
+                context="GuppyDemBuilder.build",
+                simplify_single_qubit_clifford_chains=False,
+            )
             result_traces = _compiler_certified_result_traces(
                 generator_layout,
                 analysis,

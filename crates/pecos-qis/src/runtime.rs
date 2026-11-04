@@ -439,6 +439,24 @@ pub trait QisRuntime: Send + Sync + dyn_clone::DynClone {
         ))
     }
 
+    /// Enable bounded emitted-batch snapshots for live decoder providers.
+    /// # Errors
+    /// Unsupported runtimes must reject rather than return fabricated prefixes.
+    fn enable_decoder_batch_capture(&mut self) -> Result<()> {
+        Err(RuntimeError::ExecutionError(
+            "runtime does not support decoder batch provenance".into(),
+        ))
+    }
+
+    /// Consume the emitted interval without flushing or forcing any work.
+    /// # Errors
+    /// Reject unavailable or failed provenance.
+    fn take_decoder_batches(&mut self) -> Result<crate::decoder_batches::DecoderBatchPrefix> {
+        Err(RuntimeError::ExecutionError(
+            "runtime does not support decoder batch provenance".into(),
+        ))
+    }
+
     /// Whether every custom event in this shot has been modeled or explicitly
     /// acknowledged as metadata. Capture-only histories must return false, even
     /// after those histories have been drained.

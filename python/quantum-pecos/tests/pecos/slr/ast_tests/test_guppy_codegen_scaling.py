@@ -20,14 +20,15 @@ from pecos.slr.qeclib import qubit as qb
 
 def test_large_register_codegen_scales_linearly() -> None:
     # Warm up lazy imports before timing. CPU time excludes CI scheduling delays;
-    # timeit disables cyclic GC during each sample. A 4x size step gives about 4x
-    # for linear emission and well over 8x for the quadratic set-copy regression.
+    # timeit disables cyclic GC during each sample, and the best of three absorbs
+    # contention on shared runners. A 4x size step gives about 4x for linear
+    # emission and well over 8x for the quadratic set-copy regression.
     SlrConverter(Main()).guppy()
     timings = []
     for size in (16_000, 64_000):
         q, c = QReg("q", size), CReg("c", size)
         program = Main(q, c, qb.Measure(q) > c)
         timer = Timer(lambda program=program: SlrConverter(program).guppy(), timer=process_time)
-        timings.append(timer.timeit(number=1))
+        timings.append(min(timer.repeat(repeat=3, number=1)))
     ratio = timings[1] / timings[0]
     assert ratio < 8.0, f"Quadrupling register width took {ratio:.2f}x CPU time: {timings}"

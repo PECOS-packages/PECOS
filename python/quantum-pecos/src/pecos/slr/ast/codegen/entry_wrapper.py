@@ -83,8 +83,8 @@ def build_no_arg_entry_wrapper(
         program: The AST program to wrap.
         emit_return_result_tags: **Opt-in, test-harness only.** When True and
             the program has an explicit `Return(...)`, the wrapper
-            destructures main's return and emits
-            `result("__pecos_return.<creg>", <creg>)` per returned CReg
+            destructures main's return into temporaries and emits
+            `result("__pecos_return.<creg>", <temporary>)` per returned CReg
             instead of `return <tuple>`, and is typed `-> None`. This makes
             Selene key the outputs by CReg name (immune to internal,
             non-returned measurements -- e.g. RUS verify). Default False
@@ -185,7 +185,7 @@ def _render_wrapper(info: EntryWrapperInfo, *, emit_return_result_tags: bool = F
         body_lines.append(f"    {call_expr}")
         return_ann = "None"
 
-    body = "\n".join(body_lines) if body_lines else "    pass"
+    body = "\n".join(body_lines)
     return f"\n\n@guppy\ndef entry() -> {return_ann}:\n{body}\n"
 
 

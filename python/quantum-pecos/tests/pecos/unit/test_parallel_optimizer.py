@@ -12,7 +12,7 @@
 """Tests for the ParallelOptimizer transformation pass."""
 
 import pytest
-from pecos.slr import Barrier, Block, CReg, If, LoopVar, Main, Parallel, QReg, Repeat, SlrConverter
+from pecos.slr import Barrier, Block, CReg, For, If, LoopVar, Main, Parallel, QReg, Repeat, SlrConverter, While
 from pecos.slr.qeclib import qubit as qb
 from pecos.slr.transforms import ParallelOptimizer
 
@@ -647,3 +647,23 @@ def test_measurement_dependencies() -> None:
     # Should not optimize due to control flow
     assert len(optimized.ops) == 1
     assert isinstance(optimized.ops[0], Parallel)
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_loops_inside_parallel_keep_every_iteration(nested) -> None:
+    """A For inside a Parallel is control flow; flattening it dropped iterations."""
+    q, c = QReg("q", 2), CReg("c", 1)
+    loop = For("i", 0, 2).Do(qb.X(q[0]))
+    body = Block(loop) if nested else loop
+    prog = Main(q, c, Parallel(body, qb.H(q[1]), qb.Z(q[1])), qb.Measure(q[0]) > c[0])
+    for optimize in (False, True):
+        qasm = SlrConverter(prog, optimize_parallel=optimize).qasm()
+        assert qasm.count("x q[0];") == 2, (optimize, qasm)
+
+
+def test_while_inside_parallel_is_not_flattened() -> None:
+    q, c = QReg("q", 2), CReg("c", 1)
+    loop = While(c[0] == 0).Do(qb.X(q[0]), qb.Measure(q[0]) > c[0])
+    optimized = ParallelOptimizer().transform(Main(q, c, Parallel(loop, qb.H(q[1]))))
+    assert isinstance(optimized.ops[0], Parallel)
+    assert loop in optimized.ops[0].ops

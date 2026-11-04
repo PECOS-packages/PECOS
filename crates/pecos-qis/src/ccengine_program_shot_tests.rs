@@ -4,20 +4,8 @@ use pecos_engines::{ClassicalControlEngineBuilder, MonteCarloEngine, StateVecEng
 use pecos_random::{PCG32_INIT_STATE, PCGRandom};
 
 fn program() -> String {
-    // SeleneU64Result is a 16-byte C struct. Windows returns it through a
-    // hidden output pointer; the other supported 64-bit targets use registers.
-    #[cfg(not(windows))]
-    let (declaration, call) = (
-        "declare { i32, i64 } @selene_get_current_shot(ptr)",
-        "%abi = call { i32, i64 } @selene_get_current_shot(ptr null)",
-    );
-    #[cfg(windows)]
-    let (declaration, call) = (
-        "declare void @selene_get_current_shot(ptr sret({ i32, i64 }), ptr)",
-        "%out = alloca { i32, i64 }\n\
-         call void @selene_get_current_shot(ptr sret({ i32, i64 }) %out, ptr null)\n\
-         %abi = load { i32, i64 }, ptr %out",
-    );
+    let declaration = crate::selene_test_ir::declaration("selene_get_current_shot", "ptr");
+    let call = crate::selene_test_ir::call("abi", "selene_get_current_shot", "ptr null");
     format!(
         r#"
 @shot_label = private constant [4 x i8] c"shot"

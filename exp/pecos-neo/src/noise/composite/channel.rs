@@ -15,6 +15,10 @@
 //! This module provides `CompositeChannel`, an adapter that wraps a composite `Primitive`
 //! and implements the `NoiseChannel` trait, allowing composite-based noise models
 //! to be used with the existing `ComposableNoiseModel`.
+//!
+//! Noiseless operation events return before primitives run, including direct
+//! context mutations such as `leak()` and `unleak()`. `BeforeGate` is exempt
+//! because it decides suppression: even a fault primitive on that event runs.
 
 use super::Primitive;
 use super::batch::GeometricSampler;
@@ -77,8 +81,10 @@ impl CompositeEventFilter {
     #[must_use]
     pub fn matches(self, event: &NoiseEvent<'_>) -> bool {
         match (self, event) {
-            (Self::SingleQubitGate, NoiseEvent::AfterGate { qubits, .. }) => qubits.len() == 1,
-            (Self::TwoQubitGate, NoiseEvent::AfterGate { qubits, .. }) => qubits.len() == 2,
+            (Self::SingleQubitGate, NoiseEvent::AfterGate { group_size, .. }) => {
+                group_size.get() == 1
+            }
+            (Self::TwoQubitGate, NoiseEvent::AfterGate { group_size, .. }) => group_size.get() == 2,
             (Self::AnyGate, NoiseEvent::AfterGate { .. }) => true,
             (Self::Preparation, NoiseEvent::AfterPreparation { .. }) => true,
             (Self::BeforeMeasurement, NoiseEvent::BeforeMeasurement { .. }) => true,
@@ -92,6 +98,94 @@ impl CompositeEventFilter {
             _ => false,
         }
     }
+}
+
+/// Complete operands with eligibility checked at each primitive invocation.
+#[derive(Clone, Copy)]
+struct OperandSelection<'a> {
+    qubits: &'a [QubitId],
+    suppressed: bool,
+}
+
+impl OperandSelection<'_> {
+    fn prepare(self, index: usize, ctx: &mut NoiseContext) -> bool {
+        if self.suppressed && !ctx.is_leaked(self.qubits[index]) {
+            return false;
+        }
+        if let Some(gate) = ctx.current_gate() {
+            let size = gate.num_qubits;
+            let start = index / size * size;
+            let end = (start + size).min(self.qubits.len());
+            ctx.set_current_qubit_index(index - start, &self.qubits[start..end]);
+            ctx.set_current_gate_suppressed(self.suppressed);
+        }
+        true
+    }
+
+    /// Install non-gate operands once; a per-member copy would make the scan O(n^2).
+    fn begin_non_gate_scan(self, ctx: &mut NoiseContext) {
+        if ctx.current_gate().is_none() {
+            ctx.set_current_qubit_index(0, self.qubits);
+        }
+    }
+
+    fn select_non_gate_member(index: usize, ctx: &mut NoiseContext) {
+        if ctx.current_gate().is_none() {
+            ctx.set_current_member_index(index);
+        }
+    }
+}
+
+/// Complete both stages within each group so local fired flags cannot cross groups.
+fn apply_two_pass(
+    primitive: &impl Primitive,
+    operands: OperandSelection<'_>,
+    mut select_stage1: impl FnMut(usize, &mut PecosRng) -> bool,
+    outcomes: Option<&[bool]>,
+    ctx: &mut NoiseContext,
+    rng: &mut PecosRng,
+) -> NoiseResponse {
+    let mut combined = NoiseResponse::None;
+    let size = ctx
+        .current_gate()
+        .map_or(operands.qubits.len(), |g| g.num_qubits);
+    for (group_index, group) in operands.qubits.chunks(size).enumerate() {
+        ctx.clear_fired_flags();
+        let group_start = group_index * size;
+        let selection = OperandSelection {
+            qubits: group,
+            suppressed: operands.suppressed,
+        };
+        selection.begin_non_gate_scan(ctx);
+        // Stage 2 is arbitrary work and runs even when stage 1 selected no members.
+        for stage in [1, 2] {
+            for (i, &q) in group.iter().enumerate() {
+                let index = group_start + i;
+                if stage == 1 && !select_stage1(index, rng) {
+                    continue;
+                }
+                if !selection.prepare(i, ctx) {
+                    continue;
+                }
+                OperandSelection::select_non_gate_member(i, ctx);
+                if let Some(outcomes) = outcomes
+                    && index < outcomes.len()
+                {
+                    ctx.set_current_outcome(outcomes[index]);
+                }
+                let response = if stage == 1 {
+                    primitive.apply_stage1(q, ctx, rng)
+                } else {
+                    primitive.apply_stage2(q, ctx, rng)
+                };
+                combined = combined.combine(composite_to_noise_response(response, q));
+                if outcomes.is_some() {
+                    ctx.clear_current_outcome();
+                }
+            }
+        }
+    }
+    combined
 }
 
 /// A noise channel backed by a composite primitive.
@@ -232,17 +326,32 @@ impl<P: Primitive> CompositeChannel<P> {
     #[inline]
     fn apply_geometric(
         &self,
-        qubits: &[QubitId],
+        operands: OperandSelection<'_>,
         event: &NoiseEvent<'_>,
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> NoiseResponse {
+        let qubits = operands.qubits;
         let sampler = self
             .sampler
             .as_ref()
             .expect("sampler must be set for geometric");
         let indices = sampler.sample_range(0, qubits.len(), rng);
 
+        if self.primitive.needs_two_pass() {
+            let outcomes = match event {
+                NoiseEvent::AfterMeasurement { outcomes, .. } => Some(*outcomes),
+                _ => None,
+            };
+            return apply_two_pass(
+                &self.primitive,
+                operands,
+                |index, _| indices.binary_search(&index).is_ok(),
+                outcomes,
+                ctx,
+                rng,
+            );
+        }
         if indices.is_empty() {
             return NoiseResponse::None;
         }
@@ -253,11 +362,13 @@ impl<P: Primitive> CompositeChannel<P> {
             _ => None,
         };
 
-        // Fast path: process candidates without expensive context updates
-        // Note: We skip set_current_qubit_index to avoid O(n) copies per event
+        ctx.clear_fired_flags();
         let mut combined = NoiseResponse::None;
         for idx in indices {
             let qubit = qubits[idx];
+            if !operands.prepare(idx, ctx) {
+                continue;
+            }
 
             // Only set outcome context for measurement events
             if let Some(outcomes) = outcomes
@@ -284,11 +395,12 @@ impl<P: Primitive> CompositeChannel<P> {
     #[inline]
     fn apply_linear(
         &self,
-        qubits: &[QubitId],
+        operands: OperandSelection<'_>,
         event: &NoiseEvent<'_>,
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> NoiseResponse {
+        let qubits = operands.qubits;
         let outcomes = match event {
             NoiseEvent::AfterMeasurement { outcomes, .. } => Some(*outcomes),
             _ => None,
@@ -302,10 +414,18 @@ impl<P: Primitive> CompositeChannel<P> {
 
         // Check if this primitive needs two-pass processing
         if self.primitive.needs_two_pass() {
-            return self.apply_two_pass(qubits, outcomes, threshold, ctx, rng);
+            return apply_two_pass(
+                &self.primitive,
+                operands,
+                |_, rng| threshold.is_none_or(|threshold| rng.next_u64() < threshold),
+                outcomes,
+                ctx,
+                rng,
+            );
         }
 
         // Single-pass processing (standard)
+        operands.begin_non_gate_scan(ctx);
         let mut combined = NoiseResponse::None;
         for (i, &qubit) in qubits.iter().enumerate() {
             // If probability is set, do threshold check
@@ -316,7 +436,10 @@ impl<P: Primitive> CompositeChannel<P> {
             }
 
             // Set qubit index for correlated actions
-            ctx.set_current_qubit_index(i, qubits);
+            if !operands.prepare(i, ctx) {
+                continue;
+            }
+            OperandSelection::select_non_gate_member(i, ctx);
 
             // Only set outcome context for measurement events
             if let Some(outcomes) = outcomes
@@ -326,70 +449,6 @@ impl<P: Primitive> CompositeChannel<P> {
             }
 
             let composite_response = self.primitive.apply(qubit, ctx, rng);
-            let noise_response = composite_to_noise_response(composite_response, qubit);
-            combined = combined.combine(noise_response);
-
-            if outcomes.is_some() {
-                ctx.clear_current_outcome();
-            }
-        }
-
-        combined
-    }
-
-    /// Apply using two-pass processing for `TwoStage` primitives.
-    ///
-    /// Pass 1: Run `apply_stage1` on all qubits (sampling phase)
-    /// Pass 2: Run `apply_stage2` on all qubits (effect phase)
-    #[inline]
-    fn apply_two_pass(
-        &self,
-        qubits: &[QubitId],
-        outcomes: Option<&[bool]>,
-        threshold: Option<u64>,
-        ctx: &mut NoiseContext,
-        rng: &mut PecosRng,
-    ) -> NoiseResponse {
-        let mut combined = NoiseResponse::None;
-
-        // === Pass 1: Stage 1 on all qubits ===
-        for (i, &qubit) in qubits.iter().enumerate() {
-            // If probability is set, do threshold check
-            // Note: For two-stage, the probability is typically in stage1
-            if let Some(thresh) = threshold
-                && rng.next_u64() >= thresh
-            {
-                continue;
-            }
-
-            ctx.set_current_qubit_index(i, qubits);
-
-            if let Some(outcomes) = outcomes
-                && i < outcomes.len()
-            {
-                ctx.set_current_outcome(outcomes[i]);
-            }
-
-            let composite_response = self.primitive.apply_stage1(qubit, ctx, rng);
-            let noise_response = composite_to_noise_response(composite_response, qubit);
-            combined = combined.combine(noise_response);
-
-            if outcomes.is_some() {
-                ctx.clear_current_outcome();
-            }
-        }
-
-        // === Pass 2: Stage 2 on all qubits ===
-        for (i, &qubit) in qubits.iter().enumerate() {
-            ctx.set_current_qubit_index(i, qubits);
-
-            if let Some(outcomes) = outcomes
-                && i < outcomes.len()
-            {
-                ctx.set_current_outcome(outcomes[i]);
-            }
-
-            let composite_response = self.primitive.apply_stage2(qubit, ctx, rng);
             let noise_response = composite_to_noise_response(composite_response, qubit);
             combined = combined.combine(noise_response);
 
@@ -419,20 +478,31 @@ impl<P: Primitive + Clone + 'static> NoiseChannel for CompositeChannel<P> {
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> NoiseResponse {
-        let qubits = event.qubits();
-        if qubits.is_empty() {
+        // BeforeGate decides suppression; its primitives must still run.
+        if !matches!(event, NoiseEvent::BeforeGate { .. }) && ctx.is_noiseless_operation(event) {
             return NoiseResponse::None;
         }
-
+        let qubits = event.qubits();
+        let suppressed = event.leaked_suppressed();
+        if qubits.is_empty() && suppressed.is_empty() {
+            return NoiseResponse::None;
+        }
+        let enclosing = ctx.enter_event();
         // For gate events, set gate context for dynamic probability primitives
         match event {
             NoiseEvent::BeforeGate {
-                gate_type, angles, ..
+                gate_type,
+                angles,
+                group_size,
+                ..
             }
             | NoiseEvent::AfterGate {
-                gate_type, angles, ..
+                gate_type,
+                angles,
+                group_size,
+                ..
             } => {
-                ctx.set_current_gate(*gate_type, angles, qubits.len());
+                ctx.set_current_gate(*gate_type, angles, *group_size);
             }
             NoiseEvent::IdleTime { duration, .. } => {
                 ctx.set_current_idle(*duration);
@@ -441,16 +511,29 @@ impl<P: Primitive + Clone + 'static> NoiseChannel for CompositeChannel<P> {
         }
 
         // Choose processing strategy based on probability and qubit count
-        let result = if self.use_geometric(qubits.len()) {
-            self.apply_geometric(qubits, event, ctx, rng)
-        } else {
-            self.apply_linear(qubits, event, ctx, rng)
-        };
+        let mut result = NoiseResponse::None;
+        for operands in [
+            OperandSelection {
+                qubits,
+                suppressed: false,
+            },
+            OperandSelection {
+                qubits: suppressed,
+                suppressed: true,
+            },
+        ] {
+            if operands.qubits.is_empty() {
+                continue;
+            }
+            let response = if self.use_geometric(operands.qubits.len()) {
+                self.apply_geometric(operands, event, ctx, rng)
+            } else {
+                self.apply_linear(operands, event, ctx, rng)
+            };
+            result = result.combine(response);
+        }
 
-        // Clear context after processing
-        ctx.clear_current_gate();
-        ctx.clear_current_idle();
-        ctx.clear_correlation();
+        ctx.exit_event(enclosing);
 
         result
     }
@@ -817,13 +900,24 @@ impl<P: Primitive> BatchCompositeChannel<P> {
     #[inline]
     fn process_geometric_inline(
         &self,
-        qubits: &[QubitId],
+        operands: OperandSelection<'_>,
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> NoiseResponse {
+        let qubits = operands.qubits;
         // Sample indices using geometric distribution (O(n*p))
         let indices = self.sampler.sample_range(0, qubits.len(), rng);
 
+        if self.primitive.needs_two_pass() {
+            return apply_two_pass(
+                &self.primitive,
+                operands,
+                |index, _| indices.binary_search(&index).is_ok(),
+                None,
+                ctx,
+                rng,
+            );
+        }
         if indices.is_empty() {
             return NoiseResponse::None;
         }
@@ -832,6 +926,9 @@ impl<P: Primitive> BatchCompositeChannel<P> {
         let mut combined = NoiseResponse::None;
         for idx in indices {
             let qubit = qubits[idx];
+            if !operands.prepare(idx, ctx) {
+                continue;
+            }
             let composite_response = self.primitive.apply(qubit, ctx, rng);
             if !composite_response.is_none() {
                 let noise_response = composite_to_noise_response(composite_response, qubit);
@@ -846,14 +943,27 @@ impl<P: Primitive> BatchCompositeChannel<P> {
     #[inline]
     fn process_linear_inline(
         &self,
-        qubits: &[QubitId],
+        operands: OperandSelection<'_>,
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> NoiseResponse {
+        if self.primitive.needs_two_pass() {
+            return apply_two_pass(
+                &self.primitive,
+                operands,
+                |_, rng| self.sampler.check_single(rng),
+                None,
+                ctx,
+                rng,
+            );
+        }
+        let qubits = operands.qubits;
+        operands.begin_non_gate_scan(ctx);
         let mut combined = NoiseResponse::None;
-        for &qubit in qubits {
+        for (i, &qubit) in qubits.iter().enumerate() {
             // Use u64 threshold comparison for speed
-            if self.sampler.check_single(rng) {
+            if self.sampler.check_single(rng) && operands.prepare(i, ctx) {
+                OperandSelection::select_non_gate_member(i, ctx);
                 let composite_response = self.primitive.apply(qubit, ctx, rng);
                 if !composite_response.is_none() {
                     let noise_response = composite_to_noise_response(composite_response, qubit);
@@ -883,20 +993,31 @@ impl<P: Primitive + Clone + 'static> NoiseChannel for BatchCompositeChannel<P> {
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> NoiseResponse {
-        let qubits = event.qubits();
-        if qubits.is_empty() {
+        // BeforeGate decides suppression; its primitives must still run.
+        if !matches!(event, NoiseEvent::BeforeGate { .. }) && ctx.is_noiseless_operation(event) {
             return NoiseResponse::None;
         }
-
+        let qubits = event.qubits();
+        let suppressed = event.leaked_suppressed();
+        if qubits.is_empty() && suppressed.is_empty() {
+            return NoiseResponse::None;
+        }
+        let enclosing = ctx.enter_event();
         // For gate events, set gate context
         match event {
             NoiseEvent::BeforeGate {
-                gate_type, angles, ..
+                gate_type,
+                angles,
+                group_size,
+                ..
             }
             | NoiseEvent::AfterGate {
-                gate_type, angles, ..
+                gate_type,
+                angles,
+                group_size,
+                ..
             } => {
-                ctx.set_current_gate(*gate_type, angles, qubits.len());
+                ctx.set_current_gate(*gate_type, angles, *group_size);
             }
             NoiseEvent::IdleTime { duration, .. } => {
                 ctx.set_current_idle(*duration);
@@ -905,18 +1026,29 @@ impl<P: Primitive + Clone + 'static> NoiseChannel for BatchCompositeChannel<P> {
         }
 
         // Optimized inline processing: sample indices and process without collecting
-        let result = if self.use_geometric(qubits.len()) {
-            // Geometric sampling: generate candidate indices directly (O(n*p))
-            // Process inline without intermediate Vec allocation
-            self.process_geometric_inline(qubits, ctx, rng)
-        } else {
-            // Linear fallback for small counts or high probability
-            self.process_linear_inline(qubits, ctx, rng)
-        };
+        let mut result = NoiseResponse::None;
+        for operands in [
+            OperandSelection {
+                qubits,
+                suppressed: false,
+            },
+            OperandSelection {
+                qubits: suppressed,
+                suppressed: true,
+            },
+        ] {
+            if operands.qubits.is_empty() {
+                continue;
+            }
+            let response = if self.use_geometric(operands.qubits.len()) {
+                self.process_geometric_inline(operands, ctx, rng)
+            } else {
+                self.process_linear_inline(operands, ctx, rng)
+            };
+            result = result.combine(response);
+        }
 
-        ctx.clear_current_gate();
-        ctx.clear_current_idle();
-        ctx.clear_correlation();
+        ctx.exit_event(enclosing);
 
         result
     }
@@ -1177,8 +1309,12 @@ impl<P: Primitive + Clone + 'static> NoiseChannel for CompositeCrosstalkChannel<
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> NoiseResponse {
-        let gated_qubits = event.qubits();
-        let targets = self.get_targets(gated_qubits, ctx);
+        // BeforeGate decides suppression; its primitives must still run.
+        if !matches!(event, NoiseEvent::BeforeGate { .. }) && ctx.is_noiseless_operation(event) {
+            return NoiseResponse::None;
+        }
+        let gated_qubits = event.gated_qubits();
+        let targets = self.get_targets(&gated_qubits, ctx);
 
         if targets.is_empty() {
             return NoiseResponse::None;
@@ -1287,11 +1423,12 @@ mod tests {
             assert_channel_kinds(&crosstalk, kinds);
         }
 
-        // Arity filters inspect qubit count, not the gate type.
+        // Arity filters use group size: batched H stays single-qubit; incomplete CX
+        // uses the documented whole-slice fallback.
         let two_targets = NoiseEvent::after_gate(GateType::H, &[QubitId(0), QubitId(1)], &[]);
         let one_target = NoiseEvent::after_gate(GateType::CX, &[QubitId(0)], &[]);
-        assert!(TwoQubitGate.matches(&two_targets));
-        assert!(!SingleQubitGate.matches(&two_targets));
+        assert!(!TwoQubitGate.matches(&two_targets));
+        assert!(SingleQubitGate.matches(&two_targets));
         assert!(SingleQubitGate.matches(&one_target));
         assert!(!TwoQubitGate.matches(&one_target));
     }
@@ -1313,6 +1450,8 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::H.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         assert!(NoiseChannel::responds_to(&channel, &event));
@@ -1324,6 +1463,8 @@ mod tests {
             qubits: &qubits2,
             angles: &angles,
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::CX.quantum_arity(), qubits2.len()),
+            leaked_suppressed: &[],
         };
         assert!(!NoiseChannel::responds_to(&channel, &event2));
     }
@@ -1344,6 +1485,8 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::H.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         let response = channel.apply(&event, &mut ctx, &mut rng);
@@ -1376,6 +1519,7 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::CX.quantum_arity(), qubits.len()),
         };
 
         let response = channel.apply(&event, &mut ctx, &mut rng);
@@ -1397,6 +1541,8 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::H.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         let response = channel.apply(&event, &mut ctx, &mut rng);
@@ -1425,6 +1571,8 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::CX.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         assert!(NoiseChannel::responds_to(&channel, &event));
@@ -1464,6 +1612,8 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::H.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         // Run multiple times to get statistical coverage
@@ -1514,6 +1664,7 @@ mod tests {
         let qubits = [QubitId(0)];
         let outcomes = [false];
         let event = NoiseEvent::AfterMeasurement {
+            gate_type: GateType::MZ,
             qubits: &qubits,
             outcomes: &outcomes,
         };
@@ -1578,6 +1729,8 @@ mod tests {
             qubits: &qubits,
             angles: &[],
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::H.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         assert!(NoiseChannel::responds_to(&crosstalk, &event));
@@ -1627,7 +1780,10 @@ mod tests {
         ctx.mark_prepared(QubitId(2));
 
         let qubits = [QubitId(0)];
-        let event = NoiseEvent::AfterPreparation { qubits: &qubits };
+        let event = NoiseEvent::AfterPreparation {
+            gate_type: GateType::PZ,
+            qubits: &qubits,
+        };
 
         // Run many times and count how often qubit 1 is affected
         let mut affected_count = 0;
@@ -1680,6 +1836,7 @@ mod tests {
         let qubits = [QubitId(0)];
         let outcomes = [false];
         let event = NoiseEvent::AfterMeasurement {
+            gate_type: GateType::MZ,
             qubits: &qubits,
             outcomes: &outcomes,
         };
@@ -1711,6 +1868,7 @@ mod tests {
         let qubits = [QubitId(0)];
         let outcomes = [false];
         let event = NoiseEvent::AfterMeasurement {
+            gate_type: GateType::MZ,
             qubits: &qubits,
             outcomes: &outcomes,
         };
@@ -1742,6 +1900,8 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::H.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         assert!(NoiseChannel::responds_to(&channel, &event));
@@ -1775,6 +1935,8 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::H.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         // Zero probability must always be empty
@@ -1800,6 +1962,8 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::H.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         // Run once and check we get roughly 10% affected
@@ -1844,6 +2008,8 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::H.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         // Run and verify roughly 0.1% affected
@@ -2083,6 +2249,8 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::CX.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         // Qubit 0 perspective: partner (qubit 1) didn't fire, I did -> PartnerOnlyFired = false
@@ -2144,6 +2312,8 @@ mod tests {
             qubits: &qubits,
             angles: &[],
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::H.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
         assert!(!NoiseChannel::responds_to(&channel, &gate_event));
 
@@ -2176,6 +2346,8 @@ mod tests {
             qubits: &qubits,
             angles: &[],
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::H.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
         assert!(!NoiseChannel::responds_to(&channel, &gate_event));
     }
@@ -2190,6 +2362,7 @@ mod tests {
 
         // Should NOT respond to preparation
         let prep_event = NoiseEvent::AfterPreparation {
+            gate_type: GateType::PZ,
             qubits: &[QubitId(0)],
         };
         assert!(!NoiseChannel::responds_to(&channel, &prep_event));

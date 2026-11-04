@@ -69,14 +69,7 @@ def run(*, distance, rounds, basis, p, shots, seed, run_statevec):
     t0 = time.perf_counter()
     analyzer = DagFaultAnalyzer(dag)
     influence = analyzer.build_influence_map()
-    dem_obj = (
-        DemBuilder(influence)
-        .with_noise(p1=p, p2=p, p_meas=p, p_prep=p)
-        .with_detectors_json(tc.get_meta("detectors"))
-        .with_observables_json(tc.get_meta("observables"))
-        .with_num_measurements(num_meas)
-        .build()
-    )
+    dem_obj = DemBuilder(influence).with_noise(p1=p, p2=p, p_meas=p, p_prep=p).with_circuit_metadata(tc).build()
     dem_str = dem_obj.to_string()
     dem_analytical = [0.0] * num_dets
     for line in dem_str.strip().split("\n"):

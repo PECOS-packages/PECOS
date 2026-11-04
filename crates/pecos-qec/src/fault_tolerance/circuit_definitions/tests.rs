@@ -184,7 +184,12 @@ fn malformed_metadata() {
 
 #[test]
 fn non_string_attributes() {
-    for attribute in ["detectors", "observables", "num_measurements"] {
+    for attribute in [
+        "detectors",
+        "observables",
+        "num_measurements",
+        "measurement_classes",
+    ] {
         let mut circuit = stamped();
         circuit.set_meta(attribute, Attribute::Int(2));
         assert!(
@@ -199,7 +204,7 @@ fn non_string_attributes() {
 
 #[test]
 fn invalid_measurement_count() {
-    for value in ["two", "-1", "184467440737095516160"] {
+    for value in ["", "two", "-1", "184467440737095516160"] {
         let mut circuit = stamped();
         circuit.set_meta("num_measurements", Attribute::String(value.into()));
         assert!(matches!(
@@ -211,6 +216,17 @@ fn invalid_measurement_count() {
             Err(DefinitionError::InvalidMeasurementCount { .. })
         ));
     }
+}
+
+#[test]
+fn invalid_measurement_count_states_the_limit() {
+    let value = "184467440737095516160".to_owned();
+    let message = DefinitionError::InvalidMeasurementCount {
+        value: value.clone(),
+    }
+    .to_string();
+    assert!(message.contains(&usize::MAX.to_string()), "{message}");
+    assert!(message.contains(&value), "{message}");
 }
 
 #[test]

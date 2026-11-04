@@ -2966,6 +2966,46 @@ impl PyDetectorErrorModel {
 // DEM Builder
 // =============================================================================
 
+/// Reject an influence map whose measurement records differ from a circuit's.
+fn check_map_records(
+    map: &RustDagFaultInfluenceMap,
+    measurements: &[(usize, usize, u8)],
+    meas_ids: &[pecos_core::MeasId],
+) -> PyResult<()> {
+    let record_count = map
+        .measurements
+        .len()
+        .max(map.meas_ids.len())
+        .max(measurements.len())
+        .max(meas_ids.len());
+    let Some(record) = (0..record_count).find(|&index| {
+        (map.measurements.get(index), map.meas_ids.get(index))
+            != (measurements.get(index), meas_ids.get(index))
+    }) else {
+        return Ok(());
+    };
+    let describe = |measurements: &[(usize, usize, u8)], meas_ids: &[pecos_core::MeasId]| match (
+        measurements.get(record),
+        meas_ids.get(record),
+    ) {
+        (Some(&(node, qubit, basis)), Some(id)) => format!(
+            "node {node} qubit {qubit} basis {basis} meas_id {}",
+            id.index()
+        ),
+        (Some(&(node, qubit, basis)), None) => {
+            format!("node {node} qubit {qubit} basis {basis}")
+        }
+        (None, Some(id)) => format!("meas_id {} with no measurement", id.index()),
+        (None, None) => "no record".to_owned(),
+    };
+    Err(pyo3::exceptions::PyValueError::new_err(format!(
+        "influence map and circuit disagree at measurement record {record}: map has {}, \
+         circuit has {}; build the influence map from circuit.to_dag_circuit()",
+        describe(&map.measurements, &map.meas_ids),
+        describe(measurements, meas_ids),
+    )))
+}
+
 /// Advanced builder for Detector Error Models (DEMs).
 ///
 /// For most use cases, prefer `DetectorErrorModel.from_circuit()` or
@@ -3004,6 +3044,7 @@ pub struct PyDemBuilder {
     influence_map: RustDagFaultInfluenceMap,
     noise: NoiseConfig,
     detectors_json: Option<String>,
+    measurement_classes_json: Option<String>,
     observables_json: Option<String>,
     num_measurements: Option<usize>,
     exact_branch_circuit: Option<DagCircuit>,
@@ -3021,6 +3062,7 @@ impl PyDemBuilder {
             influence_map: influence_map.inner.clone(),
             noise: NoiseConfig::default(),
             detectors_json: None,
+            measurement_classes_json: None,
             observables_json: None,
             num_measurements: None,
             exact_branch_circuit: None,
@@ -3124,10 +3166,143 @@ impl PyDemBuilder {
         slf
     }
 
+    /// Copy detector, observable, measurement-class and count metadata from a tick circuit.
+    ///
+    /// Absent attributes preserve earlier settings, as do blank `detectors`,
+    /// `observables` and `num_measurements` strings. A blank `measurement_classes`
+    /// string is kept, and `build()` rejects it as malformed, as it does malformed
+    /// class JSON.
+    ///
+    /// Only attributes are copied, after checking them against the circuit: the
+    /// influence map must hold the measurement records of `circuit.to_dag_circuit()`,
+    /// a declared count must equal the circuit's, ids must be unique, references must
+    /// resolve, and attributes must agree with any annotations on ids, measurements
+    /// and labels. The map check compares only each measurement's node, qubit, basis
+    /// and id, so a map from another circuit with the same records passes whatever
+    /// its other gates, as do annotated outputs merged into the map from elsewhere.
+    /// Build the map from this circuit.
+    ///
+    /// Use `DetectorErrorModel.from_circuit` for circuits defined by annotation alone.
+    /// A map that already carries annotated observables, from a circuit with no
+    /// `observables` attribute, needs the separate setters. Those setters do not check
+    /// agreement with observables the map carries, so omit those observables.
+    ///
+    /// Tracked Pauli annotations are not copied. They reach the DEM only through the
+    /// influence map.
+    ///
+    /// Returns:
+    ///     Self for method chaining.
+    ///
+    /// Raises:
+    ///     `ValueError`: If an attribute is not a string or the circuit does not
+    ///         convert to a DAG, `num_measurements` is invalid or differs from the
+    ///         circuit's count, the influence map holds different measurement
+    ///         records, `detectors` or `observables` is malformed or fails those
+    ///         checks, or the circuit has detector or observable annotations and
+    ///         the matching attribute defines nothing.
+    fn with_circuit_metadata<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        circuit: &PyTickCircuit,
+    ) -> PyResult<PyRefMut<'py, Self>> {
+        use pecos_qec::fault_tolerance::circuit_definitions::{
+            AnnotationDefinition, DefinitionError, DefinitionKind, check_measurement_count,
+            dag_circuit_emission, resolve_definitions,
+        };
+        use pecos_quantum::Attribute;
+        use pyo3::exceptions::PyValueError;
+
+        let attribute = |name: &str| -> PyResult<Option<&str>> {
+            match circuit.inner.get_meta(name) {
+                None => Ok(None),
+                Some(Attribute::String(value)) => Ok(Some(value.as_str())),
+                Some(value) => Err(PyValueError::new_err(format!(
+                    "attribute {name:?} must be a string, got {value:?}",
+                ))),
+            }
+        };
+        let not_blank = |value: &&str| !value.trim().is_empty();
+        let detectors = attribute("detectors")?.filter(not_blank);
+        let observables = attribute("observables")?.filter(not_blank);
+        let classes = attribute("measurement_classes")?;
+        let count = attribute("num_measurements")?.filter(not_blank);
+
+        // The DAG is what build() and from_circuit resolve against: it mints the ids
+        // of measurements the tick circuit left without one.
+        let dag = DagCircuit::try_from(&circuit.inner)
+            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        let (measurements, meas_ids) = RustDagFaultAnalyzer::new(&dag).extract_measurements();
+        check_map_records(&slf.influence_map, &measurements, &meas_ids)?;
+
+        let invalid = |error: DefinitionError| {
+            PyValueError::new_err(format!("invalid circuit definitions: {error}"))
+        };
+        let emission = dag_circuit_emission(&dag);
+        check_measurement_count(count, emission.len()).map_err(invalid)?;
+        let annotations: Vec<_> = dag
+            .annotations()
+            .iter()
+            .filter_map(AnnotationDefinition::from_annotation)
+            .collect();
+        let resolve = |annotations: &[AnnotationDefinition]| {
+            resolve_definitions(detectors, observables, annotations, &emission).map_err(invalid)
+        };
+        let attributes = resolve(&[])?;
+        let annotates = |is_detector: bool| {
+            annotations.iter().any(|annotation| {
+                matches!(annotation.kind, DefinitionKind::Detector { .. }) == is_detector
+            })
+        };
+        for (kind, annotated, defined) in [
+            (
+                "detector",
+                annotates(true),
+                !attributes.detectors.is_empty(),
+            ),
+            (
+                "observable",
+                annotates(false),
+                !attributes.observables.is_empty(),
+            ),
+        ] {
+            if annotated && !defined {
+                return Err(PyValueError::new_err(format!(
+                    "circuit has {kind} annotations but its \"{kind}s\" attribute defines \
+                     none; with_circuit_metadata reads attributes only, so use \
+                     DetectorErrorModel.from_circuit or set the attribute",
+                )));
+            }
+        }
+        resolve(&annotations)?;
+
+        if let Some(value) = detectors {
+            slf.detectors_json = Some(value.to_owned());
+        }
+        if let Some(value) = observables {
+            slf.observables_json = Some(value.to_owned());
+        }
+        if let Some(value) = classes {
+            slf.measurement_classes_json = Some(value.to_owned());
+        }
+        if count.is_some() {
+            slf.num_measurements = Some(emission.len());
+        }
+        Ok(slf)
+    }
+
+    /// Set measurement classes in influence-map record order, not stamped-id order.
+    fn with_measurement_classes_json(
+        mut slf: PyRefMut<'_, Self>,
+        json: String,
+    ) -> PyRefMut<'_, Self> {
+        slf.measurement_classes_json = Some(json);
+        slf
+    }
+
     /// Set the observable definitions from JSON.
     ///
-    /// Tracked Paulis are carried by the influence map; this helper is for
-    /// observable metadata.
+    /// This helper is for observable metadata. Tracked Paulis reach the DEM only
+    /// through the influence map, and `DagFaultAnalyzer.build_influence_map()` carries
+    /// none.
     fn with_observables_json(mut slf: PyRefMut<'_, Self>, json: String) -> PyRefMut<'_, Self> {
         slf.observables_json = Some(json);
         slf
@@ -3167,7 +3342,8 @@ impl PyDemBuilder {
     /// Raises:
     ///     `ValueError`: If the detector or observable JSON is malformed, or
     ///         a used record offset / `meas_id` is out of range for the
-    ///         configured measurement count.
+    ///         configured measurement count, measurement classes have the wrong
+    ///         length, or an explicit fault sector disagrees with the derived label.
     fn build(&self) -> PyResult<PyDetectorErrorModel> {
         let mut builder =
             RustDemBuilder::new(&self.influence_map).with_noise_config(self.noise.clone());
@@ -3183,6 +3359,12 @@ impl PyDemBuilder {
         if let Some(ref json) = self.detectors_json {
             builder = builder
                 .with_detectors_json(json)
+                .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        }
+
+        if let Some(ref json) = self.measurement_classes_json {
+            builder = builder
+                .with_measurement_classes_json(json)
                 .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
         }
 
@@ -4882,8 +5064,9 @@ impl PyDemSamplerBuilder {
 
     /// Set observable definitions from JSON.
     ///
-    /// Tracked Paulis are carried by the influence map; this helper is for
-    /// observable metadata.
+    /// This helper is for observable metadata. Tracked Paulis reach the DEM only
+    /// through the influence map, and `DagFaultAnalyzer.build_influence_map()` carries
+    /// none.
     fn with_observables_json(mut slf: PyRefMut<'_, Self>, json: String) -> PyRefMut<'_, Self> {
         slf.observables_json = Some(json);
         slf
@@ -8516,5 +8699,97 @@ mod corpus_sector_tests {
         assert_eq!(labelled.errors[1].components[1].detectors, vec![1, 3]);
         assert_eq!(text.errors[1].components[0].detectors, vec![0, 1]);
         assert_eq!(text.errors[1].components[1].detectors, vec![2, 3]);
+    }
+}
+
+#[cfg(test)]
+mod map_record_tests {
+    use super::*;
+    use pecos_core::MeasId;
+
+    const MEASUREMENT: (usize, usize, u8) = (2, 0, 0);
+
+    fn error(
+        map_measurements: Vec<(usize, usize, u8)>,
+        map_ids: &[usize],
+        measurements: &[(usize, usize, u8)],
+        ids: &[usize],
+    ) -> Option<String> {
+        pyo3::Python::initialize();
+        let mut map = RustDagFaultInfluenceMap::default();
+        map.measurements = map_measurements;
+        map.meas_ids = map_ids.iter().copied().map(MeasId::from_raw).collect();
+        let ids: Vec<_> = ids.iter().copied().map(MeasId::from_raw).collect();
+        check_map_records(&map, measurements, &ids)
+            .err()
+            .map(|error| error.to_string())
+    }
+
+    #[test]
+    fn equal_records_pass() {
+        assert_eq!(error(vec![MEASUREMENT], &[5], &[MEASUREMENT], &[5]), None);
+        assert_eq!(error(vec![MEASUREMENT], &[], &[MEASUREMENT], &[]), None);
+        assert_eq!(error(vec![], &[], &[], &[]), None);
+    }
+
+    #[test]
+    fn names_an_id_past_the_measurements() {
+        let map_surplus = error(vec![MEASUREMENT], &[5, 9], &[MEASUREMENT], &[5]).unwrap();
+        assert!(
+            map_surplus
+                .contains("record 1: map has meas_id 9 with no measurement, circuit has no record"),
+            "{map_surplus}"
+        );
+        let circuit_surplus = error(vec![], &[], &[], &[9]).unwrap();
+        assert!(
+            circuit_surplus
+                .contains("record 0: map has no record, circuit has meas_id 9 with no measurement"),
+            "{circuit_surplus}"
+        );
+    }
+
+    #[test]
+    fn names_an_absent_id() {
+        let message = error(vec![MEASUREMENT], &[], &[MEASUREMENT], &[5]).unwrap();
+        assert!(
+            message.contains(
+                "record 0: map has node 2 qubit 0 basis 0, circuit has node 2 qubit 0 basis 0 meas_id 5"
+            ),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn compares_each_part_of_a_measurement() {
+        for other in [(3, 0, 0), (2, 1, 0), (2, 0, 1)] {
+            let message = error(vec![other], &[5], &[MEASUREMENT], &[5]).unwrap();
+            assert!(message.contains("record 0:"), "{message}");
+        }
+    }
+
+    #[test]
+    fn compares_lengths_without_ids() {
+        let map_longer = error(vec![MEASUREMENT], &[], &[], &[]).unwrap();
+        assert!(
+            map_longer.contains("record 0: map has node 2 qubit 0 basis 0, circuit has no record"),
+            "{map_longer}"
+        );
+        let circuit_longer = error(vec![], &[], &[MEASUREMENT], &[]).unwrap();
+        assert!(
+            circuit_longer
+                .contains("record 0: map has no record, circuit has node 2 qubit 0 basis 0"),
+            "{circuit_longer}"
+        );
+    }
+
+    #[test]
+    fn reports_the_first_difference() {
+        let map_measurements = vec![MEASUREMENT, (3, 5, 0), (4, 6, 0)];
+        let measurements = [MEASUREMENT, (3, 1, 0), (4, 2, 0)];
+        let message = error(map_measurements, &[], &measurements, &[]).unwrap();
+        assert!(
+            message.contains("record 1: map has node 3 qubit 5 basis 0"),
+            "{message}"
+        );
     }
 }

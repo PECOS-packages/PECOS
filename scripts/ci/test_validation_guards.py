@@ -100,12 +100,15 @@ def test_old_python_core_guard_is_rejected(tmp_path: Path) -> None:
     step = next(
         step
         for step in steps.value
-        if isinstance(name := mapping_get(step, "name"), yaml.ScalarNode) and name.value == "Run core Python tests"
+        if isinstance(run := mapping_get(step, "run"), yaml.ScalarNode)
+        and run.value.startswith("just pytest-ci-core-shard ")
     )
-    condition = mapping_get(step, "if")
+    # The shard step has no guard: inject the old branch-only condition to
+    # prove that scheduled and manually dispatched validation stays protected.
+    run = mapping_get(step, "run")
     lines = path.read_text().splitlines(keepends=True)
-    line = lines[condition.start_mark.line]
-    lines[condition.start_mark.line] = f"{line[: len(line) - len(line.lstrip())]}if: {OLD_CORE_GUARD}\n"
+    line = lines[run.start_mark.line]
+    lines.insert(run.start_mark.line, f"{line[: len(line) - len(line.lstrip())]}if: {OLD_CORE_GUARD}\n")
     path.write_text("".join(lines))
     with pytest.raises(AssertionError, match=r"python-test\.yml:\d+: python-core step .*branch-ref gate"):
         assert_validation_guards(directory)

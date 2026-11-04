@@ -104,16 +104,9 @@ impl PyStabVec {
     ///     `num_qubits`: Number of qubits
     ///     seed: Optional RNG seed for reproducibility
     ///     `pruning_threshold`: Relative pruning threshold (default 1e-8)
-    ///     `mc_threshold`: Monte Carlo measurement threshold. Positive integer = MC for
-    ///         T > threshold. None = exact measurement only. Default: 2048.
     #[new]
-    #[pyo3(signature = (num_qubits, seed=None, pruning_threshold=None, mc_threshold=Some(2048)))]
-    fn new(
-        num_qubits: usize,
-        seed: Option<u64>,
-        pruning_threshold: Option<f64>,
-        mc_threshold: Option<usize>,
-    ) -> Self {
+    #[pyo3(signature = (num_qubits, seed=None, pruning_threshold=None))]
+    fn new(num_qubits: usize, seed: Option<u64>, pruning_threshold: Option<f64>) -> Self {
         let mut builder = StabVec::builder(num_qubits);
         if let Some(s) = seed {
             builder = builder.seed(s);
@@ -121,7 +114,6 @@ impl PyStabVec {
         if let Some(pt) = pruning_threshold {
             builder = builder.pruning_threshold(pt);
         }
-        builder = builder.mc_threshold(mc_threshold);
         PyStabVec {
             inner: builder.build(),
         }
@@ -524,9 +516,9 @@ impl PyStabVec {
 #[cfg(test)]
 crate::simulator_utils::direct_surface_test!(
     direct_surface_matches_predicate,
-    { PyStabVec::new(2, None, None, Some(2048)) },
+    { PyStabVec::new(2, None, None) },
     ignored_forcing = (
-        |seed| PyStabVec::new(2, Some(seed), None, Some(2048)),
+        |seed| PyStabVec::new(2, Some(seed), None),
         |sim: &mut PyStabVec| sim.inner.state_vector()
     )
 );

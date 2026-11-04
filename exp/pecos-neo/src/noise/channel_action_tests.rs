@@ -1113,7 +1113,7 @@ fn probability_combinators_forward_operand_reads() {
 }
 
 #[test]
-fn sequences_and_choices_forward_each_childs_operand_reads() {
+fn sequences_and_choices_forward_operand_reads_from_each_child() {
     use crate::noise::composite::{BoxSample, Sample, Seq};
     for selected in [None, Some(0), Some(1)] {
         let children = [

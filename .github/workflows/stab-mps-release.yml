@@ -1,0 +1,183 @@
+name: StabMps Release
+
+on:
+  push:
+    tags: ["stab-mps-v*"]
+  pull_request:
+    paths:
+      - '.github/workflows/stab-mps-release.yml'
+      - 'scripts/ci/build_stab_mps_release.py'
+      - 'python/selene-plugins/pecos-selene-stab-mps/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_NET_RETRY: "10"
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version-file: .github/uv.toml
+          python-version: '3.12'
+          enable-cache: false
+      - name: Check package version and release tag
+        id: version
+        env:
+          RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+        run: |
+          uv run --frozen --no-project --with packaging==25.0 python - <<'PY'
+          import os
+          import tomllib
+          from pathlib import Path
+          from packaging.version import Version
+
+          project = Path('python/selene-plugins/pecos-selene-stab-mps/pyproject.toml')
+          version = tomllib.loads(project.read_text())['project']['version']
+          parsed = Version(version)
+          if str(parsed) != version:
+              raise SystemExit(f'Use the canonical PEP 440 version: {parsed}')
+          tag = os.environ['RELEASE_TAG']
+          if tag and tag != f'stab-mps-v{version}':
+              raise SystemExit(f'Tag {tag!r} must match package version {version!r}')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              print(f'version={version}', file=output)
+              print(f'prerelease={str(parsed.is_prerelease or parsed.is_devrelease).lower()}', file=output)
+          PY
+
+  build-wheels:
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            arch: x86_64
+            platform-tag: manylinux_2_28_x86_64
+          - os: macos-15
+            arch: arm64
+            platform-tag: macosx_13_0_arm64
+          - os: macos-15-intel
+            arch: x86_64
+            platform-tag: macosx_13_0_x86_64
+          - os: windows-2022
+            arch: AMD64
+            platform-tag: win_amd64
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: '3.12'
+      - name: Set up Rust on macOS and Windows
+        if: runner.os != 'Linux'
+        run: bash scripts/ci/ensure-rust.sh stable minimal
+      - name: Build, repair and smoke-test wheel
+        uses: pypa/cibuildwheel@298ed2fb2c105540f5ed055e8a6ad78d82dd3a7e # v3.3.1
+        with:
+          package-dir: python/selene-plugins/pecos-selene-stab-mps
+          output-dir: wheelhouse
+        env:
+          # The plugin uses a C ABI, so one py3-none wheel covers Python 3.12+.
+          CIBW_BUILD: 'cp312-*'
+          CIBW_SKIP: '*-musllinux*'
+          CIBW_ARCHS: ${{ matrix.arch }}
+          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
+          CIBW_ENVIRONMENT_LINUX: >-
+            PATH=$HOME/.cargo/bin:$PATH
+            CARGO_NET_GIT_FETCH_WITH_CLI=true
+            CARGO_NET_RETRY=10
+          CIBW_BEFORE_ALL_LINUX: bash {project}/scripts/ci/ensure-rust.sh stable minimal
+          CIBW_BEFORE_BUILD: python {project}/scripts/ci/build_stab_mps_release.py
+          CIBW_ENVIRONMENT_MACOS: MACOSX_DEPLOYMENT_TARGET=13.0
+          CIBW_TEST_COMMAND: python {project}/scripts/ci/smoke_selene_wheel.py pecos_selene_stab_mps
+      - name: Check wheel platform tag
+        run: >-
+          python scripts/ci/check_wheel_platform_tags.py
+          --expected-platform-tag '${{ matrix.platform-tag }}' wheelhouse/*.whl
+      - name: Check macOS deployment target
+        if: runner.os == 'macOS'
+        run: >-
+          python scripts/ci/check_macos_wheel_minos.py
+          --maximum-version 13.0 wheelhouse/*.whl
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: stab-mps-wheel-${{ matrix.os }}
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+
+  publish:
+    needs: [prepare, build-wheels]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/stab-mps-v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          pattern: stab-mps-wheel-*
+          merge-multiple: true
+          path: wheelhouse
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: '0.11.16'
+          python-version: '3.12'
+          enable-cache: false
+      - name: Check complete release wheel set
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          wheels = list(Path('wheelhouse').glob('*.whl'))
+          prefix = f"pecos_selene_stab_mps-{os.environ['RELEASE_VERSION']}-py3-none-"
+          if len(wheels) != 4 or any(not wheel.name.startswith(prefix) for wheel in wheels):
+              raise SystemExit(f'Expected four StabMps release wheels, found {wheels}')
+          PY
+          uvx --from twine==7.0.0 twine check wheelhouse/*.whl
+      - name: Upload wheels to SW Artifactory
+        run: uvx --from twine==7.0.0 twine upload --non-interactive wheelhouse/*.whl
+        env:
+          TWINE_REPOSITORY_URL: https://quantinuumsw.jfrog.io/artifactory/api/pypi/pypi_local/
+          TWINE_USERNAME: ${{ secrets.QTNM_ARTIF_SW_WRITE_USER }}
+          TWINE_PASSWORD: ${{ secrets.QTNM_ARTIF_SW_WRITE_TOKEN }}
+      - name: Create GitHub release with wheels
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+        run: |
+          args=()
+          if [ "$PRERELEASE" = true ]; then args+=(--prerelease); fi
+          gh release create "$RELEASE_TAG" wheelhouse/*.whl --verify-tag \
+            --title "StabMps $RELEASE_VERSION" \
+            --notes 'PECOS StabMps simulator plugin wheels for Selene. Also available from Quantinuum SW Artifactory.' \
+            "${args[@]}"

@@ -20,8 +20,11 @@ pub fn unknown_register(reg_type: &str, name: &str) -> PecosError {
 /// Create an error for an undeclared classical register.
 #[must_use]
 pub fn unknown_classical_register(name: &str) -> PecosError {
+    if name == "JOB_shotnum" {
+        return unsupported_shot_number();
+    }
     invalid_operation(format!(
-        "Unknown classical register: {name}. Declare '{name}' with creg before using it"
+        "Unknown classical register: {name}. Declare '{name}' with creg before its first use"
     ))
 }
 
@@ -70,4 +73,11 @@ pub fn wrong_qubit_count(gate: &str, expected: usize, actual: usize) -> PecosErr
 #[must_use]
 pub fn register_size_mismatch(operation: &str, details: &str) -> PecosError {
     invalid_operation(format!("Register size mismatch in {operation}: {details}"))
+}
+
+/// The Rust engine has no implicit shot-number register.
+pub(crate) fn unsupported_shot_number() -> PecosError {
+    invalid_operation(
+        "JOB_shotnum is not supported: the PECOS Rust QASM engine does not provide the shot-number built-in",
+    )
 }

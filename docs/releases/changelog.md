@@ -18,6 +18,29 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   drops its unused width argument, and `pecos_qasm::dag_bridge::QasmBridgeError`
   gains an `InvalidProgram` variant.
 
+- The PECOS QASM parser recognizes `pi` and statement keywords only at word
+  boundaries, so names such as `pivot`, `pi_2` and `reset2` remain identifiers.
+  Classical expressions support integer remainder (`%`) with the precedence
+  of multiplication and division, including PHIR-JSON export. Gate arguments
+  retain floating-point arithmetic for remainder, as they do for division.
+
+- **Breaking:** `pecos_qasm::ast::Operation::ClassicalAssignment` removes
+  `is_indexed`. Its `index: Option<usize>` is the sole assignment selector:
+  `None` writes the whole register and `Some(index)` writes that bit. Invalid
+  indexed assignments can no longer silently write bit 0 or skip the write.
+
+- The PECOS Rust QASM engine rejects an empty classical measurement target
+  as an unknown register instead of substituting `c`.
+
+- **Breaking:** classical registers must be declared with `creg` before their
+  first use, including conditions, assignments, function arguments and
+  measurement targets. Move a later declaration before the first reference.
+
+- Undeclared `JOB_shotnum` now reports that the PECOS Rust QASM engine does
+  not provide the shot-number built-in, instead of advising a `creg`
+  declaration. An explicitly declared `creg JOB_shotnum` remains an ordinary
+  writable register, initially zero.
+
 - **Breaking:** pecos-neo always suppresses gates on leaked operands in all three
   noise builders, including noiseless gates and models with no configured leak
   source (#1574, #1575). Noiseless operations suppress faults, including composite,

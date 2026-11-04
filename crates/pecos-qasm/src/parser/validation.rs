@@ -19,7 +19,7 @@ impl Program {
             definition.validate_parameter_references()?;
         }
         for operation in &self.operations {
-            self.validate_classical_operation(operation)?;
+            self.validate_classical_operation(operation, true)?;
         }
         Ok(())
     }
@@ -28,12 +28,14 @@ impl Program {
         &self,
         name: &str,
         index: Option<usize>,
+        check_bounds: bool,
     ) -> Result<(), PecosError> {
         let size = self
             .classical_registers
             .get(name)
             .ok_or_else(|| unknown_classical_register(name))?;
-        if let Some(index) = index
+        if check_bounds
+            && let Some(index) = index
             && index >= *size
         {
             return Err(classical_bit_out_of_bounds(name, index, *size));
@@ -41,18 +43,28 @@ impl Program {
         Ok(())
     }
 
-    fn validate_classical_expression(&self, expression: &Expression) -> Result<(), PecosError> {
+    fn validate_classical_expression(
+        &self,
+        expression: &Expression,
+        check_bounds: bool,
+    ) -> Result<(), PecosError> {
         match expression {
-            Expression::Variable(name) => self.validate_classical_reference(name, None),
-            Expression::BitId(name, index) => self.validate_classical_reference(name, Some(*index)),
-            Expression::BinaryOp { left, right, .. } => {
-                self.validate_classical_expression(left)?;
-                self.validate_classical_expression(right)
+            Expression::Variable(name) => {
+                self.validate_classical_reference(name, None, check_bounds)
             }
-            Expression::UnaryOp { expr, .. } => self.validate_classical_expression(expr),
+            Expression::BitId(name, index) => {
+                self.validate_classical_reference(name, Some(*index), check_bounds)
+            }
+            Expression::BinaryOp { left, right, .. } => {
+                self.validate_classical_expression(left, check_bounds)?;
+                self.validate_classical_expression(right, check_bounds)
+            }
+            Expression::UnaryOp { expr, .. } => {
+                self.validate_classical_expression(expr, check_bounds)
+            }
             Expression::FunctionCall { args, .. } => {
                 for argument in args {
-                    self.validate_classical_expression(argument)?;
+                    self.validate_classical_expression(argument, check_bounds)?;
                 }
                 Ok(())
             }
@@ -60,7 +72,11 @@ impl Program {
         }
     }
 
-    fn validate_classical_operation(&self, operation: &Operation) -> Result<(), PecosError> {
+    pub(super) fn validate_classical_operation(
+        &self,
+        operation: &Operation,
+        check_bounds: bool,
+    ) -> Result<(), PecosError> {
         match operation {
             Operation::ClassicalAssignment {
                 target,
@@ -68,22 +84,24 @@ impl Program {
                 expression,
                 ..
             } => {
-                self.validate_classical_reference(target, *index)?;
-                self.validate_classical_expression(expression)
+                self.validate_classical_reference(target, *index, check_bounds)?;
+                self.validate_classical_expression(expression, check_bounds)
             }
             Operation::MeasureWithMapping { c_reg, c_index, .. } => {
-                self.validate_classical_reference(c_reg, Some(*c_index))
+                self.validate_classical_reference(c_reg, Some(*c_index), check_bounds)
             }
-            Operation::RegMeasure { c_reg, .. } => self.validate_classical_reference(c_reg, None),
+            Operation::RegMeasure { c_reg, .. } => {
+                self.validate_classical_reference(c_reg, None, check_bounds)
+            }
             Operation::If {
                 condition,
                 operation,
             } => {
-                self.validate_classical_expression(condition)?;
-                self.validate_classical_operation(operation)
+                self.validate_classical_expression(condition, check_bounds)?;
+                self.validate_classical_operation(operation, check_bounds)
             }
             Operation::VoidFunctionCall { expression } => {
-                self.validate_classical_expression(expression)
+                self.validate_classical_expression(expression, check_bounds)
             }
             // Opaque parameters and quantum arguments are declarations, not values.
             Operation::OpaqueGate { .. }

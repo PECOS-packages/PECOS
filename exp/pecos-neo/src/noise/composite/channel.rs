@@ -143,9 +143,9 @@ impl OperandSelection<'_> {
         }
     }
 
-    /// Install the complete group before a stage and freeze that stage's leader.
+    /// Freeze the stage's leader within the already installed group.
     fn begin_stage(self, ctx: &mut NoiseContext) {
-        ctx.set_current_qubit_index(0, self.qubits);
+        ctx.set_current_member_index(0);
         ctx.set_current_gate_suppressed(self.suppressed);
         ctx.set_group_leader(
             self.qubits
@@ -181,6 +181,7 @@ fn apply_two_pass(
             qubits: group,
             suppressed: operands.suppressed,
         };
+        ctx.set_current_qubit_index(0, group);
         // Stage 2 is arbitrary work and runs even when stage 1 selected no members.
         for stage in [1, 2] {
             selection.begin_stage(ctx);
@@ -360,7 +361,8 @@ impl<P: Primitive> CompositeChannel<P> {
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> NoiseResponse {
-        if self.primitive.reads_operands() {
+        let two_pass = self.primitive.needs_two_pass();
+        if !two_pass && self.primitive.reads_operands() {
             operands.begin_non_gate_scan(ctx);
         }
         let qubits = operands.qubits;
@@ -370,7 +372,7 @@ impl<P: Primitive> CompositeChannel<P> {
             .expect("sampler must be set for geometric");
         let indices = sampler.sample_range(0, qubits.len(), rng);
 
-        if self.primitive.needs_two_pass() {
+        if two_pass {
             let outcomes = match event {
                 NoiseEvent::AfterMeasurement { outcomes, .. } => Some(*outcomes),
                 _ => None,
@@ -938,14 +940,15 @@ impl<P: Primitive> BatchCompositeChannel<P> {
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> NoiseResponse {
-        if self.primitive.reads_operands() {
+        let two_pass = self.primitive.needs_two_pass();
+        if !two_pass && self.primitive.reads_operands() {
             operands.begin_non_gate_scan(ctx);
         }
         let qubits = operands.qubits;
         // Sample indices using geometric distribution (O(n*p))
         let indices = self.sampler.sample_range(0, qubits.len(), rng);
 
-        if self.primitive.needs_two_pass() {
+        if two_pass {
             return apply_two_pass(
                 &self.primitive,
                 operands,

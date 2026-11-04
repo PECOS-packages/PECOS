@@ -184,10 +184,13 @@ preserve the per-qubit marginal rate.
 `channel_action` runs its wrapped channel once per operand group per stage. The
 leader is the first eligible member at the start of each stage (the first leaked
 member of a suppressed group, otherwise member 0), and remains fixed within that
-stage. Probability and condition guards decide on the leader's invocation. A
-wrapped skip stops the sequence on every later member it names, without emitting
-duplicate skip marks; unnamed members continue. Leak and unleak marks retain all
-named targets.
+stage. Probability and condition guards decide on the leader's invocation. Each
+sequence records wrapped-channel skip targets at the step that returned them.
+After evaluating that step, the sequence stops only for a named member, even if
+a guard on that member bypasses the adapter or an inner sequence. Unnamed members,
+including the leader, continue. Earlier steps and the evaluated step retain their
+effects; later steps do not run on skipped members. Skip targets reach the runner
+only once. Leak and unleak marks retain all named targets.
 
 On geometric single-pass non-gate events, `Primitive::reads_operands` opts into
 installing all operands before sampling, independently of whether member 0 is
@@ -197,7 +200,8 @@ forward it from their children. Custom readers using `current_gate_qubits()`,
 operands on that path. Function conditions opt in with
 `FnCondition::with_operand_reads()`. `channel_action` declares operand reads;
 `pauli()` does not and keeps O(n*p) processing. Linear and two-pass paths always
-install operands. Every path sets the current member index.
+install operands once per group, sharing the same list between stages. Every path
+sets the current member index.
 
 `SingleQubitChannel` and `TwoQubitChannel` discard a seeping qubit's state by
 sampling I, X, Y or Z uniformly and independently for each seeping qubit. Identity

@@ -2616,11 +2616,7 @@ pub mod actions {
                 .group_leader()
                 .is_some_and(|leader| ctx.current_qubit_index() != leader)
             {
-                return if ctx.channel_skipped(std::ptr::from_ref(self).addr(), qubit) {
-                    CompositeResponse::SkipGateAlreadyReported
-                } else {
-                    CompositeResponse::None
-                };
+                return CompositeResponse::None;
             }
 
             // Get current gate info from context
@@ -2662,14 +2658,6 @@ pub mod actions {
 
             // Apply the wrapped channel
             let response = self.channel.apply(&event, ctx, rng);
-            if ctx.group_leader().is_some() {
-                // Adapter addresses identify invocation sites only during this group/stage.
-                // They are never dereferenced and nested events save/restore the records.
-                ctx.record_channel_skips(
-                    std::ptr::from_ref(self).addr(),
-                    response.skipped_qubits(),
-                );
-            }
 
             if response.is_none() {
                 CompositeResponse::None
@@ -2694,10 +2682,13 @@ pub mod actions {
     /// probability; sampling another member does not run the channel. Any guard
     /// around the adapter (`seq!`, `when`, `if_then`, partner or fired conditions,
     /// including in two-stage primitives) is decided on the leader's invocation.
-    /// A guard true only on another member runs nothing for the group. If the
-    /// wrapped channel names a later member in a skip response, that member's
-    /// invocation of this adapter also stops its sequence. Unnamed members continue.
-    /// The skip targets are emitted only once, in the leader's response.
+    /// A guard true only on another member runs nothing for the group. Each
+    /// enclosing sequence remembers wrapped-channel skip targets at the step that
+    /// returned them. After evaluating that step on later members, it stops for
+    /// named qubits even if a guard bypasses the adapter or an inner sequence.
+    /// Unnamed members, including the leader, continue. Earlier steps and the
+    /// evaluated step retain their effects. Skip targets are emitted only once,
+    /// in the leader's response.
     ///
     /// Gate events use one gate group; non-gate events use all operands. With no
     /// enclosing group installed, the adapter runs on every invocation.

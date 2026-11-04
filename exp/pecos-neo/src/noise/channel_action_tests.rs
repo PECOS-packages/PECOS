@@ -194,7 +194,7 @@ fn adapter_suppressed_group_runs_on_first_leaked_member() {
 }
 
 #[test]
-fn adapter_leader_stays_fixed_after_unleak() {
+fn adapter_single_pass_leader_stays_fixed_after_unleak() {
     let probe = Probe::default();
     let channel = CompositeChannel::new("unleak", seq![channel_action(probe.clone()), unleak()]);
     let mut ctx = NoiseContext::new();
@@ -662,7 +662,7 @@ fn gates(response: &NoiseResponse) -> Vec<GateCommand> {
 
 #[test]
 fn adapter_skips_stop_exactly_the_named_members_without_duplicate_marks() {
-    for skipped in [&PAIR[..], &PAIR[..1]] {
+    for skipped in [&PAIR[..], &PAIR[..1], &PAIR[1..]] {
         for suppressed in [false, true] {
             let probe = Probe {
                 response: NoiseResponse::SkipGate(skipped.iter().copied().collect()),
@@ -686,44 +686,333 @@ fn adapter_skips_stop_exactly_the_named_members_without_duplicate_marks() {
                 );
                 assert_eq!(probe.views.lock().unwrap().len(), 1);
                 assert_eq!(skip_targets(&response), skipped);
-                let expected = if skipped.len() == 1 {
-                    vec![GateCommand::x(PAIR[1])]
-                } else {
-                    vec![]
-                };
+                let expected: Vec<_> = PAIR
+                    .into_iter()
+                    .filter(|q| !skipped.contains(q))
+                    .map(GateCommand::x)
+                    .collect();
                 assert_eq!(gates(&response), expected);
             }
         }
     }
 }
 
+fn sequence(primitives: Vec<Box<dyn Primitive>>, boxed: bool) -> Box<dyn Primitive> {
+    use crate::noise::composite::{BoxSeq, Seq};
+    if boxed {
+        Box::new(BoxSeq::new(primitives))
+    } else {
+        Box::new(Seq::new(primitives))
+    }
+}
+
+fn skipping_probe() -> Probe {
+    Probe {
+        response: NoiseResponse::SkipGate(PAIR.into_iter().collect()),
+        ..Probe::default()
+    }
+}
+
+fn assert_guarded_sequence_stops(primitive: Box<dyn Primitive>, probe: &Probe, seed: u64) {
+    let response = CompositeChannel::new("guarded skip", seq![primitive]).apply(
+        &event(&PAIR, false),
+        &mut NoiseContext::new(),
+        &mut PecosRng::seed_from_u64(seed),
+    );
+    assert_eq!(probe.views.lock().unwrap().len(), 1);
+    assert_eq!(skip_targets(&response), PAIR);
+    assert_eq!(gates(&response), vec![]);
+}
+
+fn leader_hit_partner_miss_seed() -> u64 {
+    use rand::RngExt;
+    let seed = 1;
+    let mut rng = PecosRng::seed_from_u64(seed);
+    // Probe and gate injection consume no RNG draws, so these are the two guard draws.
+    assert!(rng.random::<f64>() < 0.5, "leader must hit the guard");
+    assert!(rng.random::<f64>() >= 0.5, "non-leader must miss the guard");
+    seed
+}
+
+struct GuardEntry<P> {
+    inner: P,
+    members: Members,
+}
+impl<P: Primitive> Primitive for GuardEntry<P> {
+    fn reads_operands(&self) -> bool {
+        self.inner.reads_operands()
+    }
+    fn apply(
+        &self,
+        qubit: QubitId,
+        ctx: &mut NoiseContext,
+        rng: &mut PecosRng,
+    ) -> CompositeResponse {
+        self.members.apply(qubit, ctx, rng);
+        self.inner.apply(qubit, ctx, rng)
+    }
+    fn describe(&self) -> String {
+        "guard entry".into()
+    }
+    fn clone_box(&self) -> Box<dyn Primitive> {
+        Box::new(GuardEntry {
+            inner: self.inner.clone_box(),
+            members: self.members.clone(),
+        })
+    }
+}
+
 #[test]
-fn adapter_skip_records_are_scoped_to_site_group_stage_and_event() {
+fn sequence_remembers_skip_when_probability_guard_misses_partner() {
+    let seed = leader_hit_partner_miss_seed();
+    for boxed in [false, true] {
+        let probe = skipping_probe();
+        let entered = Members::default();
+        let primitive = sequence(
+            vec![
+                Box::new(
+                    prob(
+                        0.5,
+                        GuardEntry {
+                            inner: channel_action(probe.clone()),
+                            members: entered.clone(),
+                        },
+                    )
+                    .unwrap(),
+                ),
+                Box::new(inject_x()),
+            ],
+            boxed,
+        );
+        assert_guarded_sequence_stops(primitive, &probe, seed);
+        assert_eq!(
+            *entered.0.lock().unwrap(),
+            vec![0],
+            "non-leader must miss the guard"
+        );
+    }
+}
+
+#[test]
+fn sequence_remembers_skip_when_condition_excludes_partner() {
+    use crate::noise::composite::FnCondition;
+    for boxed in [false, true] {
+        let probe = skipping_probe();
+        let evaluated = Arc::new(Mutex::new(vec![]));
+        let captured = Arc::clone(&evaluated);
+        let condition = FnCondition::new("leader only", move |q, _: &NoiseContext| {
+            let hit = q == PAIR[0];
+            captured.lock().unwrap().push((q, hit));
+            hit
+        });
+        let primitive = sequence(
+            vec![
+                Box::new(when(condition, channel_action(probe.clone()), nothing())),
+                Box::new(inject_x()),
+            ],
+            boxed,
+        );
+        assert_guarded_sequence_stops(primitive, &probe, 42);
+        assert_eq!(
+            *evaluated.lock().unwrap(),
+            vec![(PAIR[0], true), (PAIR[1], false)]
+        );
+    }
+}
+
+#[test]
+fn outer_sequence_remembers_skip_when_guard_bypasses_inner_sequence() {
+    let seed = leader_hit_partner_miss_seed();
+    for outer_boxed in [false, true] {
+        for inner_boxed in [false, true] {
+            let probe = skipping_probe();
+            let entered = Members::default();
+            let inner = sequence(
+                vec![
+                    Box::new(channel_action(probe.clone())),
+                    Box::new(inject_x()),
+                ],
+                inner_boxed,
+            );
+            let outer = sequence(
+                vec![
+                    Box::new(
+                        prob(
+                            0.5,
+                            GuardEntry {
+                                inner,
+                                members: entered.clone(),
+                            },
+                        )
+                        .unwrap(),
+                    ),
+                    Box::new(inject_z()),
+                ],
+                outer_boxed,
+            );
+            assert_guarded_sequence_stops(outer, &probe, seed);
+            assert_eq!(
+                *entered.0.lock().unwrap(),
+                vec![0],
+                "non-leader must bypass the inner sequence"
+            );
+        }
+    }
+}
+
+#[test]
+fn sequence_remembers_skip_through_function_and_choice_guards() {
+    use crate::noise::composite::BoxSample;
+    let seed = leader_hit_partner_miss_seed();
+    for boxed in [false, true] {
+        let probe = skipping_probe();
+        let guards: Vec<Box<dyn Primitive>> = vec![
+            Box::new(prob_fn(
+                |_| Probability::new(0.5).unwrap(),
+                channel_action(probe.clone()),
+            )),
+            Box::new(
+                BoxSample::new(vec![
+                    (0.5, Box::new(channel_action(probe.clone()))),
+                    (0.5, Box::new(nothing())),
+                ])
+                .unwrap(),
+            ),
+        ];
+        for guard in guards {
+            probe.views.lock().unwrap().clear();
+            assert_guarded_sequence_stops(
+                sequence(vec![guard, Box::new(inject_x())], boxed),
+                &probe,
+                seed,
+            );
+        }
+    }
+}
+
+#[test]
+fn sequence_stops_at_the_recorded_step_and_keeps_earlier_effects() {
+    let seed = leader_hit_partner_miss_seed();
+    for boxed in [false, true] {
+        let probe = skipping_probe();
+        let primitive = sequence(
+            vec![
+                Box::new(inject_z()),
+                Box::new(prob(0.5, channel_action(probe.clone())).unwrap()),
+                Box::new(inject_x()),
+            ],
+            boxed,
+        );
+        let response = CompositeChannel::new("step index", seq![primitive]).apply(
+            &event(&PAIR, false),
+            &mut NoiseContext::new(),
+            &mut PecosRng::seed_from_u64(seed),
+        );
+        assert_eq!(skip_targets(&response), PAIR);
+        assert_eq!(
+            gates(&response),
+            vec![GateCommand::z(PAIR[0]), GateCommand::z(PAIR[1])]
+        );
+        assert_eq!(probe.views.lock().unwrap().len(), 1);
+    }
+}
+
+#[derive(Clone, Default)]
+struct OperandBufferProbe(Arc<Mutex<Vec<usize>>>);
+impl Primitive for OperandBufferProbe {
+    fn reads_operands(&self) -> bool {
+        true
+    }
+    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, _: &mut PecosRng) -> CompositeResponse {
+        assert_eq!(
+            ctx.current_gate_qubits(),
+            &[QubitId(0), QubitId(1), QubitId(2)]
+        );
+        assert_eq!(ctx.current_qubit_index(), qubit.0);
+        self.0
+            .lock()
+            .unwrap()
+            .push(ctx.current_gate_qubits().as_ptr().addr());
+        CompositeResponse::None
+    }
+    fn describe(&self) -> String {
+        "operand buffer".into()
+    }
+    fn clone_box(&self) -> Box<dyn Primitive> {
+        Box::new(self.clone())
+    }
+}
+
+#[test]
+fn two_pass_non_gate_reader_reuses_one_operand_buffer() {
+    let qubits = [QubitId(0), QubitId(1), QubitId(2)];
+    for geometric in [false, true] {
+        let probe = OperandBufferProbe::default();
+        let primitive = two_stage(probe.clone(), probe.clone());
+        let threshold = if geometric { 2.0 } else { 0.0 };
+        let channels: Vec<Box<dyn NoiseChannel>> = vec![
+            Box::new(
+                CompositeChannel::new("two pass", primitive.clone())
+                    .with_probability(0.999_999)
+                    .unwrap()
+                    .with_geometric_threshold(threshold)
+                    .with_min_qubits(0),
+            ),
+            Box::new(
+                BatchCompositeChannel::new("two pass", 0.999_999, primitive)
+                    .unwrap()
+                    .with_geometric_threshold(threshold)
+                    .with_min_qubits(0),
+            ),
+        ];
+        for channel in channels {
+            probe.0.lock().unwrap().clear();
+            channel.apply(
+                &NoiseEvent::AfterPreparation {
+                    gate_type: GateType::PZ,
+                    qubits: &qubits,
+                },
+                &mut NoiseContext::new(),
+                &mut PecosRng::seed_from_u64(42),
+            );
+            let buffers = probe.0.lock().unwrap();
+            assert_eq!(buffers.len(), 6);
+            assert!(
+                buffers.iter().all(|address| *address == buffers[0]),
+                "each stage must reuse the group's operand buffer"
+            );
+        }
+    }
+}
+
+#[test]
+fn sequence_skip_records_are_scoped_to_site_step_group_stage_and_event() {
     let mut ctx = NoiseContext::new();
     ctx.set_current_qubit_index(0, &PAIR);
     ctx.set_group_leader(Some(0));
-    ctx.record_channel_skips(7, PAIR.into_iter().collect());
-    assert!(ctx.channel_skipped(7, PAIR[1]));
-    assert!(!ctx.channel_skipped(8, PAIR[1]));
+    ctx.record_sequence_skips(7, 0, PAIR.into_iter().collect());
+    assert!(ctx.sequence_skipped(7, 0, PAIR[1]));
+    assert!(!ctx.sequence_skipped(8, 0, PAIR[1]));
+    assert!(!ctx.sequence_skipped(7, 1, PAIR[1]));
     let saved = ctx.enter_event();
-    assert!(!ctx.channel_skipped(7, PAIR[1]));
-    ctx.record_channel_skips(8, PAIR.into_iter().collect());
+    assert!(!ctx.sequence_skipped(7, 0, PAIR[1]));
+    ctx.record_sequence_skips(8, 0, PAIR.into_iter().collect());
     ctx.exit_event(saved);
-    assert!(ctx.channel_skipped(7, PAIR[1]));
-    assert!(!ctx.channel_skipped(8, PAIR[1]));
+    assert!(ctx.sequence_skipped(7, 0, PAIR[1]));
+    assert!(!ctx.sequence_skipped(8, 0, PAIR[1]));
     ctx.set_current_qubit_index(0, &[QubitId(2), QubitId(3)]);
-    assert!(!ctx.channel_skipped(7, PAIR[1]));
-    ctx.record_channel_skips(7, PAIR.into_iter().collect());
+    assert!(!ctx.sequence_skipped(7, 0, PAIR[1]));
+    ctx.record_sequence_skips(7, 0, PAIR.into_iter().collect());
     ctx.set_group_leader(Some(1));
-    assert!(!ctx.channel_skipped(7, PAIR[1]));
+    assert!(!ctx.sequence_skipped(7, 0, PAIR[1]));
     for clear in [
         NoiseContext::clear_correlation,
         NoiseContext::clear_current_gate,
         NoiseContext::reset,
     ] {
-        ctx.record_channel_skips(7, PAIR.into_iter().collect());
+        ctx.record_sequence_skips(7, 0, PAIR.into_iter().collect());
         clear(&mut ctx);
-        assert!(!ctx.channel_skipped(7, PAIR[1]));
+        assert!(!ctx.sequence_skipped(7, 0, PAIR[1]));
     }
 }
 

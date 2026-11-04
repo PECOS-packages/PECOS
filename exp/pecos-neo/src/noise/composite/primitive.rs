@@ -1067,6 +1067,12 @@ impl<P: Primitive> Primitive for Sample<P> {
 }
 
 /// Sequential: execute all primitives in order, combine responses.
+///
+/// Stop after a step only if it skips the current member. Wrapped-channel skips
+/// are remembered per step for the operand group, so later named members stop
+/// after that step even when a guard bypasses the channel or an inner sequence.
+/// The evaluated step and earlier steps retain their effects; skip targets are
+/// not emitted again when a remembered skip stops a later member.
 pub struct Seq<P: Primitive> {
     primitives: Vec<P>,
 }
@@ -1098,20 +1104,13 @@ impl<P: Primitive> Primitive for Seq<P> {
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> CompositeResponse {
-        let mut combined = CompositeResponse::None;
-
-        for prim in &self.primitives {
-            let response = prim.apply(qubit, ctx, rng);
-
-            // If we hit a SkipGate, stop processing and return it
-            if response.skips_gate() {
-                return combined.combine(response);
-            }
-
-            combined = combined.combine(response);
-        }
-
-        combined
+        apply_sequence(
+            &self.primitives,
+            std::ptr::from_ref(self).addr(),
+            qubit,
+            ctx,
+            rng,
+        )
     }
 
     fn describe(&self) -> String {
@@ -1151,7 +1150,36 @@ impl<P: Primitive> Primitive for Seq<P> {
     }
 }
 
+/// Evaluate a sequence step before enforcing its group-scoped skip record.
+/// Site addresses identify borrowed sequences only for the current group/stage.
+fn apply_sequence(
+    primitives: &[impl Primitive],
+    site: usize,
+    qubit: QubitId,
+    ctx: &mut NoiseContext,
+    rng: &mut PecosRng,
+) -> CompositeResponse {
+    let mut combined = CompositeResponse::None;
+    for (step, primitive) in primitives.iter().enumerate() {
+        let mut response = primitive.apply(qubit, ctx, rng);
+        if ctx.group_leader().is_some() {
+            ctx.record_sequence_skips(site, step, response.channel_skipped_qubits());
+        }
+        if !response.skips_qubit(qubit) && ctx.sequence_skipped(site, step, qubit) {
+            response = response.combine(CompositeResponse::SkipGateAlreadyReported);
+        }
+        let stops = response.skips_qubit(qubit);
+        combined = combined.combine(response);
+        if stops {
+            return combined;
+        }
+    }
+    combined
+}
+
 /// Sequential execution of heterogeneous primitives using trait objects.
+///
+/// Uses the same member-specific skip and group-record rules as [`Seq`].
 ///
 /// Unlike `Seq<P>` which requires all primitives to be the same type,
 /// `BoxSeq` allows different primitive types by boxing them.
@@ -1186,20 +1214,13 @@ impl Primitive for BoxSeq {
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> CompositeResponse {
-        let mut combined = CompositeResponse::None;
-
-        for prim in &self.primitives {
-            let response = prim.apply(qubit, ctx, rng);
-
-            // If we hit a SkipGate, stop processing and return it
-            if response.skips_gate() {
-                return combined.combine(response);
-            }
-
-            combined = combined.combine(response);
-        }
-
-        combined
+        apply_sequence(
+            &self.primitives,
+            std::ptr::from_ref(self).addr(),
+            qubit,
+            ctx,
+            rng,
+        )
     }
 
     fn describe(&self) -> String {

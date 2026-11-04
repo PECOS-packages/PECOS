@@ -14,6 +14,8 @@
 
 use crate::command::GateCommand;
 use crate::noise::NoiseResponse;
+use pecos_core::QubitId;
+use smallvec::SmallVec;
 
 /// Result of applying a noise primitive.
 ///
@@ -68,7 +70,7 @@ impl CompositeResponse {
         matches!(self, Self::None)
     }
 
-    /// Check if this response skips the gate.
+    /// Check if this response skips any qubit, independent of the current member.
     #[must_use]
     pub fn skips_gate(&self) -> bool {
         match self {
@@ -79,6 +81,35 @@ impl CompositeResponse {
             ),
             Self::Multiple(responses) => responses.iter().any(Self::skips_gate),
             _ => false,
+        }
+    }
+
+    /// Check if this response skips the current member identified by `qubit`.
+    ///
+    /// Ordinary skip responses refer to the current member. Wrapped channel
+    /// responses skip only their explicitly named targets.
+    #[must_use]
+    pub fn skips_qubit(&self, qubit: QubitId) -> bool {
+        match self {
+            Self::SkipGate | Self::SkipGateAlreadyReported => true,
+            Self::Channel(response) => channel_any(
+                response,
+                |r| matches!(r, NoiseResponse::SkipGate(qubits) if qubits.contains(&qubit)),
+            ),
+            Self::Multiple(responses) => responses.iter().any(|r| r.skips_qubit(qubit)),
+            _ => false,
+        }
+    }
+
+    /// Targets reported by wrapped channels, including through enclosing sequences.
+    pub(crate) fn channel_skipped_qubits(&self) -> SmallVec<[QubitId; 4]> {
+        match self {
+            Self::Channel(response) => response.skipped_qubits(),
+            Self::Multiple(responses) => responses
+                .iter()
+                .flat_map(Self::channel_skipped_qubits)
+                .collect(),
+            _ => SmallVec::new(),
         }
     }
 
@@ -190,7 +221,10 @@ impl CompositeResponse {
 }
 
 /// Query all leaves without allocating or discarding their qubit targets.
-fn channel_any(response: &NoiseResponse, predicate: fn(&NoiseResponse) -> bool) -> bool {
+fn channel_any(
+    response: &NoiseResponse,
+    predicate: impl Fn(&NoiseResponse) -> bool + Copy,
+) -> bool {
     match response {
         NoiseResponse::Multiple(responses) => responses.iter().any(|r| channel_any(r, predicate)),
         response => predicate(response),
@@ -219,6 +253,33 @@ fn channel_gates(response: &NoiseResponse) -> Vec<GateCommand> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn skip_queries_distinguish_the_current_member_from_other_targets() {
+        use smallvec::smallvec;
+        let response = CompositeResponse::Multiple(vec![
+            CompositeResponse::None,
+            CompositeResponse::Channel(Box::new(NoiseResponse::Multiple(vec![
+                NoiseResponse::MarkLeaked(smallvec![QubitId(0)]),
+                NoiseResponse::Multiple(vec![NoiseResponse::SkipGate(smallvec![QubitId(1)])]),
+            ]))),
+        ]);
+        assert!(response.skips_gate());
+        assert!(!response.skips_qubit(QubitId(0)));
+        assert!(response.skips_qubit(QubitId(1)));
+        assert_eq!(response.channel_skipped_qubits().as_slice(), &[QubitId(1)]);
+        for response in [
+            CompositeResponse::SkipGate,
+            CompositeResponse::SkipGateAlreadyReported,
+        ] {
+            assert!(response.skips_qubit(QubitId(0)));
+            assert!(response.skips_qubit(QubitId(1)));
+            assert!(response.channel_skipped_qubits().is_empty());
+        }
+        let empty = CompositeResponse::Channel(Box::new(NoiseResponse::SkipGate(smallvec![])));
+        assert!(!empty.skips_qubit(QubitId(0)));
+        assert!(!CompositeResponse::None.skips_qubit(QubitId(0)));
+    }
 
     #[test]
     fn channel_helpers_answer_for_every_named_qubit() {

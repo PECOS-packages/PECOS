@@ -14,15 +14,22 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   includes wrapped single-qubit channels on multi-operand preparation, measurement
   and idle events (one group of all operands), and nested composites.
   Guards around an adapter are decided on the leader's invocation. A wrapped
-  skip also stops sequences on later named members, without emitting duplicate
-  skip targets; unnamed members continue. `CompositeResponse::Channel(Box<NoiseResponse>)`
+  skip is recorded by every enclosing sequence at the step that returned it.
+  After evaluating that step, the sequence stops only for named members, even if
+  their guard bypasses the adapter or an inner sequence; unnamed members, including
+  the leader, continue. Earlier steps and the evaluated step retain their effects.
+  Skip propagation emits no duplicate targets. `CompositeResponse::Channel(Box<NoiseResponse>)`
   retains all response targets, `SkipGateAlreadyReported` propagates sequence
   stopping without another runner effect, and `CompositeResponse::causes_unleak`
-  queries unleak effects. The new `Primitive::reads_operands`, `GateAction::reads_operands`
-  and `Condition::reads_operands` capabilities opt into full operand installation
+  queries unleak effects. `CompositeResponse::skips_qubit` checks a skip against
+  the current member; `skips_gate` remains a qubit-independent query.
+  The new `Primitive::reads_operands`, `GateAction::reads_operands` and
+  `Condition::reads_operands` capabilities opt into full operand installation
   before geometric single-pass non-gate sampling; undeclared readers see no
-  operands. Linear and two-pass paths always install operands, and all paths set
-  member indices. Function conditions can opt in with `FnCondition::with_operand_reads`.
+  operands. Linear and two-pass paths always install operands, once per group,
+  and all paths set member indices. Function conditions can opt in with
+  `FnCondition::with_operand_reads`; `FnCondition` now implements `Clone` when its
+  callback does, allowing it to be used in `when` and `skip_if`.
   Nested `CompositeCrosstalkChannel` isolates event state so adapters act on each
   crosstalk target. Consequently its primitives no longer see the enclosing
   `current_gate()` or `is_current_gate_suppressed()`.

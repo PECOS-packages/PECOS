@@ -208,7 +208,7 @@ pecos-decoder-core = { version = "0.2.0-dev.0", path = "crates/pecos-decoder-cor
 pecos-decoders = { version = "0.2.0-dev.0", path = "crates/pecos-decoders" }
 pecos-engines = { version = "0.2.0-dev.0", path = "crates/pecos-engines" }
 pecos-eeg = { version = "0.2.0-dev.0", path = "exp/pecos-eeg" }
-pecos-stab-tn = { version = "0.2.0-dev.0", path = "exp/pecos-stab-tn" }
+pecos-stab-tn = { version = "0.2.0-dev.0", path = "crates/pecos-stab-tn" }
 pecos-experimental = { version = "0.2.0-dev.0", path = "exp/pecos-experimental" }
 pecos-foreign = { version = "0.2.0-dev.0", path = "crates/pecos-foreign" }
 pecos-frontier = { version = "0.2.0-dev.0", path = "exp/pecos-frontier" }

@@ -205,6 +205,9 @@ fn crossover_case(t_count: usize) -> CaseResult {
         dense.h(&qid(qubit));
     }
 
+    // Materialize the Clifford-only input while it still has one stored term.
+    compare_to_oracle(&mut stab, &mut dense, &format!("{name}/input"));
+
     // Materializing after each T prevents same-qubit rotations from fusing.
     // RZ decomposition itself changes gamma only, so the terms remain on the
     // shared-structure dispatch path while their count crosses 2^n.
@@ -212,26 +215,35 @@ fn crossover_case(t_count: usize) -> CaseResult {
         let target = step % 9;
         stab.t(&qid(target));
         dense.t(&qid(target));
+        stab.flush_all_pending_rz();
         let checkpoint = format!("{name}/after_t_{}", step + 1);
         compare_to_oracle(&mut stab, &mut dense, &checkpoint);
     }
 
     let expected_terms = 1usize << t_count;
-    assert_eq!(
-        stab.num_terms(),
-        expected_terms,
-        "{name}: wrong crossover term count"
-    );
-    assert!(
-        stab.has_shared_projection_structure(),
-        "{name}: expected the shared-structure dispatch precondition"
-    );
+    if t_count == 12 {
+        assert!(
+            stab.is_dense(),
+            "{name}: RZ growth must cross over before measurement"
+        );
+        assert_eq!(stab.num_terms(), 0);
+    } else {
+        assert_eq!(
+            stab.num_terms(),
+            expected_terms,
+            "{name}: wrong crossover term count"
+        );
+        assert!(
+            stab.has_shared_projection_structure(),
+            "{name}: expected the shared-structure dispatch precondition"
+        );
+    }
 
     let mut measurements = Vec::new();
     let amplitudes = if t_count == 12 {
-        // 4096 > the default mc_threshold (2048). Qubit 9 is an unrotated
-        // |+> factor, so this is nondeterministic and cannot take the earlier
-        // deterministic shortcut. The selected result consumes the fixed RNG.
+        // Qubit 9 is an unrotated |+> factor. This exercises a nondeterministic
+        // dense readout after the growth crossover (the historical case name is retained
+        // for the golden corpus).
         let mut expected = dense.state();
         measurements.push(measure(
             &mut stab,
@@ -265,9 +277,11 @@ fn shared_structure_measurements() -> CaseResult {
         stab.h(&qid(qubit));
         dense.h(&qid(qubit));
     }
+    compare_to_oracle(&mut stab, &mut dense, &format!("{NAME}/input"));
     for qubit in 0..4 {
         stab.t(&qid(qubit));
         dense.t(&qid(qubit));
+        stab.flush_all_pending_rz();
         compare_to_oracle(
             &mut stab,
             &mut dense,
@@ -728,7 +742,7 @@ fn validate_mixed_corpus_before_pinning() {
 }
 
 #[test]
-#[ignore = "4096-term crossover and Monte-Carlo measurement are intentionally slow"]
+#[ignore = "4096-term corpus is reserved for the explicit slow lane"]
 fn slow_corpus_matches_oracle_and_reference_bits() {
     assert_matches_reference(&[crossover_case(12)]);
 }

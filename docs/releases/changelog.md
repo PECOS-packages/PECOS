@@ -6,6 +6,16 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Breaking:** seeded StabVec results change for circuits with non-Clifford
+  rotations; `is_deterministic` may report false for a multi-term measurement
+  made deterministic only by interference. `set_rng` changes future draws only:
+  it preserves the sampled bitstring, so reseeding clones does not decorrelate
+  an already sampled branch.
+- **Breaking:** removed StabVec's `mc_threshold` builder option in Rust and
+  constructor parameter in Python.
+- StabVec now uses exact gate-by-gate sampling for faster multi-term measurement,
+  eliminating pairwise Gram overlaps and Monte Carlo measurement approximation.
+
 - **Breaking:** pecos-neo always suppresses gates on leaked operands in all three
   noise builders, including noiseless gates and models with no configured leak
   source (#1574, #1575). Noiseless operations suppress faults, including composite,

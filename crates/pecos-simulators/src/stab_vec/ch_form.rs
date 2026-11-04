@@ -37,7 +37,7 @@ use crate::{CliffordGateable, MeasurementResult, QuantumSimulator};
 use core::fmt::Debug;
 use pecos_core::{BitSet, IndexSet, QubitId, RngManageable};
 use pecos_random::rng_ext::RngProbabilityExt;
-use pecos_random::{PecosRng, Rng, SeedableRng};
+use pecos_random::{PecosRng, Rng, RngExt, SeedableRng};
 
 /// Evaluate the Hadamard normalization with a fixed multiplication order.
 ///
@@ -209,6 +209,7 @@ impl InnerProductScratch {
 /// Precomputed constraint solution for shared-structure inner products.
 /// When all terms share v, F, s, the GF(2) constraint system is identical
 /// for all pairs. Solve once, reuse for all T^2/2 inner products.
+#[cfg(test)]
 pub(crate) struct SharedConstraints {
     pub norm: f64,
     pub all_free: bool,
@@ -220,6 +221,7 @@ pub(crate) struct SharedConstraints {
     pub consistent: bool,
 }
 
+#[cfg(test)]
 impl SharedConstraints {
     #[inline]
     pub fn is_determined(&self, p: usize) -> bool {
@@ -286,6 +288,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
 
     /// Get omega as Complex64 (for precomputation in batch inner products).
     #[inline]
+    #[cfg(test)]
     pub(crate) fn omega_complex(&self) -> num_complex::Complex64 {
         self.omega.to_complex()
     }
@@ -423,13 +426,23 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
     /// encodes the qubit values (bit j = qubit j, little-endian).
     #[must_use]
     pub fn amplitude(&self, x: usize) -> num_complex::Complex64 {
+        self.amplitude_where(|j| (x >> j) & 1 == 1)
+    }
+
+    /// Amplitude of a computational basis bitset, without a machine-word limit.
+    #[must_use]
+    pub fn amplitude_bits(&self, x: &S) -> num_complex::Complex64 {
+        self.amplitude_where(|j| x.contains(j))
+    }
+
+    fn amplitude_where(&self, bit: impl Fn(usize) -> bool) -> num_complex::Complex64 {
         let n = self.num_qubits;
 
         // Convert x to bit vector y[j] = (x >> j) & 1
         // Compute mu = sum(y[j] * gamma[j])
         let mut mu = 0i32;
         for j in 0..n {
-            if (x >> j) & 1 == 1 {
+            if bit(j) {
                 mu += i32::from(self.gamma[j]);
             }
         }
@@ -438,7 +451,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
         // Also accumulate phase from M: mu += 2 * (sum(M[p,:] & u) % 2) after each XOR.
         let mut u = S::with_capacity(n);
         for p in 0..n {
-            if (x >> p) & 1 == 1 {
+            if bit(p) {
                 // u ^= F[p, :]
                 u.xor_assign(self.f.row(p));
                 // mu += 2 * (sum(M[p,:] & u) % 2)
@@ -486,6 +499,30 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
         // Combine real scalars first to reduce complex multiplications.
         let real_scale = norm * sign;
         self.omega.to_complex() * (i_pow_mu * real_scale)
+    }
+
+    /// Sample the support using one uniform f64 draw per Hadamard bit.
+    /// Amplitudes constrain u = x F outside v. Since F G^T = I (also
+    /// preserved by `apply_cx`), choose u = y on that support and x = y G^T.
+    pub(crate) fn sample_basis(&self, rng: &mut R) -> S {
+        let mut y = S::with_capacity(self.num_qubits);
+        for j in 0..self.num_qubits {
+            let bit = if self.v.contains(j) {
+                rng.random::<f64>() < 0.5
+            } else {
+                self.s.contains(j)
+            };
+            if bit {
+                y.insert(j);
+            }
+        }
+        let mut x = S::with_capacity(self.num_qubits);
+        for p in 0..self.num_qubits {
+            if self.g.row(p).intersection_count(&y) & 1 == 1 {
+                x.insert(p);
+            }
+        }
+        x
     }
 
     /// Compute amplitude reusing a scratch `BitSet` to avoid per-call allocation.
@@ -591,6 +628,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
 
     /// Precompute the constraint solution for shared-structure batch inner products.
     /// Call once, then pass to `inner_product_pair_precomputed` for each pair.
+    #[cfg(test)]
     pub(crate) fn precompute_shared_constraints(&self) -> SharedConstraints {
         let n = self.num_qubits;
         let v_count = self.v.len();
@@ -716,6 +754,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
     /// If `diff_qubits` is provided, only those qubits can have gamma differences.
     /// This makes the computation O(|diff|) instead of O(n).
     #[must_use]
+    #[cfg(test)]
     pub(crate) fn inner_product_pair_precomputed(
         &self,
         other: &Self,
@@ -963,6 +1002,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
 
     /// Like `inner_product_pair`, with rows precomputed from these two states.
     /// The rows must correspond to the current F, v and s of self and other.
+    #[cfg(test)]
     pub(crate) fn inner_product_pair_with_rows(
         &self,
         other: &Self,
@@ -1018,6 +1058,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
     }
 
     /// Build this term's rows once for a batch of divergent inner products.
+    #[cfg(test)]
     pub(crate) fn precompute_constraint_rows(&self) -> ConstraintRows {
         let mut rows = ConstraintRows {
             rows_u64: Vec::with_capacity(if self.num_qubits <= 62 {

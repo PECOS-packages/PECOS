@@ -1057,7 +1057,6 @@ class StabVec:
         num_qubits: int,
         seed: int | None = None,
         pruning_threshold: float | None = None,
-        mc_threshold: int | None = 2048,
     ) -> None: ...
     @property
     def gate_capacity(self) -> int | None: ...

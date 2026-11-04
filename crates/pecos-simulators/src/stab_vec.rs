@@ -33,6 +33,9 @@
 //!   "Simulation of quantum circuits by low-rank stabilizer decompositions."
 //!   arXiv:1808.00128 (2019).
 
+#[cfg(test)]
+mod gate_by_gate_tests;
+
 pub mod ch_form;
 pub mod exact_scalar;
 pub mod quadratic_form;
@@ -44,11 +47,14 @@ use crate::clifford_frame::{
 use crate::{
     ArbitraryRotationGateable, CliffordGateable, MeasurementResult, QuantumSimulator, StateVecSoA,
 };
-use ch_form::{CHFormGeneric, InnerProductScratch};
+use ch_form::CHFormGeneric;
+#[cfg(test)]
+use ch_form::InnerProductScratch;
 use core::fmt::Debug;
 use core::mem::size_of;
 use num_complex::Complex64;
-use pecos_core::{Angle64, BitSet, IndexSet, QubitId};
+use pecos_core::gate_type::GateType;
+use pecos_core::{Angle64, BitSet, IndexSet, QubitId, try_simplify_rotation};
 use pecos_random::{PecosRng, Rng, RngExt, SeedableRng};
 
 /// Maximum resident size of the dense state used by the hybrid representation.
@@ -63,10 +69,11 @@ const DENSE_CROSSOVER_NUMERATOR: usize = 3;
 const DENSE_CROSSOVER_DENOMINATOR: usize = 2;
 
 /// Clifford+RZ simulator using a sum-over-Cliffords decomposition with a
-/// permanent dense-state crossover for large, structurally divergent decompositions.
+/// permanent dense-state crossover for large decompositions.
 ///
-/// Each term is a (coefficient, CH-form state) pair. Clifford gates are free
-/// (applied to all terms). Each RZ gate doubles the number of terms.
+/// Each term is a (coefficient, CH-form state) pair. Clifford gates preserve
+/// the term count; term-level H gates also update the sampled basis state.
+/// Each non-Clifford RZ decomposition doubles the number of terms.
 ///
 /// RZ gates on the same qubit are automatically fused: `RZ(a) RZ(b) = RZ(a+b)`.
 /// Pending RZ angles are flushed when a non-commuting gate or measurement is applied.
@@ -90,7 +97,11 @@ const DENSE_CROSSOVER_DENOMINATOR: usize = 2;
 pub struct StabVecGeneric<S: IndexSet = BitSet, R: SeedableRng + Rng + Debug = PecosRng> {
     num_qubits: usize,
     terms: Vec<(Complex64, CHFormGeneric<S, R>)>,
-    /// Permanent dense representation after a divergent measurement crosses over.
+    /// Sample of the stored terms, excluding deferred frames and rotations.
+    x: Option<S>,
+    /// Disabled only while materializing a snapshot or transferring to dense.
+    sample_on_entry: bool,
+    /// Permanent dense representation after term growth or measurement crosses over.
     dense: Option<StateVecSoA<R>>,
     /// Pending RZ angles per qubit.
     pending_rz: Vec<Angle64>,
@@ -107,12 +118,6 @@ pub struct StabVecGeneric<S: IndexSet = BitSet, R: SeedableRng + Rng + Debug = P
     global_phase: Angle64,
     gamma_diff_qubits: Vec<usize>,
     rel_pruning_threshold: f64,
-    /// Monte Carlo measurement threshold. When `Some(n)`, shared-structure
-    /// decomposed measurements use MC term sampling if T > n (O(T) instead of
-    /// O(T*pairs)). Divergent measurements never use MC. `None` = exact
-    /// decomposition measurements only.
-    /// Default: `Some(2048)`.
-    mc_threshold: Option<usize>,
     max_dense_bytes: usize,
     rng: R,
 }
@@ -125,7 +130,6 @@ pub struct StabVecBuilder {
     num_qubits: usize,
     seed: Option<u64>,
     rel_pruning_threshold: f64,
-    mc_threshold: Option<usize>,
 }
 
 impl StabVecBuilder {
@@ -138,17 +142,6 @@ impl StabVecBuilder {
     #[must_use]
     pub fn pruning_threshold(mut self, threshold: f64) -> Self {
         self.rel_pruning_threshold = threshold;
-        self
-    }
-
-    /// Set the Monte Carlo measurement threshold.
-    ///
-    /// - `Some(n)`: Use MC term sampling for shared-structure decomposed
-    ///   measurements when T > n (default: `Some(2048)`)
-    /// - `None`: Disable MC sampling; dense measurements remain exact
-    #[must_use]
-    pub fn mc_threshold(mut self, threshold: Option<usize>) -> Self {
-        self.mc_threshold = threshold;
         self
     }
 
@@ -172,13 +165,14 @@ impl StabVecBuilder {
             num_qubits: self.num_qubits,
             terms: vec![(Complex64::new(1.0, 0.0), ch)],
             dense: None,
+            x: None,
+            sample_on_entry: true,
             pending_rz: vec![Angle64::default(); self.num_qubits],
             cliff_frame: vec![CliffordFrame::IDENTITY; self.num_qubits],
             frame_phase: 0,
             global_phase: Angle64::ZERO,
             gamma_diff_qubits: Vec::new(),
             rel_pruning_threshold: self.rel_pruning_threshold,
-            mc_threshold: self.mc_threshold,
             max_dense_bytes: DEFAULT_MAX_DENSE_BYTES,
             rng,
         }
@@ -221,6 +215,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
     /// Both quantities use the same pairwise CH-form overlaps. The shared-
     /// structure implementation is selected only when pointer equality proves
     /// its precondition; structurally divergent terms use the general overlap.
+    #[cfg(test)]
     fn exact_norm_and_prob0(&self, q: usize) -> (f64, f64) {
         let shared_structure = self.has_shared_projection_structure();
         let shared_constraints =
@@ -278,6 +273,43 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
             }
         }
         (norm_sq, 0.5 * twice_prob0)
+    }
+
+    #[cfg(test)]
+    fn sample_projected_terms(&mut self) -> S {
+        let mut reference = self.clone();
+        let mut x = S::with_capacity(self.num_qubits);
+        for q in 0..self.num_qubits {
+            reference.recompute_gamma_diff();
+            let (norm, zero) = reference.exact_norm_and_prob0(q);
+            assert!(
+                norm > 0.0,
+                "forced sampler requires a nonzero projected state"
+            );
+            let probability = (zero / norm).clamp(0.0, 1.0);
+            let outcome = if probability >= 1.0 {
+                false
+            } else if probability == 0.0 {
+                true
+            } else {
+                self.rng.random::<f64>() >= probability
+            };
+            if outcome {
+                x.insert(q);
+            }
+            for (c, ch) in &mut reference.terms {
+                *c *= Self::projection_coefficient_scale(ch, q);
+                ch.project_z(q, outcome);
+            }
+            reference
+                .terms
+                .retain(|(_, ch)| !ch.omega_exact().is_zero());
+            let scale = reference.max_coefficient_squared().sqrt();
+            for (c, _) in &mut reference.terms {
+                *c /= scale;
+            }
+        }
+        x
     }
 
     fn projection_coefficient_scale(ch: &CHFormGeneric<S, R>, q: usize) -> f64 {
@@ -364,8 +396,9 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
             // Mark representatives and set their new coefficients.
             let mut keep = vec![false; self.terms.len()];
             let mut new_coeffs = vec![Complex64::new(0.0, 0.0); self.terms.len()];
+            let floor = 1e-30 * self.max_coefficient_squared();
             for &(c, idx) in &merged {
-                if c.norm_sqr() > 1e-30 {
+                if c.norm_sqr() > floor {
                     keep[idx] = true;
                     new_coeffs[idx] = c;
                 }
@@ -391,6 +424,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
             }
             // Recompute gamma_diff_qubits from actual surviving terms.
             self.recompute_gamma_diff();
+            self.drop_single_term_sample();
         }
     }
 
@@ -401,13 +435,14 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
             num_qubits,
             terms: vec![(Complex64::new(1.0, 0.0), ch)],
             dense: None,
+            x: None,
+            sample_on_entry: true,
             pending_rz: vec![Angle64::default(); num_qubits],
             cliff_frame: vec![CliffordFrame::IDENTITY; num_qubits],
             frame_phase: 0,
             global_phase: Angle64::ZERO,
             gamma_diff_qubits: Vec::new(),
             rel_pruning_threshold: 1e-8,
-            mc_threshold: Some(2048),
             max_dense_bytes: DEFAULT_MAX_DENSE_BYTES,
             rng,
         }
@@ -444,15 +479,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
         1usize.checked_shl(shift)
     }
 
-    fn should_switch_to_dense_for_measurement(&self, structure_uniform: bool) -> bool {
-        // Shared-structure measurements avoid the general pairwise Gram pass:
-        // they are either deterministic, use precomputed shared constraints,
-        // or take the configured O(T) Monte Carlo path. Dense materialization
-        // cannot pay back its O(T * 2^n) cost in those branches.
-        if structure_uniform {
-            return false;
-        }
-
+    fn should_switch_to_dense(&self, term_count: usize) -> bool {
         let Some(amplitude_count) = self.dense_amplitude_count() else {
             return false;
         };
@@ -464,31 +491,76 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
         }
 
         let crossover = amplitude_count * DENSE_CROSSOVER_NUMERATOR / DENSE_CROSSOVER_DENOMINATOR;
-        self.terms.len() > crossover
+        term_count > crossover
     }
 
-    fn switch_to_dense(&mut self) {
+    fn switch_to_dense(&mut self, prospective_terms: usize) {
         debug_assert!(self.dense.is_none());
-        debug_assert!(
-            self.should_switch_to_dense_for_measurement(self.has_shared_projection_structure())
-        );
+        debug_assert!(self.should_switch_to_dense(prospective_terms));
 
         // Reuse the established exact materialization path. This flushes every
         // deferred frame, rotation, and global phase before dense ownership begins.
-        let state = self.state_vector();
+        self.x = None;
+        self.sample_on_entry = false;
+        self.flush_all_cliff_frames();
+        self.flush_all_pending_rz();
+        let mut state = self.state_vector_no_flush();
+        Self::normalize_vector(&mut state);
+        self.x = None;
         let dense = StateVecSoA::from_complex_state(&state, self.rng.clone());
         self.terms.clear();
         self.gamma_diff_qubits.clear();
         self.dense = Some(dense);
     }
 
+    /// Whether deferred rotations can grow the decomposition during a flush.
+    fn has_pending_decomposition(&self) -> bool {
+        self.pending_rz
+            .iter()
+            .any(|&angle| try_simplify_rotation(GateType::RZ, angle).is_none())
+    }
+
+    /// Upper bound on growth during a batch, before pruning or angle fusion.
+    /// Keep the established batch path whenever dense conversion is impossible.
+    fn may_switch_during_batch(&self, additional_rotations: usize) -> bool {
+        if !self.sample_on_entry {
+            return false;
+        }
+        let pending_rotations = self
+            .pending_rz
+            .iter()
+            .filter(|&&angle| try_simplify_rotation(GateType::RZ, angle).is_none())
+            .count();
+        let prospective_terms = (0..pending_rotations + additional_rotations)
+            .fold(self.terms.len(), |count, _| count.saturating_mul(2));
+        self.should_switch_to_dense(prospective_terms)
+    }
+
     /// Compute the full state vector by summing all terms.
+    ///
+    /// Observation never consumes randomness or changes the sampled basis state.
+    /// A single term with only pending Clifford rotations flushes in place.
+    /// Otherwise, deferred gates materialize on a clone, whose vector is
+    /// normalized if it has multiple terms.
     ///
     /// O(2^n * `num_terms`) -- only use for small systems and testing.
     #[must_use]
     pub fn state_vector(&mut self) -> Vec<Complex64> {
         if let Some(dense) = &mut self.dense {
             return dense.state();
+        }
+        let can_flush_in_place = self.terms.len() == 1 && !self.has_pending_decomposition();
+        if !can_flush_in_place {
+            let mut snapshot = self.clone();
+            snapshot.x = None;
+            snapshot.sample_on_entry = false;
+            snapshot.flush_all_cliff_frames();
+            snapshot.flush_all_pending_rz();
+            let mut state = snapshot.state_vector_no_flush();
+            if snapshot.terms.len() > 1 {
+                Self::normalize_vector(&mut state);
+            }
+            return state;
         }
         self.flush_all_cliff_frames();
         self.flush_all_pending_rz();
@@ -507,30 +579,25 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
         sv
     }
 
-    /// Remove terms with negligible coefficients.
-    ///
-    /// Uses both absolute threshold (1e-14) and the configurable relative
-    /// threshold. The relative threshold aggressively prunes small-angle
-    /// rotation terms where many coefficients are tiny relative to the
-    /// dominant terms.
-    #[allow(dead_code)]
-    fn prune_terms(&mut self) {
-        if self.rel_pruning_threshold <= 0.0 {
-            return; // exact mode: no pruning
+    fn normalize_vector(state: &mut [Complex64]) {
+        let norm = state.iter().map(Complex64::norm_sqr).sum::<f64>().sqrt();
+        if norm > 0.0 {
+            for amplitude in state {
+                *amplitude /= norm;
+            }
         }
-        let abs_threshold: f64 = 1e-14;
-        let max_coeff_sq = self
-            .terms
+    }
+
+    fn max_coefficient_squared(&self) -> f64 {
+        self.terms
             .iter()
             .map(|(c, _)| c.norm_sqr())
-            .fold(0.0f64, f64::max);
-        let rel_threshold = max_coeff_sq * self.rel_pruning_threshold;
-        let threshold = abs_threshold.max(rel_threshold);
-        self.terms.retain(|(coeff, _)| coeff.norm_sqr() > threshold);
-        // Always keep at least one term
-        if self.terms.is_empty() {
-            let ch = CHFormGeneric::with_rng(self.num_qubits, self.rng.clone());
-            self.terms.push((Complex64::new(0.0, 0.0), ch));
+            .fold(0.0, f64::max)
+    }
+
+    fn drop_single_term_sample(&mut self) {
+        if self.terms.len() <= 1 {
+            self.x = None;
         }
     }
 
@@ -598,6 +665,9 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
 
     /// Move a deferred pair through a gate as one phase-exact transition.
     fn propagate_cliff_frames(&mut self, q: usize, r: usize, gate: PauliFrameGate) {
+        if self.is_dense() {
+            return;
+        }
         if !gate.propagate_transposed(&mut self.cliff_frame, &mut self.frame_phase, (q, r)) {
             self.flush_cliff_frame(q);
             self.flush_cliff_frame(r);
@@ -618,20 +688,19 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
             // that pair while the frame is still visible to flush_pending_rz.
             if matches!(cf.index(), 1 | 2) {
                 self.flush_pending_rz(q);
+                if self.is_dense() {
+                    return;
+                }
             }
             self.cliff_frame[q] = CliffordFrame::IDENTITY;
 
             // Paulis: diagonal part is cheap, non-diagonal part uses X/Y gate.
             match cf.index() {
                 1 => {
-                    self.apply_clifford(|ch| {
-                        ch.x(&[qid]);
-                    });
+                    self.x_term(q);
                 }
                 2 => {
-                    self.apply_clifford(|ch| {
-                        ch.y(&[qid]);
-                    });
+                    self.y_term(q);
                     // The frame phase is relative to ELEMENT_MATRIX[2], while
                     // CH-form's named Y emits the standard Y matrix.
                     self.frame_phase = (self.frame_phase
@@ -652,6 +721,9 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
         // Flush pending RZ first (non-diagonal Cliffords don't commute with RZ).
         // Keep the frame visible until the paired angle has been materialized.
         self.flush_pending_rz(q);
+        if self.is_dense() {
+            return;
+        }
         self.cliff_frame[q] = CliffordFrame::IDENTITY;
 
         // General path: apply via H+S generator decomposition.
@@ -660,12 +732,12 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
         let seq = &GENERATORS[idx];
         for &g in seq.iter().take(len) {
             match g {
-                0 => self.apply_clifford(|ch| {
-                    ch.h(&[qid]);
-                }),
-                1 => self.apply_clifford(|ch| {
-                    ch.sz(&[qid]);
-                }),
+                0 => self.h_term(q),
+                1 => {
+                    for (_, ch) in &mut self.terms {
+                        ch.sz(&[qid]);
+                    }
+                }
                 _ => {}
             }
         }
@@ -690,10 +762,110 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
         }
     }
 
-    fn apply_clifford(&mut self, f: impl Fn(&mut CHFormGeneric<S, R>)) {
+    fn x_term(&mut self, q: usize) {
         for (_, ch) in &mut self.terms {
-            f(ch);
+            ch.x(&[QubitId(q)]);
         }
+        if let Some(x) = &mut self.x {
+            x.toggle(q);
+        }
+    }
+
+    fn y_term(&mut self, q: usize) {
+        for (_, ch) in &mut self.terms {
+            ch.y(&[QubitId(q)]);
+        }
+        if let Some(x) = &mut self.x {
+            x.toggle(q);
+        }
+    }
+
+    fn cx_term(&mut self, c: usize, t: usize) {
+        for (_, ch) in &mut self.terms {
+            ch.cx(&[(QubitId(c), QubitId(t))]);
+        }
+        if let Some(x) = &mut self.x
+            && x.contains(c)
+        {
+            x.toggle(t);
+        }
+    }
+
+    fn cy_term(&mut self, c: usize, t: usize) {
+        for (_, ch) in &mut self.terms {
+            ch.cy(&[(QubitId(c), QubitId(t))]);
+        }
+        if let Some(x) = &mut self.x
+            && x.contains(c)
+        {
+            x.toggle(t);
+        }
+    }
+
+    fn h_term(&mut self, q: usize) {
+        if let Some(dense) = &mut self.dense {
+            dense.h(&[QubitId(q)]);
+            return;
+        }
+        for (_, ch) in &mut self.terms {
+            ch.h(&[QubitId(q)]);
+        }
+        let Some(x) = &mut self.x else { return };
+        x.remove(q);
+        let a0: Complex64 = self
+            .terms
+            .iter()
+            .map(|(c, ch)| c * ch.amplitude_bits(x))
+            .sum();
+        x.insert(q);
+        let a1: Complex64 = self
+            .terms
+            .iter()
+            .map(|(c, ch)| c * ch.amplitude_bits(x))
+            .sum();
+        let p0 = a0.norm_sqr();
+        let p1 = a1.norm_sqr();
+        assert!(
+            p0 > 0.0 || p1 > 0.0,
+            "StabVec sampled x support invariant broken after H"
+        );
+        let one = if p0 == 0.0 {
+            true
+        } else if p1 == 0.0 {
+            false
+        } else {
+            self.rng.random::<f64>() < p1 / (p0 + p1)
+        };
+        if !one {
+            x.remove(q);
+        }
+        #[cfg(test)]
+        assert!(
+            self.sampled_amplitude().is_none_or(|a| a.norm_sqr() > 0.0),
+            "sampled x support invariant after each term-level H"
+        );
+    }
+
+    #[cfg(test)]
+    fn sampled_amplitude(&self) -> Option<Complex64> {
+        self.x.as_ref().map(|x| {
+            self.terms
+                .iter()
+                .map(|(c, ch)| c * ch.amplitude_bits(x))
+                .sum()
+        })
+    }
+
+    #[cfg(test)]
+    fn max_coefficient_magnitude(&self) -> f64 {
+        self.max_coefficient_squared().sqrt()
+    }
+
+    #[cfg(test)]
+    fn set_sampled_basis_for_test(&mut self, x: S) {
+        assert!(self.terms.len() > 1);
+        self.x = Some(x);
+        assert!(self.sampled_amplitude().unwrap().norm_sqr() > 0.0);
     }
 
     fn apply_c_type_checked(
@@ -723,7 +895,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
         );
     }
 
-    /// Apply a C-type Clifford whose M and gamma transforms are identical for
+    /// Apply a diagonal C-type Clifford whose M and gamma transforms are identical for
     /// terms sharing G and M. F, G, v, and s must be left unchanged.
     fn apply_c_type_clifford(&mut self, operation: impl Fn(&mut CHFormGeneric<S, R>)) {
         if self.terms.len() <= 1 {
@@ -771,23 +943,40 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
     /// Apply an XX root to stored terms after its caller has handled frames.
     /// YY roots reuse this decomposition without propagating their frames again.
     fn apply_xx_root(&mut self, pairs: &[(QubitId, QubitId)], dagger: bool) {
-        let q0s: Vec<QubitId> = pairs.iter().map(|p| p.0).collect();
-        let q1s: Vec<QubitId> = pairs.iter().map(|p| p.1).collect();
-        self.apply_clifford(|ch| {
-            ch.h(&q0s);
-            ch.h(&q1s);
-        });
-        self.apply_c_type_clifford(|ch| {
-            if dagger {
-                ch.szzdg(pairs);
-            } else {
-                ch.szz(pairs);
+        if self.x.is_some() {
+            for &(a, b) in pairs {
+                self.h_term(a.index());
+                self.h_term(b.index());
+                self.apply_c_type_clifford(|ch| {
+                    if dagger {
+                        ch.szzdg(&[(a, b)]);
+                    } else {
+                        ch.szz(&[(a, b)]);
+                    }
+                });
+                self.h_term(a.index());
+                self.h_term(b.index());
             }
-        });
-        self.apply_clifford(|ch| {
-            ch.h(&q0s);
-            ch.h(&q1s);
-        });
+        } else {
+            // Preserve the single-term batch ordering and materialization path.
+            let q0s: Vec<QubitId> = pairs.iter().map(|p| p.0).collect();
+            let q1s: Vec<QubitId> = pairs.iter().map(|p| p.1).collect();
+            for (_, ch) in &mut self.terms {
+                ch.h(&q0s);
+                ch.h(&q1s);
+            }
+            self.apply_c_type_clifford(|ch| {
+                if dagger {
+                    ch.szzdg(pairs);
+                } else {
+                    ch.szz(pairs);
+                }
+            });
+            for (_, ch) in &mut self.terms {
+                ch.h(&q0s);
+                ch.h(&q1s);
+            }
+        }
     }
 
     /// Buffer an RZ gate. Fuses with any pending RZ on the same qubit.
@@ -796,6 +985,10 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
     /// scalar -1 lost when a signed sum wraps is tracked in `global_phase`
     /// (e.g. 8T = RZ(2pi) = -I).
     fn apply_rz(&mut self, theta: Angle64, q: usize) {
+        if let Some(dense) = &mut self.dense {
+            dense.rz(theta, &[QubitId(q)]);
+            return;
+        }
         let previous = self.pending_rz[q];
         let combined = previous + theta;
         if pecos_core::unitary_rep::rotation_sum_wraps(previous, theta) {
@@ -808,16 +1001,17 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
 
     /// Apply RZ(theta) immediately (decompose into terms).
     fn apply_rz_immediate(&mut self, theta: Angle64, q: usize) {
-        // Detect Clifford angles using exact Angle64 fixed-point comparison.
-        // No float conversion needed for detection -- only for the decomposition coefficients.
+        // Share the exact Clifford-angle classification with state_vector's
+        // draw-free flush guard. Keep the phase-exact rotation factors below.
+        let clifford = try_simplify_rotation(GateType::RZ, theta);
 
         // RZ(0) = I (identity, no terms added)
-        if theta == Angle64::ZERO {
+        if clifford == Some(GateType::I) {
             return;
         }
 
         // RZ(pi) = -iZ (Clifford)
-        if theta == Angle64::HALF_TURN {
+        if clifford == Some(GateType::Z) {
             let phase = Complex64::new(0.0, -1.0); // -i
             for (coeff, ch) in &mut self.terms {
                 *coeff *= phase;
@@ -827,7 +1021,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
         }
 
         // RZ(pi/2) = e^{-i*pi/4} * S (Clifford)
-        if theta == Angle64::QUARTER_TURN {
+        if clifford == Some(GateType::SZ) {
             let inv_sqrt2 = std::f64::consts::FRAC_1_SQRT_2;
             let phase = Complex64::new(inv_sqrt2, -inv_sqrt2); // e^{-i*pi/4}
             for (coeff, ch) in &mut self.terms {
@@ -838,7 +1032,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
         }
 
         // RZ(3pi/2) = RZ(-pi/2) = e^{i*pi/4} * Sdg (Clifford)
-        if theta == Angle64::THREE_QUARTERS_TURN {
+        if clifford == Some(GateType::SZdg) {
             let inv_sqrt2 = std::f64::consts::FRAC_1_SQRT_2;
             let phase = Complex64::new(inv_sqrt2, inv_sqrt2); // e^{i*pi/4}
             for (coeff, ch) in &mut self.terms {
@@ -856,15 +1050,27 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
         // Collect gamma Vecs from pruned terms to reuse (avoids malloc churn).
         let mut gamma_pool: Vec<Vec<u8>> = Vec::new();
         if self.rel_pruning_threshold > 0.0 {
-            let abs_threshold: f64 = 1e-14;
-            let max_coeff_sq = self
-                .terms
-                .iter()
-                .map(|(c, _)| c.norm_sqr())
-                .fold(0.0f64, f64::max);
+            let max_coeff_sq = self.max_coefficient_squared();
+            let abs_threshold = if self.terms.len() > 1 {
+                1e-14 * max_coeff_sq
+            } else {
+                1e-14_f64
+            };
             let threshold = abs_threshold.max(max_coeff_sq * self.rel_pruning_threshold);
+            let skip_pruning = self.x.as_ref().is_some_and(|x| {
+                let mut pre = Complex64::new(0.0, 0.0);
+                let mut post = Complex64::new(0.0, 0.0);
+                for (c, ch) in &self.terms {
+                    let contribution = c * ch.amplitude_bits(x);
+                    pre += contribution;
+                    if c.norm_sqr() > threshold {
+                        post += contribution;
+                    }
+                }
+                post.norm_sqr() <= 1e-24 * pre.norm_sqr()
+            });
             let mut i = 0;
-            while i < self.terms.len() {
+            while !skip_pruning && i < self.terms.len() {
                 if self.terms[i].0.norm_sqr() <= threshold {
                     let (_, mut ch) = self.terms.swap_remove(i);
                     gamma_pool.push(ch.take_gamma());
@@ -876,6 +1082,30 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
                 let ch = CHFormGeneric::with_rng(self.num_qubits, self.rng.clone());
                 self.terms.push((Complex64::new(0.0, 0.0), ch));
             }
+        }
+
+        let prospective_terms = self.terms.len().saturating_mul(2);
+        // Snapshot and dense materialization flushes already disable entry
+        // sampling. They must finish materializing without recursively switching.
+        if self.sample_on_entry && self.should_switch_to_dense(prospective_terms) {
+            // theta acts on the stored state. Dense conversion consumes the
+            // frame, so restore the physical RZ angle if that frame negates Z.
+            let dense_angle = if self.cliff_frame[q].z_image().positive {
+                theta
+            } else {
+                -theta
+            };
+            self.switch_to_dense(prospective_terms);
+            self.dense
+                .as_mut()
+                .expect("dense crossover installed the dense representation")
+                .rz(dense_angle, &[QubitId(q)]);
+            return;
+        }
+
+        self.drop_single_term_sample();
+        if self.terms.len() == 1 && self.sample_on_entry {
+            self.x = Some(self.terms[0].1.sample_basis(&mut self.rng));
         }
 
         // Track that qubit q now has gamma divergence between terms.
@@ -905,10 +1135,9 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
 
     /// Measure a qubit. Returns the measurement result and projects the state.
     ///
-    /// For a single term, uses O(n) probability computation. Large structurally
-    /// divergent decompositions switch permanently to `StateVecSoA` when memory
-    /// permits. Shared-structure decompositions retain their cheaper exact or
-    /// Monte Carlo paths; smaller divergent decompositions use general CH-form overlap.
+    /// Multi-term determinism is sound but incomplete: every stored term must
+    /// have the same Z eigenvalue before projection. Interference alone does
+    /// not establish this flag. Single-term and dense flags remain exact.
     fn measure_qubit(&mut self, q: usize, forced: Option<bool>) -> MeasurementResult {
         if let Some(dense) = &mut self.dense {
             assert!(
@@ -936,12 +1165,12 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
             self.flush_cliff_frame(q);
         }
 
-        // Only replace the structurally divergent O(T^2) Gram path. Shared
-        // structure has cheaper exact and Monte Carlo measurement paths for
-        // which O(T * 2^n) dense materialization would be a regression.
-        let structure_uniform = self.has_shared_projection_structure();
-        if forced.is_none() && self.should_switch_to_dense_for_measurement(structure_uniform) {
-            self.switch_to_dense();
+        if self.is_dense() {
+            return self.measure_qubit(q, forced);
+        }
+
+        if forced.is_none() && self.should_switch_to_dense(self.terms.len()) {
+            self.switch_to_dense(self.terms.len());
             return self
                 .dense
                 .as_mut()
@@ -968,185 +1197,52 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
             debug_assert_eq!(discarded_pending_rz, Angle64::ZERO);
         }
 
-        // Compute probability of measuring 0. Optimized multi-term paths are
-        // valid only while all terms share the CH structure they precompute.
-        // Exact branches carry the input norm they already compute; optimized
-        // shared-structure branches use StabVec's normalized-state invariant.
-        let (state_norm_sq, prob0) = if self.terms.len() == 1 {
-            // Single term: O(n) using CH-form structure directly
+        let multi_term = self.terms.len() > 1;
+        let (outcome, is_deterministic, projected_norm_sq) = if multi_term {
+            let sampled = self
+                .x
+                .as_ref()
+                .expect("multi-term sampled x invariant")
+                .contains(q);
+            let outcome = forced.unwrap_or(sampled);
+            let eigenvalue = self.terms[0].1.expectation_value_zq(q);
+            let deterministic = eigenvalue != 0.0
+                && self
+                    .terms
+                    .iter()
+                    .all(|(_, ch)| ch.expectation_value_zq(q).to_bits() == eigenvalue.to_bits());
+            debug_assert!(
+                !deterministic || (eigenvalue < 0.0) == outcome,
+                "deterministic stored terms must agree with the sampled outcome"
+            );
+            (outcome, deterministic, 0.0)
+        } else {
             let (coeff, ch) = &self.terms[0];
-            let norm_sq = coeff.norm_sqr();
-            (norm_sq, norm_sq * ch.prob_z_zero(q))
-        } else if !structure_uniform {
-            self.exact_norm_and_prob0(q)
-        } else if self.terms.len() <= 8 {
-            // expectation_value_zq depends only on shared structure (G/v/s), same for all terms.
-            let ez0 = self.terms[0].1.expectation_value_zq(q);
-            if ez0 == 0.0 {
-                // Full pairwise computation. Use gamma_diff_qubits for O(|diff|) early-skip.
-                let sc = self.terms[0].1.precompute_shared_constraints();
-                let t = self.terms.len();
-                let omegas: Vec<_> = self
-                    .terms
-                    .iter()
-                    .map(|(_, ch)| ch.omega_complex())
-                    .collect();
-                let diff = &self.gamma_diff_qubits;
-                let ez = self.terms[0].1.expectation_value_zq(q);
-                let one_plus_ez = 1.0 + ez;
-                let mut prob = 0.0;
-                for j in 0..t {
-                    prob += self.terms[j].0.norm_sqr() * one_plus_ez;
-                }
-                for j in 0..t {
-                    for k in (j + 1)..t {
-                        // Fast early-skip using diff qubits only.
-                        // If any diff qubit (other than z_qubit q) has l=2, skip.
-                        let g1 = self.terms[j].1.gamma();
-                        let g2 = self.terms[k].1.gamma();
-                        let mut skip = false;
-                        for &p in diff {
-                            if p == q {
-                                continue;
-                            }
-                            if (g1[p] ^ g2[p]) == 2 {
-                                skip = true;
-                                break;
-                            }
-                        }
-                        if skip {
-                            continue;
-                        }
-                        let cjk = self.terms[j].0.conj() * self.terms[k].0;
-                        let (ip, ip_z) = self.terms[j].1.inner_product_pair_precomputed(
-                            &self.terms[k].1,
-                            q,
-                            &sc,
-                            omegas[j],
-                            omegas[k],
-                            Some(diff),
-                        );
-                        prob += 2.0 * (cjk * (ip + ip_z)).re;
-                    }
-                }
-                (1.0, 0.5 * prob)
+            let state_norm_sq = coeff.norm_sqr();
+            let prob0 = state_norm_sq * ch.prob_z_zero(q);
+            let outcome = if let Some(value) = forced {
+                value
+            } else if (prob0 - 1.0).abs() < 1e-10 {
+                false
+            } else if prob0 < 1e-10 {
+                true
             } else {
-                // Deterministic: all terms have the same Z_q expectation.
-                (1.0, 0.5 * (1.0 + ez0))
-            }
-        } else {
-            // Large T: first check if measurement is deterministic from structure.
-            let ez = self.terms[0].1.expectation_value_zq(q);
-            if ez != 0.0 {
-                // Deterministic: all terms have the same Z_q expectation.
-                (1.0, 0.5 * (1.0 + ez))
-            } else if self.mc_threshold.is_some_and(|t| self.terms.len() > t) {
-                // Very large T: Monte Carlo term sampling. Pick a term proportional
-                // to |c_j|², use its single-term probability as Pr(0).
-                // This approximation drops cross-term interference but is good when
-                // terms are nearly orthogonal (most cross-terms are zero from gamma
-                // bucketing). O(T) instead of O(T * pairs_per_bucket).
-                let norm_sq: f64 = self.terms.iter().map(|(c, _)| c.norm_sqr()).sum();
-                let r: f64 = self.rng.random::<f64>() * norm_sq;
-                let mut cumulative = 0.0;
-                let mut chosen = 0;
-                for (j, (c, _)) in self.terms.iter().enumerate() {
-                    cumulative += c.norm_sqr();
-                    if cumulative >= r {
-                        chosen = j;
-                        break;
-                    }
-                }
-                (1.0, self.terms[chosen].1.prob_z_zero(q))
-            } else {
-                // Non-deterministic: sort-based bucketing.
-                let sc = self.terms[0].1.precompute_shared_constraints();
-                let t = self.terms.len();
-                let omegas: Vec<_> = self
-                    .terms
-                    .iter()
-                    .map(|(_, ch)| ch.omega_complex())
-                    .collect();
-                let diff = &self.gamma_diff_qubits;
-
-                // Sort by (gamma on diff qubits excluding q, then q) via direct
-                // comparison. This groups terms that differ only on qubit q adjacently,
-                // enabling efficient cross-term bucketing. Avoids packed-key overflow
-                // for large diff sets.
-                let mut sorted_indices: Vec<usize> = (0..t).collect();
-                sorted_indices.sort_unstable_by(|&a, &b| {
-                    let ga = self.terms[a].1.gamma();
-                    let gb = self.terms[b].1.gamma();
-                    // Primary: all diff qubits except q
-                    for &p in diff {
-                        if p == q {
-                            continue;
-                        }
-                        match (ga[p] & 3).cmp(&(gb[p] & 3)) {
-                            std::cmp::Ordering::Equal => {}
-                            ord => return ord,
-                        }
-                    }
-                    // Secondary: q itself (refines within masked groups)
-                    (ga[q] & 3).cmp(&(gb[q] & 3))
-                });
-
-                // Group detection: same gamma on all diff qubits except q.
-                let same_masked = |a: usize, b: usize| -> bool {
-                    let ga = self.terms[a].1.gamma();
-                    let gb = self.terms[b].1.gamma();
-                    diff.iter().all(|&p| p == q || (ga[p] & 3) == (gb[p] & 3))
-                };
-
-                let mut prob = 0.0;
-                let ez = self.terms[0].1.expectation_value_zq(q);
-                let one_plus_ez = 1.0 + ez;
-                for j in 0..t {
-                    prob += self.terms[j].0.norm_sqr() * one_plus_ez;
-                }
-                // Cross terms: only within groups of matching masked keys
-                let mut group_start = 0;
-                while group_start < t {
-                    let mut group_end = group_start + 1;
-                    while group_end < t
-                        && same_masked(sorted_indices[group_end], sorted_indices[group_start])
-                    {
-                        group_end += 1;
-                    }
-                    for a in group_start..group_end {
-                        let j = sorted_indices[a];
-                        for &k in &sorted_indices[(a + 1)..group_end] {
-                            let cjk = self.terms[j].0.conj() * self.terms[k].0;
-                            let (ip, ip_z) = self.terms[j].1.inner_product_pair_precomputed(
-                                &self.terms[k].1,
-                                q,
-                                &sc,
-                                omegas[j],
-                                omegas[k],
-                                Some(&self.gamma_diff_qubits),
-                            );
-                            prob += 2.0 * (cjk * (ip + ip_z)).re;
-                        }
-                    }
-                    group_start = group_end;
-                }
-                (1.0, 0.5 * prob)
-            } // end non-deterministic
+                self.rng.random::<f64>() >= prob0
+            };
+            let deterministic = (prob0 - 1.0).abs() < 1e-10 || prob0 < 1e-10;
+            (
+                outcome,
+                deterministic,
+                if outcome {
+                    state_norm_sq - prob0
+                } else {
+                    prob0
+                },
+            )
         };
-
-        // Determine the outcome.
-        let outcome = if let Some(forced_val) = forced {
-            forced_val
-        } else if (prob0 - 1.0).abs() < 1e-10 {
-            false // deterministic |0>
-        } else if prob0 < 1e-10 {
-            true // deterministic |1>
-        } else {
-            let r: f64 = self.rng.random();
-            r >= prob0
-        };
-
-        let is_deterministic = (prob0 - 1.0).abs() < 1e-10 || prob0 < 1e-10;
+        #[cfg(test)]
+        let resample_forced =
+            multi_term && self.x.as_ref().is_some_and(|x| x.contains(q) != outcome);
 
         // Project: measure each CH-form term, keep only compatible terms.
         // After measurement, the state should be projected onto the outcome subspace.
@@ -1230,18 +1326,21 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
             self.merge_identical_terms();
         }
 
-        // P0 and P1 are complementary orthogonal projectors, so the squared
-        // norm after projection is the probability weight already computed.
-        let projected_norm_sq = if outcome {
-            state_norm_sq - prob0
+        let scale = if multi_term {
+            self.max_coefficient_squared().sqrt()
         } else {
-            prob0
+            projected_norm_sq.sqrt()
         };
-        if projected_norm_sq > 0.0 {
-            let inv_norm = 1.0 / projected_norm_sq.sqrt();
+        if scale > 0.0 {
+            let inv_norm = 1.0 / scale;
             for (coeff, _) in &mut self.terms {
                 *coeff *= inv_norm;
             }
+        }
+        self.drop_single_term_sample();
+        #[cfg(test)]
+        if resample_forced && self.terms.len() > 1 {
+            self.x = Some(self.sample_projected_terms());
         }
 
         // RZ(theta) = diag(exp(-i*theta/2), exp(i*theta/2)). The discarded
@@ -1278,7 +1377,6 @@ impl StabVecGeneric<BitSet, PecosRng> {
             num_qubits,
             seed: None,
             rel_pruning_threshold: 1e-8,
-            mc_threshold: Some(2048),
         }
     }
 
@@ -1315,6 +1413,8 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> QuantumSimulator for Sta
         self.rng = rng;
         self.terms = vec![(Complex64::new(1.0, 0.0), ch)];
         self.dense = None;
+        self.x = None;
+        self.sample_on_entry = true;
         self.pending_rz.fill(Angle64::default());
         self.cliff_frame.fill(CliffordFrame::IDENTITY);
         self.frame_phase = 0;
@@ -1415,6 +1515,10 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
         // If pending_rz is zero, H can be composed into the Clifford frame!
         for &q in qubits {
             let qi = q.index();
+            if let Some(dense) = &mut self.dense {
+                dense.h(&[q]);
+                continue;
+            }
             if self.pending_rz[qi] == Angle64::default() {
                 // No pending RZ: safe to compose H into frame.
                 self.compose_cliff_frame(qi, CliffordFrame::H);
@@ -1422,9 +1526,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
                 // Pending RZ exists: must flush frame and RZ, then apply H.
                 self.flush_cliff_frame(qi);
                 self.flush_pending_rz(qi);
-                self.apply_clifford(|ch| {
-                    ch.h(&[q]);
-                });
+                self.h_term(qi);
             }
         }
         self
@@ -1437,6 +1539,10 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
         }
         for &q in qubits {
             self.flush_noncommuting_pending_rz(q.index());
+        }
+        if let Some(dense) = &mut self.dense {
+            dense.h3(qubits);
+            return self;
         }
         self.sz(qubits).y(qubits);
         // H3 = exp(-i*pi/4) * Y * SZ.
@@ -1453,6 +1559,10 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
         }
         for &q in qubits {
             self.flush_noncommuting_pending_rz(q.index());
+        }
+        if let Some(dense) = &mut self.dense {
+            dense.h4(qubits);
+            return self;
         }
         self.sz(qubits).x(qubits);
         // Correct the projective frame composition to canonical H4 phase.
@@ -1483,6 +1593,14 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
             dense.cx(pairs);
             return self;
         }
+        if pairs.len() > 1 && self.may_switch_during_batch(0) {
+            // A flush can switch representations. Finish each pair before
+            // propagating frames through the next gate in the batch.
+            for &pair in pairs {
+                self.cx(&[pair]);
+            }
+            return self;
+        }
         for &(q0, q1) in pairs {
             let c = q0.index();
             let t = q1.index();
@@ -1491,9 +1609,13 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
             self.flush_pending_rz(t);
             self.propagate_cliff_frames(c, t, PauliFrameGate::Cx);
         }
-        self.apply_clifford(|ch| {
-            ch.cx(pairs);
-        });
+        if let Some(dense) = &mut self.dense {
+            dense.cx(pairs);
+            return self;
+        }
+        for &(c, t) in pairs {
+            self.cx_term(c.index(), t.index());
+        }
         self
     }
 
@@ -1503,10 +1625,22 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
             dense.cz(pairs);
             return self;
         }
+        if pairs.len() > 1 && self.may_switch_during_batch(0) {
+            // A flush can switch representations. Finish each pair before
+            // propagating frames through the next gate in the batch.
+            for &pair in pairs {
+                self.cz(&[pair]);
+            }
+            return self;
+        }
         for &(q0, q1) in pairs {
             let q = q0.index();
             let r = q1.index();
             self.propagate_cliff_frames(q, r, PauliFrameGate::Cz);
+        }
+        if let Some(dense) = &mut self.dense {
+            dense.cz(pairs);
+            return self;
         }
         self.apply_c_type_clifford(|ch| {
             ch.cz(pairs);
@@ -1520,10 +1654,22 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
             dense.szz(pairs);
             return self;
         }
+        if pairs.len() > 1 && self.may_switch_during_batch(0) {
+            // A flush can switch representations. Finish each pair before
+            // propagating frames through the next gate in the batch.
+            for &pair in pairs {
+                self.szz(&[pair]);
+            }
+            return self;
+        }
         for &(q0, q1) in pairs {
             let q = q0.index();
             let r = q1.index();
             self.propagate_cliff_frames(q, r, PauliFrameGate::Szz);
+        }
+        if let Some(dense) = &mut self.dense {
+            dense.szz(pairs);
+            return self;
         }
         self.apply_c_type_clifford(|ch| {
             ch.szz(pairs);
@@ -1538,10 +1684,22 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
             return self;
         }
         // SZZdg = SZZ^{-1}. Pauli propagation same as SZZ (inverse has same symplectic).
+        if pairs.len() > 1 && self.may_switch_during_batch(0) {
+            // A flush can switch representations. Finish each pair before
+            // propagating frames through the next gate in the batch.
+            for &pair in pairs {
+                self.szzdg(&[pair]);
+            }
+            return self;
+        }
         for &(q0, q1) in pairs {
             let q = q0.index();
             let r = q1.index();
             self.propagate_cliff_frames(q, r, PauliFrameGate::SzzDg);
+        }
+        if let Some(dense) = &mut self.dense {
+            dense.szzdg(pairs);
+            return self;
         }
         self.apply_c_type_clifford(|ch| {
             ch.szzdg(pairs);
@@ -1555,6 +1713,14 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
             dense.sxx(pairs);
             return self;
         }
+        if pairs.len() > 1 && self.may_switch_during_batch(0) {
+            // A flush can switch representations. Finish each pair before
+            // propagating frames through the next gate in the batch.
+            for &pair in pairs {
+                self.sxx(&[pair]);
+            }
+            return self;
+        }
         for &(q0, q1) in pairs {
             let q = q0.index();
             let r = q1.index();
@@ -1562,6 +1728,10 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
                 self.flush_noncommuting_pending_rz(target);
             }
             self.propagate_cliff_frames(q, r, PauliFrameGate::Sxx);
+        }
+        if let Some(dense) = &mut self.dense {
+            dense.sxx(pairs);
+            return self;
         }
         // SXX = H*H * SZZ * H*H
         self.apply_xx_root(pairs, false);
@@ -1574,6 +1744,14 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
             dense.sxxdg(pairs);
             return self;
         }
+        if pairs.len() > 1 && self.may_switch_during_batch(0) {
+            // A flush can switch representations. Finish each pair before
+            // propagating frames through the next gate in the batch.
+            for &pair in pairs {
+                self.sxxdg(&[pair]);
+            }
+            return self;
+        }
         for &(q0, q1) in pairs {
             let q = q0.index();
             let r = q1.index();
@@ -1581,6 +1759,10 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
                 self.flush_noncommuting_pending_rz(target);
             }
             self.propagate_cliff_frames(q, r, PauliFrameGate::SxxDg);
+        }
+        if let Some(dense) = &mut self.dense {
+            dense.sxxdg(pairs);
+            return self;
         }
         self.apply_xx_root(pairs, true);
         self
@@ -1592,6 +1774,14 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
             dense.syy(pairs);
             return self;
         }
+        if pairs.len() > 1 && self.may_switch_during_batch(0) {
+            // A flush can switch representations. Finish each pair before
+            // propagating frames through the next gate in the batch.
+            for &pair in pairs {
+                self.syy(&[pair]);
+            }
+            return self;
+        }
         for &(q0, q1) in pairs {
             let q = q0.index();
             let r = q1.index();
@@ -1599,6 +1789,10 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
                 self.flush_noncommuting_pending_rz(target);
             }
             self.propagate_cliff_frames(q, r, PauliFrameGate::Syy);
+        }
+        if let Some(dense) = &mut self.dense {
+            dense.syy(pairs);
+            return self;
         }
         // SYY = S*S * SXX * Sdg*Sdg
         let all_qubits: Vec<QubitId> = pairs.iter().flat_map(|&(q0, q1)| [q0, q1]).collect();
@@ -1618,6 +1812,14 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
             dense.syydg(pairs);
             return self;
         }
+        if pairs.len() > 1 && self.may_switch_during_batch(0) {
+            // A flush can switch representations. Finish each pair before
+            // propagating frames through the next gate in the batch.
+            for &pair in pairs {
+                self.syydg(&[pair]);
+            }
+            return self;
+        }
         for &(q0, q1) in pairs {
             let q = q0.index();
             let r = q1.index();
@@ -1625,6 +1827,10 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
                 self.flush_noncommuting_pending_rz(target);
             }
             self.propagate_cliff_frames(q, r, PauliFrameGate::SyyDg);
+        }
+        if let Some(dense) = &mut self.dense {
+            dense.syydg(pairs);
+            return self;
         }
         let all_qubits: Vec<QubitId> = pairs.iter().flat_map(|&(q0, q1)| [q0, q1]).collect();
         self.apply_c_type_clifford(|ch| {
@@ -1643,6 +1849,14 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
             dense.cy(pairs);
             return self;
         }
+        if pairs.len() > 1 && self.may_switch_during_batch(0) {
+            // A flush can switch representations. Finish each pair before
+            // propagating frames through the next gate in the batch.
+            for &pair in pairs {
+                self.cy(&[pair]);
+            }
+            return self;
+        }
         for &(q0, q1) in pairs {
             // Target RZ does not commute with CY. An identity or Z frame
             // flush would leave it pending, so consume it explicitly.
@@ -1650,9 +1864,13 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
             self.flush_cliff_frame(q0.index());
             self.flush_cliff_frame(q1.index());
         }
-        self.apply_clifford(|ch| {
-            ch.cy(pairs);
-        });
+        if let Some(dense) = &mut self.dense {
+            dense.cy(pairs);
+            return self;
+        }
+        for &(c, t) in pairs {
+            self.cy_term(c.index(), t.index());
+        }
         self
     }
 
@@ -1735,6 +1953,22 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> ArbitraryRotationGateabl
             dense.rzz(theta, pairs);
             return self;
         }
+        if pairs.len() > 1
+            && self.may_switch_during_batch(
+                if try_simplify_rotation(GateType::RZ, theta).is_none() {
+                    pairs.len()
+                } else {
+                    0
+                },
+            )
+        {
+            // A component RZ can switch representations; complete the current
+            // pair's rotation before starting the next one.
+            for &pair in pairs {
+                self.rzz(theta, &[pair]);
+            }
+            return self;
+        }
         // RZZ = CX * RZ_tgt * CX. Use frame-aware CX and RZ.
         self.cx(pairs);
         let targets: Vec<QubitId> = pairs.iter().map(|p| p.1).collect();
@@ -1747,6 +1981,22 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> ArbitraryRotationGateabl
         crate::clifford_gateable::validate_distinct_pairs(pairs, "RXX");
         if let Some(dense) = &mut self.dense {
             dense.rxx(theta, pairs);
+            return self;
+        }
+        if pairs.len() > 1
+            && self.may_switch_during_batch(
+                if try_simplify_rotation(GateType::RZ, theta).is_none() {
+                    pairs.len()
+                } else {
+                    0
+                },
+            )
+        {
+            // A component RZ can switch representations; complete the current
+            // pair's rotation before starting the next one.
+            for &pair in pairs {
+                self.rxx(theta, &[pair]);
+            }
             return self;
         }
         // RXX = H*H * RZZ * H*H. Use frame-aware gates.
@@ -1765,6 +2015,22 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> ArbitraryRotationGateabl
             dense.ryy(theta, pairs);
             return self;
         }
+        if pairs.len() > 1
+            && self.may_switch_during_batch(
+                if try_simplify_rotation(GateType::RZ, theta).is_none() {
+                    pairs.len()
+                } else {
+                    0
+                },
+            )
+        {
+            // A component RZ can switch representations; complete the current
+            // pair's rotation before starting the next one.
+            for &pair in pairs {
+                self.ryy(theta, &[pair]);
+            }
+            return self;
+        }
         // RYY = S*S * RXX * Sdg*Sdg. Use frame-aware gates.
         let q0s: Vec<QubitId> = pairs.iter().map(|p| p.0).collect();
         let q1s: Vec<QubitId> = pairs.iter().map(|p| p.1).collect();
@@ -1781,6 +2047,8 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> pecos_core::RngManageabl
 {
     type Rng = R;
 
+    /// Change future draws only; the sampled bitstring is part of the state
+    /// and is preserved, so reseeding clones does not decorrelate it.
     fn set_rng(&mut self, rng: Self::Rng) {
         if let Some(dense) = &mut self.dense {
             pecos_core::RngManageable::set_rng(dense, rng.clone());
@@ -1936,6 +2204,8 @@ mod tests {
             .rz(theta1, &qid(0))
             .rz(theta2, &qid(1));
 
+        // Count materialized rotations; observation leaves pending gates intact.
+        crz.flush_all_pending_rz();
         states_match_up_to_phase(&crz.state_vector(), &sv.state(), "multiple_rz");
         assert_eq!(crz.num_terms(), 4); // 2 RZ on different qubits -> 4 terms after flush
     }
@@ -2237,6 +2507,7 @@ mod tests {
     fn test_many_rz_gates() {
         // 5 RZ gates -> 32 terms. Verify state still matches StateVec.
         let mut crz = StabVec::new(2);
+        crz.max_dense_bytes = 0;
         let mut sv = StateVec::new(2);
 
         let angles: Vec<Angle64> = [0.3, 0.7, 1.1, 0.5, 0.9]
@@ -2272,6 +2543,8 @@ mod tests {
         // With RZ fusion + commutation, same-qubit rotations merge even through
         // commuting Cliffords. a0+a2 fuse (through CX control), a1+a4 fuse.
         // Result: 3 independent RZ -> 2^3 = 8 terms.
+        crz.flush_all_cliff_frames();
+        crz.flush_all_pending_rz();
         states_match_up_to_phase(&crz.state_vector(), &sv.state(), "5_rz_gates");
         assert_eq!(crz.num_terms(), 8);
     }
@@ -3001,7 +3274,9 @@ mod tests {
             stab_vec.rz(angle, &q0).h(&q0);
             state_vec.rz(angle, &q0).h(&q0);
         }
-        assert_eq!(stab_vec.num_terms(), term_count);
+        if !stab_vec.is_dense() {
+            assert_eq!(stab_vec.num_terms(), term_count);
+        }
     }
 
     fn prepare_uniform_terms(
@@ -3020,7 +3295,9 @@ mod tests {
             stab_vec.flush_all_pending_rz();
             state_vec.rz(angle, &q0);
         }
-        assert_eq!(stab_vec.num_terms(), term_count);
+        if !stab_vec.is_dense() {
+            assert_eq!(stab_vec.num_terms(), term_count);
+        }
     }
 
     fn assert_phase_exact_state_matches(actual: &[Complex64], expected: &[Complex64], label: &str) {
@@ -3071,21 +3348,32 @@ mod tests {
     }
 
     fn crossover_test_pair(term_count: usize, shared_structure: bool) -> (StabVec, StateVecSoA) {
+        crossover_test_pair_with_budget(term_count, shared_structure, DEFAULT_MAX_DENSE_BYTES)
+    }
+
+    fn crossover_test_pair_with_budget(
+        term_count: usize,
+        shared_structure: bool,
+        max_dense_bytes: usize,
+    ) -> (StabVec, StateVecSoA) {
         let mut stab = StabVec::builder(6).seed(42).pruning_threshold(0.0).build();
+        stab.max_dense_bytes = max_dense_bytes;
         let mut dense = StateVecSoA::with_seed(6, 42);
         if shared_structure {
             prepare_uniform_terms(&mut stab, &mut dense, term_count);
         } else {
             prepare_nonuniform_terms(&mut stab, &mut dense, term_count);
         }
-        assert_eq!(stab.has_shared_projection_structure(), shared_structure);
+        if !stab.is_dense() {
+            assert_eq!(stab.has_shared_projection_structure(), shared_structure);
+        }
         (stab, dense)
     }
 
     #[test]
     fn term_count_below_crossover_stays_decomposed() {
         let (mut stab, mut dense) = crossover_test_pair(64, false);
-        assert!(!stab.should_switch_to_dense_for_measurement(false));
+        assert!(!stab.should_switch_to_dense(stab.terms.len()));
 
         let outcome = stab.mz(&[QubitId(0)])[0].outcome;
         assert!(!stab.is_dense());
@@ -3099,26 +3387,31 @@ mod tests {
     }
 
     #[test]
-    fn mc_threshold_remains_reachable_below_dense_crossover() {
+    fn shared_structure_below_dense_crossover_stays_decomposed() {
         let (mut stab, mut dense) = crossover_test_pair(64, true);
-        stab.mc_threshold = Some(1);
 
         let outcome = stab.mz(&[QubitId(0)])[0].outcome;
         assert!(!stab.is_dense());
-        let expected = normalized_z_projection(&dense.state(), 0, outcome, "MC below crossover");
+        let expected =
+            normalized_z_projection(&dense.state(), 0, outcome, "shared below crossover");
         crate::state_vector_test_utils::assert_phase_exact_state_matches(
             &stab.state_vector(),
             &expected,
             1e-12,
-            "MC below crossover",
+            "shared below crossover",
         );
     }
 
     #[test]
     fn term_count_above_crossover_switches_to_dense() {
         let (mut stab, mut dense) = crossover_test_pair(128, false);
-        assert!(stab.should_switch_to_dense_for_measurement(false));
-        stab.mc_threshold = Some(1);
+        assert!(stab.is_dense(), "RZ growth switches before measurement");
+        crate::state_vector_test_utils::assert_phase_exact_state_matches(
+            &stab.state_vector(),
+            &dense.state(),
+            1e-12,
+            "growth crossover before measurement",
+        );
 
         let outcome = stab.mz(&[QubitId(0)])[0].outcome;
         assert!(stab.is_dense());
@@ -3133,13 +3426,18 @@ mod tests {
     }
 
     #[test]
-    fn shared_structure_above_crossover_stays_decomposed() {
+    fn shared_structure_above_crossover_switches_to_dense() {
         let (mut stab, mut dense) = crossover_test_pair(128, true);
-        assert!(!stab.should_switch_to_dense_for_measurement(true));
-        stab.mc_threshold = Some(1);
+        assert!(stab.is_dense(), "RZ growth switches before measurement");
+        crate::state_vector_test_utils::assert_phase_exact_state_matches(
+            &stab.state_vector(),
+            &dense.state(),
+            1e-12,
+            "growth crossover before measurement",
+        );
 
         let outcome = stab.mz(&[QubitId(0)])[0].outcome;
-        assert!(!stab.is_dense());
+        assert!(stab.is_dense());
         let expected =
             normalized_z_projection(&dense.state(), 0, outcome, "shared above dense crossover");
         crate::state_vector_test_utils::assert_phase_exact_state_matches(
@@ -3151,8 +3449,10 @@ mod tests {
     }
 
     #[test]
-    fn dense_crossover_preserves_seed_reproducibility_and_rng_draw_count() {
-        let (template, _) = crossover_test_pair(128, false);
+    fn dense_crossover_preserves_reproducibility_and_decomposed_sample() {
+        // Retain a decomposition to exercise the measurement-time check too.
+        let (mut template, _) = crossover_test_pair_with_budget(128, false, 0);
+        template.max_dense_bytes = DEFAULT_MAX_DENSE_BYTES;
         let mut changed_from_decomposition = 0;
 
         for seed in 0..1024_u64 {
@@ -3180,7 +3480,23 @@ mod tests {
             let next_decomposition =
                 pecos_core::RngManageable::rng_mut(&mut decomposition).random::<u64>();
             assert_eq!(next_a, next_b, "seed {seed}");
-            assert_eq!(next_a, next_decomposition, "seed {seed}");
+            let mut dense_rng = PecosRng::seed_from_u64(seed);
+            let _ = dense_rng.random::<f64>();
+            assert_eq!(
+                next_a,
+                dense_rng.random::<u64>(),
+                "dense measurement draws once, seed {seed}"
+            );
+            let mut untouched_rng = PecosRng::seed_from_u64(seed);
+            assert_eq!(
+                next_decomposition,
+                untouched_rng.random::<u64>(),
+                "decomposed measurement draws nothing, seed {seed}"
+            );
+            assert_eq!(
+                decomposition_result.outcome,
+                template.x.as_ref().unwrap().contains(0)
+            );
         }
 
         assert!(changed_from_decomposition > 0);
@@ -3307,7 +3623,7 @@ mod tests {
 
     #[test]
     fn dense_memory_cap_prevents_switch() {
-        let (mut stab, mut dense) = crossover_test_pair(128, false);
+        let (mut stab, mut dense) = crossover_test_pair_with_budget(128, false, 1023);
         let dense_bytes = (1usize << stab.num_qubits()) * size_of::<Complex64>();
         assert_eq!(DEFAULT_MAX_DENSE_BYTES, 512 * 1024 * 1024);
         assert_eq!(
@@ -3316,7 +3632,7 @@ mod tests {
         );
         assert!((1usize << 26) * size_of::<Complex64>() > DEFAULT_MAX_DENSE_BYTES);
         stab.max_dense_bytes = dense_bytes - 1;
-        assert!(!stab.should_switch_to_dense_for_measurement(false));
+        assert!(!stab.should_switch_to_dense(stab.terms.len()));
 
         let outcome = stab.mz(&[QubitId(0)])[0].outcome;
         assert!(!stab.is_dense());
@@ -3351,6 +3667,7 @@ mod tests {
         for input_frame in 0..24 {
             for pauli in ["X", "Y"] {
                 let mut stab_vec = StabVec::builder(1).seed(0x715).build();
+                stab_vec.max_dense_bytes = 0;
                 let mut state_vec = StateVecSoA::with_seed(1, 0x715);
                 stab_vec
                     .ry(pecos_core::radians!(0.731), &q0)
@@ -3358,7 +3675,8 @@ mod tests {
                 state_vec
                     .ry(pecos_core::radians!(0.731), &q0)
                     .rz(pecos_core::radians!(-0.417), &q0);
-                let _ = stab_vec.state_vector();
+                stab_vec.flush_all_cliff_frames();
+                stab_vec.flush_all_pending_rz();
                 let _ = state_vec.state();
 
                 for &generator in &GENERATORS[input_frame][..GEN_LENS[input_frame] as usize] {
@@ -3388,6 +3706,7 @@ mod tests {
         for input_frame in [0, 3, 4, 5] {
             for pauli in ["X", "Y"] {
                 let mut stab_vec = StabVec::builder(1).seed(0x715).build();
+                stab_vec.max_dense_bytes = 0;
                 let mut state_vec = StateVecSoA::with_seed(1, 0x715);
                 for &generator in &GENERATORS[input_frame][..GEN_LENS[input_frame] as usize] {
                     match generator {
@@ -3776,8 +4095,8 @@ mod tests {
         }
 
         assert_eq!(
-            workaround_complement_count, 9,
-            "the removed MPZ; X workaround no longer witnesses the reviewed trajectory divergence"
+            workaround_complement_count, 0,
+            "gate-by-gate sampling stores the branch in the state, so MPZ; X and PNZ select the same partner branch"
         );
     }
 
@@ -3793,6 +4112,7 @@ mod tests {
                     ("divergent structure", prepare_nonuniform_terms),
                 ] {
                     let mut stab_vec = StabVec::builder(2).pruning_threshold(0.0).build();
+                    stab_vec.max_dense_bytes = 0;
                     let mut state_vec = StateVecSoA::new(2);
                     prepare(&mut stab_vec, &mut state_vec, term_count);
                     assert_phase_exact_state_matches(
@@ -3821,6 +4141,7 @@ mod tests {
         for gate in NAMED_TWO_QUBIT_ROOT_GATES {
             for term_count in [2, 4, 8, 16] {
                 let mut stab_vec = StabVec::builder(2).pruning_threshold(0.0).build();
+                stab_vec.max_dense_bytes = 0;
                 let mut state_vec = StateVecSoA::new(2);
                 prepare_nonuniform_terms(&mut stab_vec, &mut state_vec, term_count / 2);
                 let q0 = qid(0);
@@ -3831,6 +4152,8 @@ mod tests {
                 apply_two_qubit_root(&mut stab_vec, gate);
                 apply_two_qubit_root(&mut state_vec, gate);
 
+                stab_vec.flush_all_cliff_frames();
+                stab_vec.flush_all_pending_rz();
                 let actual = stab_vec.state_vector();
                 let expected = state_vec.state();
                 assert_eq!(stab_vec.num_terms(), term_count);
@@ -3888,6 +4211,7 @@ mod tests {
         for gate in ["H3", "H4"] {
             for term_count in [2, 4, 8, 16] {
                 let mut stab_vec = StabVec::builder(2).pruning_threshold(0.0).build();
+                stab_vec.max_dense_bytes = 0;
                 let mut state_vec = StateVecSoA::new(2);
                 prepare_nonuniform_terms(&mut stab_vec, &mut state_vec, term_count);
                 match gate {
@@ -3909,6 +4233,7 @@ mod tests {
             }
 
             let mut stab_vec = StabVec::builder(2).pruning_threshold(0.0).build();
+            stab_vec.max_dense_bytes = 0;
             let mut state_vec = StateVecSoA::new(2);
             let angle = pecos_core::radians!(0.37);
             stab_vec.h(&qid(0)).rz(angle, &qid(0));
@@ -3982,8 +4307,11 @@ mod tests {
         );
     }
 
-    fn prepare_divergent_probability_counterexample() -> (StabVec, Vec<Complex64>) {
-        let mut stab = StabVec::builder(7).pruning_threshold(0.0).seed(694).build();
+    fn prepare_divergent_probability_counterexample(seed: u64) -> (StabVec, Vec<Complex64>) {
+        let mut stab = StabVec::builder(7)
+            .pruning_threshold(0.0)
+            .seed(seed)
+            .build();
         let mut dense = StateVecSoA::with_seed(7, 694);
         for (q, angle) in [(0, 0.37), (1, 0.53), (2, 0.71)] {
             let qubit = QubitId(q);
@@ -4023,13 +4351,14 @@ mod tests {
             .h(&[QubitId(1)])
             .sz(&[QubitId(0), QubitId(0), QubitId(4)])
             .h(&[QubitId(2)]);
-        let _ = stab.state_vector();
+        stab.flush_all_cliff_frames();
+        stab.flush_all_pending_rz();
         (stab, dense.state())
     }
 
     #[test]
     fn divergent_structure_measurement_probability_matches_state_vec_soa() {
-        let (stab, expected_state) = prepare_divergent_probability_counterexample();
+        let (stab, expected_state) = prepare_divergent_probability_counterexample(694);
         assert_eq!(stab.num_terms(), 4);
         assert!(!stab.has_shared_projection_structure());
         let expected_prob0 = expected_state
@@ -4043,8 +4372,7 @@ mod tests {
         let samples = 20_000_u32;
         let mut zero_count = 0_u32;
         for seed in 0..samples {
-            let mut sample = stab.clone();
-            sample.rng = PecosRng::seed_from_u64(u64::from(seed));
+            let (mut sample, _) = prepare_divergent_probability_counterexample(u64::from(seed));
             if !sample.mz(&[QubitId(2)])[0].outcome {
                 zero_count += 1;
             }
@@ -4058,7 +4386,7 @@ mod tests {
 
     #[test]
     fn divergent_projection_uses_exact_norm_and_preserves_state() {
-        let (stab, state) = prepare_divergent_probability_counterexample();
+        let (stab, state) = prepare_divergent_probability_counterexample(694);
         for outcome in [false, true] {
             let mut expected = state.clone();
             for (basis, amplitude) in expected.iter_mut().enumerate() {
@@ -4083,6 +4411,7 @@ mod tests {
     #[test]
     fn divergent_projection_does_not_merge_by_gamma_and_omega_alone() {
         let mut stab = StabVec::builder(3).pruning_threshold(0.0).build();
+        stab.max_dense_bytes = 0;
         let mut dense = StateVecSoA::new(3);
         for (q, radians) in [(0, 0.339_52), (1, 0.721_75), (2, 0.090_18)] {
             let qubit = QubitId(q);
@@ -4221,7 +4550,7 @@ mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
-    fn exact_overlap_contract_asserts_complete_gamma_diff_set() {
+    fn test_reference_asserts_complete_gamma_diff_set() {
         let mut stab = StabVec::builder(2).pruning_threshold(0.0).build();
         let mut unused_reference = StateVecSoA::new(2);
         prepare_uniform_terms(&mut stab, &mut unused_reference, 2);

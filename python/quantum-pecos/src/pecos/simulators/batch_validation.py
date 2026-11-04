@@ -42,7 +42,16 @@ class PreparedTick:
     tick: Any
     time: int | tuple[int, int, int]
     params: dict[str, Any]
-    items: tuple[tuple[str, AbstractSet[Location], dict[str, Any]], ...]
+    batches: tuple[tuple[str, AbstractSet[Location], dict[str, Any]], ...]
+
+    def items(self, _tick: None = None) -> Iterator[tuple[str, AbstractSet[Location], dict[str, Any]]]:
+        """Iterate the decoded batches."""
+        return iter(self.batches)
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        """Return the original tick's live metadata."""
+        return self.tick.metadata
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -56,6 +65,17 @@ class PreparedCircuit:
     ticks: tuple[PreparedTick, ...]
     state_type: type
     gate_capacity: int | None
+
+    def check_state(self, state: SimulatorProtocol) -> None:
+        """Require the state type and capacity used during preparation."""
+        capacity = getattr(state, "gate_capacity", None)
+        if type(state) is not self.state_type or capacity != self.gate_capacity:
+            msg = (
+                f"prepared circuit was validated for {self.state_type.__name__} "
+                f"with gate_capacity={self.gate_capacity}; got {type(state).__name__} "
+                f"with gate_capacity={capacity}; re-run prepare_circuit for this state"
+            )
+            raise ValueError(msg)
 
 
 def prepare_circuit(state: SimulatorProtocol, circuit: QuantumCircuit | LogicalCircuit) -> PreparedCircuit:

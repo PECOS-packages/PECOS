@@ -145,14 +145,7 @@ class HybridEngine:
                         "pass the raw circuit instead"
                     )
                     raise TypeError(msg)
-            capacity = getattr(state, "gate_capacity", None)
-            if type(state) is not circuit.state_type or capacity != circuit.gate_capacity:
-                msg = (
-                    f"prepared circuit was validated for {circuit.state_type.__name__} "
-                    f"with gate_capacity={circuit.gate_capacity}; got {type(state).__name__} "
-                    f"with gate_capacity={capacity}; re-run prepare_circuit for this state"
-                )
-                raise ValueError(msg)
+            circuit.check_state(state)
         operation_analyzer = None
         engine_manages_inspector = False
         finish_run = None
@@ -292,7 +285,7 @@ class HybridEngine:
                         state,
                         output,
                         output_export,
-                        tick.items,
+                        tick.batches,
                         error_gen,
                         removed,
                         self._dispatch_gate,

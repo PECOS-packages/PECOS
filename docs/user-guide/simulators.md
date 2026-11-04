@@ -626,6 +626,9 @@ For fine-grained control, you can use simulators directly:
 `HybridEngine`. Prepared ideal ticks skip per-shot decoding and batch validation;
 error circuits remain checked. Preparation rejects malformed gates even under
 `skip` or false conditions.
+`Standard` and `TimingRunner` also accept prepared circuits, skipping ideal-tick
+decoding while retaining simulator batch validation. The code-capacity threshold
+helpers prepare their fixed circuits automatically for these runners.
 
 ```python
 from pecos import HybridEngine, QuantumCircuit

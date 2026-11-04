@@ -420,6 +420,10 @@ struct GroupProbe {
     suppressed: bool,
 }
 impl Primitive for GroupProbe {
+    fn reads_operands(&self) -> bool {
+        true
+    }
+
     fn apply(&self, q: QubitId, ctx: &mut NoiseContext, _rng: &mut PecosRng) -> CompositeResponse {
         use crate::noise::composite::{AnyQubitLeaked, Condition, PartnerLeaked};
         let first = q.0 / 2 * 2;
@@ -530,6 +534,10 @@ fn composite_group_context_all_paths() {
 #[derive(Clone, Copy)]
 struct FiredGroupProbe;
 impl Primitive for FiredGroupProbe {
+    fn reads_operands(&self) -> bool {
+        true
+    }
+
     fn apply(
         &self,
         _q: QubitId,
@@ -687,6 +695,10 @@ fn channel_adapter_preserves_custom_group_size() {
 struct NestedProbe(std::sync::Arc<std::sync::Mutex<Vec<NestedView>>>);
 type NestedView = (QubitId, bool, GateType, Vec<QubitId>);
 impl Primitive for NestedProbe {
+    fn reads_operands(&self) -> bool {
+        true
+    }
+
     fn apply(&self, q: QubitId, ctx: &mut NoiseContext, _: &mut PecosRng) -> CompositeResponse {
         self.0.lock().unwrap().push((
             q,

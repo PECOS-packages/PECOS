@@ -40,6 +40,14 @@ pub trait GateAction: Send + Sync {
         rng: &mut PecosRng,
     ) -> CompositeResponse;
 
+    /// Whether this action reads the event's operand list through the context.
+    ///
+    /// See [`super::primitive::Primitive::reads_operands`]. The blanket primitive
+    /// implementation forwards this capability for custom actions too.
+    fn reads_operands(&self) -> bool {
+        false
+    }
+
     /// Human-readable name for visualization.
     fn name(&self) -> &'static str;
 
@@ -885,6 +893,10 @@ const EMIT_NO: usize = 0;
 const EMIT_YES: usize = 1;
 
 impl GateAction for TwoQubitEmissionWithPartnerDepolarize {
+    fn reads_operands(&self) -> bool {
+        true
+    }
+
     fn apply(
         &self,
         qubit: QubitId,
@@ -979,6 +991,10 @@ impl IndependentEmissionWithPartnerDepolarize {
 }
 
 impl GateAction for IndependentEmissionWithPartnerDepolarize {
+    fn reads_operands(&self) -> bool {
+        true
+    }
+
     fn apply(
         &self,
         qubit: QubitId,
@@ -1092,6 +1108,10 @@ impl PartnerDepolarize {
 }
 
 impl GateAction for PartnerDepolarize {
+    fn reads_operands(&self) -> bool {
+        true
+    }
+
     fn apply(
         &self,
         _qubit: QubitId,
@@ -1528,6 +1548,10 @@ impl ZZDephasing {
 }
 
 impl GateAction for ZZDephasing {
+    fn reads_operands(&self) -> bool {
+        true
+    }
+
     fn apply(
         &self,
         qubit: QubitId,
@@ -1590,6 +1614,10 @@ pub struct ZZDephasingRate {
 }
 
 impl GateAction for ZZDephasingRate {
+    fn reads_operands(&self) -> bool {
+        true
+    }
+
     fn apply(
         &self,
         qubit: QubitId,
@@ -2517,28 +2545,7 @@ pub mod actions {
 
     /// Adapter that wraps a `NoiseChannel` to be used as a composite primitive.
     ///
-    /// This enables using traditional channel implementations as building blocks
-    /// within composite noise decision trees. The adapter reconstructs the noise event
-    /// from the current context and delegates to the wrapped channel.
-    ///
-    /// Each invocation site runs at most once per operand group per stage, on the
-    /// leader: the first member eligible when the enclosing composite installs the
-    /// group (the first leaked member for a suppressed group, otherwise member 0).
-    /// The leader stays fixed even if leakage changes. A probability around the
-    /// adapter, including channel-level sampling, selects the leader with that
-    /// probability; sampling another member does not run the channel. Any guard
-    /// around the adapter (`seq!`, `when`, `if_then`, partner or fired conditions,
-    /// including in two-stage primitives) is decided on the leader's invocation.
-    /// A guard true only on another member runs nothing for the group. If the
-    /// wrapped channel skips the group, primitives after the adapter in a sequence
-    /// still run on non-leader members.
-    ///
-    /// Gate events use one gate group; non-gate events use all operands. With no
-    /// enclosing group installed, the adapter runs on every invocation.
-    /// It synthesizes an `AfterGate` with the current gate type (or `I`), angles and
-    /// complete operand group (or just the invoked qubit). Suppressed groups go in
-    /// `leaked_suppressed`. Registered group size is preserved. The wrapped channel's
-    /// `responds_to` filter is bypassed, and its response retains every named qubit.
+    /// See [`channel_action`] for group leadership, sampling, guards and skip propagation.
     ///
     /// # Example
     ///
@@ -2593,6 +2600,10 @@ pub mod actions {
     }
 
     impl GateAction for ChannelAdapter {
+        fn reads_operands(&self) -> bool {
+            true
+        }
+
         fn apply(
             &self,
             qubit: QubitId,
@@ -2605,7 +2616,11 @@ pub mod actions {
                 .group_leader()
                 .is_some_and(|leader| ctx.current_qubit_index() != leader)
             {
-                return CompositeResponse::None;
+                return if ctx.channel_skipped(std::ptr::from_ref(self).addr(), qubit) {
+                    CompositeResponse::SkipGateAlreadyReported
+                } else {
+                    CompositeResponse::None
+                };
             }
 
             // Get current gate info from context
@@ -2647,6 +2662,14 @@ pub mod actions {
 
             // Apply the wrapped channel
             let response = self.channel.apply(&event, ctx, rng);
+            if ctx.group_leader().is_some() {
+                // Adapter addresses identify invocation sites only during this group/stage.
+                // They are never dereferenced and nested events save/restore the records.
+                ctx.record_channel_skips(
+                    std::ptr::from_ref(self).addr(),
+                    response.skipped_qubits(),
+                );
+            }
 
             if response.is_none() {
                 CompositeResponse::None
@@ -2663,16 +2686,18 @@ pub mod actions {
     /// Wrap a traditional `NoiseChannel` as a composite primitive action.
     ///
     /// Each invocation site runs at most once per operand group per stage, on the
-    /// leader: the first member eligible when the enclosing composite installs the
-    /// group (the first leaked member for a suppressed group, otherwise member 0).
-    /// The leader stays fixed even if leakage changes. A probability around the
+    /// leader: the first member eligible at the start of that stage (the first
+    /// leaked member for a suppressed group, otherwise member 0). The leader stays
+    /// fixed within the stage, and is chosen again for the next stage.
+    /// A probability around the
     /// adapter, including channel-level sampling, selects the leader with that
     /// probability; sampling another member does not run the channel. Any guard
     /// around the adapter (`seq!`, `when`, `if_then`, partner or fired conditions,
     /// including in two-stage primitives) is decided on the leader's invocation.
     /// A guard true only on another member runs nothing for the group. If the
-    /// wrapped channel skips the group, primitives after the adapter in a sequence
-    /// still run on non-leader members.
+    /// wrapped channel names a later member in a skip response, that member's
+    /// invocation of this adapter also stops its sequence. Unnamed members continue.
+    /// The skip targets are emitted only once, in the leader's response.
     ///
     /// Gate events use one gate group; non-gate events use all operands. With no
     /// enclosing group installed, the adapter runs on every invocation.

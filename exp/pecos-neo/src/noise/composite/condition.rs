@@ -24,6 +24,14 @@ pub trait Condition: Send + Sync {
     /// Evaluate the condition for a specific qubit.
     fn evaluate(&self, qubit: QubitId, ctx: &NoiseContext) -> bool;
 
+    /// Whether this condition reads the event's operand list through the context.
+    ///
+    /// See [`super::primitive::Primitive::reads_operands`]. Custom conditions must
+    /// declare operand reads for geometric single-pass non-gate processing.
+    fn reads_operands(&self) -> bool {
+        false
+    }
+
     /// Human-readable name for visualization.
     fn name(&self) -> &'static str;
 }
@@ -192,6 +200,10 @@ impl Condition for GateTypeIs {
 pub struct PartnerLeaked;
 
 impl Condition for PartnerLeaked {
+    fn reads_operands(&self) -> bool {
+        true
+    }
+
     fn evaluate(&self, qubit: QubitId, ctx: &NoiseContext) -> bool {
         // Get the other qubit in this two-qubit gate
         let Some(other) = ctx.other_qubit() else {
@@ -221,6 +233,10 @@ impl Condition for PartnerLeaked {
 pub struct AnyQubitLeaked;
 
 impl Condition for AnyQubitLeaked {
+    fn reads_operands(&self) -> bool {
+        true
+    }
+
     fn evaluate(&self, _qubit: QubitId, ctx: &NoiseContext) -> bool {
         // Fast path: if no leakage at all, return false immediately
         if ctx.leaked_count() == 0 {
@@ -266,6 +282,10 @@ impl Condition for IFired {
 pub struct PartnerFired;
 
 impl Condition for PartnerFired {
+    fn reads_operands(&self) -> bool {
+        true
+    }
+
     fn evaluate(&self, _qubit: QubitId, ctx: &NoiseContext) -> bool {
         ctx.partner_fired()
     }
@@ -284,6 +304,10 @@ impl Condition for PartnerFired {
 pub struct PartnerOnlyFired;
 
 impl Condition for PartnerOnlyFired {
+    fn reads_operands(&self) -> bool {
+        true
+    }
+
     fn evaluate(&self, _qubit: QubitId, ctx: &NoiseContext) -> bool {
         ctx.partner_fired() && !ctx.current_qubit_fired()
     }
@@ -294,12 +318,14 @@ impl Condition for PartnerOnlyFired {
 }
 
 /// Condition from a function.
+#[derive(Clone)]
 pub struct FnCondition<F>
 where
     F: Fn(QubitId, &NoiseContext) -> bool + Send + Sync,
 {
     func: F,
     name: &'static str,
+    reads_operands: bool,
 }
 
 impl<F> FnCondition<F>
@@ -308,7 +334,21 @@ where
 {
     /// Create a new function-based condition.
     pub fn new(name: &'static str, func: F) -> Self {
-        Self { func, name }
+        Self {
+            func,
+            name,
+            reads_operands: false,
+        }
+    }
+
+    /// Declare that the callback reads operands through the context.
+    ///
+    /// Without this declaration, a callback used on the geometric single-pass
+    /// non-gate path sees no operands unless another child requires them.
+    #[must_use]
+    pub fn with_operand_reads(mut self) -> Self {
+        self.reads_operands = true;
+        self
     }
 }
 
@@ -316,6 +356,10 @@ impl<F> Condition for FnCondition<F>
 where
     F: Fn(QubitId, &NoiseContext) -> bool + Send + Sync,
 {
+    fn reads_operands(&self) -> bool {
+        self.reads_operands
+    }
+
     fn evaluate(&self, qubit: QubitId, ctx: &NoiseContext) -> bool {
         (self.func)(qubit, ctx)
     }

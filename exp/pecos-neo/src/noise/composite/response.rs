@@ -30,6 +30,11 @@ pub enum CompositeResponse {
     /// Skip/remove the current gate for this qubit
     SkipGate,
 
+    /// Stop this member's sequence for a skip already emitted by a wrapped channel.
+    ///
+    /// This carries no additional runner effect, avoiding duplicate skip targets.
+    SkipGateAlreadyReported,
+
     /// Mark the qubit as leaked
     Leak,
 
@@ -67,7 +72,7 @@ impl CompositeResponse {
     #[must_use]
     pub fn skips_gate(&self) -> bool {
         match self {
-            Self::SkipGate => true,
+            Self::SkipGate | Self::SkipGateAlreadyReported => true,
             Self::Channel(response) => channel_any(
                 response,
                 |r| matches!(r, NoiseResponse::SkipGate(qubits) if !qubits.is_empty()),

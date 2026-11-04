@@ -120,6 +120,24 @@ does not scale seepage. Two-qubit channels share the outer fault and emission
 draws per pair, including through `channel_action`; composite builders
 preserve the per-qubit marginal rate.
 
+`channel_action` runs its wrapped channel once per operand group per stage. The
+leader is the first eligible member at the start of each stage (the first leaked
+member of a suppressed group, otherwise member 0), and remains fixed within that
+stage. Probability and condition guards decide on the leader's invocation. A
+wrapped skip stops the sequence on every later member it names, without emitting
+duplicate skip marks; unnamed members continue. Leak and unleak marks retain all
+named targets.
+
+On geometric single-pass non-gate events, `Primitive::reads_operands` opts into
+installing all operands before sampling, independently of whether member 0 is
+sampled. Actions and conditions declare the same capability, and combinators
+forward it from their children. Custom readers using `current_gate_qubits()`,
+`other_qubit()` or partner conditions must declare it; otherwise they see no
+operands on that path. Function conditions opt in with
+`FnCondition::with_operand_reads()`. `channel_action` declares operand reads;
+`pauli()` does not and keeps O(n*p) processing. Linear and two-pass paths always
+install operands. Every path sets the current member index.
+
 `SingleQubitChannel` and `TwoQubitChannel` discard a seeping qubit's state by
 sampling I, X, Y or Z uniformly and independently for each seeping qubit. Identity
 injects no gate. This fully depolarizing channel also discards correlations with

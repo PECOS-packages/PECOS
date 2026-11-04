@@ -7,19 +7,25 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 ## Unreleased
 
 - **Breaking:** pecos-neo `channel_action` now runs its wrapped channel once per
-  operand group per invocation site and stage (#1568), on the group's fixed first
-  eligible member. Rates change, not only seeds: on a k-member group, a wrapped
-  channel with rate p no longer fires at about `1 - (1 - p)^k`. This includes
-  wrapped single-qubit channels on multi-operand preparation, measurement and
-  idle events (one group of all operands), and composites nested through
-  `channel_action`. Guards around an adapter are decided on the leader's
-  invocation; a guard true only on another member runs nothing for the group.
-  Geometric single-pass composites on non-gate events install the full operand
-  list only when member 0 is sampled, and retain the correct member index.
-  The new `CompositeResponse::Channel(Box<NoiseResponse>)` retains all response
-  targets, and the public `CompositeResponse::causes_unleak` queries unleak
-  effects. Nested `CompositeCrosstalkChannel` now isolates its event state so
-  adapters inside it act on each crosstalk target.
+  operand group per invocation site and stage (#1568). Each stage chooses its
+  first eligible member (first leaked member for suppressed groups); that leader
+  stays fixed within the stage. Rates change, not only seeds: on a k-member group,
+  a wrapped channel with rate p no longer fires at about `1 - (1 - p)^k`. This
+  includes wrapped single-qubit channels on multi-operand preparation, measurement
+  and idle events (one group of all operands), and nested composites.
+  Guards around an adapter are decided on the leader's invocation. A wrapped
+  skip also stops sequences on later named members, without emitting duplicate
+  skip targets; unnamed members continue. `CompositeResponse::Channel(Box<NoiseResponse>)`
+  retains all response targets, `SkipGateAlreadyReported` propagates sequence
+  stopping without another runner effect, and `CompositeResponse::causes_unleak`
+  queries unleak effects. The new `Primitive::reads_operands`, `GateAction::reads_operands`
+  and `Condition::reads_operands` capabilities opt into full operand installation
+  before geometric single-pass non-gate sampling; undeclared readers see no
+  operands. Linear and two-pass paths always install operands, and all paths set
+  member indices. Function conditions can opt in with `FnCondition::with_operand_reads`.
+  Nested `CompositeCrosstalkChannel` isolates event state so adapters act on each
+  crosstalk target. Consequently its primitives no longer see the enclosing
+  `current_gate()` or `is_current_gate_suppressed()`.
 
 - **Breaking:** pecos-neo always suppresses gates on leaked operands in all three
   noise builders, including noiseless gates and models with no configured leak

@@ -42,6 +42,18 @@ pub trait Primitive: Send + Sync {
         rng: &mut PecosRng,
     ) -> CompositeResponse;
 
+    /// Whether this primitive reads the event's operand list through the context.
+    ///
+    /// Return true when using `current_gate_qubits()`, `other_qubit()`, partner
+    /// conditions or `channel_action`, including through any child. Geometric
+    /// single-pass non-gate channels install operands before sampling only when
+    /// this capability is true. A custom primitive that reads operands without
+    /// declaring it sees an empty operand list on that path. Linear and two-pass
+    /// channels always install operands. Member indices are set on every path.
+    fn reads_operands(&self) -> bool {
+        false
+    }
+
     /// Human-readable description for visualization (single line).
     fn describe(&self) -> String;
 
@@ -295,6 +307,10 @@ impl<P1: Primitive, P2: Primitive> TwoStage<P1, P2> {
 }
 
 impl<P1: Primitive, P2: Primitive> Primitive for TwoStage<P1, P2> {
+    fn reads_operands(&self) -> bool {
+        self.stage1.reads_operands() || self.stage2.reads_operands()
+    }
+
     fn apply(
         &self,
         qubit: QubitId,
@@ -352,6 +368,10 @@ impl<P1: Primitive, P2: Primitive> Primitive for TwoStage<P1, P2> {
 }
 
 impl Primitive for Box<dyn Primitive> {
+    fn reads_operands(&self) -> bool {
+        (**self).reads_operands()
+    }
+
     fn apply(
         &self,
         qubit: QubitId,
@@ -406,6 +426,10 @@ impl Primitive for Box<dyn Primitive> {
 
 // Implement Primitive for all GateActions
 impl<A: GateAction + Clone + 'static> Primitive for A {
+    fn reads_operands(&self) -> bool {
+        GateAction::reads_operands(self)
+    }
+
     fn apply(
         &self,
         qubit: QubitId,
@@ -476,6 +500,10 @@ impl<P: Primitive> Prob<P> {
 }
 
 impl<P: Primitive> Primitive for Prob<P> {
+    fn reads_operands(&self) -> bool {
+        self.inner.reads_operands()
+    }
+
     fn apply(
         &self,
         qubit: QubitId,
@@ -601,6 +629,10 @@ where
     F: Fn(Option<&crate::noise::GateInfo>) -> Probability + Send + Sync + Clone + 'static,
     P: Primitive,
 {
+    fn reads_operands(&self) -> bool {
+        self.inner.reads_operands()
+    }
+
     fn apply(
         &self,
         qubit: QubitId,
@@ -676,6 +708,10 @@ impl<P: Primitive> ProbLinear<P> {
 }
 
 impl<P: Primitive> Primitive for ProbLinear<P> {
+    fn reads_operands(&self) -> bool {
+        self.inner.reads_operands()
+    }
+
     fn apply(
         &self,
         qubit: QubitId,
@@ -782,6 +818,10 @@ impl<P: Primitive> ProbQuadratic<P> {
 }
 
 impl<P: Primitive> Primitive for ProbQuadratic<P> {
+    fn reads_operands(&self) -> bool {
+        self.inner.reads_operands()
+    }
+
     fn apply(
         &self,
         qubit: QubitId,
@@ -848,6 +888,12 @@ impl<C: Condition, T: Primitive, E: Primitive> When<C, T, E> {
 }
 
 impl<C: Condition + Clone + 'static, T: Primitive, E: Primitive> Primitive for When<C, T, E> {
+    fn reads_operands(&self) -> bool {
+        self.condition.reads_operands()
+            || self.then_branch.reads_operands()
+            || self.else_branch.reads_operands()
+    }
+
     fn apply(
         &self,
         qubit: QubitId,
@@ -941,6 +987,12 @@ impl<P: Primitive> Sample<P> {
 }
 
 impl<P: Primitive> Primitive for Sample<P> {
+    fn reads_operands(&self) -> bool {
+        self.branches
+            .iter()
+            .any(|(_, child)| child.reads_operands())
+    }
+
     fn apply(
         &self,
         qubit: QubitId,
@@ -1036,6 +1088,10 @@ impl<P: Primitive> Seq<P> {
 }
 
 impl<P: Primitive> Primitive for Seq<P> {
+    fn reads_operands(&self) -> bool {
+        self.primitives.iter().any(Primitive::reads_operands)
+    }
+
     fn apply(
         &self,
         qubit: QubitId,
@@ -1120,6 +1176,10 @@ impl BoxSeq {
 }
 
 impl Primitive for BoxSeq {
+    fn reads_operands(&self) -> bool {
+        self.primitives.iter().any(Primitive::reads_operands)
+    }
+
     fn apply(
         &self,
         qubit: QubitId,
@@ -1199,6 +1259,10 @@ impl<C: Condition> SkipIf<C> {
 }
 
 impl<C: Condition + Clone + 'static> Primitive for SkipIf<C> {
+    fn reads_operands(&self) -> bool {
+        self.condition.reads_operands()
+    }
+
     fn apply(
         &self,
         qubit: QubitId,
@@ -1320,6 +1384,12 @@ impl BoxSample {
 }
 
 impl Primitive for BoxSample {
+    fn reads_operands(&self) -> bool {
+        self.branches
+            .iter()
+            .any(|(_, child)| child.reads_operands())
+    }
+
     fn apply(
         &self,
         qubit: QubitId,

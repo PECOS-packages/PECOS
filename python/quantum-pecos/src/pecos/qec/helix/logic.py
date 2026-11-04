@@ -22,7 +22,6 @@ from typing import TYPE_CHECKING
 from pecos_rslib import PauliString
 
 from pecos.qec import discover_detectors
-from pecos.qec.dem_spec import Detector, Observable, result_ref
 from pecos.qec.helix.code import c4_helix_code
 from pecos.qec.helix.compile import parse_signed_logical_pauli
 from pecos.qec.helix.gadgets import (
@@ -39,12 +38,13 @@ from pecos.qec.helix.logical import (
     symplectic_action,
 )
 from pecos.qec.helix.lowering import helix_result_refs, lower_steps
-from pecos.qec.helix.memory import set_discovered_metadata
+from pecos.qec.helix.memory import discovered_definitions, set_discovered_metadata
 
 if TYPE_CHECKING:
     from pecos_rslib.qec import DiscoveredDetectors
 
     from pecos.qec.circuit_steps import CircuitStep
+    from pecos.qec.dem_spec import Detector, Observable
     from pecos.qec.helix.compile import Matrix
     from pecos.quantum import TickCircuit
 
@@ -133,15 +133,4 @@ def logic_circuit(basis: str, tokens: tuple[str, ...]) -> TickCircuit:
 def logic_definitions(basis: str, tokens: tuple[str, ...]) -> tuple[list[Detector], list[Observable]]:
     """Return typed discovered parities, retaining every observable's noiseless sign."""
     circuit, found = _logic_discovery(basis, tokens)
-    refs = [result_ref(tag, occurrence=occurrence) for tag, occurrence in helix_result_refs(circuit)]
-    detectors = []
-    for index, (records, reference) in enumerate(found.detectors):
-        if reference != 0:
-            msg = f"Detector {index} has nonzero reference {reference}: {records}"
-            raise ValueError(msg)
-        detectors.append(Detector(*(refs[record] for record in records), id=index))
-    observables = [
-        Observable(*(refs[record] for record in records), id=index, metadata={"reference": reference})
-        for index, (records, reference) in enumerate(found.observables)
-    ]
-    return detectors, observables
+    return discovered_definitions(circuit, found)

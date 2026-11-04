@@ -3,6 +3,7 @@
 
 """Helix algebra and C4-Helix flagged memory and logic circuits (arXiv:2609.03194)."""
 
+from pecos.qec.helix.cnot import cnot_circuit, cnot_conjugates, cnot_definitions, cnot_gadgets
 from pecos.qec.helix.code import HelixCode, c4_helix_code, helix_code
 from pecos.qec.helix.compile import Matrix, logical_pauli_fixup, min_cost_words, parse_signed_logical_pauli
 from pecos.qec.helix.gadgets import (
@@ -38,6 +39,10 @@ __all__ = [
     "c4_helix_gates",
     "c4_round_steps",
     "chosen_weight8_supports",
+    "cnot_circuit",
+    "cnot_conjugates",
+    "cnot_definitions",
+    "cnot_gadgets",
     "compile_logical_clifford",
     "helix_code",
     "helix_result_classifier",

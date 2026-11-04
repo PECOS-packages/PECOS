@@ -152,7 +152,7 @@ fn lockstep(ops: &[Op], n: usize, seed: u64, allow_dense: bool) -> bool {
             apply(&mut sim, op);
             apply(&mut dense, op);
         }
-        crossed |= sim.is_dense();
+        crossed |= allow_dense && sim.is_dense();
         assert_support(&sim);
         let actual = sim.state_vector();
         let expected = dense.state();
@@ -202,7 +202,10 @@ fn g_random_lockstep_and_determinism() {
                 };
                 ops.push(op);
             }
-            crossed |= lockstep(&ops, n, seed, allow_dense);
+            let circuit_crossed = lockstep(&ops, n, seed, allow_dense);
+            if allow_dense {
+                crossed |= circuit_crossed;
+            }
         }
     }
     assert!(
@@ -320,7 +323,8 @@ fn g_joint_distributions() {
         ],
     ];
     for (fixture, ops) in fixtures.iter().enumerate() {
-        let n = if fixture == 4 { 2 } else { 3 };
+        let switches_in_measurement = fixture == 4;
+        let n = if switches_in_measurement { 2 } else { 3 };
         let expected = exact_histories(ops, n);
         let mut counts = vec![0u64; expected.len()];
         let shots = 6000u64;
@@ -330,7 +334,7 @@ fn g_joint_distributions() {
                 .pruning_threshold(0.0)
                 .unwrap()
                 .build();
-            if fixture != 4 {
+            if !switches_in_measurement {
                 sim.max_dense_bytes = 0;
             }
             let mut history = 0;
@@ -340,13 +344,13 @@ fn g_joint_distributions() {
                     if fixture == 0 && position == 0 {
                         assert!(sim.num_terms() > 1);
                     }
-                    if fixture == 4 && position == 0 {
+                    if switches_in_measurement && position == 0 {
                         assert!(!sim.is_dense());
                         assert_eq!(sim.num_terms(), 4);
                         assert!(!sim.cliff_frame[0].is_diagonal());
                     }
                     let result = measure(&mut sim, op);
-                    if fixture == 4 && position == 0 {
+                    if switches_in_measurement && position == 0 {
                         assert!(sim.is_dense(), "measurement frame flush must cross over");
                     }
                     if fixture == 0 && position == 0 {
@@ -957,9 +961,9 @@ fn g_pruning_threshold_rejects_invalid_values() {
     }
 }
 
-// G: a high valid threshold preserves the largest term at decomposition.
+// G: threshold 0.999 accepts a single-term split and preserves the dense trajectory.
 #[test]
-fn g_high_pruning_threshold_preserves_largest_term_and_dense_reference() {
+fn g_high_pruning_threshold_single_split_matches_dense_reference() {
     for seed in 0..64 {
         let mut sim = StabVec::builder(2)
             .seed(seed)
@@ -996,17 +1000,137 @@ fn g_high_pruning_threshold_preserves_largest_term_and_dense_reference() {
 #[test]
 fn g_pruning_retains_terms_equal_to_cutoff() {
     let mut sim = StabVec::builder(2).pruning_threshold(0.25).unwrap().build();
-    let ch = sim.terms[0].1.clone();
+    let largest = sim.terms[0].1.clone();
+    let mut cutoff = largest.clone();
+    cutoff.x(&[QubitId(0)]);
+    let mut below = largest.clone();
+    below.x(&[QubitId(1)]);
     sim.terms = vec![
-        (Complex64::new(0.5, 0.0), ch.clone()),
-        (Complex64::new(0.25, 0.0), ch),
+        (Complex64::new(0.5, 0.0), largest),
+        (Complex64::new(0.25, 0.0), cutoff),
+        (Complex64::new(0.125, 0.0), below),
     ];
-    sim.set_sampled_basis_for_test(bits(0, 2));
+    // Only the term exactly at the cutoff supports x = |01>.
+    sim.set_sampled_basis_for_test(bits(1, 2));
     sim.apply_rz_immediate(pecos_core::radians!(0.37), 1);
     assert_eq!(
         sim.num_terms(),
         4,
-        "a term exactly at the cutoff must survive"
+        "the cutoff term must survive and the below-cutoff term must be pruned"
     );
+    assert_eq!(sim.x.as_ref(), Some(&bits(1, 2)));
     assert_support(&sim);
+}
+
+// G: both signed zeros and the greatest representable threshold below one work.
+#[test]
+fn g_pruning_threshold_accepts_range_endpoints() {
+    for threshold in [0.0, -0.0, f64::from_bits(1.0f64.to_bits() - 1)] {
+        let mut sim = StabVec::builder(2)
+            .seed(42)
+            .pruning_threshold(threshold)
+            .unwrap()
+            .build();
+        let mut dense = StateVecSoA::with_seed(2, 42);
+        for op in [Op::H(0), Op::Rz(0, 0.37), Op::H(0), Op::Cx(0, 1)] {
+            apply(&mut sim, op);
+            apply(&mut dense, op);
+        }
+        for q in 0..2 {
+            let outcome = sim.mz(&[QubitId(q)])[0].outcome;
+            let (probability, projected) = dense_branch(dense, Op::Mz(q), outcome);
+            assert!(probability > 0.0);
+            dense = projected;
+            crate::state_vector_test_utils::assert_phase_exact_state_matches(
+                &sim.state_vector(),
+                &dense.state(),
+                1e-12,
+                "accepted pruning endpoint",
+            );
+            assert_support(&sim);
+        }
+    }
+}
+
+// G: pruning several terms near the upper threshold retains the largest one.
+#[test]
+fn g_high_pruning_threshold_keeps_largest_of_several_terms() {
+    for threshold in [0.999, f64::from_bits(1.0f64.to_bits() - 1)] {
+        let mut sim = StabVec::builder(2)
+            .seed(42)
+            .pruning_threshold(threshold)
+            .unwrap()
+            .build();
+        let largest = sim.terms[0].1.clone();
+        let mut smaller = largest.clone();
+        smaller.x(&[QubitId(0)]);
+        let mut smallest = largest.clone();
+        smallest.x(&[QubitId(1)]);
+        sim.terms = vec![
+            (Complex64::new(1.0, 0.0), largest),
+            (Complex64::new(0.5, 0.0), smaller),
+            (Complex64::new(0.25, 0.0), smallest),
+        ];
+        sim.set_sampled_basis_for_test(bits(0, 2));
+        let angle = pecos_core::radians!(0.37);
+        sim.apply_rz_immediate(angle, 1);
+        assert_eq!(
+            sim.num_terms(),
+            2,
+            "only the largest term survives before doubling"
+        );
+        assert!(
+            sim.terms
+                .iter()
+                .all(|(_, ch)| ch.amplitude_bits(&bits(0, 2)).norm_sqr() > 0.0)
+        );
+        assert_support(&sim);
+        // The intended pruned state is |00>; compare its subsequent trajectory.
+        let mut dense = StateVecSoA::with_seed(2, 42);
+        dense.rz(angle, &[QubitId(1)]);
+        sim.h(&[QubitId(1)]);
+        dense.h(&[QubitId(1)]);
+        crate::state_vector_test_utils::assert_phase_exact_state_matches(
+            &sim.state_vector(),
+            &dense.state(),
+            1e-12,
+            "largest retained at high threshold",
+        );
+        let outcome = sim.mz(&[QubitId(1)])[0].outcome;
+        let (probability, mut projected) = dense_branch(dense, Op::Mz(1), outcome);
+        assert!(probability > 0.0);
+        crate::state_vector_test_utils::assert_phase_exact_state_matches(
+            &sim.state_vector(),
+            &projected.state(),
+            1e-12,
+            "pruned high-threshold trajectory",
+        );
+    }
+}
+
+// G: impossible forced projections may leave zero coefficients; RZ keeps one sentinel.
+#[test]
+fn g_zero_coefficients_collapse_before_rz_sampling() {
+    for threshold in [0.0, 0.25] {
+        for copies in [1, 3] {
+            let mut sim = StabVec::builder(2)
+                .pruning_threshold(threshold)
+                .unwrap()
+                .build();
+            sim.measure_qubit(0, Some(true));
+            assert_eq!(sim.terms[0].0, Complex64::new(0.0, 0.0));
+            // Also exercise a pre-existing decomposition of the zero sentinel.
+            sim.terms.resize(copies, sim.terms[0].clone());
+            sim.rz(pecos_core::radians!(0.37), &[QubitId(1)])
+                .h(&[QubitId(1)]);
+            assert_eq!(sim.num_terms(), 1);
+            assert!(sim.x.is_none());
+            assert_eq!(sim.gamma_diff_qubits, [] as [usize; 0]);
+            assert!(
+                sim.state_vector()
+                    .iter()
+                    .all(|a| *a == Complex64::new(0.0, 0.0))
+            );
+        }
+    }
 }

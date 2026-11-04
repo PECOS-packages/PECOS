@@ -1074,6 +1074,19 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
         // the signed fixed-point representative before taking the half-angle.
         let (sin_half, cos_half_val) = theta.half_angle_sin_cos();
 
+        // Impossible forced projections can leave zero coefficients: retain one
+        // zero sentinel without sampling or doubling it, even with pruning off.
+        if self
+            .terms
+            .iter()
+            .all(|(c, _)| *c == Complex64::new(0.0, 0.0))
+        {
+            self.terms.truncate(1);
+            self.x = None;
+            self.gamma_diff_qubits.clear();
+            return;
+        }
+
         // Prune negligible terms before doubling to limit growth.
         // Collect gamma Vecs from pruned terms to reuse (avoids malloc churn).
         let mut gamma_pool: Vec<Vec<u8>> = Vec::new();

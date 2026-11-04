@@ -11,8 +11,10 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   made deterministic only by interference. `set_rng` changes future draws only:
   it preserves the sampled bitstring, so reseeding clones does not decorrelate
   an already sampled branch.
-  `StabVecBuilder::pruning_threshold` now returns `Result`, accepting only finite
-  values in `[0.0, 1.0)`; Python raises `ValueError` for invalid thresholds.
+- **Breaking:** `StabVecBuilder::pruning_threshold` now returns `Result`,
+  accepting only finite values in `[0.0, 1.0)`; Python raises `ValueError` for
+  invalid thresholds. Pruning now uses strict `<`, so terms exactly at the
+  cutoff survive.
 - **Breaking:** removed StabVec's `mc_threshold` builder option in Rust and
   constructor parameter in Python.
 - StabVec now uses exact gate-by-gate sampling for faster multi-term measurement,

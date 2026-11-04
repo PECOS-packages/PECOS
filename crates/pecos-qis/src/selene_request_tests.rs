@@ -296,23 +296,37 @@ fn native_custom_qubit_handle_identity() {
             assert_eq!(second, 0);
             assert_eq!(direct.custom_call(0, &second.to_ne_bytes()).unwrap(), 0);
             while direct.get_next_operations().unwrap().is_some() {}
-            let source = r"
-            declare {i32, i64} @selene_qalloc(ptr)
+            let source = format!(
+                r"
+            {declare_selene_qalloc}
             declare i32 @selene_qfree(ptr, i64)
-            declare {i32, i64} @selene_custom_runtime_call(ptr, i64, ptr, i64)
-            define i64 @qmain(i64 %shot) {
-                %a = call {i32, i64} @selene_qalloc(ptr null)
-                %q = extractvalue {i32, i64} %a, 1
+            {declare_selene_custom_runtime_call}
+            define i64 @qmain(i64 %shot) {{
+                {call_a}
+                %q = extractvalue {{i32, i64}} %a, 1
                 %free = call i32 @selene_qfree(ptr null, i64 %q)
-                %b = call {i32, i64} @selene_qalloc(ptr null)
-                %r = extractvalue {i32, i64} %b, 1
+                {call_b}
+                %r = extractvalue {{i32, i64}} %b, 1
                 %data = alloca i64
                 store i64 %r, ptr %data
-                %custom = call {i32, i64} @selene_custom_runtime_call(ptr null, i64 0, ptr %data, i64 8)
+                {call_custom}
                 ret i64 0
-            }
-        ";
-            run_native_source(runtime, source).unwrap();
+            }}
+        ",
+                declare_selene_qalloc = crate::selene_test_ir::declaration("selene_qalloc", "ptr"),
+                declare_selene_custom_runtime_call = crate::selene_test_ir::declaration(
+                    "selene_custom_runtime_call",
+                    "ptr, i64, ptr, i64"
+                ),
+                call_a = crate::selene_test_ir::call("a", "selene_qalloc", "ptr null"),
+                call_b = crate::selene_test_ir::call("b", "selene_qalloc", "ptr null"),
+                call_custom = crate::selene_test_ir::call(
+                    "custom",
+                    "selene_custom_runtime_call",
+                    "ptr null, i64 0, ptr %data, i64 8"
+                ),
+            );
+            run_native_source(runtime, &source).unwrap();
         },
     );
 }
@@ -352,26 +366,40 @@ fn native_custom_returned_qubit_identity() {
             assert_eq!(second, 0);
             assert_eq!(direct.custom_call(0, &second.to_ne_bytes()).unwrap(), 0);
             while direct.get_next_operations().unwrap().is_some() {}
-            let source = r"
-            declare {i32, i64} @selene_qalloc(ptr)
+            let source = format!(
+                r"
+            {declare_selene_qalloc}
             declare i32 @selene_qfree(ptr, i64)
             declare i32 @selene_rxy(ptr, i64, double, double)
-            declare {i32, i64} @selene_custom_runtime_call(ptr, i64, ptr, i64)
-            define i64 @qmain(i64 %shot) {
-                %a = call {i32, i64} @selene_qalloc(ptr null)
-                %q = extractvalue {i32, i64} %a, 1
+            {declare_selene_custom_runtime_call}
+            define i64 @qmain(i64 %shot) {{
+                {call_a}
+                %q = extractvalue {{i32, i64}} %a, 1
                 %free = call i32 @selene_qfree(ptr null, i64 %q)
-                %b = call {i32, i64} @selene_qalloc(ptr null)
-                %r = extractvalue {i32, i64} %b, 1
+                {call_b}
+                %r = extractvalue {{i32, i64}} %b, 1
                 %data = alloca i64
                 store i64 0, ptr %data
-                %custom = call {i32, i64} @selene_custom_runtime_call(ptr null, i64 0, ptr %data, i64 8)
-                %handle = extractvalue {i32, i64} %custom, 1
+                {call_custom}
+                %handle = extractvalue {{i32, i64}} %custom, 1
                 %gate = call i32 @selene_rxy(ptr null, i64 %handle, double 0.0, double 0.0)
                 ret i64 0
-            }
-        ";
-            run_native_source(runtime, source).unwrap();
+            }}
+        ",
+                declare_selene_qalloc = crate::selene_test_ir::declaration("selene_qalloc", "ptr"),
+                declare_selene_custom_runtime_call = crate::selene_test_ir::declaration(
+                    "selene_custom_runtime_call",
+                    "ptr, i64, ptr, i64"
+                ),
+                call_a = crate::selene_test_ir::call("a", "selene_qalloc", "ptr null"),
+                call_b = crate::selene_test_ir::call("b", "selene_qalloc", "ptr null"),
+                call_custom = crate::selene_test_ir::call(
+                    "custom",
+                    "selene_custom_runtime_call",
+                    "ptr null, i64 0, ptr %data, i64 8"
+                ),
+            );
+            run_native_source(runtime, &source).unwrap();
         },
     );
 }
@@ -444,28 +472,49 @@ fn native_custom_future_handle_identity() {
                     assert_eq!(direct.get_bool_result(response).unwrap(), Some(true));
                     let tag = u64::from(returned);
                     let read_back = if returned {
-                        "%handle = extractvalue {i32, i64} %custom, 1\n%read = call {i32, i8} @selene_future_read_bool(ptr null, i64 %handle)"
+                        "%handle = extractvalue {i32, i64} %custom, 1\n%read = call i64 @selene_future_read_bool(ptr null, i64 %handle)"
                     } else {
                         ""
                     };
                     let source = format!(
                         r"
-                    declare {{i32, i64}} @selene_qalloc(ptr)
-                    declare {{i32, i64}} @selene_qubit_lazy_measure(ptr, i64)
-                    declare {{i32, i64}} @selene_custom_runtime_call(ptr, i64, ptr, i64)
-                    declare {{i32, i8}} @selene_future_read_bool(ptr, i64)
+                    {declare_selene_qalloc}
+                    {declare_selene_qubit_lazy_measure}
+                    {declare_selene_custom_runtime_call}
+                    declare i64 @selene_future_read_bool(ptr, i64)
                     define i64 @qmain(i64 %shot) {{
-                        %a = call {{i32, i64}} @selene_qalloc(ptr null)
+                        {call_a}
                         %q = extractvalue {{i32, i64}} %a, 1
-                        %m = call {{i32, i64}} @selene_qubit_lazy_measure(ptr null, i64 %q)
+                        {call_m}
                         %future = extractvalue {{i32, i64}} %m, 1
                         %data = alloca i64
                         store i64 %future, ptr %data
-                        %custom = call {{i32, i64}} @selene_custom_runtime_call(ptr null, i64 {tag}, ptr %data, i64 8)
+                        {call_custom}
                         {read_back}
                         ret i64 0
                     }}
-                "
+                ",
+                        declare_selene_qalloc =
+                            crate::selene_test_ir::declaration("selene_qalloc", "ptr"),
+                        declare_selene_qubit_lazy_measure = crate::selene_test_ir::declaration(
+                            "selene_qubit_lazy_measure",
+                            "ptr, i64"
+                        ),
+                        declare_selene_custom_runtime_call = crate::selene_test_ir::declaration(
+                            "selene_custom_runtime_call",
+                            "ptr, i64, ptr, i64"
+                        ),
+                        call_a = crate::selene_test_ir::call("a", "selene_qalloc", "ptr null"),
+                        call_m = crate::selene_test_ir::call(
+                            "m",
+                            "selene_qubit_lazy_measure",
+                            "ptr null, i64 %q"
+                        ),
+                        call_custom = crate::selene_test_ir::call(
+                            "custom",
+                            "selene_custom_runtime_call",
+                            &format!("ptr null, i64 {tag}, ptr %data, i64 8")
+                        ),
                     );
                     run_native_source(runtime, &source).unwrap();
                 },
@@ -710,25 +759,36 @@ fn native_custom_call_events_are_executed_or_rejected_before_return() {
                 if normalize {
                     runtime.set_batch_adapter_factory(|| Ok(Box::new(PhysicalX)));
                 }
-                let source = r"
+                let source = format!(
+                    r"
                 declare i64 @___qalloc()
                 declare void @___reset(i64)
                 declare i64 @___lazy_measure(i64)
                 declare i1 @___read_future_bool(i64)
-                declare {i32, i64} @selene_custom_runtime_call(ptr, i64, ptr, i64)
-                define i64 @qmain(i64 %shot) {
+                {declare_selene_custom_runtime_call}
+                define i64 @qmain(i64 %shot) {{
                     %q = call i64 @___qalloc()
                     call void @___reset(i64 %q)
                     %data = alloca i64
                     store i64 %q, ptr %data
-                    %custom = call {i32, i64} @selene_custom_runtime_call(ptr null, i64 42, ptr %data, i64 8)
-                    %returned = extractvalue {i32, i64} %custom, 1
+                    {call_custom}
+                    %returned = extractvalue {{i32, i64}} %custom, 1
                     %future = call i64 @___lazy_measure(i64 %returned)
                     %one = call i1 @___read_future_bool(i64 %future)
                     %status = select i1 %one, i64 0, i64 1
                     ret i64 %status
-                }
-            ";
+                }}
+            ",
+                    declare_selene_custom_runtime_call = crate::selene_test_ir::declaration(
+                        "selene_custom_runtime_call",
+                        "ptr, i64, ptr, i64"
+                    ),
+                    call_custom = crate::selene_test_ir::call(
+                        "custom",
+                        "selene_custom_runtime_call",
+                        "ptr null, i64 42, ptr %data, i64 8"
+                    ),
+                );
                 let trace = crate::OperationTraceStore::default();
                 let mut engine = crate::QisEngine::new(
                     Box::new(crate::QisHeliosInterface::new()),
@@ -849,35 +909,47 @@ fn custom_created_measurements_use_engine_feedback_without_source_slots() {
     unsafe extern "C" fn discard(_: RuntimeInstance, _: u64) -> i32 {
         0
     }
-    let source = r"
+    let _lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+    for (trace_enabled, deferred) in [(false, false), (true, false), (false, true), (true, true)] {
+        let before_custom = if deferred {
+            "%old = call i64 @___lazy_measure(i64 %a)\n            call void @___dec_future_refcount(i64 %old)"
+        } else {
+            ""
+        };
+        let source = format!(
+            r"
         declare i64 @___qalloc()
         declare i64 @___lazy_measure(i64)
         declare void @___dec_future_refcount(i64)
         declare void @___reset(i64)
         declare void @___rxy(i64, double, double)
-        declare {i32, i64} @selene_custom_runtime_call(ptr, i64, ptr, i64)
+        {declare_selene_custom_runtime_call}
         declare i1 @___read_future_bool(i64)
-        define i64 @qmain(i64 %shot) {
+        define i64 @qmain(i64 %shot) {{
             %a = call i64 @___qalloc()
             %b = call i64 @___qalloc()
             call void @___reset(i64 %a)
             call void @___reset(i64 %b)
             call void @___rxy(i64 %b, double 3.141592653589793, double 0.0)
-            %call = call {i32, i64} @selene_custom_runtime_call(ptr null, i64 0, ptr null, i64 0)
-            %future = extractvalue {i32, i64} %call, 1
+            {before_custom}
+            {call_custom}
+            %future = extractvalue {{i32, i64}} %call, 1
             %value = call i1 @___read_future_bool(i64 %future)
             %failed = xor i1 %value, true
             %status = zext i1 %failed to i64
             ret i64 %status
-        }
-    ";
-    let _lock = crate::test_env::ENV_MUTEX.lock().unwrap();
-    for (trace_enabled, deferred) in [(false, false), (true, false), (false, true), (true, true)] {
-        let source = if deferred {
-            source.replace("%call = call", "%old = call i64 @___lazy_measure(i64 %a)\n            call void @___dec_future_refcount(i64 %old)\n            %call = call")
-        } else {
-            source.to_string()
-        };
+        }}
+    ",
+            declare_selene_custom_runtime_call = crate::selene_test_ir::declaration(
+                "selene_custom_runtime_call",
+                "ptr, i64, ptr, i64"
+            ),
+            call_custom = crate::selene_test_ir::call(
+                "call",
+                "selene_custom_runtime_call",
+                "ptr null, i64 0, ptr null, i64 0"
+            ),
+        );
         DELIVERIES.with_borrow_mut(Vec::clear);
         with_config(
             |d| {
@@ -971,37 +1043,58 @@ fn opaque_future_reuse_does_not_inherit_source_provenance() {
             unsafe { (ORIGINAL.get().unwrap().get_bool_result_fn)(instance, future, out) }
         }
     }
-    let source = r#"
+    let source = format!(
+        r#"
         @name = private constant [8 x i8] c"detector"
         declare i64 @___qalloc()
         declare void @___reset(i64)
         declare i64 @___lazy_measure(i64)
         declare void @___dec_future_refcount(i64)
-        declare {i32, i64} @selene_custom_runtime_call(ptr, i64, ptr, i64)
+        {declare_selene_custom_runtime_call}
         declare i1 @___read_future_bool(i64)
         declare void @print_bool_selene(ptr, i64, i1)
-        define i64 @qmain(i64 %shot) {
+        define i64 @qmain(i64 %shot) {{
             %q = call i64 @___qalloc()
             call void @___reset(i64 %q)
             %old = call i64 @___lazy_measure(i64 %q)
             call void @___dec_future_refcount(i64 %old)
-            %call = call {i32, i64} @selene_custom_runtime_call(ptr null, i64 0, ptr null, i64 0)
-            %new = extractvalue {i32, i64} %call, 1
+            {call_custom}
+            %new = extractvalue {{i32, i64}} %call, 1
             %value = call i1 @___read_future_bool(i64 %new)
             call void @print_bool_selene(ptr @name, i64 8, i1 %value)
             ret i64 0
-        }
-    "#;
+        }}
+    "#,
+        declare_selene_custom_runtime_call =
+            crate::selene_test_ir::declaration("selene_custom_runtime_call", "ptr, i64, ptr, i64"),
+        call_custom = crate::selene_test_ir::call(
+            "call",
+            "selene_custom_runtime_call",
+            "ptr null, i64 0, ptr null, i64 0"
+        ),
+    );
     let _lock = crate::test_env::ENV_MUTEX.lock().unwrap();
     for (trace_enabled, output) in [
         (false, "bool"),
+        (false, "observed"),
+        (true, "observed"),
         (true, "bool"),
         (true, "repeated"),
         (true, "integer"),
         (false, "qir"),
         (true, "qir"),
     ] {
-        let source = if output == "qir" {
+        let source = if output == "observed" {
+            source
+                .replace(
+                    "declare i1 @___read_future_bool(i64)",
+                    "declare i1 @pecos_runtime_read_bool_v1(ptr, i64, i64)",
+                )
+                .replace(
+                    "@___read_future_bool(i64 %new)",
+                    "@pecos_runtime_read_bool_v1(ptr @name, i64 8, i64 %new)",
+                )
+        } else if output == "qir" {
             source
                 .replace("declare i64 @___qalloc()", "declare i32 @__quantum__qis__m__body(i64, i64)\ndeclare i32 @__quantum__rt__result_get_one(i64)")
                 .replace("%q = call i64 @___qalloc()\n            call void @___reset(i64 %q)\n            %old = call i64 @___lazy_measure(i64 %q)\n            call void @___dec_future_refcount(i64 %old)", "%old = call i32 @__quantum__qis__m__body(i64 0, i64 7)")
@@ -1015,7 +1108,7 @@ fn opaque_future_reuse_does_not_inherit_source_provenance() {
             source.replace("declare void @print_bool_selene(ptr, i64, i1)", "declare void @print_int_selene(ptr, i64, i64)")
                 .replace("call void @print_bool_selene(ptr @name, i64 8, i1 %value)", "%integer = zext i1 %value to i64\n            call void @print_int_selene(ptr @name, i64 8, i64 %integer)")
         } else {
-            source.to_string()
+            source.clone()
         };
         REUSED.set(false);
         with_config(
@@ -1047,7 +1140,14 @@ fn opaque_future_reuse_does_not_inherit_source_provenance() {
                         }
                     }
                 })();
-                if output == "qir" {
+                if output == "observed" {
+                    assert!(
+                        outcome
+                            .unwrap_err()
+                            .to_string()
+                            .contains("unknown measurement provenance")
+                    );
+                } else if output == "qir" {
                     assert!(
                         outcome
                             .unwrap_err()
@@ -1120,9 +1220,20 @@ fn decoder_request_never_forces_an_unread_native_future_or_inserts_a_barrier() {
             assert_eq!(context, b"{}");
             self.decode(window, instance, syndrome)
         }
+        fn decode_observed_v1(
+            &mut self,
+            window: u64,
+            instance: u64,
+            syndrome: &[u8],
+            context: &[u8],
+            reads: &[crate::runtime_decoder::RuntimeObservedRead],
+        ) -> std::result::Result<u64, PecosError> {
+            assert_eq!(reads, &[] as &[crate::runtime_decoder::RuntimeObservedRead]);
+            self.decode_v1(window, instance, syndrome, context)
+        }
     }
     let _lock = crate::test_env::ENV_MUTEX.lock().unwrap();
-    for versioned in [false, true] {
+    for mode in 0..3 {
         FORCES.set(0);
         with_config(
             |d| {
@@ -1143,7 +1254,7 @@ fn decoder_request_never_forces_an_unread_native_future_or_inserts_a_barrier() {
             %status = sub i64 1, %frame
             ret i64 %status
         }";
-                let source = if versioned {
+                let source = if mode != 0 {
                     format!("@context = private constant [2 x i8] c\"{{}}\"\n{}", source
                     .replace("declare i64 @pecos_runtime_decode(i64, i64, ptr, i64)",
                         "declare i64 @pecos_runtime_decode_v1(i64, i64, ptr, i64, ptr, i64)")
@@ -1151,6 +1262,14 @@ fn decoder_request_never_forces_an_unread_native_future_or_inserts_a_barrier() {
                         "@pecos_runtime_decode_v1(i64 9, i64 0, ptr %data, i64 1, ptr @context, i64 2)"))
                 } else {
                     source.to_string()
+                };
+                let source = if mode == 2 {
+                    source.replace(
+                        "pecos_runtime_decode_v1",
+                        "pecos_runtime_decode_observed_v1",
+                    )
+                } else {
+                    source
                 };
                 let mut engine = crate::QisEngine::new(
                     Box::new(crate::QisHeliosInterface::new()),

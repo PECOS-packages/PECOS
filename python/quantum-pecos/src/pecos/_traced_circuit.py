@@ -36,10 +36,17 @@ def normalize_traced_tick_circuit(
     """Normalize a runtime-traced TickCircuit before fault analysis.
 
     Runtime traces may contain parameterized Clifford rotations such as
-    ``RZZ(pi/2)``. Lower these rotations, optionally simplify Clifford chains,
-    and assign stable measurement ids before converting the trace to a DAG.
+    ``RZZ(pi/2)``. Lower named rotations while retaining the arity of physical
+    gates: a half-turn ``RZZ`` keeps its two-qubit noise and idle locations.
+    Optionally simplify Clifford chains, then assign stable measurement ids
+    before converting the trace to a DAG.
     """
-    _call_required_tick_circuit_method(tick_circuit, "lower_clifford_rotations", context)
+    _call_required_tick_circuit_method(
+        tick_circuit,
+        "lower_clifford_rotations",
+        context,
+        preserve_gate_arity=True,
+    )
     if simplify_single_qubit_clifford_chains:
         _call_required_tick_circuit_method(
             tick_circuit,
@@ -49,9 +56,14 @@ def normalize_traced_tick_circuit(
     _call_required_tick_circuit_method(tick_circuit, "assign_missing_meas_ids", context)
 
 
-def _call_required_tick_circuit_method(tick_circuit: object, method_name: str, context: str) -> None:
+def _call_required_tick_circuit_method(
+    tick_circuit: object,
+    method_name: str,
+    context: str,
+    **kwargs: object,
+) -> None:
     method = getattr(tick_circuit, method_name, None)
     if not callable(method):
         msg = f"{context}: expected a TickCircuit with callable {method_name}()."
         raise TypeError(msg)
-    method()
+    method(**kwargs)

@@ -60,6 +60,7 @@ nav:
   - Runtime QIS Tracing: user-guide/runtime-qis-tracing.md
   - Runtime Custom Events: user-guide/runtime-custom-events.md
   - Scheduled Idle Simulation: user-guide/scheduled-idle-simulation.md
+  - Python Worker Context: user-guide/python-worker-context.md
   - Simulators: user-guide/simulators.md
   - Stabilizer Tensor Networks: user-guide/stabilizer-tensor-networks.md
   - Engine Selection: user-guide/engine-selection.md
@@ -72,6 +73,7 @@ nav:
   - Quantum Information Primitives: user-guide/quantum-info.md
   - Stabilizer Codes: user-guide/stabilizer-codes.md
   - Pauli Algebra and QEC in Python: user-guide/python-pauli-qec.md
+  - Circuit Parallelism and Density: user-guide/circuit-parallelism.md
   - Pauli and Stabilizer Analysis: user-guide/stabilizer-analysis.md
   - Stabilizer-Code Verification: user-guide/stabilizer-code-verification.md
   - Fault-Tolerance Analysis and Distance Certification: user-guide/fault-tolerance-analysis.md

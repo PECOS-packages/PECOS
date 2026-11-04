@@ -125,6 +125,19 @@ off unless insertion asked for it — and the idle-noise families apply to whate
 idles the runtime emitted. `with_strip_traced_idles(...)` overrides that pairing
 in either direction when you want it stated explicitly.
 
+The Guppy DEM pipeline retains adjacent one-qubit Clifford gates emitted by the
+selected runtime, even when their ideal actions cancel. It lowers Clifford
+rotations before fault propagation but does not merge or cancel the resulting
+one-qubit gate chains.
+
+Traced DEM preparation retains a physical two-qubit half-turn such as
+`RZZ(pi)` as a two-qubit noise location. Its ideal action is equivalent to
+`Z` on each operand, but its noise and post-gate idle insertion still follow
+the runtime-emitted two-qubit operation. The fault propagator resolves that
+ideal action without splitting the physical location. Explicit circuit
+optimization with `lower_clifford_rotations()` retains its existing default;
+use `preserve_gate_arity=True` when preparing noise analysis.
+
 The linear family uses a custom Z-biased distribution, keeping smaller X and Y
 memory errors while making dephasing dominant; its weights are an additive
 probability distribution and must sum to 1. The sine-squared family uses Z only,

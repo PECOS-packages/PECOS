@@ -189,7 +189,7 @@ The optimizer is conservative to ensure correctness:
 
 ### Control Flow
 
-Parallel blocks containing control flow (`If`, `Repeat`) are not optimized:
+Parallel blocks containing control flow (`If`, `Repeat`, `For`, `While`) are not optimized:
 
 ```python
 from pecos.slr import Parallel, QReg, CReg, If

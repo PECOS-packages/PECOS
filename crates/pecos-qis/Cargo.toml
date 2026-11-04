@@ -44,6 +44,7 @@ tempfile.workspace = true
 rand.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+regex.workspace = true
 sha2.workspace = true
 libloading.workspace = true
 

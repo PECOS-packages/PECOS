@@ -20,6 +20,7 @@ fn deserialize_program_operations<'de, D: serde::Deserializer<'de>>(
 ) -> Result<Vec<Operation>, D::Error> {
     let ops = Vec::<Operation>::deserialize(deserializer)?;
     super::declarations::validate_operations(&ops).map_err(serde::de::Error::custom)?;
+    super::exports::collect(&ops).map_err(serde::de::Error::custom)?;
     Ok(ops)
 }
 
@@ -137,6 +138,7 @@ pub enum Operation {
     DataExport {
         data: String,
         variables: Vec<String>,
+        to: Option<Vec<String>>,
     },
     /// Comment
     Comment { comment: String },
@@ -223,6 +225,10 @@ impl<'de> Deserialize<'de> for Operation {
                 .as_str()
                 .ok_or_else(|| D::Error::custom("qop must be a string"))?
                 .to_string();
+            if qop == "Measure" {
+                super::classical_validation::validate_measure_json(&val)
+                    .map_err(D::Error::custom)?;
+            }
             let angles = obj
                 .get("angles")
                 .map_or(Ok(None), convert_angles)
@@ -361,11 +367,22 @@ impl<'de> Deserialize<'de> for Operation {
                 .ok_or_else(|| D::Error::custom("data must be a string"))?
                 .to_string();
             let kind = declaration_kind(&data);
-            if obj.contains_key("variables") && kind.is_none() {
+            if data == "cvar_export" {
+                let (variables, to) = super::exports::decode(&val).map_err(D::Error::custom)?;
+                Ok(Operation::DataExport {
+                    data,
+                    variables,
+                    to,
+                })
+            } else if obj.contains_key("variables") && kind.is_none() {
                 // DataExport
                 let variables: Vec<String> = serde_json::from_value(obj["variables"].clone())
                     .map_err(|e| D::Error::custom(format!("variables: {e}")))?;
-                Ok(Operation::DataExport { data, variables })
+                Ok(Operation::DataExport {
+                    data,
+                    variables,
+                    to: None,
+                })
             } else {
                 // VariableDefinition
                 let variable = if kind.is_some() {
@@ -428,7 +445,7 @@ impl<'de> Deserialize<'de> for Operation {
 }
 
 /// Represents an argument to a quantum operation
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(untagged)]
 pub enum QubitArg {
     /// Single qubit (var, idx)
@@ -464,9 +481,6 @@ pub enum Expression {
     /// Integer literal
     Integer(i64),
 }
-
-// Constants for internal register naming
-pub const MEASUREMENT_PREFIX: &str = "measurement_";
 
 /// Validate a v0.1 quantum declaration: the type is optional and size must be positive.
 /// Declaration registration enforces the program-wide unique-name rule separately.
@@ -685,10 +699,17 @@ mod tests {
     fn test_data_export() {
         let json = r#"{
             "format": "PHIR/JSON", "version": "0.1.0", "metadata": {},
-            "ops": [{"data": "cvar_export", "variables": ["m", "n"]}]
+            "ops": [
+                {"data":"cvar_define","data_type":"u32","variable":"m"},
+                {"data":"cvar_define","data_type":"u32","variable":"n"},
+                {"data": "cvar_export", "variables": ["m", "n"]}
+            ]
         }"#;
         let program: PHIRProgram = serde_json::from_str(json).expect("should parse");
-        if let Operation::DataExport { data, variables } = &program.ops[0] {
+        if let Operation::DataExport {
+            data, variables, ..
+        } = &program.ops[2]
+        {
             assert_eq!(data, "cvar_export");
             assert_eq!(variables, &["m", "n"]);
         } else {

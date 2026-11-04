@@ -101,8 +101,8 @@ For the shared Monte Carlo engine, `.seed()` controls a run seed drawn for each
 run. Each shot derives its own seed from that run seed and its global shot index,
 so changing the worker count or the number of shots preserves the shared prefix.
 Random draws in earlier shots do not affect later shots. Reusing a built engine
-advances its run-seed stream. Shot-seed derivation is stable, but component seeds
-use Rust's `DefaultHasher`; identical samples across Rust releases are not promised.
+advances its run-seed stream. Shot seeds and the component seeds derived from them
+use fixed algorithms, so they do not depend on the Rust release.
 
 The `sim()` function returns a builder that provides flexibility through method chaining. You can configure seeds, workers, noise models, and more:
 

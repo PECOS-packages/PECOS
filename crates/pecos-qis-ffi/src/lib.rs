@@ -29,6 +29,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex};
 
+mod decoder_reads;
 pub mod ffi;
 mod random;
 mod selene;
@@ -91,6 +92,7 @@ pub struct ExecutionContext {
     native_selene_handles: AtomicBool,
     /// Native future identity to dense source measurement provenance.
     native_future_sources: Mutex<BTreeMap<u64, usize>>,
+    decoder_reads: Mutex<decoder_reads::DecoderReads>,
     measurement_identities: Mutex<MeasurementIdentities>,
     /// Sticky audit failure independent of optional per-output read attribution.
     native_provenance_unknown: AtomicBool,
@@ -221,6 +223,7 @@ impl ExecutionContext {
             dynamic_mode_active: AtomicBool::new(false),
             native_selene_handles: AtomicBool::new(false),
             native_future_sources: Mutex::new(BTreeMap::new()),
+            decoder_reads: Mutex::new(decoder_reads::DecoderReads::default()),
             measurement_identities: Mutex::new(MeasurementIdentities::default()),
             native_provenance_unknown: AtomicBool::new(false),
             waiting_for_result: AtomicU64::new(u64::MAX),
@@ -274,6 +277,9 @@ impl ExecutionContext {
         }
         if let Ok(mut identities) = self.measurement_identities.lock() {
             *identities = MeasurementIdentities::default();
+        }
+        if let Ok(mut reads) = self.decoder_reads.lock() {
+            *reads = decoder_reads::DecoderReads::default();
         }
         self.native_provenance_unknown
             .store(false, Ordering::SeqCst);

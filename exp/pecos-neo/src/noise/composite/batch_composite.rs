@@ -177,12 +177,13 @@ impl BatchState {
 /// Result of batch processing.
 ///
 /// `responses` retains exact response targets, including those named by a
-/// wrapped channel. The `skip`, `leaked` and `unleaked` lists record the invoked
+/// wrapped channel. The `skip` list records an invoked qubit only when the
+/// response skips that qubit. The `leaked` and `unleaked` lists record the invoked
 /// qubit when its response reports that effect, even if a wrapped channel names
-/// other qubits. Use `responses` to determine those exact targets.
+/// other qubits. Use `responses` to determine exact leakage targets.
 #[derive(Debug, Clone, Default)]
 pub struct BatchCompositeResult {
-    /// Invoked qubits whose response skips a gate.
+    /// Invoked qubits skipped by their response.
     pub skip: SmallVec<[QubitId; 8]>,
     /// Invoked qubits whose response causes leakage.
     pub leaked: SmallVec<[QubitId; 8]>,
@@ -297,7 +298,7 @@ impl<P: Primitive> FastBatchProcessor<P> {
                 if response.causes_unleak() {
                     result.unleaked.push(qubit);
                 }
-                if response.skips_gate() {
+                if response.skips_qubit(qubit) {
                     result.skip.push(qubit);
                 }
                 result.responses.push((qubit, response));

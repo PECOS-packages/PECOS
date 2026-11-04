@@ -522,7 +522,13 @@ impl NoiseContext {
     /// allowing actions to know which qubit they're processing and access
     /// the other qubits involved.
     pub fn set_current_qubit_index(&mut self, index: usize, gate_qubits: &[QubitId]) {
-        if self.current_gate_qubits.as_slice() != gate_qubits {
+        self.select_operand_group(index, gate_qubits);
+    }
+
+    /// Select a member and install its operands, returning whether the group changed.
+    pub(crate) fn select_operand_group(&mut self, index: usize, gate_qubits: &[QubitId]) -> bool {
+        let changed = self.current_gate_qubits.as_slice() != gate_qubits;
+        if changed {
             #[cfg(feature = "composite-noise")]
             self.sequence_skips.clear();
             if self.current_gate.is_some() {
@@ -532,6 +538,13 @@ impl NoiseContext {
             self.current_gate_qubits = gate_qubits.iter().copied().collect();
         }
         self.current_qubit_index = index;
+        changed
+    }
+
+    /// Expose the actual storage mode to operand-buffer regression tests.
+    #[cfg(all(test, feature = "composite-noise"))]
+    pub(crate) fn current_gate_qubits_spilled(&self) -> bool {
+        self.current_gate_qubits.spilled()
     }
 
     /// Select a member without copying the optionally installed operands.
@@ -547,7 +560,10 @@ impl NoiseContext {
         self.sequence_skips.clear();
     }
 
-    /// Record the leader's skip targets without emitting them again on later members.
+    /// Insert nonempty skip targets for a sequence step; empty input leaves records intact.
+    ///
+    /// This method only inserts records. They are cleared with the group, stage or
+    /// event, and saved/restored across nested events.
     #[cfg(feature = "composite-noise")]
     pub(crate) fn record_sequence_skips(
         &mut self,
@@ -564,9 +580,11 @@ impl NoiseContext {
 
     #[cfg(feature = "composite-noise")]
     pub(crate) fn sequence_skipped(&self, site: usize, step: usize, qubit: QubitId) -> bool {
-        self.sequence_skips
-            .get(&(site, step))
-            .is_some_and(|qubits| qubits.binary_search(&qubit).is_ok())
+        !self.sequence_skips.is_empty()
+            && self
+                .sequence_skips
+                .get(&(site, step))
+                .is_some_and(|qubits| qubits.binary_search(&qubit).is_ok())
     }
 
     /// Get the selected group's stable leader, or `None` for standalone actions.

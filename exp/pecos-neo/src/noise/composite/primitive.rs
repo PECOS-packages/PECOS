@@ -1165,10 +1165,11 @@ fn apply_sequence(
         if ctx.group_leader().is_some() {
             ctx.record_sequence_skips(site, step, response.channel_skipped_qubits());
         }
-        if !response.skips_qubit(qubit) && ctx.sequence_skipped(site, step, qubit) {
+        let mut stops = response.skips_qubit(qubit);
+        if !stops && ctx.sequence_skipped(site, step, qubit) {
             response = response.combine(CompositeResponse::SkipGateAlreadyReported);
+            stops = true;
         }
-        let stops = response.skips_qubit(qubit);
         combined = combined.combine(response);
         if stops {
             return combined;

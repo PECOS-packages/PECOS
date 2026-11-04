@@ -190,7 +190,10 @@ After evaluating that step, the sequence stops only for a named member, even if
 a guard on that member bypasses the adapter or an inner sequence. Unnamed members,
 including the leader, continue. Earlier steps and the evaluated step retain their
 effects; later steps do not run on skipped members. Skip targets reach the runner
-only once. Leak and unleak marks retain all named targets.
+only once. This stop guarantee applies to later steps of every enclosing sequence
+for named members. Without an enclosing sequence, guard branches are evaluated
+per member as usual, even for members named in a wrapped skip. Leak and unleak
+marks retain all named targets.
 
 On geometric single-pass non-gate events, `Primitive::reads_operands` opts into
 installing all operands before sampling, independently of whether member 0 is

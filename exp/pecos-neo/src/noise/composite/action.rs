@@ -2688,7 +2688,9 @@ pub mod actions {
     /// named qubits even if a guard bypasses the adapter or an inner sequence.
     /// Unnamed members, including the leader, continue. Earlier steps and the
     /// evaluated step retain their effects. Skip targets are emitted only once,
-    /// in the leader's response.
+    /// in the leader's response. Wrapped skips stop later steps of every enclosing
+    /// sequence for named members. Without an enclosing sequence, guard branches
+    /// are evaluated per member as usual, even for members named in a wrapped skip.
     ///
     /// Gate events use one gate group; non-gate events use all operands. With no
     /// enclosing group installed, the adapter runs on every invocation.

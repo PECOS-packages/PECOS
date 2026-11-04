@@ -118,14 +118,13 @@ impl OperandSelection<'_> {
             let start = index / size * size;
             let end = (start + size).min(self.qubits.len());
             let group = &self.qubits[start..end];
-            if ctx.current_gate_qubits() != group {
+            if ctx.select_operand_group(index - start, group) {
                 ctx.set_group_leader(
                     group
                         .iter()
                         .position(|q| !self.suppressed || ctx.is_leaked(*q)),
                 );
             }
-            ctx.set_current_qubit_index(index - start, group);
             ctx.set_current_gate_suppressed(self.suppressed);
         }
         true

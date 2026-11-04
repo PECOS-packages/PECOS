@@ -341,6 +341,36 @@ fn adapter_unleak_reaches_fast_batch_result() {
 }
 
 #[test]
+fn fast_batch_skip_list_contains_only_invoked_qubits_that_are_skipped() {
+    for target in PAIR {
+        let probe = Probe {
+            response: NoiseResponse::SkipGate(smallvec::smallvec![target]),
+            ..Probe::default()
+        };
+        let processor = FastBatchProcessor::new(1.0, channel_action(probe)).unwrap();
+        let result = processor.process_range(
+            0,
+            1,
+            &BatchState::new(2),
+            &mut NoiseContext::new(),
+            &mut PecosRng::seed_from_u64(42),
+        );
+        let expected = if target == PAIR[0] {
+            vec![PAIR[0]]
+        } else {
+            vec![]
+        };
+        assert_eq!(result.skip.as_slice(), expected);
+        assert_eq!(result.responses.len(), 1);
+        assert_eq!(result.responses[0].0, PAIR[0]);
+        assert_eq!(
+            result.responses[0].1.channel_skipped_qubits().as_slice(),
+            &[target]
+        );
+    }
+}
+
+#[test]
 fn adapter_sites_and_stages_each_run_once() {
     let probe = Probe::default();
     let primitive = two_stage(
@@ -866,14 +896,24 @@ fn sequence_remembers_skip_through_function_and_choice_guards() {
     let seed = leader_hit_partner_miss_seed();
     for boxed in [false, true] {
         let probe = skipping_probe();
+        let entered = Members::default();
         let guards: Vec<Box<dyn Primitive>> = vec![
             Box::new(prob_fn(
                 |_| Probability::new(0.5).unwrap(),
-                channel_action(probe.clone()),
+                GuardEntry {
+                    inner: channel_action(probe.clone()),
+                    members: entered.clone(),
+                },
             )),
             Box::new(
                 BoxSample::new(vec![
-                    (0.5, Box::new(channel_action(probe.clone()))),
+                    (
+                        0.5,
+                        Box::new(GuardEntry {
+                            inner: channel_action(probe.clone()),
+                            members: entered.clone(),
+                        }),
+                    ),
                     (0.5, Box::new(nothing())),
                 ])
                 .unwrap(),
@@ -881,10 +921,16 @@ fn sequence_remembers_skip_through_function_and_choice_guards() {
         ];
         for guard in guards {
             probe.views.lock().unwrap().clear();
+            entered.0.lock().unwrap().clear();
             assert_guarded_sequence_stops(
                 sequence(vec![guard, Box::new(inject_x())], boxed),
                 &probe,
                 seed,
+            );
+            assert_eq!(
+                *entered.0.lock().unwrap(),
+                vec![0],
+                "non-leader must miss the guard"
             );
         }
     }
@@ -917,6 +963,8 @@ fn sequence_stops_at_the_recorded_step_and_keeps_earlier_effects() {
     }
 }
 
+const OPERAND_BUFFER_TEST_SIZE: usize = 1024;
+
 #[derive(Clone, Default)]
 struct OperandBufferProbe(Arc<Mutex<Vec<usize>>>);
 impl Primitive for OperandBufferProbe {
@@ -924,11 +972,13 @@ impl Primitive for OperandBufferProbe {
         true
     }
     fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, _: &mut PecosRng) -> CompositeResponse {
-        assert_eq!(
-            ctx.current_gate_qubits(),
-            &[QubitId(0), QubitId(1), QubitId(2)]
+        assert!(
+            ctx.current_gate_qubits_spilled(),
+            "buffer must be heap-backed for address reuse to be meaningful"
         );
+        assert_eq!(ctx.current_gate_qubits().len(), OPERAND_BUFFER_TEST_SIZE);
         assert_eq!(ctx.current_qubit_index(), qubit.0);
+        assert_eq!(ctx.current_gate_qubits()[ctx.current_qubit_index()], qubit);
         self.0
             .lock()
             .unwrap()
@@ -945,7 +995,7 @@ impl Primitive for OperandBufferProbe {
 
 #[test]
 fn two_pass_non_gate_reader_reuses_one_operand_buffer() {
-    let qubits = [QubitId(0), QubitId(1), QubitId(2)];
+    let qubits: Vec<_> = (0..OPERAND_BUFFER_TEST_SIZE).map(QubitId).collect();
     for geometric in [false, true] {
         let probe = OperandBufferProbe::default();
         let primitive = two_stage(probe.clone(), probe.clone());
@@ -976,7 +1026,7 @@ fn two_pass_non_gate_reader_reuses_one_operand_buffer() {
                 &mut PecosRng::seed_from_u64(42),
             );
             let buffers = probe.0.lock().unwrap();
-            assert_eq!(buffers.len(), 6);
+            assert_eq!(buffers.len(), 2 * OPERAND_BUFFER_TEST_SIZE);
             assert!(
                 buffers.iter().all(|address| *address == buffers[0]),
                 "each stage must reuse the group's operand buffer"

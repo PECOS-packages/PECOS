@@ -2,7 +2,7 @@
 // Licensed under the Apache License, Version 2.0.
 
 use crate::PauliKindForDecomp;
-use pecos_core::{QubitId, gate_type::GateType};
+use pecos_core::{Angle64, QubitId, gate_type::GateType};
 use pecos_simulators::CliffordGateable;
 
 pub(super) fn rotation_axis(gate: GateType) -> Option<PauliKindForDecomp> {
@@ -10,6 +10,16 @@ pub(super) fn rotation_axis(gate: GateType) -> Option<PauliKindForDecomp> {
         GateType::RX | GateType::RXX => Some(PauliKindForDecomp::X),
         GateType::RY | GateType::RYY => Some(PauliKindForDecomp::Y),
         GateType::RZ | GateType::RZZ => Some(PauliKindForDecomp::Z),
+        _ => None,
+    }
+}
+
+/// Fixed-angle gates that equal a Pauli rotation up to global phase, which a
+/// program does not track: `T = e^{i pi/8} RZ(pi/4)`, `Tdg = e^{-i pi/8} RZ(-pi/4)`.
+pub(super) fn fixed_rotation(gate: GateType) -> Option<(PauliKindForDecomp, Angle64)> {
+    match gate {
+        GateType::T => Some((PauliKindForDecomp::Z, Angle64::QUARTER_TURN / 2u64)),
+        GateType::Tdg => Some((PauliKindForDecomp::Z, -(Angle64::QUARTER_TURN / 2u64))),
         _ => None,
     }
 }

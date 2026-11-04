@@ -55,6 +55,40 @@ fn phase_normalization_and_word_symplectic() {
 }
 
 #[test]
+fn t_and_tdg_compile_as_quarter_pi_z_rotations() {
+    let eighth = Angle64::QUARTER_TURN / 2u64;
+    let build = |fixed: bool| {
+        let mut circuit = TickCircuit::new();
+        circuit.tick().h(&[0, 1]);
+        if fixed {
+            circuit.tick().t(&[0]);
+        } else {
+            circuit.tick().rz(eighth, &[0]);
+        }
+        circuit.tick().cx(&[(0, 1)]);
+        if fixed {
+            circuit.tick().tdg(&[1]);
+        } else {
+            circuit.tick().rz(-eighth, &[1]);
+        }
+        circuit.tick().h(&[1]);
+        circuit.tick().mz(&[0, 1]);
+        HeisenbergProgram::compile(&circuit).unwrap()
+    };
+    let (fixed, parametric) = (build(true), build(false));
+    assert_eq!(fixed.operations, parametric.operations);
+    for seed in 0..50 {
+        assert_eq!(fixed.run(seed), parametric.run(seed));
+    }
+    let rotations = fixed
+        .operations
+        .iter()
+        .filter(|op| matches!(op, HeisenbergOp::Rotation { .. }))
+        .count();
+    assert_eq!(rotations, 2);
+}
+
+#[test]
 fn repeated_mx_and_reset_fault_cancellation() {
     let mut circuit = TickCircuit::new();
     circuit.tick().mx(&[0]);
@@ -142,8 +176,6 @@ fn rejected_kinds_have_locations_at_every_angle() {
         GateType::RXYXY2Q,
         GateType::RXXRYYRZZ,
         GateType::U2q,
-        GateType::T,
-        GateType::Tdg,
         GateType::CH,
         GateType::CCX,
         GateType::MeasureLeaked,

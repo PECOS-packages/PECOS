@@ -9,7 +9,7 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-"""Deprecated emitters still spell literals correctly and restore loop bindings."""
+"""Deprecated emitters still spell literals correctly and preserve loop semantics."""
 
 import numpy as np
 import pytest
@@ -47,26 +47,16 @@ def test_legacy_quantum_circuit_empty_for(form: str) -> None:
     generator = QuantumCircuitGenerator(_internal=True)
     generator.generate_block(Main(q, loop.Do(qb.X(q[0]))))
     assert len(generator.get_circuit()) == 0
-    assert generator.loop_var_values == {}
 
 
 @pytest.mark.parametrize("form", ["bounds", "iterable"])
-@pytest.mark.parametrize("inner_count", [0, 1])
-def test_legacy_nested_for_restores_outer_binding(form: str, inner_count: int) -> None:
+@pytest.mark.parametrize("inner_count", [0, 1, 2])
+def test_legacy_nested_for_reuses_variable_in_generated_circuit(form: str, inner_count: int) -> None:
     q, i = QReg("q", 2), LoopVar("i")
     inner = For(i, 0, inner_count) if form == "bounds" else For(i, range(inner_count))
     after_inner = qb.X(q[i])
-    outer_values = []
-
-    class BindingRecorder(QuantumCircuitGenerator):
-        def _resolve_symbolic(self, op, loop_var, value):
-            if op is after_inner:
-                outer_values.append(self.loop_var_values[i])
-            return super()._resolve_symbolic(op, loop_var, value)
-
-    generator = BindingRecorder(_internal=True)
-    generator.generate_block(Main(q, For(i, 0, 2).Do(inner.Do(qb.H(q[0])), after_inner)))
-    assert outer_values == [0, 1]
-    assert generator.loop_var_values == {}
-    x_targets = [locations for symbol, locations, _ in generator.get_circuit().items() if symbol == "X"]
-    assert x_targets == [{0}, {1}]
+    generator = QuantumCircuitGenerator(_internal=True)
+    generator.generate_block(Main(q, For(i, 0, 2).Do(inner.Do(qb.H(q[i])), after_inner)))
+    gates = [(symbol, locations) for symbol, locations, _ in generator.get_circuit().items()]
+    inner_gates = [("H", {index}) for index in range(inner_count)]
+    assert gates == [*inner_gates, ("X", {0}), *inner_gates, ("X", {1})]

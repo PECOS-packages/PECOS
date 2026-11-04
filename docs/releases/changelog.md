@@ -7,9 +7,15 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 ## Unreleased
 
 - **Breaking:** Guppy code generation rejects `For` labels that shadow a register,
-  allocator, block input or other tracked local binding. These programs previously
-  generated source that could fail at HUGR compilation. The error names the
-  collision and asks the user to rename the loop label.
+  allocator, block input or generated temporary. Imported names and emitted
+  function names are rejected for loop labels, registers, allocators and block
+  inputs only when the same generated function also references their generated
+  meaning. Harmless shadowing of unused imports or helpers remains supported.
+  These rejected programs previously generated source that could fail at HUGR compilation.
+  A nested `For` that reuses an enclosing loop variable is now rejected in Guppy:
+  Python leaves the variable at the inner loop's last value, silently changing
+  subsequent operations in the outer loop. Errors name the collision and ask
+  the user to rename the loop label, register or allocator.
 
 - QASM code generation renders boolean literals as `1` and `0`, including
   assignments and expressions in the deprecated QASM generator.
@@ -21,7 +27,7 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   copies and returns, by preserving the element type of empty bool arrays.
 
 - The deprecated QuantumCircuit generator handles empty `For` loops in both
-  range and start/stop forms and restores outer bindings after nested loops.
+  range and start/stop forms and preserves outer iteration values after nested loops.
 
 - Guppy single-bit assignment errors name the SLR value and suggest a comparison,
   bit index or valid bit value. Integer-to-bool errors suggest using `0` or `1`.

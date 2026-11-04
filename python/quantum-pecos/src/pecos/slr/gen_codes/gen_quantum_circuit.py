@@ -49,7 +49,6 @@ class QuantumCircuitGenerator(Generator):
         self.current_tick = {}  # Accumulate operations for current tick
         self.current_scope = None
         self.permutation_map = {}
-        self.loop_var_values = {}  # Maps LoopVar to current iteration value
 
     def get_circuit(self) -> QuantumCircuit:
         """Get the generated QuantumCircuit.
@@ -202,16 +201,10 @@ class QuantumCircuitGenerator(Generator):
         self.exit_block(block)
 
     def _unroll_for(self, block, iterations):
-        """Restore the enclosing bindings even when an inner loop is empty."""
-        outer_values = self.loop_var_values
-        self.loop_var_values = outer_values.copy()
-        try:
-            for value in iterations:
-                self.loop_var_values[block.var] = value
-                for op in block.ops:
-                    self._handle_op(self._resolve_symbolic(op, block.var, value))
-        finally:
-            self.loop_var_values = outer_values
+        """Resolve each iteration directly, without mutable loop-binding state."""
+        for value in iterations:
+            for op in block.ops:
+                self._handle_op(self._resolve_symbolic(op, block.var, value))
 
     def _resolve_symbolic(self, op, loop_var: LoopVar, value: int):
         """Resolve symbolic elements in an operation to concrete elements.

@@ -469,6 +469,8 @@ fn glued_opaque_is_a_gate_call() {
 
 #[test]
 fn glued_if_is_not_a_conditional() {
+    // `if_stmt` requires `(` right after `if`, so this documents the behaviour
+    // rather than guarding the keyword lookahead.
     use crate::parser::Rule;
     use pest::Parser;
     assert!(matches!(

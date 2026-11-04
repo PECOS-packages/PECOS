@@ -14,7 +14,8 @@ impl Program {
     /// gate definitions and operations inside conditions that may never execute.
     ///
     /// # Errors
-    /// Returns an error naming an undeclared classical reference or invalid gate parameter.
+    /// Returns an error naming an undeclared classical reference, a bit outside its
+    /// register, or an invalid gate parameter.
     pub fn validate_classical_references(&self) -> Result<(), PecosError> {
         self.validate_classical_references_with_bounds_error(classical_bit_out_of_bounds)
     }

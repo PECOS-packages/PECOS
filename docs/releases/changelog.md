@@ -11,7 +11,8 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   classical value is read or written: conditions, assignments, operands,
   function arguments and measurement targets. Before, the engine evaluated an
   undeclared name as 0, so `if(i == 0) x q[0];` with no `creg i` ran the gate.
-  Errors name the register and explain the required declaration or width;
+  Errors name the register and explain the required declaration or width:
+  move a later declaration before the first reference, or declare it wider;
   undeclared `JOB_shotnum` instead gets the unsupported-built-in error below.
   A later redeclaration cannot shrink a register below a bit already used;
   keep the larger size or use a different register name. A gate body

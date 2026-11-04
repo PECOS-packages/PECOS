@@ -13,11 +13,13 @@ readme = "README.md"
 
 [features]
 default = []
-# Enable multi-threaded gate execution for large state vectors (20+ qubits).
+# Select parallel gate execution for large state vectors (20+ qubits).
 # Provides 1.5x-7x speedups for single-shot workloads like amplitude calculation.
 # Do NOT enable for multi-shot workloads where shots are parallelized at the
 # orchestration level - this causes thread oversubscription and hurts throughput.
-parallel = ["rayon"]
+# Rayon itself is always a dependency: the stab_tn module parallelises behind
+# runtime options.
+parallel = []
 
 [dependencies]
 pecos-core.workspace = true
@@ -28,9 +30,12 @@ num-complex.workspace = true
 nalgebra.workspace = true
 smallvec.workspace = true
 wide.workspace = true
-rayon = { version = "1.10", optional = true }
+rayon = "1.10"
+thiserror.workspace = true
 
 [dev-dependencies]
+approx.workspace = true
+rand_chacha.workspace = true
 rand.workspace = true
 paste.workspace = true
 

@@ -6,6 +6,11 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- `pecos-simulators` now contains the stabilizer tensor-network simulators (StabMps,
+  MAST) as `pecos_simulators::stab_tn`, formerly the unpublished `pecos-stab-tn`
+  crate; `rayon` is now always a dependency and `parallel` only selects parallel gate
+  execution.
+
 - The Selene plugins `pecos-selene-stabilizer`, `pecos-selene-statevec` and
   `pecos-selene-stab-mps` are now built for PyPI release on the Python release
   train, included in the distribution bundle and published manually.

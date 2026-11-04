@@ -405,7 +405,7 @@ jobs:
       run: cargo +stable test --locked -p pecos-simulators --test stab_vec_correctness
 
     - name: Test canonical stabilizer amplitudes
-      run: cargo +stable test --locked -p pecos-stab-tn --lib stab_mps::canonical_ket::tests
+      run: cargo +stable test --locked -p pecos-simulators --lib stab_tn::stab_mps::canonical_ket::tests
 
     - name: Build quantum-pecos wheel
       if: matrix.build-quantum-pecos

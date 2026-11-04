@@ -646,7 +646,7 @@ fn validator_rejects_malformed_lowering() {
     {
         projection
             .gates
-            .push(pecos_stab_tn::stab_mps::coordinate_tableau::CoordinateGate::H(2));
+            .push(pecos_simulators::stab_tn::stab_mps::coordinate_tableau::CoordinateGate::H(2));
     }
     invalid(p, "coordinate gate outside active width");
     let mut p = plan.clone();

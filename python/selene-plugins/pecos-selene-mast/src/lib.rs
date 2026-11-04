@@ -17,8 +17,8 @@
 
 use anyhow::{Result, anyhow, bail};
 use pecos_core::{Angle64, QubitId};
+use pecos_simulators::stab_tn::stab_mps::mast::Mast;
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable};
-use pecos_stab_tn::stab_mps::mast::Mast;
 use selene_core::error_model::BatchResult;
 use selene_core::export_simulator_plugin;
 use selene_core::operation::{BatchOperation, Operation};

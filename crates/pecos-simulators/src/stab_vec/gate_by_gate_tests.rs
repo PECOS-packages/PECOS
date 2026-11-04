@@ -152,7 +152,13 @@ fn lockstep(ops: &[Op], n: usize, seed: u64, allow_dense: bool) -> bool {
             apply(&mut sim, op);
             apply(&mut dense, op);
         }
-        crossed |= allow_dense && sim.is_dense();
+        if !allow_dense {
+            assert!(
+                !sim.is_dense(),
+                "{op:?}: crossed with the dense budget disabled"
+            );
+        }
+        crossed |= sim.is_dense();
         assert_support(&sim);
         let actual = sim.state_vector();
         let expected = dense.state();
@@ -202,10 +208,7 @@ fn g_random_lockstep_and_determinism() {
                 };
                 ops.push(op);
             }
-            let circuit_crossed = lockstep(&ops, n, seed, allow_dense);
-            if allow_dense {
-                crossed |= circuit_crossed;
-            }
+            crossed |= lockstep(&ops, n, seed, allow_dense);
         }
     }
     assert!(

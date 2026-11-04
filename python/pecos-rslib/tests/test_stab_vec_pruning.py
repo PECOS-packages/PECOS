@@ -23,7 +23,7 @@ from pecos_rslib import StabVec
     [(1.0, "1"), (-1e-3, "-0.001"), (float("nan"), "NaN"), (float("inf"), "inf")],
 )
 def test_invalid_pruning_threshold_is_value_error(threshold, value):
-    message = f"invalid pruning threshold {value}: " "expected a finite value with 0.0 <= threshold < 1.0"
+    message = f"invalid pruning threshold {value}: expected a finite value with 0.0 <= threshold < 1.0"
     with pytest.raises(ValueError, match=f"^{re.escape(message)}$"):
         StabVec(2, pruning_threshold=threshold)
 

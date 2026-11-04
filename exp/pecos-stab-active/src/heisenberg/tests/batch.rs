@@ -106,7 +106,8 @@ fn compare(program: &HeisenbergProgram, seeds: &[u64], coverage: &mut Coverage) 
         // planning regression that would otherwise shrink the batch corpus.
         let plan = plan.unwrap();
         let expected: Vec<_> = seeds.iter().map(|&seed| plan.run(seed)).collect();
-        for budget in [0, 3 * (size_of::<Complex64>() << plan.peak), usize::MAX] {
+        let lane = size_of::<Complex64>() << plan.peak;
+        for budget in [0, lane - 1, lane, 3 * lane, usize::MAX] {
             assert_eq!(plan.run_batch(seeds, budget), expected, "budget={budget}");
         }
         assert_eq!(observed(&plan, seeds, coverage), expected);
@@ -259,6 +260,11 @@ fn active_measurement_shares_value_across_opposite_outcomes() {
 
 #[test]
 fn parallel_random_families() {
+    // An explicit pool, so chunks run concurrently even on a one-core runner.
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(4)
+        .build()
+        .unwrap();
     let mut rng = PecosRng::seed_from_u64(0x9a47);
     let seeds: Vec<_> = (0..1000).map(|_| rng.next_u64()).collect();
     for generator in [passes::random_circuit, reordering::random_circuit] {
@@ -270,10 +276,11 @@ fn parallel_random_families() {
             ] {
                 let budget = 3 * (size_of::<Complex64>() << plan.peak);
                 assert!(chunk_shots(plan.peak, budget) < seeds.len());
-                assert_eq!(
-                    plan.par_run_batch(&seeds, budget),
-                    plan.run_batch(&seeds, budget)
-                );
+                let parallel = pool.install(|| plan.par_run_batch(&seeds, budget));
+                assert_eq!(parallel, plan.run_batch(&seeds, budget));
+                for (shot, &seed) in parallel.iter().zip(&seeds).step_by(97) {
+                    assert_eq!(*shot, plan.run(seed));
+                }
             }
         }
     }

@@ -21,7 +21,9 @@ impl SamplingPlan {
     /// every budget. Shots that agree on every rotation sign and projection value
     /// so far share one amplitude vector. Amplitude memory is at most
     /// `max(lane_budget_bytes, 16 * 2^peak)` bytes. Any budget below `16 << peak`,
-    /// including 0, runs shots one at a time, at the cost of `run`.
+    /// including 0, runs shots one at a time, at the cost of `run`. The budget
+    /// covers amplitudes only: each shot in a chunk also holds its RNG and its
+    /// noise, measurement and record buffers until the chunk finishes.
     #[must_use]
     pub fn run_batch(&self, seeds: &[u64], lane_budget_bytes: usize) -> Vec<ShotResult> {
         seeds
@@ -42,6 +44,8 @@ impl SamplingPlan {
     }
 }
 
+// Field visibility is widened to the heisenberg module only so the test
+// observer in tests/batch.rs can inspect lanes and shot state.
 pub(in crate::heisenberg) struct Shot {
     rng: PecosRng,
     pub(in crate::heisenberg) noise: Vec<bool>,
@@ -105,25 +109,21 @@ impl<'a> BatchSampler<'a> {
     }
 
     fn run(self) -> Vec<ShotResult> {
-        self.run_observed(
-            #[cfg(test)]
-            |_, _| {},
-        )
+        self.run_observed(|_, _| {})
     }
 
+    /// Runs every operation, calling `observe(operation, self)` after each one.
+    /// Production passes a no-op closure, which is monomorphized away.
     pub(in crate::heisenberg) fn run_observed(
         mut self,
-        #[cfg(test)] mut observe: impl FnMut(usize, &Self),
+        mut observe: impl FnMut(usize, &Self),
     ) -> Vec<ShotResult> {
         for (operation, op) in self.plan.operations.iter().enumerate() {
             let lane_count = self.lanes.len();
             for index in 0..lane_count {
                 self.execute(index, op);
             }
-            #[cfg(test)]
             observe(operation, &self);
-            #[cfg(not(test))]
-            let _ = operation;
         }
         self.shots
             .into_iter()

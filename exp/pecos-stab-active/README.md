@@ -86,7 +86,7 @@ stream for joint Pauli-noise alternatives and quantum measurements.
 `program.plan(limit)` and `plan_scheduled(&program, limit)` build a reusable
 `SamplingPlan`. `plan.run_batch(&seeds, lane_budget_bytes)` shares amplitudes
 between shots with equal rotation signs and projection values so far; result i
-is bit-identical to `plan.run(seeds[i])` for every explicit budget. Amplitude
+is bit-identical to `plan.run(seeds[i])` for every budget. Amplitude
 memory is bounded by `max(lane_budget_bytes, 16 * 2^peak)`. A budget smaller than
 one lane, including zero, runs one shot at a time. `plan.par_run_batch` executes
 chunks on the Rayon pool and returns results in seed order, with up to one such

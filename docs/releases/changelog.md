@@ -6,6 +6,10 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- The Selene plugins `pecos-selene-stabilizer`, `pecos-selene-statevec` and
+  `pecos-selene-stab-mps` are now built for PyPI release on the Python release
+  train, included in the distribution bundle and published manually.
+
 - **Breaking:** pecos-neo always suppresses gates on leaked operands in all three
   noise builders, including noiseless gates and models with no configured leak
   source (#1574, #1575). Noiseless operations suppress faults, including composite,

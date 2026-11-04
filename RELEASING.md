@@ -68,7 +68,8 @@ git push origin py-<version>
 ```
 
 The `py-*` tag triggers full validation, including `python-release.yml` in full-release mode: all
-platform wheels (pecos-rslib, pecos-rslib-llvm), quantum-pecos wheel + sdist,
+platform wheels (pecos-rslib, pecos-rslib-llvm and the Selene plugins listed in
+`python/selene-plugins/release-plugins.txt`), quantum-pecos wheel + sdist,
 abi3 wheel tests across Python versions, and a `collect_artifacts` bundle
 pinned to the tagged commit. Wait for it to go green. Then run:
 
@@ -117,14 +118,19 @@ Confirm each package at its prompt. Every confirmation is collected before the
 first upload, so declining part-way through leaves nothing published. Upload order
 matters and the script enforces it: all packages are preflighted (complete set,
 consistent version, only expected files) and `twine check`ed before anything
-uploads, dependencies go first
-(`pecos-rslib` -> `pecos-rslib-llvm` -> `quantum-pecos`, which pins both at
-exact versions), and any failure or declined prompt aborts the remaining
-uploads rather than continuing. Publishing `quantum-pecos` alone (`-p`) is
+uploads. The Selene plugins listed in `python/selene-plugins/release-plugins.txt`
+upload first (they have no PECOS dependencies), then `pecos-rslib` ->
+`pecos-rslib-llvm` -> `quantum-pecos`, which pins both at exact versions. Any
+failure or declined prompt aborts the remaining uploads rather than continuing.
+Run the script from a checkout of the tagged commit: it publishes the packages that
+checkout lists and refuses a bundle holding any other package. Publishing `quantum-pecos` alone (`-p`) is
 blocked unless its pinned dependencies already exist on PyPI. Checks run
 `twine check --strict`.
 Credentials come from `~/.pypirc`; a **new** package's first upload needs an
-account-scoped token (project-scoped tokens cannot create projects).
+account-scoped token (project-scoped tokens cannot create projects). The first
+release that includes a plugin creates its PyPI project, so check
+`release-plugins.txt` against PyPI before publishing; the plugins upload first so a
+token that cannot create them fails before any core package is public.
 
 ## 6. GitHub release
 
@@ -152,3 +158,19 @@ uv venv /tmp/verify && uv pip install --python /tmp/verify \
 
 (`--no-cache` matters: a resolver that looked while an upload was in flight
 may have cached "not found".)
+
+Check every listed Selene plugin from PyPI in its own clean environment, run from
+outside the checkout so the installed wheel is what loads:
+
+```
+grep -vE '^(#|$)' python/selene-plugins/release-plugins.txt | while read -r plugin; do
+  uv venv "/tmp/verify-$plugin" --python 3.12
+  uv pip install --python "/tmp/verify-$plugin" --no-cache --prerelease=allow \
+    "$plugin==<version>"
+  (cd /tmp && "/tmp/verify-$plugin/bin/python" "$OLDPWD/scripts/ci/smoke_selene_wheel.py" \
+    "${plugin//-/_}")
+done
+```
+
+`smoke_selene_wheel.py` loads each plugin's native library, which a bare import does
+not.

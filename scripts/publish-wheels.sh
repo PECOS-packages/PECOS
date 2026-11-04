@@ -21,7 +21,23 @@ DRY_RUN=false
 PACKAGE=""
 ASSUME_YES=false
 
-ALL_PACKAGES=(pecos-rslib pecos-rslib-llvm quantum-pecos)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RELEASE_PLUGINS=()
+while IFS= read -r plugin || [ -n "$plugin" ]; do
+    # Trim whitespace and ignore comments and blank lines.
+    plugin="${plugin#"${plugin%%[![:space:]]*}"}"
+    plugin="${plugin%"${plugin##*[![:space:]]}"}"
+    case "$plugin" in ''|\#*) continue ;; esac
+    RELEASE_PLUGINS+=("$plugin")
+done < "$SCRIPT_DIR/../python/selene-plugins/release-plugins.txt"
+if [ "${#RELEASE_PLUGINS[@]}" -eq 0 ]; then
+    echo "Error: no Selene release plugins listed in $SCRIPT_DIR/../python/selene-plugins/release-plugins.txt" >&2
+    exit 1
+fi
+# Upload order. The Selene plugins have no PECOS dependencies and go first, so a
+# failed first upload of a new plugin project stops before any core package is
+# public. quantum-pecos pins both rslib packages, so they precede it.
+ALL_PACKAGES=("${RELEASE_PLUGINS[@]}" pecos-rslib pecos-rslib-llvm quantum-pecos)
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -47,7 +63,7 @@ while [[ $# -gt 0 ]]; do
             echo ""
             echo "Options:"
             echo "  -f, --file FILE      Artifact zip OR extracted artifact directory (default: pecos-distribution.zip)"
-            echo "  -p, --package PKG    Publish only specific package (pecos-rslib, pecos-rslib-llvm, or quantum-pecos)"
+            echo "  -p, --package PKG    Publish only specific package (${ALL_PACKAGES[*]})"
             echo "  --dry-run            Show what would be uploaded without actually uploading"
             echo "  -y, --yes            Skip per-package confirmation prompts (for non-interactive use)"
             echo "  -h, --help           Show this help message"
@@ -266,6 +282,19 @@ else
     # All-packages mode: preflight EVERYTHING before uploading anything, and
     # require one consistent version across the set.
     echo -e "${GREEN}Preflighting all PECOS packages${NC}"
+    # The package list comes from this checkout, not from the bundle: refuse a bundle
+    # holding a package this checkout would silently skip.
+    bundle_root="$DIST_DIR"
+    [ -d "$bundle_root/dist" ] && bundle_root="$bundle_root/dist"
+    for dir in "$bundle_root"/*/; do
+        [ -d "$dir" ] || continue
+        name=$(basename "$dir")
+        if ! printf '%s\n' "${ALL_PACKAGES[@]}" | grep -qx "$name"; then
+            echo -e "${RED}Error: the bundle contains $name, which this checkout does not publish.${NC}"
+            echo "Run the script from a checkout of the tagged commit."
+            exit 1
+        fi
+    done
     versions=()
     for pkg in "${ALL_PACKAGES[@]}"; do
         v=$(preflight_package "$pkg")
@@ -284,8 +313,8 @@ else
     for pkg in "${ALL_PACKAGES[@]}"; do
         confirm_package "$pkg"
     done
-    # Dependencies first; upload_package aborts the script on failure, so quantum-pecos
-    # cannot publish without its pinned deps.
+    # ALL_PACKAGES order (see its definition); upload_package aborts the script on
+    # failure, so quantum-pecos cannot publish without its pinned deps.
     for pkg in "${ALL_PACKAGES[@]}"; do
         upload_package "$pkg"
     done

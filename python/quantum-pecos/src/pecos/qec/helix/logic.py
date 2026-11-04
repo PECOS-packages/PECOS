@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 from pecos_rslib import PauliString
 
 from pecos.qec import discover_detectors
+from pecos.qec.dem_spec import Detector, Observable, result_ref
 from pecos.qec.helix.code import c4_helix_code
 from pecos.qec.helix.compile import parse_signed_logical_pauli
 from pecos.qec.helix.gadgets import (
@@ -41,6 +42,8 @@ from pecos.qec.helix.lowering import helix_result_refs, lower_steps
 from pecos.qec.helix.memory import set_discovered_metadata
 
 if TYPE_CHECKING:
+    from pecos_rslib.qec import DiscoveredDetectors
+
     from pecos.qec.circuit_steps import CircuitStep
     from pecos.qec.helix.compile import Matrix
     from pecos.quantum import TickCircuit
@@ -108,8 +111,8 @@ def logic_conjugates(basis: str, tokens: tuple[str, ...]) -> list[tuple[int, str
     return conjugates
 
 
-def logic_circuit(basis: str, tokens: tuple[str, ...]) -> TickCircuit:
-    """Build an ASAP logic circuit with discovered detectors and signed references."""
+def _logic_discovery(basis: str, tokens: tuple[str, ...]) -> tuple[TickCircuit, DiscoveredDetectors]:
+    """Discover both public representations on the same ASAP circuit."""
     steps = [step for _, gadget in logic_gadgets(basis, tokens) for step in gadget]
     circuit = lower_steps(steps, HelixAllocation.NUM_SLOTS).tick_circuit
     records = {ref: record for record, ref in enumerate(helix_result_refs(circuit))}
@@ -117,5 +120,28 @@ def logic_circuit(basis: str, tokens: tuple[str, ...]) -> TickCircuit:
     logicals = code.logical_z if basis == "Z" else code.logical_x
     observables = [[records[(f"data:{q}", 0)] for q, axis in enumerate(row) if axis != "I"] for row in logicals]
     found = discover_detectors(circuit, observables, logic_conjugates(basis, tokens))
+    return circuit, found
+
+
+def logic_circuit(basis: str, tokens: tuple[str, ...]) -> TickCircuit:
+    """Build an ASAP logic circuit with discovered detectors and signed references."""
+    circuit, found = _logic_discovery(basis, tokens)
     set_discovered_metadata(circuit, found)
     return circuit
+
+
+def logic_definitions(basis: str, tokens: tuple[str, ...]) -> tuple[list[Detector], list[Observable]]:
+    """Return typed discovered parities, retaining every observable's noiseless sign."""
+    circuit, found = _logic_discovery(basis, tokens)
+    refs = [result_ref(tag, occurrence=occurrence) for tag, occurrence in helix_result_refs(circuit)]
+    detectors = []
+    for index, (records, reference) in enumerate(found.detectors):
+        if reference != 0:
+            msg = f"Detector {index} has nonzero reference {reference}: {records}"
+            raise ValueError(msg)
+        detectors.append(Detector(*(refs[record] for record in records), id=index))
+    observables = [
+        Observable(*(refs[record] for record in records), id=index, metadata={"reference": reference})
+        for index, (records, reference) in enumerate(found.observables)
+    ]
+    return detectors, observables

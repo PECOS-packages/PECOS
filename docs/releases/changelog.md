@@ -387,6 +387,9 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   constructor parameter in Python.
 - StabVec now uses exact gate-by-gate sampling for faster multi-term measurement,
   eliminating pairwise Gram overlaps and Monte Carlo measurement approximation.
+- The Selene plugins `pecos-selene-stabilizer`, `pecos-selene-statevec` and
+  `pecos-selene-stab-mps` are now built for PyPI release on the Python release
+  train, included in the distribution bundle and published manually.
 
 - **Breaking:** pecos-neo always suppresses gates on leaked operands in all three
   noise builders, including noiseless gates and models with no configured leak

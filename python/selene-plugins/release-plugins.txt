@@ -1,0 +1,4 @@
+# Selene plugin distributions included in the Python release bundle and manual publish.
+pecos-selene-stabilizer
+pecos-selene-statevec
+pecos-selene-stab-mps

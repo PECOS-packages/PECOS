@@ -55,6 +55,7 @@ __pycache__/
 
 # Selene plugin build artifacts
 python/selene-plugins/**/_dist/
+selene-release-wheels/
 
 # Distribution / packaging
 .Python

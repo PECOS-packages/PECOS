@@ -39,5 +39,9 @@ pecos_simulators::measurement_stress_test_suite!(DensityMatrix, 4, DensityMatrix
 pecos_simulators::measurement_stress_test_suite!(
     StabVec,
     4,
-    StabVec::builder(4).seed(42).pruning_threshold(0.0).build()
+    StabVec::builder(4)
+        .seed(42)
+        .pruning_threshold(0.0)
+        .unwrap()
+        .build()
 );

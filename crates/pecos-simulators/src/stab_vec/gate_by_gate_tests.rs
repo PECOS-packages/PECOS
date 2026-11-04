@@ -125,12 +125,16 @@ fn dense_branch(mut dense: StateVecSoA, op: Op, outcome: bool) -> (f64, StateVec
     (probability, dense)
 }
 
-fn lockstep(ops: &[Op], n: usize, seed: u64) {
+fn lockstep(ops: &[Op], n: usize, seed: u64, allow_dense: bool) -> bool {
     let mut sim = StabVec::builder(n)
         .seed(seed)
         .pruning_threshold(0.0)
+        .unwrap()
         .build();
-    sim.max_dense_bytes = 0;
+    if !allow_dense {
+        sim.max_dense_bytes = 0;
+    }
+    let mut crossed = false;
     let mut dense = StateVecSoA::with_seed(n, seed);
     for (step, &op) in ops.iter().enumerate() {
         if measured_qubit(op).is_some() {
@@ -148,6 +152,7 @@ fn lockstep(ops: &[Op], n: usize, seed: u64) {
             apply(&mut sim, op);
             apply(&mut dense, op);
         }
+        crossed |= sim.is_dense();
         assert_support(&sim);
         let actual = sim.state_vector();
         let expected = dense.state();
@@ -158,44 +163,52 @@ fn lockstep(ops: &[Op], n: usize, seed: u64) {
             );
         }
     }
+    crossed
 }
 
 // G: new behavior.
 #[test]
 fn g_random_lockstep_and_determinism() {
-    for seed in 0..32 {
-        let n = 2 + usize::try_from(seed % 7).unwrap();
-        let mut rng = PecosRng::seed_from_u64(seed + 987);
-        let mut ops = vec![Op::H(0), Op::Rz(0, 0.37), Op::H(0)];
-        let mut rotations = 1;
-        for _ in 0..70 {
-            let q = rng.random_range(0..n);
-            let t = (q + rng.random_range(1..n)) % n;
-            let op = match rng.random_range(0..13) {
-                0 => Op::H(q),
-                1 => Op::S(q),
-                2 => Op::X(q),
-                3 => Op::Y(q),
-                4 => Op::Cx(q, t),
-                5 => Op::Cy(q, t),
-                6 => Op::Sxx(q, t),
-                7 => Op::Syy(q, t),
-                8 if rotations < 7 => {
-                    rotations += 1;
-                    Op::Rz(q, 0.61)
-                }
-                9 if rotations < 7 => {
-                    rotations += 1;
-                    Op::T(q)
-                }
-                10 => Op::Mpz(q),
-                11 => Op::Mx(q),
-                _ => Op::Mz(q),
-            };
-            ops.push(op);
+    let mut crossed = false;
+    for allow_dense in [false, true] {
+        for seed in 0..32 {
+            let n = 2 + usize::try_from(seed % if allow_dense { 3 } else { 7 }).unwrap();
+            let mut rng = PecosRng::seed_from_u64(seed + 987);
+            let mut ops = vec![Op::H(0), Op::Rz(0, 0.37), Op::H(0)];
+            let mut rotations = 1;
+            for _ in 0..70 {
+                let q = rng.random_range(0..n);
+                let t = (q + rng.random_range(1..n)) % n;
+                let op = match rng.random_range(0..13) {
+                    0 => Op::H(q),
+                    1 => Op::S(q),
+                    2 => Op::X(q),
+                    3 => Op::Y(q),
+                    4 => Op::Cx(q, t),
+                    5 => Op::Cy(q, t),
+                    6 => Op::Sxx(q, t),
+                    7 => Op::Syy(q, t),
+                    8 if rotations < 7 => {
+                        rotations += 1;
+                        Op::Rz(q, 0.61)
+                    }
+                    9 if rotations < 7 => {
+                        rotations += 1;
+                        Op::T(q)
+                    }
+                    10 => Op::Mpz(q),
+                    11 => Op::Mx(q),
+                    _ => Op::Mz(q),
+                };
+                ops.push(op);
+            }
+            crossed |= lockstep(&ops, n, seed, allow_dense);
         }
-        lockstep(&ops, n, seed);
     }
+    assert!(
+        crossed,
+        "random lockstep must exercise the growth crossover"
+    );
     let mut sim = StabVec::new_with_seed(2, 7);
     sim.h(&[QubitId(0)])
         .rz(pecos_core::radians!(0.37), &[QubitId(0)])
@@ -241,7 +254,7 @@ fn exact_histories(ops: &[Op], n: usize) -> Vec<f64> {
 // G: new behavior.
 #[test]
 fn g_joint_distributions() {
-    // Bonferroni across all 4 * 8 possible histories: family-wise alpha = 1e-5.
+    // Bonferroni across 4 * 8 + 4 possible histories: family-wise alpha = 1e-5.
     let fixtures = [
         vec![
             Op::H(0),
@@ -292,17 +305,34 @@ fn g_joint_distributions() {
             Op::H(1),
             Op::Mz(1),
         ],
+        vec![
+            Op::H(0),
+            Op::Rz(0, 0.37),
+            Op::H(0),
+            Op::H(1),
+            Op::Rz(1, 0.41),
+            Op::H(1),
+            Op::X(0),
+            Op::Rz(0, 0.5),
+            Op::Y(0),
+            Op::Mz(0),
+            Op::Mz(1),
+        ],
     ];
     for (fixture, ops) in fixtures.iter().enumerate() {
-        let expected = exact_histories(ops, 3);
+        let n = if fixture == 4 { 2 } else { 3 };
+        let expected = exact_histories(ops, n);
         let mut counts = vec![0u64; expected.len()];
         let shots = 6000u64;
         for seed in 0..shots {
-            let mut sim = StabVec::builder(3)
+            let mut sim = StabVec::builder(n)
                 .seed(seed)
                 .pruning_threshold(0.0)
+                .unwrap()
                 .build();
-            sim.max_dense_bytes = 0;
+            if fixture != 4 {
+                sim.max_dense_bytes = 0;
+            }
             let mut history = 0;
             let mut position = 0;
             for &op in ops {
@@ -310,7 +340,15 @@ fn g_joint_distributions() {
                     if fixture == 0 && position == 0 {
                         assert!(sim.num_terms() > 1);
                     }
+                    if fixture == 4 && position == 0 {
+                        assert!(!sim.is_dense());
+                        assert_eq!(sim.num_terms(), 4);
+                        assert!(!sim.cliff_frame[0].is_diagonal());
+                    }
                     let result = measure(&mut sim, op);
+                    if fixture == 4 && position == 0 {
+                        assert!(sim.is_dense(), "measurement frame flush must cross over");
+                    }
                     if fixture == 0 && position == 0 {
                         assert!(!result.outcome, "interference fixture must measure zero");
                         assert!(
@@ -328,7 +366,7 @@ fn g_joint_distributions() {
             counts[history] += 1;
         }
         for (history, (&count, &p)) in counts.iter().zip(&expected).enumerate() {
-            let interval = jeffreys_interval(count, shots, 1e-5 / 32.0).unwrap();
+            let interval = jeffreys_interval(count, shots, 1e-5 / 36.0).unwrap();
             assert!(
                 p >= interval.lo - 1e-14 && p <= interval.hi + 1e-14,
                 "fixture {fixture}, history {history}: exact {p}, count {count}, interval {interval:?}"
@@ -502,7 +540,11 @@ fn g_joint_h_fixture() {
 // G: new behavior.
 #[test]
 fn g_pruning_guard_preserves_rare_branch() {
-    let mut sim = StabVec::builder(2).seed(9).pruning_threshold(1e-2).build();
+    let mut sim = StabVec::builder(2)
+        .seed(9)
+        .pruning_threshold(1e-2)
+        .unwrap()
+        .build();
     sim.h(&[QubitId(0)])
         .rz(pecos_core::radians!(0.1), &[QubitId(0)])
         .h(&[QubitId(0)]);
@@ -677,7 +719,11 @@ fn g_deterministic_resample_and_measurement_draw_nothing() {
 // G: new behavior.
 #[test]
 fn g_dense_transfer_clears_deferred_state_without_draws() {
-    let mut sim = StabVec::builder(2).seed(7).pruning_threshold(0.0).build();
+    let mut sim = StabVec::builder(2)
+        .seed(7)
+        .pruning_threshold(0.0)
+        .unwrap()
+        .build();
     sim.max_dense_bytes = 0;
     for _ in 0..3 {
         sim.rz(pecos_core::radians!(0.37), &[QubitId(0)])
@@ -729,6 +775,7 @@ fn g_rz_growth_switches_immediately_with_exact_distribution() {
         let mut sim = StabVec::builder(2)
             .seed(seed)
             .pruning_threshold(0.0)
+            .unwrap()
             .build();
         let mut dense = StateVecSoA::with_seed(2, seed);
         let mut history = 0;
@@ -831,7 +878,11 @@ fn g_growth_crossover_preserves_enclosing_gates_and_frames() {
             "H", "H3", "H4", "CX", "CY", "CZ", "SXX", "SXXdg", "SYY", "SYYdg", "SZZ", "SZZdg",
             "RZ", "RX", "RY", "RXX", "RYY", "RZZ",
         ] {
-            let mut sim = StabVec::builder(3).seed(9).pruning_threshold(0.0).build();
+            let mut sim = StabVec::builder(3)
+                .seed(9)
+                .pruning_threshold(0.0)
+                .unwrap()
+                .build();
             let mut dense = StateVecSoA::with_seed(3, 9);
             for op in [
                 Op::H(0),
@@ -880,4 +931,82 @@ fn g_growth_crossover_preserves_enclosing_gates_and_frames() {
             );
         }
     }
+}
+
+// G: invalid caller configuration is rejected before simulation begins.
+#[test]
+fn g_pruning_threshold_rejects_invalid_values() {
+    for (threshold, value) in [
+        (1.0, "1"),
+        (2.0, "2"),
+        (-1e-3, "-0.001"),
+        (f64::NAN, "NaN"),
+        (f64::INFINITY, "inf"),
+        (f64::NEG_INFINITY, "-inf"),
+    ] {
+        let error = StabVec::builder(2)
+            .pruning_threshold(threshold)
+            .err()
+            .unwrap();
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "invalid pruning threshold {value}: expected a finite value with 0.0 <= threshold < 1.0"
+            )
+        );
+    }
+}
+
+// G: a high valid threshold preserves the largest term at decomposition.
+#[test]
+fn g_high_pruning_threshold_preserves_largest_term_and_dense_reference() {
+    for seed in 0..64 {
+        let mut sim = StabVec::builder(2)
+            .seed(seed)
+            .pruning_threshold(0.999)
+            .unwrap()
+            .build();
+        let mut dense = StateVecSoA::with_seed(2, seed);
+        for op in [Op::H(0), Op::Rz(0, 0.37), Op::H(0)] {
+            apply(&mut sim, op);
+            apply(&mut dense, op);
+        }
+        assert_eq!(sim.num_terms(), 2);
+        assert!(sim.max_coefficient_magnitude() > 0.98);
+        assert_support(&sim);
+        crate::state_vector_test_utils::assert_phase_exact_state_matches(
+            &sim.state_vector(),
+            &dense.state(),
+            1e-12,
+            "threshold 0.999 before measurement",
+        );
+        let outcome = sim.mz(&[QubitId(0)])[0].outcome;
+        let (probability, mut projected) = dense_branch(dense, Op::Mz(0), outcome);
+        assert!(probability > 0.0);
+        crate::state_vector_test_utils::assert_phase_exact_state_matches(
+            &sim.state_vector(),
+            &projected.state(),
+            1e-12,
+            "threshold 0.999 after measurement",
+        );
+    }
+}
+
+// G: the pruning boundary is strict, including the support guard's survivor sum.
+#[test]
+fn g_pruning_retains_terms_equal_to_cutoff() {
+    let mut sim = StabVec::builder(2).pruning_threshold(0.25).unwrap().build();
+    let ch = sim.terms[0].1.clone();
+    sim.terms = vec![
+        (Complex64::new(0.5, 0.0), ch.clone()),
+        (Complex64::new(0.25, 0.0), ch),
+    ];
+    sim.set_sampled_basis_for_test(bits(0, 2));
+    sim.apply_rz_immediate(pecos_core::radians!(0.37), 1);
+    assert_eq!(
+        sim.num_terms(),
+        4,
+        "a term exactly at the cutoff must survive"
+    );
+    assert_support(&sim);
 }

@@ -21,7 +21,11 @@ fn qid(index: usize) -> [QubitId; 1] {
 
 #[test]
 fn cx_materializes_x_negated_pending_rz_with_its_frame() {
-    let mut stab = StabVec::builder(5).pruning_threshold(0.0).seed(7).build();
+    let mut stab = StabVec::builder(5)
+        .pruning_threshold(0.0)
+        .unwrap()
+        .seed(7)
+        .build();
     let mut dense = StateVecSoA::with_seed(5, 7);
 
     stab.h(&qid(3));
@@ -89,6 +93,7 @@ fn prepare_negated_pending_rotations(stab: &mut StabVec, dense: &mut StateVecSoA
 fn public_pending_rz_flush_keeps_each_negated_angle_with_its_frame() {
     let mut stab = StabVec::builder(2)
         .pruning_threshold(0.0)
+        .unwrap()
         .seed(0x720)
         .build();
     let mut dense = StateVecSoA::with_seed(2, 0x720);
@@ -106,7 +111,11 @@ fn public_pending_rz_flush_keeps_each_negated_angle_with_its_frame() {
 #[test]
 fn cy_materializes_target_rz_even_with_an_identity_or_z_frame() {
     for z_frame in [false, true] {
-        let mut stab = StabVec::builder(2).pruning_threshold(0.0).seed(7).build();
+        let mut stab = StabVec::builder(2)
+            .pruning_threshold(0.0)
+            .unwrap()
+            .seed(7)
+            .build();
         let mut dense = StateVecSoA::with_seed(2, 7);
         stab.h(&qid(0)).h(&qid(1));
         dense.h(&qid(0)).h(&qid(1));
@@ -144,6 +153,7 @@ fn public_flush_and_measurement_preserve_all_z_axis_frames() {
         for seed in 0..16 {
             let mut stab = StabVec::builder(2)
                 .pruning_threshold(0.0)
+                .unwrap()
                 .seed(seed)
                 .build();
             let mut dense = StateVecSoA::with_seed(2, seed);
@@ -308,6 +318,7 @@ fn two_qubit_paths_preserve_x_and_y_negated_pending_rz_pairings() {
     ] {
         let mut stab = StabVec::builder(2)
             .pruning_threshold(0.0)
+            .unwrap()
             .seed(0x720)
             .build();
         let mut dense = StateVecSoA::with_seed(2, 0x720);
@@ -333,7 +344,11 @@ fn yy_roots_propagate_unflushed_partner_frames_once() {
                 CliffordTGate::Y(1 - rotated),
                 CliffordTGate::Z(1 - rotated),
             ] {
-                let mut stab = StabVec::builder(2).pruning_threshold(0.0).seed(7).build();
+                let mut stab = StabVec::builder(2)
+                    .pruning_threshold(0.0)
+                    .unwrap()
+                    .seed(7)
+                    .build();
                 let mut dense = StateVecSoA::with_seed(2, 7);
                 stab.h(&qid(0)).h(&qid(1));
                 dense.h(&qid(0)).h(&qid(1));
@@ -527,6 +542,7 @@ fn check_seeded_random_circuits(include_t: bool) {
             .collect();
         let mut stab = StabVec::builder(NUM_QUBITS)
             .pruning_threshold(0.0)
+            .unwrap()
             .seed(circuit_index as u64)
             .build();
         let mut dense = StateVecSoA::with_seed(NUM_QUBITS, circuit_index as u64);

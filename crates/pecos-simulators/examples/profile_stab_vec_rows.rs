@@ -15,7 +15,7 @@ use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StabVec};
 use std::hint::black_box;
 use std::time::Instant;
 
-fn main() {
+fn main() -> Result<(), pecos_simulators::InvalidPruningThreshold> {
     let runs: usize = std::env::args()
         .nth(1)
         .map_or(10, |value| value.parse().expect("runs must be an integer"));
@@ -25,7 +25,7 @@ fn main() {
         for run in 0..=runs {
             let mut sim = StabVec::builder(num_qubits)
                 .seed(42)
-                .pruning_threshold(0.0)
+                .pruning_threshold(0.0)?
                 .build();
             for q in 0..num_qubits {
                 sim.h(&[QubitId(q)]);
@@ -59,4 +59,5 @@ fn main() {
             }
         }
     }
+    Ok(())
 }

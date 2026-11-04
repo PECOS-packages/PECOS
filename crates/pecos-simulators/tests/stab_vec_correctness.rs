@@ -134,6 +134,7 @@ fn compare_projected_to_oracle(
 fn exact_stab(num_qubits: usize, seed: u64) -> StabVec {
     StabVec::builder(num_qubits)
         .pruning_threshold(0.0)
+        .unwrap()
         .seed(seed)
         .build()
 }

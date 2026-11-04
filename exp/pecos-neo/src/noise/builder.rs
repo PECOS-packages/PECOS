@@ -316,7 +316,11 @@ impl NoiseModelBuilder {
         self
     }
 
-    /// Set seepage probability for single-qubit gates.
+    /// Set seepage probability conditional on an emission fault on a leaked qubit.
+    ///
+    /// The per-qubit marginal rate is `p1 * emission_ratio * seepage`, with
+    /// angle scaling included in `p1` where configured. Leakage scale does not
+    /// enter this product.
     #[must_use]
     pub fn with_p1_seepage(mut self, prob: f64) -> Self {
         self.p1_seepage_prob = prob;
@@ -330,7 +334,11 @@ impl NoiseModelBuilder {
         self
     }
 
-    /// Set seepage probability for two-qubit gates.
+    /// Set seepage probability conditional on an emission fault on a leaked qubit.
+    ///
+    /// The per-qubit marginal rate is `p2 * emission_ratio * seepage`, with
+    /// angle scaling included in `p2` where configured. Leakage scale does not
+    /// enter this product.
     #[must_use]
     pub fn with_p2_seepage(mut self, prob: f64) -> Self {
         self.p2_seepage_prob = prob;
@@ -409,6 +417,12 @@ impl NoiseModelBuilder {
     }
 
     /// Mark specific gate types as noiseless.
+    ///
+    /// Suppresses faults from these operations, including preparation, readout,
+    /// crosstalk and idle-after-two-qubit noise. Leakage suppression, preparation
+    /// clearing and lifecycle tracking still run. Scheduled idle is unaffected.
+    /// Custom channels must honor the setting; a fault primitive attached to a
+    /// `BeforeGate` composite still runs because that event decides suppression.
     #[must_use]
     pub fn with_noiseless_gate(mut self, gate_type: GateType) -> Self {
         self.noiseless_gates.push(gate_type);
@@ -416,6 +430,12 @@ impl NoiseModelBuilder {
     }
 
     /// Mark multiple gate types as noiseless.
+    ///
+    /// Suppresses faults from these operations, including preparation, readout,
+    /// crosstalk and idle-after-two-qubit noise. Leakage suppression, preparation
+    /// clearing and lifecycle tracking still run. Scheduled idle is unaffected.
+    /// Custom channels must honor the setting; a fault primitive attached to a
+    /// `BeforeGate` composite still runs because that event decides suppression.
     #[must_use]
     pub fn with_noiseless_gates(mut self, gate_types: impl IntoIterator<Item = GateType>) -> Self {
         self.noiseless_gates.extend(gate_types);
@@ -678,11 +698,8 @@ impl NoiseModelBuilder {
             );
         }
 
-        // Add leakage channel (if scale differs from default of 1.0)
-        if (self.leakage_scale - 1.0).abs() > f64::EPSILON {
-            let channel = LeakageChannel::new().with_scale(self.leakage_scale)?;
-            model = model.add_channel(channel);
-        }
+        // Always suppress gates on leaked operands, including custom leakage.
+        model = model.add_channel(LeakageChannel::new().with_scale(self.leakage_scale)?);
 
         // Add all custom channels
         for channel in self.custom_channels {
@@ -769,7 +786,7 @@ mod tests {
             .unwrap()
             .build()
             .unwrap();
-        assert_eq!(model.channel_names(), ["IdleChannel"]);
+        assert_eq!(model.channel_names(), ["IdleChannel", "LeakageChannel"]);
 
         let qubits = [QubitId(0), QubitId(1)];
         let event = NoiseEvent::AfterGate {
@@ -777,6 +794,8 @@ mod tests {
             qubits: &qubits,
             angles: &[],
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::CX.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
         let gates = collect_gates(model.emit(&event, &mut PecosRng::seed_from_u64(47)));
 
@@ -801,6 +820,8 @@ mod tests {
             qubits: &qubits,
             angles: &[],
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::CX.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         let gates = collect_gates(model.emit(&event, &mut PecosRng::seed_from_u64(53)));
@@ -834,6 +855,8 @@ mod tests {
             qubits: &qubits,
             angles: &[],
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::CX.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         let gates = collect_gates(model.emit(&event, &mut PecosRng::seed_from_u64(59)));
@@ -847,7 +870,7 @@ mod tests {
             .unwrap()
             .build()
             .unwrap();
-        assert_eq!(model.channel_names(), ["IdleChannel"]);
+        assert_eq!(model.channel_names(), ["IdleChannel", "LeakageChannel"]);
 
         let qubits = [QubitId(0), QubitId(1)];
         let event = NoiseEvent::AfterGate {
@@ -855,6 +878,8 @@ mod tests {
             qubits: &qubits,
             angles: &[],
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::CX.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
         assert!(
             model
@@ -870,7 +895,7 @@ mod tests {
             .unwrap()
             .build()
             .unwrap();
-        assert_eq!(model.channel_names(), ["IdleChannel"]);
+        assert_eq!(model.channel_names(), ["IdleChannel", "LeakageChannel"]);
 
         let qubits = [QubitId(0)];
         let event = NoiseEvent::IdleTime {

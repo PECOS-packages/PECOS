@@ -404,6 +404,13 @@ impl PyGateRegistry {
         self.inner.contains(name)
     }
 
+    /// Return the definition's qubit arity, or None if the gate is not registered.
+    fn quantum_arity(&self, name: &str) -> Option<usize> {
+        self.inner
+            .get(name)
+            .map(|definition| definition.quantum_arity)
+    }
+
     fn __len__(&self) -> usize {
         self.inner.len()
     }

@@ -510,6 +510,8 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::RZ.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         let mut error_count = 0;
@@ -532,6 +534,8 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::RZ.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         error_count = 0;
@@ -613,6 +617,8 @@ mod tests {
             qubits: &qubits_1q,
             angles: &[],
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::H.quantum_arity(), qubits_1q.len()),
+            leaked_suppressed: &[],
         };
 
         for _ in 0..100 {
@@ -627,6 +633,11 @@ mod tests {
             qubits: &qubits_2q,
             angles: &[],
             gate_id: None,
+            group_size: crate::noise::gate_group_size(
+                GateType::CX.quantum_arity(),
+                qubits_2q.len(),
+            ),
+            leaked_suppressed: &[],
         };
 
         let mut error_count = 0;
@@ -1173,6 +1184,11 @@ mod tests {
             qubits: &qubits,
             angles: &[],
             gate_id: None,
+            group_size: crate::noise::gate_group_size(
+                (crate::command::GateType::CX).quantum_arity(),
+                qubits.len(),
+            ),
+            leaked_suppressed: &[],
         };
 
         // With 100% emission probability, both qubits should emit/leak
@@ -1212,6 +1228,11 @@ mod tests {
             qubits: &qubits,
             angles: &[],
             gate_id: None,
+            group_size: crate::noise::gate_group_size(
+                (crate::command::GateType::CX).quantum_arity(),
+                qubits.len(),
+            ),
+            leaked_suppressed: &[],
         };
 
         // Run multiple times and count leakage patterns
@@ -1291,7 +1312,7 @@ mod tests {
 
         // Test that it responds appropriately
         let mut ctx = NoiseContext::new();
-        ctx.set_current_gate(GateType::H, &[], 1);
+        ctx.set_current_gate(GateType::H, &[], std::num::NonZeroUsize::MIN);
         ctx.set_current_qubit_index(0, &[QubitId(0)]);
         let mut rng = PecosRng::seed_from_u64(42);
 
@@ -1303,6 +1324,11 @@ mod tests {
                 qubits: &[QubitId(0)],
                 angles: &[],
                 gate_id: None,
+                group_size: crate::noise::gate_group_size(
+                    GateType::H.quantum_arity(),
+                    [QubitId(0)].len(),
+                ),
+                leaked_suppressed: &[],
             };
             let response = channel.apply(&event, &mut ctx, &mut rng);
             if !response.is_none() {
@@ -1342,7 +1368,7 @@ mod tests {
         let channel = CompositeChannelBuilder::single_qubit("conditional_adapted", noise);
 
         let mut ctx = NoiseContext::new();
-        ctx.set_current_gate(GateType::H, &[], 1);
+        ctx.set_current_gate(GateType::H, &[], std::num::NonZeroUsize::MIN);
         ctx.set_current_qubit_index(0, &[QubitId(0)]);
         let mut rng = PecosRng::seed_from_u64(42);
 
@@ -1352,6 +1378,11 @@ mod tests {
             qubits: &[QubitId(0)],
             angles: &[],
             gate_id: None,
+            group_size: crate::noise::gate_group_size(
+                GateType::H.quantum_arity(),
+                [QubitId(0)].len(),
+            ),
+            leaked_suppressed: &[],
         };
         let _response = channel.apply(&event, &mut ctx, &mut rng);
         // The channel has 100% error rate, so we should see some response

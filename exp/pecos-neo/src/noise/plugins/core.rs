@@ -127,6 +127,7 @@ impl EventHandler for MeasurementStateHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::command::GateType;
     use pecos_core::QubitId;
 
     #[test]
@@ -142,7 +143,10 @@ mod tests {
     fn test_preparation_handler() {
         let handler = PreparationStateHandler;
         let qubits = [QubitId(0), QubitId(1)];
-        let event = NoiseEvent::AfterPreparation { qubits: &qubits };
+        let event = NoiseEvent::AfterPreparation {
+            gate_type: GateType::PZ,
+            qubits: &qubits,
+        };
 
         assert!(handler.handles(&event));
 
@@ -163,6 +167,7 @@ mod tests {
         let qubits = [QubitId(0)];
         let outcomes = [false];
         let event = NoiseEvent::AfterMeasurement {
+            gate_type: GateType::MZ,
             qubits: &qubits,
             outcomes: &outcomes,
         };

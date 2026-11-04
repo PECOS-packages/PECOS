@@ -302,6 +302,11 @@ impl AngleScaling {
 /// 2. Emission errors that can cause Pauli errors AND/OR leakage
 ///
 /// Applies two-qubit Pauli errors after two-qubit gates.
+///
+/// At a positive error probability, this channel also suppresses gates on
+/// leaked operands, even when noiseless. At zero probability `responds_to`
+/// and `try_apply` return early; builders register `LeakageChannel` separately
+/// to guarantee suppression at every rate.
 #[derive(Debug, Clone)]
 pub struct TwoQubitChannel {
     /// Base probability of any error occurring.
@@ -326,7 +331,8 @@ pub struct TwoQubitChannel {
     /// to determine whether to apply Pauli errors and/or cause leakage.
     emission_weights: TwoQubitEmissionWeights,
 
-    /// Seepage probability for leaked qubits.
+    /// Seepage probability conditional on an emission fault on a leaked member.
+    /// Per-pair gate-error and emission draws are shared; seepage draws are per member.
     seepage_probability: f64,
 
     // Precomputed probability thresholds for fast sampling
@@ -473,7 +479,8 @@ impl TwoQubitChannel {
         Ok(self)
     }
 
-    /// Set the seepage probability.
+    /// Set seepage conditional on an emission fault on a leaked member.
+    /// The marginal rate is angle-scaled error probability * emission ratio * p.
     ///
     /// # Errors
     /// Returns an error for invalid probabilities or weights.
@@ -557,23 +564,15 @@ impl NoiseChannel for TwoQubitChannel {
     ) -> NoiseResponse {
         match event {
             NoiseEvent::BeforeGate { qubits, .. } => {
-                // Skip noise for noiseless gates (but still check leakage)
-                if ctx.is_noiseless_operation(event) {
-                    return NoiseResponse::None;
-                }
+                // Suppress leaked operands even when the operation is noiseless.
                 Self::handle_before_gate(qubits, ctx)
             }
-            NoiseEvent::AfterGate {
-                gate_type,
-                qubits,
-                angles,
-                ..
-            } => {
+            NoiseEvent::AfterGate { .. } => {
                 // Skip noise for noiseless gates
                 if ctx.is_noiseless_operation(event) {
                     return NoiseResponse::None;
                 }
-                self.handle_after_gate(*gate_type, qubits, angles, ctx, rng)
+                self.handle_after_gate(event, ctx, rng)
             }
             _ => NoiseResponse::None,
         }
@@ -599,24 +598,17 @@ impl NoiseChannel for TwoQubitChannel {
                 if !gate_type.is_two_qubit() || !gate_type.is_unitary_gate() {
                     return None;
                 }
-                if ctx.is_noiseless_operation(event) {
-                    return Some(NoiseResponse::None);
-                }
+                // Suppress leaked operands even when the operation is noiseless.
                 Some(Self::handle_before_gate(qubits, ctx))
             }
-            NoiseEvent::AfterGate {
-                gate_type,
-                qubits,
-                angles,
-                ..
-            } => {
+            NoiseEvent::AfterGate { gate_type, .. } => {
                 if !gate_type.is_two_qubit() || !gate_type.is_unitary_gate() {
                     return None;
                 }
                 if ctx.is_noiseless_operation(event) {
                     return Some(NoiseResponse::None);
                 }
-                Some(self.handle_after_gate(*gate_type, qubits, angles, ctx, rng))
+                Some(self.handle_after_gate(event, ctx, rng))
             }
             _ => None,
         }
@@ -652,67 +644,77 @@ impl TwoQubitChannel {
         NoiseResponse::None
     }
 
-    /// Handle `AfterGate` - apply two-qubit Pauli errors.
-    fn handle_after_gate(
+    /// Shared outer draws per pair, then one seepage draw per leaked member.
+    fn seep_pair(
         &self,
         gate_type: GateType,
-        qubits: &[pecos_core::QubitId],
+        pair: &[pecos_core::QubitId],
         angles: &[Angle64],
+        ctx: &NoiseContext,
+        rng: &mut PecosRng,
+    ) -> NoiseResponse {
+        if self.seepage_probability <= 0.0 || self.emission_ratio <= 0.0 || !ctx.any_leaked(pair) {
+            return NoiseResponse::None;
+        }
+        let p = self.effective_probability(gate_type, angles);
+        if p <= 0.0 || rng.random::<f64>() >= p || !rng.check_probability(self.emission_threshold) {
+            return NoiseResponse::None;
+        }
+        let unleaked = pair
+            .iter()
+            .copied()
+            .filter(|&q| ctx.is_leaked(q) && rng.check_probability(self.seepage_threshold))
+            .collect::<SmallVec<_>>();
+        super::seepage::seep_response(unleaked, rng)
+    }
+
+    /// Apply faults to complete executed pairs and seepage only to suppressed pairs.
+    /// An incomplete trailing pair receives neither gate error nor seepage.
+    fn handle_after_gate(
+        &self,
+        event: &NoiseEvent<'_>,
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> NoiseResponse {
-        if qubits.len() > 2 {
-            let mut response = NoiseResponse::None;
-            for pair in qubits.as_chunks::<2>().0 {
-                response =
-                    response.combine(self.handle_after_gate(gate_type, pair, angles, ctx, rng));
-            }
-            return response;
-        }
-
-        if qubits.len() < 2 {
+        let NoiseEvent::AfterGate {
+            gate_type,
+            qubits,
+            leaked_suppressed,
+            angles,
+            ..
+        } = event
+        else {
             return NoiseResponse::None;
+        };
+        let gate_type = *gate_type;
+        let mut response = NoiseResponse::None;
+        for pair in qubits.as_chunks::<2>().0 {
+            response =
+                response.combine(self.handle_executed_pair(gate_type, pair, angles, ctx, rng));
         }
+        for pair in leaked_suppressed.as_chunks::<2>().0 {
+            response = response.combine(self.seep_pair(gate_type, pair, angles, ctx, rng));
+        }
+        response
+    }
 
+    /// Apply a gate fault or seepage to one complete executed pair.
+    fn handle_executed_pair(
+        &self,
+        gate_type: GateType,
+        qubits: &[pecos_core::QubitId; 2],
+        angles: &[Angle64],
+        ctx: &NoiseContext,
+        rng: &mut PecosRng,
+    ) -> NoiseResponse {
+        if ctx.any_leaked(qubits) {
+            return self.seep_pair(gate_type, qubits, angles, ctx, rng);
+        }
         let qubit0 = qubits[0];
         let qubit1 = qubits[1];
-
-        // Fast path: if no qubits are leaked, skip leakage-related checks entirely
-        let has_leakage = ctx.leaked_count() > 0;
-
-        // Handle seepage for leaked qubits (using precomputed threshold)
-        let mut unleaked = SmallVec::new();
-        if has_leakage {
-            if ctx.is_leaked(qubit0)
-                && self.seepage_probability > 0.0
-                && rng.check_probability(self.seepage_threshold)
-            {
-                unleaked.push(qubit0);
-            }
-            if ctx.is_leaked(qubit1)
-                && self.seepage_probability > 0.0
-                && rng.check_probability(self.seepage_threshold)
-            {
-                unleaked.push(qubit1);
-            }
-
-            // Skip error if either qubit is leaked
-            if ctx.is_leaked(qubit0) || ctx.is_leaked(qubit1) {
-                if unleaked.is_empty() {
-                    return NoiseResponse::None;
-                }
-                return NoiseResponse::MarkUnleaked(unleaked);
-            }
-        }
-
-        // Get angle-dependent error probability
         let p = self.effective_probability(gate_type, angles);
-
         if rng.random::<f64>() >= p {
-            if unleaked.is_empty() {
-                return NoiseResponse::None;
-            }
-            return NoiseResponse::MarkUnleaked(unleaked);
+            return NoiseResponse::None;
         }
 
         // Apply error
@@ -772,9 +774,6 @@ impl TwoQubitChannel {
         if !leaked.is_empty() {
             response = response.combine(NoiseResponse::MarkLeaked(leaked));
         }
-        if !unleaked.is_empty() {
-            response = response.combine(NoiseResponse::MarkUnleaked(unleaked));
-        }
 
         response
     }
@@ -813,6 +812,11 @@ mod tests {
                     qubits: pair_batch,
                     angles: &[],
                     gate_id: None,
+                    group_size: crate::noise::gate_group_size(
+                        GateType::CX.quantum_arity(),
+                        (pair_batch).len(),
+                    ),
+                    leaked_suppressed: &[],
                 };
                 batched_gates.extend(collect_gates(channel.apply(&event, &mut ctx, &mut rng)));
             }
@@ -828,6 +832,11 @@ mod tests {
                     qubits: pair,
                     angles: &[],
                     gate_id: None,
+                    group_size: crate::noise::gate_group_size(
+                        GateType::CX.quantum_arity(),
+                        pair.len(),
+                    ),
+                    leaked_suppressed: &[],
                 };
                 separate_gates.extend(collect_gates(channel.apply(
                     &event,
@@ -853,6 +862,8 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::CX.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         assert!(channel.responds_to(&event));
@@ -876,6 +887,8 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::H.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         assert!(!channel.responds_to(&event));
@@ -890,6 +903,8 @@ mod tests {
             qubits: &qubits,
             angles: &[],
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::CX.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         assert!(!channel.responds_to(&event));
@@ -921,6 +936,8 @@ mod tests {
             qubits: &qubits,
             angles: &[],
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::CX.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
         let mut model = ComposableNoiseModel::new()
             .add_channel(two_qubit)
@@ -1077,6 +1094,7 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::CX.quantum_arity(), qubits.len()),
         };
 
         let mut ctx = NoiseContext::new();
@@ -1105,6 +1123,8 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::CX.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         let mut ctx = NoiseContext::new();

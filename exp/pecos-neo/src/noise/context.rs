@@ -161,7 +161,7 @@ pub struct GateInfo {
     pub gate_type: GateType,
     /// Angle parameters (if any).
     pub angles: SmallVec<[Angle64; 2]>,
-    /// Number of qubits involved.
+    /// Operand-group size, rather than the number of operands in a batch.
     pub num_qubits: usize,
 }
 
@@ -213,6 +213,21 @@ impl IdleInfo {
     }
 }
 
+/// Per-event context saved while a nested composite channel processes its own event.
+///
+/// `current_outcome` stays out: nested channels see the enclosing measurement outcome.
+#[cfg(feature = "composite-noise")]
+#[derive(Debug)]
+pub(crate) struct EnclosingEvent {
+    gate: Option<GateInfo>,
+    gate_suppressed: bool,
+    idle: Option<IdleInfo>,
+    qubit_index: usize,
+    sampled_correlation: Option<usize>,
+    gate_qubits: SmallVec<[QubitId; 2]>,
+    fired_flags: [bool; 4],
+}
+
 /// Shared mutable state for noise channels.
 ///
 /// This context is passed to each noise channel when processing events,
@@ -249,6 +264,8 @@ pub struct NoiseContext {
     /// Current gate information for dynamic noise parameters.
     /// Set temporarily during gate noise processing.
     current_gate: Option<GateInfo>,
+    /// Whether the current operand group was suppressed at the skip decision.
+    current_gate_suppressed: bool,
     /// Current idle information for time-dependent noise parameters.
     /// Set temporarily during idle noise processing.
     current_idle: Option<IdleInfo>,
@@ -300,6 +317,7 @@ impl NoiseContext {
             noiseless_gates: BTreeSet::new(),
             current_outcome: None,
             current_gate: None,
+            current_gate_suppressed: false,
             current_idle: None,
             current_qubit_index: 0,
             sampled_correlation: None,
@@ -388,17 +406,37 @@ impl NoiseContext {
     ///
     /// This is used by the composite noise system to pass gate information
     /// to primitives that need dynamic parameters (e.g., angle-dependent error rates).
-    pub fn set_current_gate(&mut self, gate_type: GateType, angles: &[Angle64], num_qubits: usize) {
+    /// `group_size` is the operand-group size, not the batch's operand count.
+    pub fn set_current_gate(
+        &mut self,
+        gate_type: GateType,
+        angles: &[Angle64],
+        group_size: std::num::NonZeroUsize,
+    ) {
+        self.current_gate_suppressed = false;
         self.current_gate = Some(GateInfo::new(
             gate_type,
             angles.iter().copied().collect(),
-            num_qubits,
+            group_size.get(),
         ));
     }
 
-    /// Clear the current gate information.
+    /// Clear the current gate information and its operand/correlation context.
     pub fn clear_current_gate(&mut self) {
         self.current_gate = None;
+        self.current_gate_suppressed = false;
+        self.clear_correlation();
+    }
+
+    /// Whether the current operand group was suppressed at the skip decision.
+    #[must_use]
+    pub fn is_current_gate_suppressed(&self) -> bool {
+        self.current_gate_suppressed
+    }
+
+    #[cfg(feature = "composite-noise")]
+    pub(crate) fn set_current_gate_suppressed(&mut self, suppressed: bool) {
+        self.current_gate_suppressed = suppressed;
     }
 
     /// Get the current gate information.
@@ -407,6 +445,32 @@ impl NoiseContext {
     #[must_use]
     pub fn current_gate(&self) -> Option<&GateInfo> {
         self.current_gate.as_ref()
+    }
+
+    /// Take the enclosing event's state so a composite channel can process its own event.
+    #[cfg(feature = "composite-noise")]
+    pub(crate) fn enter_event(&mut self) -> EnclosingEvent {
+        EnclosingEvent {
+            gate: self.current_gate.take(),
+            gate_suppressed: std::mem::take(&mut self.current_gate_suppressed),
+            idle: self.current_idle.take(),
+            qubit_index: std::mem::take(&mut self.current_qubit_index),
+            sampled_correlation: self.sampled_correlation.take(),
+            gate_qubits: std::mem::take(&mut self.current_gate_qubits),
+            fired_flags: std::mem::take(&mut self.fired_flags),
+        }
+    }
+
+    /// Discard the finished event's state and restore the enclosing event.
+    #[cfg(feature = "composite-noise")]
+    pub(crate) fn exit_event(&mut self, enclosing: EnclosingEvent) {
+        self.current_gate = enclosing.gate;
+        self.current_gate_suppressed = enclosing.gate_suppressed;
+        self.current_idle = enclosing.idle;
+        self.current_qubit_index = enclosing.qubit_index;
+        self.sampled_correlation = enclosing.sampled_correlation;
+        self.current_gate_qubits = enclosing.gate_qubits;
+        self.fired_flags = enclosing.fired_flags;
     }
 
     // --- Idle Context Tracking ---
@@ -440,8 +504,18 @@ impl NoiseContext {
     /// allowing actions to know which qubit they're processing and access
     /// the other qubits involved.
     pub fn set_current_qubit_index(&mut self, index: usize, gate_qubits: &[QubitId]) {
+        if self.current_gate.is_some() && self.current_gate_qubits.as_slice() != gate_qubits {
+            self.sampled_correlation = None;
+            self.clear_fired_flags();
+        }
         self.current_qubit_index = index;
         self.current_gate_qubits = gate_qubits.iter().copied().collect();
+    }
+
+    /// Select a member of the operands already in context, without copying them.
+    #[cfg(feature = "composite-noise")]
+    pub(crate) fn set_current_member_index(&mut self, index: usize) {
+        self.current_qubit_index = index;
     }
 
     /// Get the current qubit index within a multi-qubit gate.
@@ -677,6 +751,9 @@ impl NoiseContext {
         self.noiseless_gates.contains(&gate_type)
     }
 
+    /// Check whether an operation suppresses faults, not lifecycle or suppression.
+    /// Preparation and measurement events use their own scheduled gate type;
+    /// reset, scheduled idle and other events return false.
     /// Check the scheduled and inherited noise types of a gate event.
     /// In particular, phase-shaped U operations inherit the RZ exemption.
     #[must_use]
@@ -700,6 +777,11 @@ impl NoiseContext {
                             .noise_gate_type()
                             .is_some_and(|gate| self.is_noiseless(gate)))
             }
+            super::NoiseEvent::AfterPreparation { gate_type, .. }
+            | super::NoiseEvent::BeforeMeasurement { gate_type, .. }
+            | super::NoiseEvent::AfterMeasurement { gate_type, .. } => {
+                self.is_noiseless(*gate_type)
+            }
             _ => false,
         }
     }
@@ -722,9 +804,8 @@ impl NoiseContext {
         self.active_count = 0;
         self.leaked_count = 0;
         self.current_outcome = None;
-        self.current_gate = None;
+        self.clear_current_gate();
         self.current_idle = None;
-        self.fired_flags = [false; 4];
         // Note: noiseless_gates and gate_definitions are configuration, not per-shot state
     }
 

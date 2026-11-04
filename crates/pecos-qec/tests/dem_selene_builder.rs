@@ -451,3 +451,45 @@ fn classical_delay_trace_uses_existing_idle_noise_in_nanoseconds() {
     assert_eq!(detectors, &[0]);
     assert_eq!(observables.as_slice(), [] as [u32; 0]);
 }
+
+#[test]
+fn half_turn_keeps_two_qubit_noise_and_idle_sites() {
+    use pecos_core::gate_type::GateType;
+    for runtime in [selene_simple_runtime, selene_soft_rz_runtime] {
+        let program = SeleneDemProgram::new(Qis::from_string(include_str!(
+            "fixtures/dem_programs/half_turn.ll"
+        )))
+        .with_runtime(runtime().expect("Selene public runtime is required"));
+        let build = DetectorErrorModel::builder()
+            .with_program(program)
+            .with_qubits(2)
+            .with_noise(NoiseConfig::new(0.0, 0.2, 0.0, 0.0))
+            .with_idle_after_2q(0.001)
+            .with_detectors(vec![vec![0], vec![1]])
+            .with_observables(vec![])
+            .build()
+            .unwrap();
+        let gates: Vec<_> = build
+            .circuit
+            .ticks()
+            .iter()
+            .flat_map(pecos_quantum::Tick::gate_batches)
+            .collect();
+        assert_eq!(
+            gates
+                .iter()
+                .filter(|gate| gate.gate_type == GateType::RZZ)
+                .count(),
+            1
+        );
+        assert_eq!(
+            gates
+                .iter()
+                .filter(|gate| gate.gate_type == GateType::Idle)
+                .map(|gate| gate.qubits.len())
+                .sum::<usize>(),
+            2
+        );
+        assert!(build.dem.to_string().contains("error("));
+    }
+}

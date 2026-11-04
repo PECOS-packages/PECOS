@@ -36,6 +36,8 @@ fn phase_u_scheduled_calibration_precedes_inherited_exemption_in_all_channels() 
         qubits: &qubits,
         angles: &angles,
         gate_id: Some(GateType::U.to_gate_id()),
+        group_size: pecos_neo::noise::gate_group_size(GateType::U.quantum_arity(), qubits.len()),
+        leaked_suppressed: &[],
     };
     let mut failures = Vec::new();
     for channel in channels {

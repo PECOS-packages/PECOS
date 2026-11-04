@@ -1752,22 +1752,38 @@ mod measurement_followups {
             runtime.reset().unwrap();
             RELEASE.set(0);
             REQUIRE_FEEDBACK.set(true);
-            let source = r#"
+            let source = format!(
+                r#"
                 @payload = private constant [3 x i8] c"\00\FF\07"
                 @label = private constant [8 x i8] c"observed"
                 declare i32 @__quantum__qis__m__body(i64, i64)
-                declare { i32, i64 } @selene_custom_runtime_call(ptr, i64, ptr, i64)
+                {declare_selene_custom_runtime_call}
                 declare void @print_uint_selene(ptr, i64, i64)
-                define i64 @qmain(i64 %shot) {
+                define i64 @qmain(i64 %shot) {{
                     %m = call i32 @__quantum__qis__m__body(i64 0, i64 0)
                     %n = call i32 @__quantum__qis__m__body(i64 0, i64 1)
-                    %a = call { i32, i64 } @selene_custom_runtime_call(ptr null, i64 42, ptr @payload, i64 3)
-                    %b = call { i32, i64 } @selene_custom_runtime_call(ptr null, i64 88, ptr @payload, i64 3)
-                    %value = extractvalue { i32, i64 } %b, 1
+                    {call_a}
+                    {call_b}
+                    %value = extractvalue {{ i32, i64 }} %b, 1
                     call void @print_uint_selene(ptr @label, i64 8, i64 %value)
                     ret i64 0
-                }
-            "#;
+                }}
+            "#,
+                declare_selene_custom_runtime_call = crate::selene_test_ir::declaration(
+                    "selene_custom_runtime_call",
+                    "ptr, i64, ptr, i64"
+                ),
+                call_a = crate::selene_test_ir::call(
+                    "a",
+                    "selene_custom_runtime_call",
+                    "ptr null, i64 42, ptr @payload, i64 3"
+                ),
+                call_b = crate::selene_test_ir::call(
+                    "b",
+                    "selene_custom_runtime_call",
+                    "ptr null, i64 88, ptr @payload, i64 3"
+                ),
+            );
             let mut engine = crate::QisEngine::new(
                 Box::new(crate::QisHeliosInterface::new()),
                 Box::new(runtime),
@@ -1809,25 +1825,36 @@ mod measurement_followups {
             runtime.reset().unwrap();
             RELEASE.set(0);
             REQUIRE_FEEDBACK.set(true);
-            let source = r#"
+            let source = format!(
+                r#"
                 @payload = private constant [3 x i8] c"\00\FF\07"
                 @label = private constant [8 x i8] c"observed"
                 declare i64 @___lazy_measure(i64)
-                declare { i32, i64 } @selene_custom_runtime_call(ptr, i64, ptr, i64)
+                {declare_selene_custom_runtime_call}
                 declare void @___inc_future_refcount(i64)
                 declare void @___dec_future_refcount(i64)
                 declare void @print_uint_selene(ptr, i64, i64)
-                define i64 @qmain(i64 %shot) {
+                define i64 @qmain(i64 %shot) {{
                     %m = call i64 @___lazy_measure(i64 0)
                     %n = call i64 @___lazy_measure(i64 0)
                     call void @___inc_future_refcount(i64 %m)
                     call void @___dec_future_refcount(i64 %n)
-                    %b = call { i32, i64 } @selene_custom_runtime_call(ptr null, i64 88, ptr @payload, i64 3)
-                    %value = extractvalue { i32, i64 } %b, 1
+                    {call_b}
+                    %value = extractvalue {{ i32, i64 }} %b, 1
                     call void @print_uint_selene(ptr @label, i64 8, i64 %value)
                     ret i64 0
-                }
-            "#;
+                }}
+            "#,
+                declare_selene_custom_runtime_call = crate::selene_test_ir::declaration(
+                    "selene_custom_runtime_call",
+                    "ptr, i64, ptr, i64"
+                ),
+                call_b = crate::selene_test_ir::call(
+                    "b",
+                    "selene_custom_runtime_call",
+                    "ptr null, i64 88, ptr @payload, i64 3"
+                ),
+            );
             let mut engine = crate::QisEngine::new(
                 Box::new(crate::QisHeliosInterface::new()),
                 Box::new(runtime),

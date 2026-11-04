@@ -854,6 +854,8 @@ class StateVec:
     def __init__(self, num_qubits: int) -> None: ...
     def reset(self) -> StateVec: ...
     @property
+    def gate_capacity(self) -> int | None: ...
+    @property
     def num_qubits(self) -> int: ...
     @property
     def vector(self) -> Array: ...
@@ -1034,12 +1036,16 @@ class SparseStab:
 
     def __init__(self, num_qubits: int, *, seed: int | None = None) -> None: ...
     @property
+    def gate_capacity(self) -> int | None: ...
+    @property
     def num_qubits(self) -> int: ...
 
 class Stabilizer:
     """Rust stabilizer simulator."""
 
     def __init__(self, num_qubits: int, *, seed: int | None = None) -> None: ...
+    @property
+    def gate_capacity(self) -> int | None: ...
     @property
     def num_qubits(self) -> int: ...
 
@@ -1054,6 +1060,8 @@ class StabVec:
         mc_threshold: int | None = 2048,
     ) -> None: ...
     @property
+    def gate_capacity(self) -> int | None: ...
+    @property
     def num_qubits(self) -> int: ...
     @property
     def num_terms(self) -> int: ...
@@ -1062,6 +1070,8 @@ class CoinToss:
     """Coin toss simulator for random measurement outcomes."""
 
     def __init__(self, num_qubits: int, prob: float = 0.5, seed: int | None = None) -> None: ...
+    @property
+    def gate_capacity(self) -> int | None: ...
     @property
     def num_qubits(self) -> int: ...
 
@@ -1117,7 +1127,9 @@ class QasmEngineBuilder:
 class QisEngineBuilder:
     """Builder for QIS engines."""
 
-    def runtime_decoder(self, factory: object) -> QisEngineBuilder:
+    def runtime_decoder(
+        self, factory: object, *, capture_batches: bool = False, capture_control_flow: bool = False
+    ) -> QisEngineBuilder:
         """Configure a zero-argument factory returning a fresh shot-local decoder session."""
         ...
 
@@ -1152,7 +1164,9 @@ class PhirJsonEngineBuilder:
 class SimBuilder:
     """General simulation builder."""
 
-    ...
+    def python_worker_context(self, enabled: bool = True) -> SimBuilder:
+        """Opt into Python context persistence across a QIS worker's callbacks/shots."""
+        ...
 
 class StateVectorEngineBuilder:
     """Builder for state vector engines."""
@@ -1797,6 +1811,8 @@ class PauliProp:
 
     def __init__(self, *, track_sign: bool = False) -> None: ...
     @property
+    def gate_capacity(self) -> int | None: ...
+    @property
     def track_sign(self) -> bool: ...
     def dense_string(self, num_qubits: int | None = None) -> str:
         """Format without phase; None uses natural width, insufficient width raises ValueError."""
@@ -2312,8 +2328,11 @@ class TickCircuit:
     def circuit_definitions(self) -> dict[str, Any]:
         """Return measurement-readout definitions resolved to absolute emission positions.
 
-        Detector dictionaries always include ``fault_sector`` (an opaque non-empty string,
-        or ``None`` for an unknown fault sector).
+        Detector dictionaries always include the effective ``fault_sector`` (an opaque
+        non-empty string, or ``None`` when unknown). With ``measurement_classes``, labels
+        are derived from parity-reduced support and explicit labels must agree; the
+        result also includes the validated classes in emission order. Without classes,
+        explicit labels pass through unchanged.
         Observable dictionaries include ``reference`` (integer 0 or 1) when
         metadata supplies a noiseless value, or ``None`` when absent.
         """
@@ -2376,7 +2395,7 @@ class TickCircuit:
     def get_tick_meta(self, tick_idx: int, key: str) -> Any | None: ...
     def set_gate_meta(self, tick_idx: int, gate_idx: int, key: str, value: Any) -> None: ...
     def get_gate_meta(self, tick_idx: int, gate_idx: int, key: str) -> Any | None: ...
-    def lower_clifford_rotations(self) -> None: ...
+    def lower_clifford_rotations(self, *, preserve_gate_arity: bool = False) -> None: ...
     def strip_identities(self) -> None: ...
     def strip_idles(self) -> None: ...
     def cancel_inverses(self) -> None: ...
@@ -2979,7 +2998,33 @@ class qec:
             p_prep: float,
             **noise_options: Any,
         ) -> qec.DemBuilder: ...
+        def with_circuit_metadata(self, circuit: TickCircuit) -> qec.DemBuilder:
+            """Copy detectors, observables, measurement_classes and num_measurements.
+
+            Absent attributes preserve earlier settings, as do blank detectors,
+            observables and num_measurements strings. A blank measurement_classes
+            string is kept, and build() rejects it as malformed, as it does malformed
+            class JSON. Only attributes are copied, after checking them against the
+            circuit. ValueError is raised for non-string attributes, a circuit that does
+            not convert to a DAG, a count that is invalid or differs from the circuit's,
+            an influence map whose measurement records differ from those of
+            circuit.to_dag_circuit(), malformed detectors or observables, repeated ids,
+            unresolved references, attributes that disagree with annotations on ids,
+            measurements or labels, and annotations whose matching attribute defines
+            nothing. The map check compares only each measurement's node, qubit, basis
+            and id, so a map from another circuit with the same records passes whatever
+            its other gates, as do annotated outputs merged into the map from elsewhere.
+            Build the map from this circuit. Use
+            DetectorErrorModel.from_circuit for circuits defined by annotation alone. A
+            map that already carries annotated observables, from a circuit with no
+            observables attribute, needs the separate setters. Those setters do not check
+            agreement with observables the map carries, so omit those observables.
+            Tracked Pauli annotations are not copied; they reach the DEM only through the
+            influence map.
+            """
+
         def with_detectors_json(self, json: str) -> qec.DemBuilder: ...
+        def with_measurement_classes_json(self, json: str) -> qec.DemBuilder: ...
         def with_observables_json(self, json: str) -> qec.DemBuilder: ...
         def with_num_measurements(self, num: int) -> qec.DemBuilder: ...
         def with_exact_branch_replay_circuit(self, circuit: DagCircuit) -> qec.DemBuilder: ...
@@ -4358,6 +4403,10 @@ def scheduled_idle_z(
 
 class ScheduledEventBatch:
     """Read-only original native batch supplied to a scheduled adapter."""
+
+    def to_bytes(self) -> bytes:
+        """Owned checked v7 message containing this one batch; may raise ValueError."""
+        ...
 
     @property
     def runtime_shot_id(self) -> int: ...

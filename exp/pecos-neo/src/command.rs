@@ -83,6 +83,11 @@ pub enum GateType {
     QAlloc,
     QFree,
 
+    /// Measurement-crosstalk metadata whose operands exclude global victims.
+    MeasCrosstalkGlobalPayload,
+    /// Measurement-crosstalk metadata whose operands name local potential victims.
+    MeasCrosstalkLocalPayload,
+
     // Idle
     Idle,
 }
@@ -149,6 +154,8 @@ declare_all_gate_types!(
     QAlloc,
     QFree,
     Idle,
+    MeasCrosstalkGlobalPayload,
+    MeasCrosstalkLocalPayload,
 );
 
 impl GateType {
@@ -182,7 +189,9 @@ impl GateType {
             | Self::PZ
             | Self::QAlloc
             | Self::QFree
-            | Self::Idle => 1,
+            | Self::Idle
+            | Self::MeasCrosstalkGlobalPayload
+            | Self::MeasCrosstalkLocalPayload => 1,
 
             Self::CX
             | Self::CY
@@ -227,6 +236,15 @@ impl GateType {
         matches!(self, Self::MZ | Self::MeasureLeaked | Self::MeasureFree)
     }
 
+    /// Returns true for measurement-crosstalk metadata.
+    #[must_use]
+    pub const fn is_crosstalk_payload(self) -> bool {
+        matches!(
+            self,
+            Self::MeasCrosstalkGlobalPayload | Self::MeasCrosstalkLocalPayload
+        )
+    }
+
     /// Returns true if this is a preparation operation.
     #[must_use]
     pub const fn is_preparation(self) -> bool {
@@ -246,7 +264,7 @@ impl GateType {
     }
 
     /// Returns true if this is a unitary gate (not preparation, measurement,
-    /// idle, or resource management).
+    /// idle, resource management, or crosstalk metadata).
     ///
     /// These are the gates that should receive gate depolarizing noise
     /// (p1 for single-qubit, p2 for two-qubit).
@@ -256,6 +274,7 @@ impl GateType {
             && !self.is_preparation()
             && !self.is_idle()
             && !self.is_resource_management()
+            && !self.is_crosstalk_payload()
     }
 }
 

@@ -50,7 +50,6 @@
 use super::composite::Primitive;
 #[cfg(feature = "composite-noise")]
 use super::composite::channel::{CompositeChannel, CompositeChannelBuilder};
-use super::crosstalk::CrosstalkChannel;
 use super::idle::IdleChannel;
 use super::leakage::LeakageChannel;
 use super::measurement::MeasurementChannel;
@@ -59,8 +58,8 @@ use super::preparation::PreparationChannel;
 use super::single_qubit::SingleQubitChannel;
 use super::two_qubit::{AngleScaling, TwoQubitChannel};
 use super::{
-    ComposableNoiseModel, CrosstalkTransitions, NoiseChannel, PauliWeights,
-    SingleQubitEmissionWeights, TwoQubitEmissionWeights, TwoQubitPauliWeights,
+    ComposableNoiseModel, NoiseChannel, PauliWeights, SingleQubitEmissionWeights,
+    TwoQubitEmissionWeights, TwoQubitPauliWeights,
 };
 use crate::command::GateType;
 use crate::noise::validation::{
@@ -134,9 +133,6 @@ pub struct NoiseModelBuilder {
     // Measurement
     p_meas_0: f64,
     p_meas_1: f64,
-    p_meas_crosstalk_global: f64,
-    p_meas_crosstalk_local: f64,
-    p_meas_crosstalk_transitions: Option<CrosstalkTransitions>,
 
     // Idle noise
     p_idle_linear_rate: f64,
@@ -198,9 +194,6 @@ impl NoiseModelBuilder {
             // Measurement
             p_meas_0: 0.0,
             p_meas_1: 0.0,
-            p_meas_crosstalk_global: 0.0,
-            p_meas_crosstalk_local: 0.0,
-            p_meas_crosstalk_transitions: None,
 
             // Idle
             p_idle_linear_rate: 0.0,
@@ -603,14 +596,6 @@ impl NoiseModelBuilder {
         crate::noise::validation::validate_probability(self.p2_seepage_prob, "p2_seepage_prob")?;
         crate::noise::validation::validate_probability(self.p_meas_0, "p_meas_0")?;
         crate::noise::validation::validate_probability(self.p_meas_1, "p_meas_1")?;
-        crate::noise::validation::validate_probability(
-            self.p_meas_crosstalk_global,
-            "p_meas_crosstalk_global",
-        )?;
-        crate::noise::validation::validate_probability(
-            self.p_meas_crosstalk_local,
-            "p_meas_crosstalk_local",
-        )?;
         crate::noise::validation::validate_probability(self.leakage_scale, "leakage_scale")?;
         let mut model = ComposableNoiseModel::new().add_plugin(&CorePlugin);
 
@@ -653,17 +638,6 @@ impl NoiseModelBuilder {
         if !self.measurement_override && (self.p_meas_0 > 0.0 || self.p_meas_1 > 0.0) {
             let channel = MeasurementChannel::asymmetric(self.p_meas_0, self.p_meas_1)?;
             model = model.add_channel(channel);
-
-            // Add measurement crosstalk if configured
-            if self.p_meas_crosstalk_global > 0.0 || self.p_meas_crosstalk_local > 0.0 {
-                let mut crosstalk = CrosstalkChannel::measurement()
-                    .with_global_rate(self.p_meas_crosstalk_global)?
-                    .with_local_rate(self.p_meas_crosstalk_local)?;
-                if let Some(transitions) = self.p_meas_crosstalk_transitions {
-                    crosstalk = crosstalk.with_transitions(transitions)?;
-                }
-                model = model.add_channel(crosstalk);
-            }
         }
 
         // Add preparation channel (unless overridden)

@@ -259,64 +259,35 @@ Measurement Outcome
 
 ### Crosstalk (Tricky Case #2)
 
-The two-phase protocol below is a design sketch, not the current implementation.
-Current channels run on noisy `PZ` preparation or after measurement, never gates.
-They target other non-leaked qubits prepared this shot, including measured qubits.
-Builder defaults dephase each fired target with a fair Z coin; custom primitives
-and presets retain their effects. Transition tables still sample an input state.
+Measurement crosstalk fires only on `MeasCrosstalkGlobalPayload` or
+`MeasCrosstalkLocalPayload`, both `GateCategory::Metadata`. Global operands
+exclude victims; local operands name potential victims. An empty global payload
+targets every existing, non-leaked qubit. Measured qubits remain eligible.
 
-**Why it's tricky:** Non-local (affects OTHER qubits). Spans before/after boundary (inject measurements, wait, process outcomes). Coordinated operation.
+The payload emits `CrosstalkPayload`. Each victim independently fires at its
+kind's rate. A nonempty `MeasureHidden { gate_type, qubits }` response measures
+victims directly, without user outcomes, readout noise, measurement events or
+lifecycle changes. `AfterHiddenMeasurement` carries the raw outcomes; the optional
+table selects stay, X, or leakage from the actual victim outcome. Without a
+table, only collapse occurs. This continuation finishes before the next command.
+No fired victims returns `None`. Noiseless payloads produce no hidden measurement.
 
-**Solution:** Crosstalk is a special construct (not primitives), but its internal transitions use primitives.
+Preparation crosstalk still fires only on noisy PZ and defaults to a fair Z coin.
+Neither ordinary gates nor ordinary measurements trigger measurement crosstalk.
+Neo rates are post-scale; engine parity is scoped to `leakage_scale = 1`.
 
 ```rust
-let crosstalk = Crosstalk::builder()
-    .trigger(Event::Measurement)
-
-    // Who gets affected
-    .victims(Victims::AllOtherPrepared)
-    // Or: Victims::Nearby(radius)
-    // Or: Victims::Custom(|ctx, measured| ...)
-
-    // Probability of affecting each victim
-    .global_probability(p_global)
-    .local_probability(p_local)
-
-    // What happens (uses primitives!)
-    .outcome_transitions(|outcome| match outcome {
-        0 => sample([
-            (0.90, nothing()),
-            (0.05, flip_state()),
-            (0.05, leak()),
-        ]),
-        1 => sample([
-            (0.85, nothing()),
-            (0.10, flip_state()),
-            (0.05, leak()),
-        ]),
-    })
-
-    .build();
+use pecos_neo::noise::composite::prelude::*;
+let crosstalk = CompositeCrosstalkChannel::measurement(
+    "local", PayloadKind::Local, 0.01, nothing(),
+)?;
 ```
 
-Flowchart:
-```
-Crosstalk (on Measurement)
-│
-├─▶ For each victim qubit:
-│   │
-│   └─▶ prob(p_crosstalk)
-│       │
-│       └─▶ [inject measurement, wait for outcome]
-│           │
-│           ├─▶ outcome = 0:
-│           │   └─▶ sample: 90% nothing, 5% flip, 5% leak
-│           │
-│           └─▶ outcome = 1:
-│               └─▶ sample: 85% nothing, 10% flip, 5% leak
-```
-
-**Why special construct?** Crosstalk is genuinely different from local noise. Forcing it into primitives would complicate them. Better: clean primitives + one honest special case.
+Measurement channels own one payload kind and declare their event kinds directly.
+They set and clear `current_outcome` around each victim's primitive. Preparation
+uses `CompositeCrosstalkChannel::preparation(name, primitive)`; the builder passes
+`prob(p, prob(0.5, inject_z())?)?`. `CompositeChannelBuilder::crosstalk` is a
+preparation-only convenience. Generic composite filters do not add payload events.
 
 ### Idle Noise
 

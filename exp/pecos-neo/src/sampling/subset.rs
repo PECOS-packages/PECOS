@@ -120,6 +120,8 @@ pub(crate) fn supports(command: &GateCommand) -> bool {
             | GateType::MeasureFree
             | GateType::PZ
             | GateType::QAlloc
+            | GateType::MeasCrosstalkLocalPayload
+            | GateType::MeasCrosstalkGlobalPayload
             | GateType::Idle
     ) {
         return true;

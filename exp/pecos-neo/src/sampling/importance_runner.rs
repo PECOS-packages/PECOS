@@ -162,12 +162,16 @@ pub enum ImportanceSamplingError {
     InvalidCommand(crate::command::GateCommandError),
     /// This runner cannot execute the circuit gate.
     UnsupportedGate { gate_type: GateType },
+    /// Hidden measurement continuations require `CircuitRunner`.
+    HiddenMeasurementUnsupported,
 }
 
 impl std::fmt::Display for ImportanceSamplingError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::InvalidCommand(error) => error.fmt(f),
+            Self::HiddenMeasurementUnsupported => f.write_str("ImportanceSamplingRunner cannot apply MeasureHidden measurement crosstalk; use CircuitRunner"),
+            Self::UnsupportedGate { gate_type } if gate_type.is_crosstalk_payload() => write!(f, "ImportanceSamplingRunner does not support measurement crosstalk payload {gate_type:?}; use CircuitRunner"),
             Self::UnsupportedGate { gate_type } => write!(
                 f,
                 "ImportanceSamplingRunner cannot execute circuit gate {gate_type:?}"
@@ -462,7 +466,12 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
 
     /// Execute a single command with importance-weighted noise.
     fn execute_command(&mut self, command: &GateCommand) -> Result<(), ImportanceSamplingError> {
-        let skipped = self.emit_before_gate(command);
+        if command.gate_type.is_crosstalk_payload() {
+            return Err(ImportanceSamplingError::UnsupportedGate {
+                gate_type: command.gate_type,
+            });
+        }
+        let skipped = self.emit_before_gate(command)?;
         let surviving = partition_gate_qubits(
             &command.qubits,
             crate::noise::gate_group_size(command.gate_type.quantum_arity(), command.qubits.len()),
@@ -489,7 +498,7 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
             // Preparation
             GateType::PZ | GateType::QAlloc => {
                 self.simulator.pz(qubits);
-                self.emit_after_preparation(command.gate_type, qubits);
+                self.emit_after_preparation(command.gate_type, qubits)?;
             }
 
             // Measurement
@@ -678,7 +687,10 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
     }
 
     /// Emit a before-gate noise event (for leakage handling, etc.).
-    fn emit_before_gate(&mut self, command: &GateCommand) -> SmallVec<[QubitId; 4]> {
+    fn emit_before_gate(
+        &mut self,
+        command: &GateCommand,
+    ) -> Result<SmallVec<[QubitId; 4]>, ImportanceSamplingError> {
         if let Some(ref mut noise) = self.noise {
             // Use helper constructor for zero-allocation access
             let event = NoiseEvent::before_gate(
@@ -688,24 +700,35 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
             );
             let response = noise.emit(&event, &mut self.rng);
             let skipped = response.skipped_qubits();
-            self.apply_noise_response(response);
-            return skipped;
+            self.apply_noise_response(response)?;
+            return Ok(skipped);
         }
-        SmallVec::new()
+        Ok(SmallVec::new())
     }
 
     /// Emit an after-preparation noise event.
-    fn emit_after_preparation(&mut self, gate_type: GateType, qubits: &[QubitId]) {
+    fn emit_after_preparation(
+        &mut self,
+        gate_type: GateType,
+        qubits: &[QubitId],
+    ) -> Result<(), ImportanceSamplingError> {
         if let Some(ref mut noise) = self.noise {
             let event = NoiseEvent::AfterPreparation { gate_type, qubits };
             let response = noise.emit(&event, &mut self.rng);
-            self.apply_noise_response(response);
+            self.apply_noise_response(response)?;
         }
+        Ok(())
     }
 
     /// Apply a noise response (for leakage tracking, etc.).
-    fn apply_noise_response(&mut self, response: NoiseResponse) {
+    fn apply_noise_response(
+        &mut self,
+        response: NoiseResponse,
+    ) -> Result<(), ImportanceSamplingError> {
         match response {
+            NoiseResponse::MeasureHidden { .. } => {
+                return Err(ImportanceSamplingError::HiddenMeasurementUnsupported);
+            }
             NoiseResponse::None
             | NoiseResponse::SkipGate(_)
             | NoiseResponse::MarkLeaked(_)
@@ -737,10 +760,11 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
 
             NoiseResponse::Multiple(responses) => {
                 for r in responses {
-                    self.apply_noise_response(r);
+                    self.apply_noise_response(r)?;
                 }
             }
         }
+        Ok(())
     }
 
     /// Execute a noise gate.
@@ -1040,7 +1064,12 @@ where
         &mut self,
         command: &GateCommand,
     ) -> Result<(), ImportanceSamplingError> {
-        let skipped = self.emit_before_gate(command);
+        if command.gate_type.is_crosstalk_payload() {
+            return Err(ImportanceSamplingError::UnsupportedGate {
+                gate_type: command.gate_type,
+            });
+        }
+        let skipped = self.emit_before_gate(command)?;
         let surviving = partition_gate_qubits(
             &command.qubits,
             crate::noise::gate_group_size(command.gate_type.quantum_arity(), command.qubits.len()),
@@ -1067,7 +1096,7 @@ where
             // Preparation
             GateType::PZ | GateType::QAlloc => {
                 self.simulator.pz(qubits);
-                self.emit_after_preparation(command.gate_type, qubits);
+                self.emit_after_preparation(command.gate_type, qubits)?;
             }
 
             // Measurement with outcome biasing
@@ -1447,9 +1476,11 @@ mod tests {
             vec![QubitId(0)],
             vec![pecos_core::Angle64::ZERO],
         );
-        runner.apply_noise_response(NoiseResponse::InjectGates(Box::new(smallvec::smallvec![
-            gate
-        ])));
+        runner
+            .apply_noise_response(NoiseResponse::InjectGates(Box::new(smallvec::smallvec![
+                gate
+            ])))
+            .unwrap();
     }
 
     #[test]

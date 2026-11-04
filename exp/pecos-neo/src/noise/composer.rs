@@ -562,6 +562,7 @@ impl ComposableNoiseModel {
                 }
             }
             NoiseResponse::None
+            | NoiseResponse::MeasureHidden { .. }
             | NoiseResponse::InjectGates(_)
             | NoiseResponse::FlipOutcomes(_)
             | NoiseResponse::ForceOutcomes(_)
@@ -1070,6 +1071,19 @@ mod tests {
         };
         match (actual, expected) {
             (None, None) => {}
+            (
+                NoiseResponse::MeasureHidden {
+                    gate_type: a,
+                    qubits: aq,
+                },
+                NoiseResponse::MeasureHidden {
+                    gate_type: b,
+                    qubits: bq,
+                },
+            ) => {
+                assert_eq!(a, b);
+                assert_eq!(aq, bq);
+            }
             (InjectGates(a), InjectGates(b)) => assert_eq!(a, b),
             (SkipGate(a), SkipGate(b))
             | (FlipOutcomes(a), FlipOutcomes(b))
@@ -1262,11 +1276,7 @@ mod tests {
                     .unwrap()
                     .with_filter(CompositeEventFilter::AnyGate),
             )
-            .add_channel(
-                CompositeCrosstalkChannel::new("crosstalk", pauli())
-                    .responds_to_measurement()
-                    .responds_to_preparation(),
-            )
+            .add_channel(CompositeCrosstalkChannel::preparation("crosstalk", pauli()))
     }
 
     #[test]

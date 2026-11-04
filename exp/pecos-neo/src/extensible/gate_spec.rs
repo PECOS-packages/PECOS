@@ -18,6 +18,8 @@ pub enum GateCategory {
     Idle,
     /// Qubit allocation/deallocation
     QubitManagement,
+    /// Runtime metadata that executes no simulator gate
+    Metadata,
     /// User-defined category
     Custom(u8),
 }

@@ -81,7 +81,7 @@ pub struct GateDefinitions {
     noise: Vec<Option<GateNoiseParams>>,
 
     /// Category-based noise defaults.
-    category_noise: [Option<GateNoiseParams>; 8],
+    category_noise: [Option<GateNoiseParams>; 9],
 
     /// Global noise default.
     global_noise: Option<GateNoiseParams>,
@@ -108,7 +108,7 @@ impl GateDefinitions {
             specs: vec![None; 256],
             decompositions: vec![None; 256],
             noise: vec![None; 256],
-            category_noise: [None, None, None, None, None, None, None, None],
+            category_noise: [None, None, None, None, None, None, None, None, None],
             global_noise: None,
             name_to_id: Vec::new(),
             next_user_id: 256,
@@ -577,6 +577,16 @@ impl GateDefinitions {
             GateSpec::new("PrepY").with_category(GateCategory::Preparation),
         );
 
+        self.set_core_spec(
+            gates::MEAS_CROSSTALK_GLOBAL_PAYLOAD,
+            GateSpec::new("MeasCrosstalkGlobalPayload").with_category(GateCategory::Metadata),
+        );
+
+        self.set_core_spec(
+            gates::MEAS_CROSSTALK_LOCAL_PAYLOAD,
+            GateSpec::new("MeasCrosstalkLocalPayload").with_category(GateCategory::Metadata),
+        );
+
         // Idle
         self.set_core_spec(
             gates::IDLE,
@@ -761,6 +771,7 @@ fn category_to_index(category: GateCategory) -> usize {
         GateCategory::Idle => 5,
         GateCategory::QubitManagement => 6,
         GateCategory::Custom(_) => 7,
+        GateCategory::Metadata => 8,
     }
 }
 

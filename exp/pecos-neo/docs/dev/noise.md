@@ -122,18 +122,27 @@ CompositeNoiseModelBuilder::new()
 
 #### Crosstalk
 
-Preparation crosstalk fires only after noisy `PZ`, at its own global rate.
-Measurement crosstalk fires after measurement, at independent local/global rates.
-Both default to Z with probability 1/2 per fired target. Source operands and leaked
-qubits are excluded; other qubits prepared this shot remain targets after measurement,
-including noiselessly prepared and `QAlloc` qubits. Presets and user-composed composite
-channels retain their chosen primitives. Tables retain their sampled-state behavior.
+Measurement crosstalk fires only on `MeasCrosstalkGlobalPayload` or
+`MeasCrosstalkLocalPayload`, both `GateCategory::Metadata`. Global operands
+exclude victims; local operands name potential victims. An empty global payload
+targets every existing, non-leaked qubit. Measured qubits remain eligible.
+
+The payload emits `CrosstalkPayload`. Each victim independently fires at its
+kind's rate. A nonempty `MeasureHidden { gate_type, qubits }` response measures
+victims directly, without user outcomes, readout noise, measurement events or
+lifecycle changes. `AfterHiddenMeasurement` carries the raw outcomes; the optional
+table selects stay, X, or leakage from the actual victim outcome. Without a
+table, only collapse occurs. This continuation finishes before the next command.
+No fired victims returns `None`. Noiseless payloads produce no hidden measurement.
+
+Preparation crosstalk still fires only on noisy PZ and defaults to a fair Z coin.
+Neither ordinary gates nor ordinary measurements trigger measurement crosstalk.
+Neo rates are post-scale; engine parity is scoped to `leakage_scale = 1`.
 
 ```rust
 CompositeNoiseModelBuilder::new()
     .with_p_prep_crosstalk(0.001)?
     .with_p_meas_crosstalk(0.001, 0.01)?
-    .with_p_meas_crosstalk_local_fn(neighbors)
     .with_p_meas_crosstalk_model(CrosstalkTransitions::symmetric_with_leakage())?
     .build()?;
 ```
@@ -277,7 +286,8 @@ When noise is applied, it produces a `NoiseResponse` that the runner processes:
 | `NoiseResponse::FlipOutcomes(qubits)` | Toggle measurement outcomes for qubits |
 | `NoiseResponse::ForceOutcomes(pairs)` | Set outcomes to specific values |
 | `NoiseResponse::MarkLeaked(qubits)` | Mark qubits as leaked in context |
-| `NoiseResponse::Multiple(responses)` | Combine multiple responses |
+| `NoiseResponse::Multiple(responses)` | Apply responses in order, including hidden measurements |
+| `NoiseResponse::MeasureHidden { gate_type, qubits }` | Measure without public results, readout noise or lifecycle changes, then emit `AfterHiddenMeasurement` |
 
 After-gate `qubits` contains executed operand groups only. `leaked_suppressed`
 contains complete groups skipped while leaked, in original order within each
@@ -631,7 +641,7 @@ AngleScaling::asymmetric(
 
 ### Crosstalk Transitions
 
-State-dependent crosstalk effects:
+State-dependent crosstalk effects selected by the real hidden victim outcome:
 
 ```rust
 // Simple flip model

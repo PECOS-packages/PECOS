@@ -2650,6 +2650,9 @@ pub mod actions {
 
         match response {
             NoiseResponse::None => CompositeResponse::None,
+            NoiseResponse::MeasureHidden { gate_type, qubits } => {
+                CompositeResponse::MeasureHidden { gate_type, qubits }
+            }
             NoiseResponse::SkipGate(qs) => {
                 if qs.contains(&qubit) {
                     CompositeResponse::SkipGate

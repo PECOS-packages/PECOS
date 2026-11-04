@@ -118,6 +118,15 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
+//! # Measurement Crosstalk
+//!
+//! `CompositeCrosstalkChannel::measurement(name, PayloadKind::Local, rate, primitive)`
+//! responds only to local payloads and their hidden outcomes. Global payloads
+//! exclude their operands; local payloads name victims. The primitive receives
+//! each victim's raw outcome through `NoiseContext::current_outcome`.
+//! Use `nothing()` for collapse alone or `crosstalk_transitions(table)?` for
+//! stay/flip/leak transitions. Preparation uses `preparation(name, primitive)`.
+//!
 //! # Idle Noise (T1/T2)
 //!
 //! Time-dependent idle noise can be modeled using `prob_linear` (T1-like)
@@ -176,7 +185,7 @@ pub use action::{
 pub use builder::CompositeNoiseModelBuilder;
 pub use channel::{
     BatchCompositeChannel, CompositeChannel, CompositeChannelBuilder, CompositeCrosstalkChannel,
-    CompositeEventFilter,
+    CompositeEventFilter, PayloadKind,
 };
 pub use condition::{
     Active, Always, AnyQubitLeaked, Condition, FnCondition, GateTypeIs, Leaked, Never, NotLeaked,
@@ -194,7 +203,7 @@ pub mod prelude {
     pub use super::builder::CompositeNoiseModelBuilder;
     pub use super::channel::{
         BatchCompositeChannel, CompositeChannel, CompositeChannelBuilder,
-        CompositeCrosstalkChannel, CompositeEventFilter,
+        CompositeCrosstalkChannel, CompositeEventFilter, PayloadKind,
     };
     pub use super::condition::conditions::*;
     pub use super::primitive::Probability;
@@ -567,14 +576,21 @@ mod tests {
             .pz(&[2])
             .h(&[0])
             .mz(&[0])
+            .meas_crosstalk_global_payload(&[0])
             .build();
 
         // Create crosstalk channel: 100% chance to flip other qubits during measurement
-        let crosstalk = CompositeCrosstalkChannel::new("test_crosstalk", inject_x())
-            .responds_to_measurement()
-            .global();
+        let crosstalk = CompositeCrosstalkChannel::measurement(
+            "test_crosstalk",
+            PayloadKind::Global,
+            1.0,
+            inject_x(),
+        )
+        .unwrap();
 
-        let noise = ComposableNoiseModel::new().add_channel(crosstalk);
+        let noise = ComposableNoiseModel::new()
+            .add_plugin(&crate::noise::plugins::CorePlugin)
+            .add_channel(crosstalk);
 
         let mut state = SparseStab::with_seed(3, 42);
         let mut runner = CircuitRunner::<SparseStab>::new()

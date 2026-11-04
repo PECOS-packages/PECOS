@@ -341,6 +341,7 @@ fn recipe_crosstalk() -> Result<(), Box<dyn std::error::Error>> {
         .pz(&[1])
         .pz(&[2])
         .mz(&[1]) // Measure middle qubit
+        .meas_crosstalk_local_payload(&[0, 2])
         .mz(&[0]) // Check if neighbors were affected
         .mz(&[2])
         .build();
@@ -348,11 +349,16 @@ fn recipe_crosstalk() -> Result<(), Box<dyn std::error::Error>> {
     // Chain crosstalk: measuring qubit 1 can flip qubits 0 and 2
     let mut neighbor_errors = 0;
     for seed in 0..1000 {
-        let crosstalk = CompositeCrosstalkChannel::new("chain_xt", prob(0.1, inject_x())?)
-            .responds_to_measurement()
-            .local(chain_neighbors);
+        let crosstalk = CompositeCrosstalkChannel::measurement(
+            "chain_xt",
+            PayloadKind::Local,
+            0.1,
+            inject_x(),
+        )?;
 
-        let noise = ComposableNoiseModel::new().add_channel(crosstalk);
+        let noise = ComposableNoiseModel::new()
+            .add_plugin(&pecos_neo::noise::plugins::CorePlugin)
+            .add_channel(crosstalk);
 
         let mut state = SparseStab::new(3);
         let mut runner = CircuitRunner::<SparseStab>::new()
@@ -427,8 +433,7 @@ fn recipe_realistic_device() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Surface code optimized noise
-    let same_outcome =
-        count_bell_correlation(&commands, || surface_code_noise(0.001, false), 1000)?;
+    let same_outcome = count_bell_correlation(&commands, || surface_code_noise(0.001), 1000)?;
     println!(
         "  Surface code noise (p=0.1%): {:.1}% same outcome",
         same_outcome as f64 / 10.0

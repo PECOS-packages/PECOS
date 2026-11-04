@@ -130,6 +130,8 @@ fn convert_gate_type(core_type: CoreGateType) -> Option<NeoGateType> {
         CoreGateType::QFree => NeoGateType::QFree,
 
         // Idle
+        CoreGateType::MeasCrosstalkGlobalPayload => NeoGateType::MeasCrosstalkGlobalPayload,
+        CoreGateType::MeasCrosstalkLocalPayload => NeoGateType::MeasCrosstalkLocalPayload,
         CoreGateType::Idle => NeoGateType::Idle,
 
         // Unknown or unhandled gate types

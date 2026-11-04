@@ -37,7 +37,7 @@
 
 use super::channel::{
     CompositeChannel, CompositeChannelBuilder, CompositeCrosstalkChannel, CompositeEventFilter,
-    NeighborFn,
+    PayloadKind,
 };
 use super::prelude::*;
 use crate::command::GateType;
@@ -108,7 +108,6 @@ pub struct CompositeNoiseModelBuilder {
     // Crosstalk parameters (measurement)
     p_meas_crosstalk_global: f64,
     p_meas_crosstalk_local: f64,
-    p_meas_crosstalk_local_fn: Option<NeighborFn>,
     p_meas_crosstalk_model: Option<CrosstalkTransitions>,
 
     // MeasureLeaked handling
@@ -157,7 +156,6 @@ impl Default for CompositeNoiseModelBuilder {
             p_meas_1: 0.0,
             p_meas_crosstalk_global: 0.0,
             p_meas_crosstalk_local: 0.0,
-            p_meas_crosstalk_local_fn: None,
             p_meas_crosstalk_model: None,
             handle_measure_leaked: false,
             p_idle_linear_rate: 0.0,
@@ -492,12 +490,10 @@ impl CompositeNoiseModelBuilder {
 
     // --- Crosstalk parameters ---
 
-    /// Set global crosstalk probability during measurements.
+    /// Set the global measurement-crosstalk payload probability.
     ///
-    /// With probability `p`, each other existing, non-leaked qubit is affected,
-    /// including measured qubits: without a table, Z with probability 1/2;
-    /// with `with_p_meas_crosstalk_model` set, the table is used instead.
-    /// This is a convenience method equivalent to `with_p_meas_crosstalk(p, 0.0)`.
+    /// Equivalent to `with_p_meas_crosstalk(p, 0.0)`. Each fired victim
+    /// is measured invisibly; without a table there is no further effect.
     ///
     /// # Errors
     /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
@@ -506,16 +502,12 @@ impl CompositeNoiseModelBuilder {
         Ok(self)
     }
 
-    /// Set measurement crosstalk probabilities.
+    /// Set global and local measurement-crosstalk payload probabilities.
     ///
-    /// - `global`: Probability of firing on any other existing, non-leaked qubit
-    /// - `local`: Probability of firing on existing, non-leaked neighbors only
-    ///
-    /// Measured targets remain eligible. Without a table, each fired target
-    /// receives Z with probability 1/2.
-    ///
-    /// Note: Local crosstalk requires a neighbor function to be provided
-    /// via `with_p_meas_crosstalk_local_fn`.
+    /// Global payload operands are exclusions; local operands are potential victims.
+    /// Targets exist this shot and are not leaked, even after measurement.
+    /// Each fired target is measured invisibly, then its outcome selects the
+    /// optional stay/flip/leak transition.
     ///
     /// # Errors
     /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
@@ -525,50 +517,15 @@ impl CompositeNoiseModelBuilder {
         Ok(self)
     }
 
-    /// Set the neighbor function for local measurement crosstalk.
-    ///
-    /// The function takes the gated qubits and returns their neighbors.
-    /// This is required when using `with_p_meas_crosstalk` with a non-zero
-    /// local probability.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use pecos_neo::noise::composite::CompositeNoiseModelBuilder;
-    /// use pecos_core::QubitId;
-    ///
-    /// // Define neighbors as adjacent qubits in a linear chain
-    /// fn linear_neighbors(qubits: &[QubitId]) -> Vec<QubitId> {
-    ///     qubits.iter()
-    ///         .flat_map(|q| vec![QubitId(q.0.saturating_sub(1)), QubitId(q.0 + 1)])
-    ///         .filter(|n| !qubits.contains(n))
-    ///         .collect()
-    /// }
-    ///
-    /// let model = CompositeNoiseModelBuilder::new()
-    ///     .with_p_meas_crosstalk(0.001, 0.01).unwrap()
-    ///     .with_p_meas_crosstalk_local_fn(linear_neighbors)
-    ///     .build().unwrap();
-    /// ```
-    #[must_use]
-    pub fn with_p_meas_crosstalk_local_fn(mut self, neighbor_fn: NeighborFn) -> Self {
-        self.p_meas_crosstalk_local_fn = Some(neighbor_fn);
-        self
-    }
-
     /// Set the state-dependent crosstalk transition model.
     ///
     /// When set, crosstalk effects use state-dependent transitions:
     /// - Given qubit is in |0⟩: probability to stay, flip, or leak
     /// - Given qubit is in |1⟩: probability to stay, flip, or leak
     ///
-    /// When not set, crosstalk uses dephasing (Z with probability 1/2 per fired target).
-    ///
-    /// The transition table has the same shape as `GeneralNoiseModel`'s
-    /// `p_meas_crosstalk_model`, but the source of the state differs. Neo crosstalk
-    /// does not measure the affected qubit, so unless an outcome is in context the
-    /// state is drawn uniformly, and an asymmetric table does not depend on the
-    /// qubit's real state.
+    /// Without a table, the hidden measurement alone collapses the victim.
+    /// The table uses the raw victim outcome, as in the engines.
+    /// Parity is scoped to `leakage_scale = 1`; neo rates are post-scale.
     ///
     /// # Example
     ///
@@ -935,43 +892,33 @@ impl CompositeNoiseModelBuilder {
             model = model.add_channel(channel);
         }
 
-        // Measurement crosstalk (global)
-        if self.p_meas_crosstalk_global > 0.0 {
-            let crosstalk_noise = self.build_crosstalk_noise(self.p_meas_crosstalk_global)?;
-            let channel =
-                CompositeCrosstalkChannel::new("flow_meas_crosstalk_global", crosstalk_noise)
-                    .responds_to_measurement()
-                    .global();
-            model = model.add_channel(channel);
-        }
-
-        // Measurement crosstalk (local)
-        if self.p_meas_crosstalk_local > 0.0 {
-            if let Some(neighbor_fn) = self.p_meas_crosstalk_local_fn {
-                let crosstalk_noise = self.build_crosstalk_noise(self.p_meas_crosstalk_local)?;
-                let channel =
-                    CompositeCrosstalkChannel::new("flow_meas_crosstalk_local", crosstalk_noise)
-                        .responds_to_measurement()
-                        .local(neighbor_fn);
-                model = model.add_channel(channel);
-            } else {
-                return Err(crate::noise::validation::ValidationError::new(
-                    "p_meas_crosstalk_local",
-                    "local measurement crosstalk requires a neighbor function",
-                )
-                .with_value(&self.p_meas_crosstalk_local)
-                .with_suggestion(
-                    "Set with_p_meas_crosstalk_local_fn() or set p_meas_crosstalk_local to 0",
-                ));
+        for (name, kind, rate) in [
+            (
+                "flow_meas_crosstalk_global",
+                PayloadKind::Global,
+                self.p_meas_crosstalk_global,
+            ),
+            (
+                "flow_meas_crosstalk_local",
+                PayloadKind::Local,
+                self.p_meas_crosstalk_local,
+            ),
+        ] {
+            if rate > 0.0 {
+                model = model.add_channel(CompositeCrosstalkChannel::measurement(
+                    name,
+                    kind,
+                    rate,
+                    self.build_crosstalk_noise()?,
+                )?);
             }
         }
 
         // Preparation crosstalk
         if self.p_prep_crosstalk > 0.0 {
             let crosstalk_noise = prob(self.p_prep_crosstalk, prob(0.5, inject_z())?)?;
-            let channel = CompositeCrosstalkChannel::new("flow_prep_crosstalk", crosstalk_noise)
-                .responds_to_preparation()
-                .global();
+            let channel =
+                CompositeCrosstalkChannel::preparation("flow_prep_crosstalk", crosstalk_noise);
             model = model.add_channel(channel);
         }
 
@@ -1029,14 +976,14 @@ impl CompositeNoiseModelBuilder {
 
     /// Build crosstalk noise primitive.
     ///
-    /// Uses the transition model if configured, otherwise uses dephasing.
-    fn build_crosstalk_noise(&self, probability: f64) -> ValidationResult<BoxSeq> {
+    /// Uses the transition model if configured, otherwise nothing after measurement.
+    fn build_crosstalk_noise(&self) -> ValidationResult<BoxSeq> {
         Ok(match self.p_meas_crosstalk_model {
             Some(transitions) => {
-                seq![prob(probability, crosstalk_transitions(transitions)?)?,]
+                seq![crosstalk_transitions(transitions)?,]
             }
             None => {
-                seq![prob(probability, prob(0.5, inject_z())?)?,]
+                seq![nothing(),]
             }
         })
     }
@@ -2139,43 +2086,13 @@ mod tests {
 
     #[test]
     fn test_local_crosstalk_builder() {
-        // Define a simple neighbor function for testing
-        fn linear_neighbors(qubits: &[QubitId]) -> Vec<QubitId> {
-            qubits
-                .iter()
-                .flat_map(|q| {
-                    let mut neighbors = Vec::new();
-                    if q.0 > 0 {
-                        neighbors.push(QubitId(q.0 - 1));
-                    }
-                    neighbors.push(QubitId(q.0 + 1));
-                    neighbors
-                })
-                .filter(|n| !qubits.contains(n))
-                .collect()
-        }
-
         let model = CompositeNoiseModelBuilder::new()
             .with_p_meas_crosstalk(0.001, 0.01)
             .unwrap()
-            .with_p_meas_crosstalk_local_fn(linear_neighbors)
             .build()
             .unwrap();
 
         assert_eq!(model.channel_count(), 3);
-    }
-
-    #[test]
-    fn test_local_crosstalk_without_fn_is_rejected() {
-        let error = CompositeNoiseModelBuilder::new()
-            .with_p_meas_crosstalk(0.001, 0.01)
-            .unwrap()
-            .build()
-            .err()
-            .unwrap()
-            .to_string();
-        assert!(error.contains("p_meas_crosstalk_local"), "{error}");
-        assert!(error.contains("neighbor"), "{error}");
     }
 
     #[test]
@@ -2229,14 +2146,6 @@ mod tests {
     fn test_full_model_with_all_new_features() {
         use crate::noise::CrosstalkTransitions;
 
-        fn neighbors(qubits: &[QubitId]) -> Vec<QubitId> {
-            qubits
-                .iter()
-                .flat_map(|q| vec![QubitId(q.0.saturating_sub(1)), QubitId(q.0 + 1)])
-                .filter(|n| !qubits.contains(n))
-                .collect()
-        }
-
         let transitions = CrosstalkTransitions::flip_only();
 
         let model = CompositeNoiseModelBuilder::new()
@@ -2248,7 +2157,6 @@ mod tests {
             .unwrap()
             .with_p_meas_crosstalk(0.001, 0.005)
             .unwrap()
-            .with_p_meas_crosstalk_local_fn(neighbors)
             .with_p_meas_crosstalk_model(transitions)
             .unwrap()
             .with_measure_leaked_handling(true)
@@ -2356,19 +2264,6 @@ mod tests {
             .err()
             .unwrap();
         assert_eq!(error.field, "p1");
-    }
-
-    #[test]
-    fn test_local_crosstalk_without_neighbor_fn_errors() {
-        let error = CompositeNoiseModelBuilder::new()
-            .with_p_meas_crosstalk(0.0, 0.1)
-            .unwrap()
-            .build()
-            .err()
-            .unwrap()
-            .to_string();
-        assert!(error.contains("p_meas_crosstalk_local"), "{error}");
-        assert!(error.contains("with_p_meas_crosstalk_local_fn"), "{error}");
     }
 
     // --- Emission Model Tests ---

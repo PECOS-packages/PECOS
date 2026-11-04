@@ -72,7 +72,7 @@ struct CategoryConfig {
 #[derive(Debug, Clone, Default)]
 pub struct CategoryBasedChannel {
     /// Per-category error rates. Index matches `category_to_index`.
-    category_configs: [Option<CategoryConfig>; 8],
+    category_configs: [Option<CategoryConfig>; 9],
     /// Default error rate for unconfigured categories.
     default_error: Option<f64>,
 }
@@ -237,6 +237,7 @@ fn category_to_index(category: GateCategory) -> usize {
         GateCategory::Idle => 5,
         GateCategory::QubitManagement => 6,
         GateCategory::Custom(_) => 7,
+        GateCategory::Metadata => 8,
     }
 }
 

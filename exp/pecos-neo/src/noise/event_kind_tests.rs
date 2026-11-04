@@ -30,6 +30,15 @@ pub(super) fn representative(kind: NoiseEventKind) -> NoiseEvent<'static> {
             gate_type: GateType::PZ,
             qubits: &[QubitId(0)],
         },
+        NoiseEventKind::CrosstalkPayload => NoiseEvent::CrosstalkPayload {
+            gate_type: GateType::MeasCrosstalkGlobalPayload,
+            qubits: &[QubitId(0)],
+        },
+        NoiseEventKind::AfterHiddenMeasurement => NoiseEvent::AfterHiddenMeasurement {
+            gate_type: GateType::MeasCrosstalkGlobalPayload,
+            qubits: &[QubitId(0)],
+            outcomes: &[true],
+        },
         NoiseEventKind::IdleTime => NoiseEvent::IdleTime {
             qubits: &[QubitId(0)],
             duration: TimeUnits::new(2),
@@ -194,7 +203,8 @@ fn builtin_channel_kind_declarations_have_positive_witnesses() {
                     .with_global_rate(0.2)
                     .unwrap(),
             ),
-            EventKinds::of(AfterMeasurement),
+            EventKinds::of(NoiseEventKind::CrosstalkPayload)
+                .with(NoiseEventKind::AfterHiddenMeasurement),
         ),
         (
             Box::new(CorrelatedNoiseChannel::new(0.2, 0.5).unwrap()),

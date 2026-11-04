@@ -26,6 +26,12 @@ pub enum CompositeResponse {
     /// Inject these gates (typically after the current gate)
     InjectGates(Vec<GateCommand>),
 
+    /// Hidden measurement requested by a wrapped noise channel.
+    MeasureHidden {
+        gate_type: crate::command::GateType,
+        qubits: smallvec::SmallVec<[pecos_core::QubitId; 4]>,
+    },
+
     /// Skip/remove the current gate for this qubit
     SkipGate,
 

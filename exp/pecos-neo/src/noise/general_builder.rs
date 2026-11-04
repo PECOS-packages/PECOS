@@ -411,10 +411,10 @@ impl GeneralNoiseModelBuilder {
         self
     }
 
-    /// Set crosstalk probabilities after measurement (global and local).
-    /// Targets include measured qubits prepared this shot, excluding leaked qubits
-    /// and source operands. Without a table, fired targets receive Z with probability 1/2.
-    /// This builder sets no neighbor function, so its local rate has no targets.
+    /// Set global and local measurement-crosstalk payload probabilities.
+    /// Global operands exclude victims; local operands name victims.
+    /// Existing, non-leaked victims remain eligible after measurement.
+    /// Each fired victim is measured invisibly; an optional table uses its real outcome.
     #[must_use]
     pub fn with_p_meas_crosstalk(mut self, global: f64, local: f64) -> Self {
         self.p_meas_crosstalk_global = global;

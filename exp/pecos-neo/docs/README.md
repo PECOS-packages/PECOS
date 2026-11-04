@@ -107,7 +107,7 @@ Full guide: [CircuitRunner](user-guides/runner.md)
 |-------|----------------|
 | [Adding Noise](user-guides/noise.md) | Builder options, per-channel control, common presets |
 | [Composable Noise Model](user-guides/noise-model.md) | Composing channels directly, plugins, mixing approaches |
-| [Noise Channels](user-guides/noise-channels.md) | Built-in channels: single-qubit, two-qubit, measurement, idle, crosstalk |
+| [Noise Channels](user-guides/noise-channels.md) | Built-in channels: single-qubit, two-qubit, measurement, idle, payload measurement crosstalk |
 | [Events, Signals, and Handlers](user-guides/events.md) | Event hooks, typed signals, DispatchContext |
 | [CircuitRunner](user-guides/runner.md) | Simple circuits, step-by-step control, custom gates |
 | [Importance Sampling](user-guides/importance-sampling.md) | Rare event estimation (10^-3 to 10^-6) |

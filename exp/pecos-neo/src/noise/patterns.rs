@@ -26,8 +26,6 @@
 //! | `dephasing_only` (requires `composite-noise`) | Z errors only (T2-like) |
 //! | `with_leakage` (requires `composite-noise`) | Leakage to non-computational states |
 //! | [`chain_correlated`] | Spatially correlated errors (1D) |
-//! | `chain_measurement_crosstalk` (requires `composite-noise`) | Measurement affects neighbors (1D) |
-//! | `grid_measurement_crosstalk` (requires `composite-noise`) | Measurement affects neighbors (2D) |
 //! | `realistic_device_noise` (requires `composite-noise`) | Full device model with all parameters |
 //! | `surface_code_noise` (requires `composite-noise`) | Optimized for surface code simulations |
 //!
@@ -66,7 +64,7 @@
 //! ```
 //!
 //! `DeviceNoiseParams`, realistic-device and surface-code models, leakage,
-//! dephasing, and measurement-crosstalk patterns require the `composite-noise`
+//! and dephasing patterns require the `composite-noise`
 //! Cargo feature.
 
 use super::CorrelatedNoiseChannel;
@@ -74,8 +72,6 @@ use super::builder::NoiseModelBuilder;
 use super::composer::ComposableNoiseModel;
 #[cfg(feature = "composite-noise")]
 use super::composite::prelude::*;
-#[cfg(feature = "composite-noise")]
-use super::topology::{chain_neighbors, grid_neighbors};
 #[cfg(feature = "composite-noise")]
 use super::validation::{validate_probability, validate_rate};
 use crate::noise::validation::ValidationResult;
@@ -297,65 +293,6 @@ pub fn chain_correlated(
 ) -> ValidationResult<ComposableNoiseModel> {
     let channel = CorrelatedNoiseChannel::new(base_probability, correlation_factor)?;
     Ok(ComposableNoiseModel::new().add_channel(channel))
-}
-
-/// Create a noise model with measurement crosstalk on a 1D chain.
-///
-/// Measuring a qubit can flip its neighbors.
-///
-/// # Arguments
-///
-/// * `crosstalk_probability` - Probability of flipping a neighbor during measurement
-///
-/// # Example
-///
-/// ```
-/// # use pecos_neo::noise::prelude::*;
-/// let model = chain_measurement_crosstalk(0.01).unwrap();
-/// ```
-///
-/// # Errors
-/// Returns an error for an invalid probability.
-#[cfg(feature = "composite-noise")]
-pub fn chain_measurement_crosstalk(
-    crosstalk_probability: f64,
-) -> ValidationResult<ComposableNoiseModel> {
-    let crosstalk =
-        CompositeCrosstalkChannel::new("chain_crosstalk", prob(crosstalk_probability, pauli())?)
-            .responds_to_measurement()
-            .local(chain_neighbors);
-
-    Ok(ComposableNoiseModel::new().add_channel(crosstalk))
-}
-
-/// Create a noise model with measurement crosstalk on a 2D grid.
-///
-/// # Arguments
-///
-/// * `cols` - Number of columns in the grid
-/// * `crosstalk_probability` - Probability of flipping a neighbor during measurement
-///
-/// # Example
-///
-/// ```
-/// # use pecos_neo::noise::prelude::*;
-/// // 5x4 grid with crosstalk
-/// let model = grid_measurement_crosstalk(5, 0.01).unwrap();
-/// ```
-///
-/// # Errors
-/// Returns an error for an invalid probability.
-#[cfg(feature = "composite-noise")]
-pub fn grid_measurement_crosstalk(
-    cols: usize,
-    crosstalk_probability: f64,
-) -> ValidationResult<ComposableNoiseModel> {
-    let crosstalk =
-        CompositeCrosstalkChannel::new("grid_crosstalk", prob(crosstalk_probability, pauli())?)
-            .responds_to_measurement()
-            .local(grid_neighbors(cols));
-
-    Ok(ComposableNoiseModel::new().add_channel(crosstalk))
 }
 
 // ============================================================================
@@ -603,48 +540,31 @@ pub fn realistic_device_noise(
 /// This model includes:
 /// - Depolarizing noise scaled for surface code error rates
 /// - Measurement errors (critical for surface code decoding)
-/// - Optional crosstalk between data and ancilla qubits
 ///
 /// # Arguments
 ///
 /// * `physical_error_rate` - Base physical error rate (p)
-/// * `with_crosstalk` - Whether to include measurement crosstalk
 ///
 /// # Example
 ///
 /// ```
 /// # use pecos_neo::noise::prelude::*;
-/// let model = surface_code_noise(0.001, false).unwrap();
+/// let model = surface_code_noise(0.001).unwrap();
 /// ```
 ///
 /// # Errors
 /// Returns an error for an invalid probability.
 #[cfg(feature = "composite-noise")]
-pub fn surface_code_noise(
-    physical_error_rate: f64,
-    with_crosstalk: bool,
-) -> ValidationResult<ComposableNoiseModel> {
+pub fn surface_code_noise(physical_error_rate: f64) -> ValidationResult<ComposableNoiseModel> {
     // For surface codes, 2Q errors are typically ~10x worse than 1Q
     let p1 = physical_error_rate;
     let p2 = physical_error_rate * 10.0;
     let p_meas = physical_error_rate * 2.0; // Measurement typically worse
 
-    let mut model = NoiseModelBuilder::new()
+    let model = NoiseModelBuilder::new()
         .with_depolarizing(p1, p2)
         .with_measurement_error(p_meas)
         .build()?;
-
-    if with_crosstalk {
-        // Add global measurement crosstalk for surface code
-        let crosstalk = CompositeCrosstalkChannel::new(
-            "meas_crosstalk",
-            prob(physical_error_rate * 0.1, inject_z())?,
-        )
-        .responds_to_measurement()
-        .global();
-
-        model = model.add_channel(crosstalk);
-    }
 
     Ok(model)
 }
@@ -774,7 +694,7 @@ mod tests {
 
     #[test]
     fn test_surface_code_noise() {
-        let model = surface_code_noise(0.001, true).unwrap();
+        let model = surface_code_noise(0.001).unwrap();
         let commands = CommandBuilder::new()
             .pz(&[0])
             .pz(&[1])

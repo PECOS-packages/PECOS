@@ -67,6 +67,8 @@ impl GateType {
             Self::QFree => gates::QFREE,
 
             // Idle
+            Self::MeasCrosstalkGlobalPayload => gates::MEAS_CROSSTALK_GLOBAL_PAYLOAD,
+            Self::MeasCrosstalkLocalPayload => gates::MEAS_CROSSTALK_LOCAL_PAYLOAD,
             Self::Idle => gates::IDLE,
         }
     }
@@ -150,6 +152,8 @@ impl GateId {
             121 => GateType::QFree,
 
             // Idle
+            140 => GateType::MeasCrosstalkGlobalPayload,
+            141 => GateType::MeasCrosstalkLocalPayload,
             130 => GateType::Idle,
 
             // Unknown core gate ID
@@ -250,6 +254,8 @@ mod tests {
             GateType::PZ,
             GateType::QAlloc,
             GateType::QFree,
+            GateType::MeasCrosstalkGlobalPayload,
+            GateType::MeasCrosstalkLocalPayload,
             GateType::Idle,
         ];
 

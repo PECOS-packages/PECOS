@@ -620,6 +620,36 @@ For fine-grained control, you can use simulators directly:
     println!("{:?}", state);
     ```
 
+### Preparing repeated shots
+
+`prepare_circuit` validates and decodes a circuit once for the legacy
+`HybridEngine`. Prepared ideal ticks skip per-shot decoding and batch validation;
+error circuits remain checked. Preparation rejects malformed gates even under
+`skip` or false conditions.
+
+```python
+from pecos import HybridEngine, QuantumCircuit
+from pecos.simulators import SparseStabPy, prepare_circuit
+
+circuit = QuantumCircuit(num_qubits=2, cvar_spec={"m": 1})
+circuit.append("H", {0})
+circuit.append("CX", {(0, 1)})
+circuit.append("measure Z", {0}, var=("m", 0))
+engine = HybridEngine(seed=7)
+state = SparseStabPy(2)
+prepared = prepare_circuit(state, circuit)
+for i in range(3):
+    state = SparseStabPy(2)
+    output, errors = engine.run(state, prepared, shot_id=i)
+```
+
+A prepared circuit is valid for states of the same type and gate capacity, as of
+the call. Re-prepare after changing the circuit, its registry or the state's
+bindings. Its gate locations and parameters are shared across runs; do not mutate
+them. Error models such as `DepolarizingErrorModel` still decode each tick per shot.
+`HybridEngine` subclasses that override `run_circuit` or `run_gate` must pass the
+raw circuit; `run` rejects a prepared one for them.
+
 ## Next Steps
 
 - [QASM Simulation](qasm-simulation.md): Full guide to the simulation API

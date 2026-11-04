@@ -12,6 +12,11 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   `HeisenbergProgram::compile` now accepts T/Tdg as exact +/-pi/4 Z rotations
   (up to global phase).
 
+- `SamplingPlan::run_batch` and `par_run_batch` (StabActive) run many seeded shots
+  at once. Shots that agree on every rotation sign and projection value share one
+  amplitude vector, and each result is bit-identical to `SamplingPlan::run` for
+  its seed. An explicit `lane_budget_bytes` bounds amplitude memory per chunk.
+
 - `pecos-simulators` now contains the stabilizer tensor-network simulators (StabMps,
   MAST) as `pecos_simulators::stab_tn`, formerly the unpublished `pecos-stab-tn`
   crate; `rayon` is now always a dependency and `parallel` only selects parallel gate

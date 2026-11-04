@@ -88,9 +88,10 @@ const DENSE_CROSSOVER_DENOMINATOR: usize = 2;
 ///
 /// let num_qubits = 4;
 /// let sim = StabVec::builder(num_qubits)
-///     .pruning_threshold(1e-6)
+///     .pruning_threshold(1e-6)?
 ///     .seed(42)
 ///     .build();
+/// # Ok::<(), pecos_simulators::InvalidPruningThreshold>(())
 /// ```
 ///
 #[derive(Clone, Debug)]
@@ -125,6 +126,24 @@ pub struct StabVecGeneric<S: IndexSet = BitSet, R: SeedableRng + Rng + Debug = P
 /// Default Clifford+RZ simulator using `BitSet` and `PecosRng`.
 pub type StabVec<R = PecosRng> = StabVecGeneric<BitSet, R>;
 
+/// An invalid relative pruning threshold supplied to the `StabVec` builder.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct InvalidPruningThreshold {
+    threshold: f64,
+}
+
+impl std::fmt::Display for InvalidPruningThreshold {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "invalid pruning threshold {}: expected a finite value with 0.0 <= threshold < 1.0",
+            self.threshold
+        )
+    }
+}
+
+impl std::error::Error for InvalidPruningThreshold {}
+
 /// Builder for configuring a `StabVec` simulator.
 pub struct StabVecBuilder {
     num_qubits: usize,
@@ -139,10 +158,17 @@ impl StabVecBuilder {
     /// - 0.0: exact simulation (no pruning, exponential cost)
     /// - 1e-4 to 1e-6: aggressive (faster sampling, lower precision)
     /// - 1e-12 or less: for studying effects at logical error rates ~1e-10
-    #[must_use]
-    pub fn pruning_threshold(mut self, threshold: f64) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InvalidPruningThreshold`] unless the threshold is finite and
+    /// lies in the range `0.0 <= threshold < 1.0`.
+    pub fn pruning_threshold(mut self, threshold: f64) -> Result<Self, InvalidPruningThreshold> {
+        if !threshold.is_finite() || !(0.0..1.0).contains(&threshold) {
+            return Err(InvalidPruningThreshold { threshold });
+        }
         self.rel_pruning_threshold = threshold;
-        self
+        Ok(self)
     }
 
     /// Set the RNG seed for reproducible measurements.
@@ -501,6 +527,8 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
         // Reuse the established exact materialization path. This flushes every
         // deferred frame, rotation, and global phase before dense ownership begins.
         self.x = None;
+        // Dense is permanent until reset(), which restores sample_on_entry.
+        // Any future path back to decomposition must restore it too.
         self.sample_on_entry = false;
         self.flush_all_cliff_frames();
         self.flush_all_pending_rz();
@@ -1063,7 +1091,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
                 for (c, ch) in &self.terms {
                     let contribution = c * ch.amplitude_bits(x);
                     pre += contribution;
-                    if c.norm_sqr() > threshold {
+                    if c.norm_sqr() >= threshold {
                         post += contribution;
                     }
                 }
@@ -1071,7 +1099,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
             });
             let mut i = 0;
             while !skip_pruning && i < self.terms.len() {
-                if self.terms[i].0.norm_sqr() <= threshold {
+                if self.terms[i].0.norm_sqr() < threshold {
                     let (_, mut ch) = self.terms.swap_remove(i);
                     gamma_pool.push(ch.take_gamma());
                 } else {
@@ -2905,7 +2933,11 @@ mod tests {
     fn test_builder_exact_mode() {
         // With threshold=0 (exact mode), no terms are pruned even for small angles.
         let theta = pecos_core::radians!(0.001);
-        let mut sim = StabVec::builder(1).pruning_threshold(0.0).seed(42).build();
+        let mut sim = StabVec::builder(1)
+            .pruning_threshold(0.0)
+            .unwrap()
+            .seed(42)
+            .build();
         sim.h(&qid(0));
         for _ in 0..8 {
             sim.rz(theta, &qid(0));
@@ -2920,7 +2952,11 @@ mod tests {
     fn test_builder_aggressive_pruning() {
         // With aggressive pruning, small-angle terms are removed faster.
         let theta = pecos_core::radians!(5.0f64.to_radians());
-        let mut sim = StabVec::builder(4).pruning_threshold(1e-4).seed(42).build();
+        let mut sim = StabVec::builder(4)
+            .pruning_threshold(1e-4)
+            .unwrap()
+            .seed(42)
+            .build();
         for q in 0..4 {
             sim.h(&[QubitId(q)]);
         }
@@ -3008,7 +3044,11 @@ mod tests {
     #[test]
     fn test_exact_mode_matches_statevec() {
         // With pruning_threshold=0, results should match StateVec exactly (up to phase).
-        let mut crz = StabVec::builder(2).pruning_threshold(0.0).seed(42).build();
+        let mut crz = StabVec::builder(2)
+            .pruning_threshold(0.0)
+            .unwrap()
+            .seed(42)
+            .build();
         let mut sv = StateVec::new(2);
         let theta = pecos_core::radians!(0.3);
         crz.h(&qid(0))
@@ -3356,7 +3396,11 @@ mod tests {
         shared_structure: bool,
         max_dense_bytes: usize,
     ) -> (StabVec, StateVecSoA) {
-        let mut stab = StabVec::builder(6).seed(42).pruning_threshold(0.0).build();
+        let mut stab = StabVec::builder(6)
+            .seed(42)
+            .pruning_threshold(0.0)
+            .unwrap()
+            .build();
         stab.max_dense_bytes = max_dense_bytes;
         let mut dense = StateVecSoA::with_seed(6, 42);
         if shared_structure {
@@ -4111,7 +4155,7 @@ mod tests {
                     ),
                     ("divergent structure", prepare_nonuniform_terms),
                 ] {
-                    let mut stab_vec = StabVec::builder(2).pruning_threshold(0.0).build();
+                    let mut stab_vec = StabVec::builder(2).pruning_threshold(0.0).unwrap().build();
                     stab_vec.max_dense_bytes = 0;
                     let mut state_vec = StateVecSoA::new(2);
                     prepare(&mut stab_vec, &mut state_vec, term_count);
@@ -4140,7 +4184,7 @@ mod tests {
     fn two_qubit_roots_match_state_vec_soa_with_pending_rz_across_term_counts() {
         for gate in NAMED_TWO_QUBIT_ROOT_GATES {
             for term_count in [2, 4, 8, 16] {
-                let mut stab_vec = StabVec::builder(2).pruning_threshold(0.0).build();
+                let mut stab_vec = StabVec::builder(2).pruning_threshold(0.0).unwrap().build();
                 stab_vec.max_dense_bytes = 0;
                 let mut state_vec = StateVecSoA::new(2);
                 prepare_nonuniform_terms(&mut stab_vec, &mut state_vec, term_count / 2);
@@ -4168,7 +4212,7 @@ mod tests {
 
     #[test]
     fn c_type_fast_path_checks_every_term_structure() {
-        let mut stab_vec = StabVec::builder(2).pruning_threshold(0.0).build();
+        let mut stab_vec = StabVec::builder(2).pruning_threshold(0.0).unwrap().build();
         let mut discarded_reference = StateVecSoA::new(2);
         prepare_uniform_terms(&mut stab_vec, &mut discarded_reference, 4);
 
@@ -4210,7 +4254,7 @@ mod tests {
     fn inherited_h3_h4_match_state_vec_soa_with_decomposed_terms_and_pending_rz() {
         for gate in ["H3", "H4"] {
             for term_count in [2, 4, 8, 16] {
-                let mut stab_vec = StabVec::builder(2).pruning_threshold(0.0).build();
+                let mut stab_vec = StabVec::builder(2).pruning_threshold(0.0).unwrap().build();
                 stab_vec.max_dense_bytes = 0;
                 let mut state_vec = StateVecSoA::new(2);
                 prepare_nonuniform_terms(&mut stab_vec, &mut state_vec, term_count);
@@ -4232,7 +4276,7 @@ mod tests {
                 );
             }
 
-            let mut stab_vec = StabVec::builder(2).pruning_threshold(0.0).build();
+            let mut stab_vec = StabVec::builder(2).pruning_threshold(0.0).unwrap().build();
             stab_vec.max_dense_bytes = 0;
             let mut state_vec = StateVecSoA::new(2);
             let angle = pecos_core::radians!(0.37);
@@ -4259,7 +4303,7 @@ mod tests {
 
     #[test]
     fn measurement_projection_removes_zero_omega_terms_before_uniform_gamma_path() {
-        let mut stab_vec = StabVec::builder(3).pruning_threshold(0.0).build();
+        let mut stab_vec = StabVec::builder(3).pruning_threshold(0.0).unwrap().build();
         let mut state_vec = StateVecSoA::new(3);
         // Each H RZ H decomposes its qubit into terms with opposite
         // deterministic Z support. Projecting q0 onto |1> makes term 0 a
@@ -4310,6 +4354,7 @@ mod tests {
     fn prepare_divergent_probability_counterexample(seed: u64) -> (StabVec, Vec<Complex64>) {
         let mut stab = StabVec::builder(7)
             .pruning_threshold(0.0)
+            .unwrap()
             .seed(seed)
             .build();
         let mut dense = StateVecSoA::with_seed(7, 694);
@@ -4410,7 +4455,7 @@ mod tests {
 
     #[test]
     fn divergent_projection_does_not_merge_by_gamma_and_omega_alone() {
-        let mut stab = StabVec::builder(3).pruning_threshold(0.0).build();
+        let mut stab = StabVec::builder(3).pruning_threshold(0.0).unwrap().build();
         stab.max_dense_bytes = 0;
         let mut dense = StateVecSoA::new(3);
         for (q, radians) in [(0, 0.339_52), (1, 0.721_75), (2, 0.090_18)] {
@@ -4463,7 +4508,7 @@ mod tests {
 
     #[test]
     fn single_surviving_term_is_renormalized() {
-        let mut stab = StabVec::builder(1).pruning_threshold(0.0).build();
+        let mut stab = StabVec::builder(1).pruning_threshold(0.0).unwrap().build();
         let angle = pecos_core::radians!(0.37);
         stab.h(&qid(0)).rz(angle, &qid(0)).h(&qid(0));
         assert_eq!(stab.num_terms(), 2);
@@ -4479,7 +4524,7 @@ mod tests {
 
     #[test]
     fn nondeterministic_single_term_projection_preserves_norm() {
-        let mut stab = StabVec::builder(1).pruning_threshold(0.0).build();
+        let mut stab = StabVec::builder(1).pruning_threshold(0.0).unwrap().build();
         stab.h(&qid(0));
         let _ = stab.state_vector();
         assert_eq!(stab.num_terms(), 1);
@@ -4494,7 +4539,7 @@ mod tests {
 
     #[test]
     fn impossible_forced_measurement_retains_zero_term() {
-        let mut stab = StabVec::builder(7).pruning_threshold(0.0).build();
+        let mut stab = StabVec::builder(7).pruning_threshold(0.0).unwrap().build();
         stab.measure_qubit(0, Some(true));
         assert_eq!(stab.num_terms(), 1);
         assert_eq!(stab.terms[0].0, Complex64::new(0.0, 0.0));
@@ -4551,7 +4596,7 @@ mod tests {
     #[cfg(debug_assertions)]
     #[test]
     fn test_reference_asserts_complete_gamma_diff_set() {
-        let mut stab = StabVec::builder(2).pruning_threshold(0.0).build();
+        let mut stab = StabVec::builder(2).pruning_threshold(0.0).unwrap().build();
         let mut unused_reference = StateVecSoA::new(2);
         prepare_uniform_terms(&mut stab, &mut unused_reference, 2);
         assert!(stab.has_shared_projection_structure());

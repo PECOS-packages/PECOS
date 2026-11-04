@@ -4,7 +4,7 @@ use pecos_random::{PecosRng, RngExt};
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StabVec};
 use std::time::Instant;
 
-fn main() {
+fn main() -> Result<(), pecos_simulators::InvalidPruningThreshold> {
     let workload = std::env::args().nth(1).unwrap_or_else(|| "random".into());
     let rotations: usize = std::env::args()
         .nth(2)
@@ -23,7 +23,7 @@ fn main() {
         let mut gates = PecosRng::seed_from_u64(701);
         let mut sim = StabVec::builder(num_qubits)
             .seed(u64::from(seed))
-            .pruning_threshold(0.0)
+            .pruning_threshold(0.0)?
             .build();
         for q in 0..num_qubits {
             sim.h(&[QubitId(q)]);
@@ -57,4 +57,5 @@ fn main() {
         "{workload} n={num_qubits} t={rotations} shots={shots} ms/shot={:.6}",
         start.elapsed().as_secs_f64() * 1000.0 / f64::from(shots)
     );
+    Ok(())
 }

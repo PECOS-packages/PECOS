@@ -152,11 +152,13 @@ def _walk_for_measure_results(
 
 def _render_wrapper(info: EntryWrapperInfo, *, emit_return_result_tags: bool = False) -> str:
     context = GuppyContext()
-    body_lines: list[str] = [
-        f"    {name} = array(qubit() for {context.temp(_TempPrefix.COMPREHENSION)} in range({size}))"
-        for name, size in info.allocator_sizes.items()
-    ]
-    call_args = ", ".join(info.allocator_sizes.keys())
+    # User allocator names belong to main's scope. Inline arguments keep them
+    # from shadowing the constructors, range, or main in this wrapper.
+    body_lines: list[str] = []
+    call_args = ", ".join(
+        f"array(qubit() for {context.temp(_TempPrefix.COMPREHENSION)} in range({size}))"
+        for size in info.allocator_sizes.values()
+    )
     call_expr = f"main({call_args})"
 
     if emit_return_result_tags and info.explicit_return is not None:
@@ -167,10 +169,13 @@ def _render_wrapper(info: EntryWrapperInfo, *, emit_return_result_tags: bool = F
         if any(t is None for t in targets):
             msg = f"emit_return_result_tags supports only named return values, got {info.explicit_return.values!r}"
             raise ValueError(msg)
-        lhs = targets[0] if len(targets) == 1 else ", ".join(targets)
+        result_locals = [context.temp(_TempPrefix.CALL_RETURN) for _ in targets]
+        lhs = result_locals[0] if len(result_locals) == 1 else ", ".join(result_locals)
         body_lines.append(f"    {lhs} = {call_expr}")
         body_lines.extend(
-            f'    result("{RETURN_TAG_NAMESPACE}.{name}", {name})' for name in targets if name in info.all_creg_sizes
+            f'    result("{RETURN_TAG_NAMESPACE}.{name}", {local})'
+            for name, local in zip(targets, result_locals, strict=True)
+            if name in info.all_creg_sizes
         )
         return_ann = "None"
     elif info.explicit_return is not None:

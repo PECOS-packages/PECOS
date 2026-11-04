@@ -17,9 +17,10 @@ from dataclasses import replace
 from typing import ClassVar
 
 import pytest
+from pecos import Hugr, selene_engine, sim
 from pecos.slr import Block, CReg, For, Main, QAlloc, QReg, Repeat, Return, SlrConverter
 from pecos.slr.ast import ast_to_guppy, slr_to_ast
-from pecos.slr.ast.codegen.entry_wrapper import build_no_arg_entry_wrapper
+from pecos.slr.ast.codegen.entry_wrapper import RETURN_TAG_NAMESPACE, build_no_arg_entry_wrapper
 from pecos.slr.ast.codegen.guppy import AstToGuppy, GuppyCodegenError
 from pecos.slr.qeclib import qubit as qb
 from pecos.slr.slr_converter import _load_and_compile_entry
@@ -283,7 +284,19 @@ def test_invalid_user_binding_names_are_codegen_errors(name: str, binding: str) 
         SlrConverter(Main(q, bindings[binding])).guppy()
 
 
-@pytest.mark.parametrize("name", ["class", "True", "lambda", "a b", "_repeat_0", "_comprehension_0"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "class",
+        "True",
+        "lambda",
+        "a b",
+        "__debug__",
+        "\N{FULLWIDTH LATIN SMALL LETTER H}",
+        "_repeat_0",
+        "_comprehension_0",
+    ],
+)
 @pytest.mark.parametrize("kind", ["bit", "qubit"])
 def test_block_input_name_validation_reports_its_block(name: str, kind: str) -> None:
     q, c = QReg("q", 1), CReg("c", 1)
@@ -362,3 +375,67 @@ def test_repeat_temporary_avoids_an_emitted_helper_name() -> None:
     assert "def _repeat_0(" in source
     assert "for _repeat_0 in" not in source
     assert converter.hugr()
+
+
+@pytest.mark.parametrize("name", ["qubit", "range", "main", "array"])
+def test_wrapper_does_not_bind_user_allocator_names(name: str) -> None:
+    q, b = QReg(name, 1), QReg("b", 1)
+    # In main, a parameter named array cannot coexist with CReg's array()
+    # initializer. This case isolates the independent wrapper-scope collision.
+    declarations = [] if name == "array" else [CReg("c", 1)]
+    program = Main(q, b, *declarations, qb.H(b[0]))
+    assert SlrConverter(program).hugr()
+
+
+@pytest.mark.parametrize("names", [("result",), ("result", "other"), ("other", "result")])
+def test_wrapper_return_tags_keep_user_names_out_of_bindings(names: tuple[str, ...], tmp_path) -> None:
+    registers = [CReg(name, 1 if name == "result" else 2) for name in names]
+    assignments = [reg.set(1 if reg.sym == "result" else 2) for reg in registers]
+    program = Main(*registers, *assignments, Return(*registers))
+    source = (
+        SlrConverter(program).guppy()
+        + build_no_arg_entry_wrapper(
+            slr_to_ast(program),
+            emit_return_result_tags=True,
+        )[0]
+    )
+    path = tmp_path / "return_tags.py"
+    path.write_text(source)
+    package = _load_and_compile_entry(path, "_slr_return_tags")
+    result = sim(Hugr(package.to_str().encode("utf-8"))).classical(selene_engine()).qubits(1).seed(42).run(2)
+    expected = {"result": [1, 1], "other": [[0, 1], [0, 1]]}
+    assert result.to_dict() == {f"{RETURN_TAG_NAMESPACE}.{name}": expected[name] for name in names}
+
+
+@pytest.mark.parametrize("name", ["__debug__", "\N{FULLWIDTH LATIN SMALL LETTER H}"])
+@pytest.mark.parametrize("binding", ["classical", "quantum", "allocator", "loop", "implicit-measurement"])
+def test_python_special_binding_names_are_rejected(name: str, binding: str) -> None:
+    q = QReg("q", 1)
+    bindings = {
+        "classical": CReg(name, 1),
+        "quantum": QReg(name, 1),
+        "allocator": QAlloc(1, name=name),
+        "loop": For(name, 0, 1).Do(),
+        "implicit-measurement": qb.Measure(q) > CReg(name, 1),
+    }
+    reason = "is reserved by Python" if name == "__debug__" else "must be NFKC-normalized (Python reads it as 'h')"
+    message = f"{name!r} {reason}. Rename the"
+    with pytest.raises(GuppyCodegenError, match=re.escape(message)):
+        SlrConverter(Main(q, qb.H(q[0]), bindings[binding])).guppy()
+
+
+@pytest.mark.parametrize("prefix", ["_measurement_", "_call_ret_", "_repeat_", "_comprehension_"])
+def test_prefix_collision_message_uses_plain_string(prefix: str) -> None:
+    name = f"{prefix}0"
+    message = f"For loop label {name!r} collides with generated Guppy name {prefix!r}. Rename the loop label."
+    with pytest.raises(GuppyCodegenError, match=f"^{re.escape(message)}$"):
+        SlrConverter(Main(For(name, 0, 1).Do())).guppy()
+
+
+@pytest.mark.parametrize("name", ["_measurement", "_repeat"])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_escaped_slot_names_remain_unique(name: str, *, reverse: bool) -> None:
+    registers = [QReg(name, 1), QReg(f"_{name}", 1)]
+    if reverse:
+        registers.reverse()
+    assert SlrConverter(Main(*registers)).hugr()

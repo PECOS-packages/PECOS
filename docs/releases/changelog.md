@@ -16,13 +16,23 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   Python leaves the variable at the inner loop's last value, silently changing
   subsequent operations in the outer loop. Errors name the collision and ask
   the user to rename the loop label, register, allocator or block input.
+  User names starting with the generated prefixes `_measurement_`, `_call_ret_`,
+  `_repeat_` or `_comprehension_` are now rejected.
+
+- Guppy slot-name allocation scales linearly with register size, avoiding a
+  performance regression for large quantum registers.
+
+- Guppy entry wrappers avoid binding user allocator and return names, so names
+  such as `qubit`, `range`, `main`, `array` and `result` do not shadow wrapper calls.
 
 - Guppy `Repeat` counters and array-comprehension variables use reserved temporary
   names, preserving user loop variables such as `_`.
 
-- Guppy rejects invalid identifiers and Python keywords used as register,
-  allocator, block input or loop names with a code generation error that names
-  the binding and asks the user to rename it.
+- Guppy prefix-collision errors show the reserved prefix as a plain string.
+
+- **Breaking:** Guppy rejects invalid identifiers, Python keywords, `__debug__` and names that
+  are not NFKC-normalized when used as register, allocator, block input or loop
+  names. The code generation error names the binding and asks the user to rename it.
 
 - Guppy block input collision errors identify the input and its block, and ask
   the user to rename the block input.

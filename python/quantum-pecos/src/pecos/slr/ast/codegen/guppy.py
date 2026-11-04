@@ -24,6 +24,7 @@ import keyword
 import math
 import numbers
 import re
+import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -290,7 +291,6 @@ class GuppyContext:
     loop_variables: set[str] = field(default_factory=set)
     linearity: GuppyLinearityState | None = None
     temp_counter: int = 0
-    temp_names: set[str] = field(default_factory=set)
     # Single namespace-wide slot -> Guppy-local table. Populated
     # by `populate_slot_locals` after declarations are collected (so
     # the registers + allocator names are known); read by
@@ -310,31 +310,17 @@ class GuppyContext:
         """Decrease indentation level."""
         self.indent_level = max(0, self.indent_level - 1)
 
-    def temp(self, prefix: _TempPrefix | None = None, *, preferred_name: str | None = None) -> str:
-        """Allocate a unique local, preserving readable slot names when supplied.
+    def temp(self, prefix: _TempPrefix) -> str:
+        """Allocate a prefixed temporary, avoiding emitted function/import names.
 
-        Slot locals also have explicit loop-label collision checks. Other locals
-        use reserved prefixes so even subsequently emitted user labels cannot
-        collide with them.
+        User bindings cannot start with a reserved prefix, and slot locals escape
+        those prefixes. The counter makes temporaries distinct from one another.
         """
-        taken = self.temp_names | self.root_allocators.keys() | self.registers.keys()
-        if preferred_name is not None:
-            name = preferred_name
-            while name in taken or self.reserved_collision(name) is not None:
-                if any(name.startswith(reserved_prefix) for reserved_prefix in _TempPrefix):
-                    name = f"_{name}"
-                else:
-                    name += "_"
-        elif prefix is not None:
+        name = f"{prefix}{self.temp_counter}"
+        self.temp_counter += 1
+        while name in self.reserved_names:
             name = f"{prefix}{self.temp_counter}"
             self.temp_counter += 1
-            while name in taken or name in self.reserved_names:
-                name = f"{prefix}{self.temp_counter}"
-                self.temp_counter += 1
-        else:
-            msg = "A generated local needs a temporary prefix or a preferred name. Supply one to temp()."
-            raise ValueError(msg)
-        self.temp_names.add(name)
         return name
 
     def reserved_collision(self, name: str) -> str | None:
@@ -359,11 +345,20 @@ class GuppyContext:
         `QReg("q_0", ...)` parameter). Idempotent: caller may invoke
         once after `_collect_declarations` populates allocators+regs.
         """
+        taken = set(self.root_allocators) | set(self.registers) | set(self.slot_locals.values())
         for allocator, size in self.root_allocators.items():
             for index in range(size):
                 slot = Slot(allocator, index)
-                if slot not in self.slot_locals:
-                    self.slot_locals[slot] = self.temp(preferred_name=f"{allocator}_{index}")
+                if slot in self.slot_locals:
+                    continue
+                candidate = f"{allocator}_{index}"
+                while candidate in taken or self.reserved_collision(candidate) is not None:
+                    if any(candidate.startswith(prefix) for prefix in _TempPrefix):
+                        candidate = f"_{candidate}"
+                    else:
+                        candidate += "_"
+                self.slot_locals[slot] = candidate
+                taken.add(candidate)
 
 
 class AstToGuppy:
@@ -647,12 +642,17 @@ class AstToGuppy:
         referenced_names: frozenset[str] = frozenset(),
     ) -> None:
         scope = f" in block {self.context.block_name!r}" if self.context.block_name else ""
+        reason = None
         if not name.isidentifier() or keyword.iskeyword(name):
-            msg = (
-                f"{kind} {name!r}{scope} must be a valid identifier that is not a Python keyword. Rename the {rename}."
-            )
+            reason = "must be a valid identifier that is not a Python keyword"
+        elif name == "__debug__":
+            reason = "is reserved by Python"
+        elif unicodedata.normalize("NFKC", name) != name:
+            reason = f"must be NFKC-normalized (Python reads it as {unicodedata.normalize('NFKC', name)!r})"
+        if reason is not None:
+            msg = f"{kind} {name!r}{scope} {reason}. Rename the {rename}."
             raise GuppyCodegenError(msg)
-        collision = next((prefix for prefix in _TempPrefix if name.startswith(prefix)), None)
+        collision = next((prefix.value for prefix in _TempPrefix if name.startswith(prefix)), None)
         if name in referenced_names:
             collision = name
         if collision is not None:

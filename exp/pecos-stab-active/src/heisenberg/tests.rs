@@ -1,6 +1,7 @@
 // Copyright 2026 The PECOS Developers
 // Licensed under the Apache License, Version 2.0.
 
+mod batch;
 mod joint_distribution;
 mod oracle;
 mod passes;

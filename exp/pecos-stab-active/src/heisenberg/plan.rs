@@ -3,6 +3,7 @@
 
 //! Model A lowering: `C_real = P C_plan`. Corrections change signs only.
 
+pub(super) mod batch;
 mod sampler;
 mod validation;
 

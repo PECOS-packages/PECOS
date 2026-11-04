@@ -30,6 +30,19 @@ fn rotation<S: ArbitraryRotationGateable>(state: &mut S, gate: &Gate) {
     }
 }
 
+// Physical T and Tdg, with their global phases, independent of the compiler's lowering.
+fn fixed_rotation<S: ArbitraryRotationGateable>(state: &mut S, gate: &Gate) {
+    match gate.gate_type {
+        GateType::T => {
+            state.t(&gate.qubits);
+        }
+        GateType::Tdg => {
+            state.tdg(&gate.qubits);
+        }
+        _ => panic!("not a fixed rotation"),
+    }
+}
+
 fn physical_noise<S: CliffordGateable>(state: &mut S, qubits: &[usize], bits: &[bool]) {
     for (i, &q) in qubits.iter().enumerate() {
         if bits[2 * i] {
@@ -136,6 +149,11 @@ pub(super) fn compare(circuit: &TickCircuit, seed: u64) {
             if let Some(dense) = &mut trace.dense {
                 dispatch::apply_clifford(dense, gate.gate_type, &gate.qubits);
             }
+        } else if matches!(gate.gate_type, GateType::T | GateType::Tdg) {
+            fixed_rotation(&mut trace.state, gate.as_gate());
+            if let Some(dense) = &mut trace.dense {
+                fixed_rotation(dense, gate.as_gate());
+            }
         } else if dispatch::rotation_axis(gate.gate_type).is_some() {
             rotation(&mut trace.state, gate.as_gate());
             if let Some(dense) = &mut trace.dense {
@@ -234,6 +252,8 @@ fn random_physical_records_probabilities_dense_and_width() {
         GateType::RXX,
         GateType::RYY,
         GateType::RZZ,
+        GateType::T,
+        GateType::Tdg,
         GateType::MZ,
         GateType::MX,
         GateType::MPZ,

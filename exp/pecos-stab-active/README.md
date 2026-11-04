@@ -84,7 +84,8 @@ scheduler, rotation fusion, or reordering. Each shot uses one continuous RNG
 stream for joint Pauli-noise alternatives and quantum measurements.
 
 The accepted gates are named Cliffords, exact fixed-axis RX/RY/RZ/RXX/RYY/RZZ
-rotations at any angle, Pauli channels, MZ/MX/MPZ/PZ/PX, and I/Idle/TrackedPauliMeta.
+rotations at any angle, T/Tdg (compiled as RZ(+-pi/4), dropping their global
+phase), Pauli channels, MZ/MX/MPZ/PZ/PX, and I/Idle/TrackedPauliMeta.
 Other gates produce errors with their tick, batch index, type, and support.
 Quarter-turn multiples take the Clifford path using exact `Angle64` equality.
 Pauli channel expressions preserve all positive alternative weights, including

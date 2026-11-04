@@ -2,14 +2,15 @@ use pecos_core::QubitId;
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StabVec};
 use std::time::Instant;
 
-fn run_test(nq: usize, nrz: usize, threshold: f64) {
+fn run_test(
+    nq: usize,
+    nrz: usize,
+    threshold: f64,
+) -> Result<(), pecos_simulators::InvalidPruningThreshold> {
     let theta = pecos_core::radians!(0.3);
-    let mc = if threshold < 0.0 { None } else { Some(2048) };
-    let actual_threshold = threshold.abs();
     let mut sim = StabVec::builder(nq)
         .seed(42)
-        .pruning_threshold(actual_threshold)
-        .mc_threshold(mc)
+        .pruning_threshold(threshold)?
         .build();
 
     for q in 0..nq {
@@ -37,12 +38,13 @@ fn run_test(nq: usize, nrz: usize, threshold: f64) {
     let terms_after = sim.num_terms();
 
     eprintln!(
-        "  threshold={actual_threshold:.0e}: T={terms_before}->{terms_after}, circuit={t_circuit:.1?}, meas={t_meas:.1?}, total={:.1?}",
+        "  threshold={threshold:.0e}: T={terms_before}->{terms_after}, circuit={t_circuit:.1?}, meas={t_meas:.1?}, total={:.1?}",
         t_circuit + t_meas
     );
+    Ok(())
 }
 
-fn main() {
+fn main() -> Result<(), pecos_simulators::InvalidPruningThreshold> {
     let nq: usize = std::env::args()
         .nth(1)
         .and_then(|s| s.parse().ok())
@@ -53,11 +55,12 @@ fn main() {
         .unwrap_or(14);
 
     eprintln!("n={nq}, nrz={nrz}:");
-    run_test(nq, nrz, 0.0); // exact
-    run_test(nq, nrz, 1e-12);
-    run_test(nq, nrz, 1e-8); // default
-    run_test(nq, nrz, 1e-6);
-    run_test(nq, nrz, 1e-4);
-    run_test(nq, nrz, 1e-3);
-    run_test(nq, nrz, 1e-2);
+    run_test(nq, nrz, 0.0)?; // exact
+    run_test(nq, nrz, 1e-12)?;
+    run_test(nq, nrz, 1e-8)?; // default
+    run_test(nq, nrz, 1e-6)?;
+    run_test(nq, nrz, 1e-4)?;
+    run_test(nq, nrz, 1e-3)?;
+    run_test(nq, nrz, 1e-2)?;
+    Ok(())
 }

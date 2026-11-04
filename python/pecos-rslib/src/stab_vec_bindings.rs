@@ -103,28 +103,25 @@ impl PyStabVec {
     /// Args:
     ///     `num_qubits`: Number of qubits
     ///     seed: Optional RNG seed for reproducibility
-    ///     `pruning_threshold`: Relative pruning threshold (default 1e-8)
-    ///     `mc_threshold`: Monte Carlo measurement threshold. Positive integer = MC for
-    ///         T > threshold. None = exact measurement only. Default: 2048.
+    ///     `pruning_threshold`: Finite relative pruning threshold in [0.0, 1.0) (default 1e-8)
+    ///
+    /// Raises:
+    ///     ValueError: If the pruning threshold is outside the valid range.
     #[new]
-    #[pyo3(signature = (num_qubits, seed=None, pruning_threshold=None, mc_threshold=Some(2048)))]
-    fn new(
-        num_qubits: usize,
-        seed: Option<u64>,
-        pruning_threshold: Option<f64>,
-        mc_threshold: Option<usize>,
-    ) -> Self {
+    #[pyo3(signature = (num_qubits, seed=None, pruning_threshold=None))]
+    fn new(num_qubits: usize, seed: Option<u64>, pruning_threshold: Option<f64>) -> PyResult<Self> {
         let mut builder = StabVec::builder(num_qubits);
         if let Some(s) = seed {
             builder = builder.seed(s);
         }
         if let Some(pt) = pruning_threshold {
-            builder = builder.pruning_threshold(pt);
+            builder = builder
+                .pruning_threshold(pt)
+                .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         }
-        builder = builder.mc_threshold(mc_threshold);
-        PyStabVec {
+        Ok(PyStabVec {
             inner: builder.build(),
-        }
+        })
     }
 
     fn reset(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
@@ -524,9 +521,9 @@ impl PyStabVec {
 #[cfg(test)]
 crate::simulator_utils::direct_surface_test!(
     direct_surface_matches_predicate,
-    { PyStabVec::new(2, None, None, Some(2048)) },
+    { PyStabVec::new(2, None, None).unwrap() },
     ignored_forcing = (
-        |seed| PyStabVec::new(2, Some(seed), None, Some(2048)),
+        |seed| PyStabVec::new(2, Some(seed), None).unwrap(),
         |sim: &mut PyStabVec| sim.inner.state_vector()
     )
 );

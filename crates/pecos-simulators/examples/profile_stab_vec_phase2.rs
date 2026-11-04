@@ -17,7 +17,10 @@ use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StabVec, Sta
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
-fn build_case(structure: &str, target_terms: usize) -> StabVec {
+fn build_case(
+    structure: &str,
+    target_terms: usize,
+) -> Result<StabVec, pecos_simulators::InvalidPruningThreshold> {
     let (num_qubits, rotations, pruning_threshold) = match target_terms {
         256 => (10, 8, 0.0),
         1024 => (10, 10, 0.0),
@@ -27,7 +30,7 @@ fn build_case(structure: &str, target_terms: usize) -> StabVec {
     };
     let mut sim = StabVec::builder(num_qubits)
         .seed(42)
-        .pruning_threshold(pruning_threshold)
+        .pruning_threshold(pruning_threshold)?
         .build();
     let all_qubits: Vec<_> = (0..num_qubits).map(QubitId).collect();
     sim.h(&all_qubits);
@@ -52,7 +55,7 @@ fn build_case(structure: &str, target_terms: usize) -> StabVec {
     sim.flush_all_pending_rz();
     assert_eq!(sim.num_terms(), target_terms);
     assert_eq!(sim.has_shared_projection_structure(), structure == "shared");
-    sim
+    Ok(sim)
 }
 
 fn median(samples: &mut [Duration]) -> Duration {
@@ -60,7 +63,7 @@ fn median(samples: &mut [Duration]) -> Duration {
     samples[samples.len() / 2]
 }
 
-fn main() {
+fn main() -> Result<(), pecos_simulators::InvalidPruningThreshold> {
     let structure = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "shared".to_owned());
@@ -72,7 +75,7 @@ fn main() {
         .nth(3)
         .and_then(|value| value.parse().ok())
         .unwrap_or(5);
-    let template = build_case(&structure, target_terms);
+    let template = build_case(&structure, target_terms)?;
     let measurement_qubit = QubitId(template.num_qubits() - 1);
     let expect_dense = structure == "divergent" && matches!(target_terms, 4096 | 16_200);
 
@@ -103,4 +106,5 @@ fn main() {
     );
     eprintln!("automatic_samples={automatic_times:?}");
     eprintln!("conversion_samples={conversion_times:?}");
+    Ok(())
 }

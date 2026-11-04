@@ -4940,6 +4940,7 @@ dependencies = [
  "num-complex 0.4.6",
  "paste",
  "pecos-core",
+ "pecos-num",
  "pecos-quantum",
  "pecos-random",
  "rand 0.10.2",

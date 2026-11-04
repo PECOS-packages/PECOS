@@ -91,7 +91,7 @@ pub use graph_state_repr::{GraphState, GraphStateRenderer};
 pub use stab_vec::ch_form::{CHForm, CHFormGeneric};
 pub use stab_vec::exact_scalar::ExactScalar;
 pub use stab_vec::sparse_binary_matrix::SparseBinaryMatrix;
-pub use stab_vec::{StabVec, StabVecBuilder, StabVecGeneric};
+pub use stab_vec::{InvalidPruningThreshold, StabVec, StabVecBuilder, StabVecGeneric};
 // pub use paulis::Paulis;
 pub use measurement_sampler::{
     MeasurementKind, MeasurementSampler, MeasurementValidationError, SampleResult,

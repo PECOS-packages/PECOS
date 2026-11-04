@@ -18,8 +18,12 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   drops its unused width argument, and `pecos_qasm::dag_bridge::QasmBridgeError`
   gains an `InvalidProgram` variant.
 
-- The PECOS QASM parser recognizes `pi` and statement keywords only at word
-  boundaries, so names such as `pivot`, `pi_2` and `reset2` remain identifiers.
+- **Breaking:** a QASM statement keyword must be followed by a non-identifier
+  character. Glued forms such as `cregc[1];`, previously read as `creg c[1];`,
+  are now syntax errors. The version header still accepts `OPENQASM2.0;`.
+
+- The PECOS QASM parser recognizes `pi` only at a word boundary, so `pivot`,
+  `pi_2` and `pi2` can be used as identifiers in expressions.
   Classical expressions support integer remainder (`%`) with the precedence
   of multiplication and division, including PHIR-JSON export. Gate arguments
   retain floating-point arithmetic for remainder, as they do for division.
@@ -34,11 +38,15 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 - **Breaking:** classical registers must be declared with `creg` before their
   first use, including conditions, assignments, function arguments and
-  measurement targets. Move a later declaration before the first reference.
+  measurement targets. Bit indices are also checked against the width declared
+  so far. Move a later declaration before the first reference, and declare a
+  width large enough for each bit used.
 
-- Undeclared `JOB_shotnum` now reports that the PECOS Rust QASM engine does
-  not provide the shot-number built-in, instead of advising a `creg`
-  declaration. An explicitly declared `creg JOB_shotnum` remains an ordinary
+- An undeclared classical reference to `JOB_shotnum` now reports that the PECOS
+  Rust QASM engine does not provide the shot-number built-in and says to remove
+  the reference, instead of advising a `creg` declaration. Quantum registers,
+  gate names and gate parameters named `JOB_shotnum` follow ordinary name
+  resolution. An explicitly declared `creg JOB_shotnum` remains an ordinary
   writable register, initially zero.
 
 - **Breaking:** pecos-neo always suppresses gates on leaked operands in all three

@@ -78,6 +78,6 @@ pub fn register_size_mismatch(operation: &str, details: &str) -> PecosError {
 /// The Rust engine has no implicit shot-number register.
 pub(crate) fn unsupported_shot_number() -> PecosError {
     invalid_operation(
-        "JOB_shotnum is not supported: the PECOS Rust QASM engine does not provide the shot-number built-in",
+        "JOB_shotnum is not supported: the PECOS Rust QASM engine does not provide the shot-number built-in. Remove the reference to JOB_shotnum",
     )
 }

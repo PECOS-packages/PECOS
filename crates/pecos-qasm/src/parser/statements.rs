@@ -26,18 +26,6 @@ pub fn parse_statement(pair: Pair<Rule>, program: &mut Program) -> Result<(), Pe
         .next()
         .ok_or_else(|| QASMParser::error("Empty statement"))?;
 
-    let is_classical_declaration = inner.as_rule() == Rule::register_decl
-        && inner
-            .clone()
-            .into_inner()
-            .any(|pair| pair.as_rule() == Rule::creg);
-    if !is_classical_declaration
-        && !program.classical_registers.contains_key("JOB_shotnum")
-        && references_shot_number(inner.clone())
-    {
-        return Err(crate::parser::errors::unsupported_shot_number());
-    }
-
     // Match on the statement type and delegate to specific parsers
     match inner.as_rule() {
         Rule::register_decl => {
@@ -99,10 +87,9 @@ pub fn parse_statement(pair: Pair<Rule>, program: &mut Program) -> Result<(), Pe
             )));
         }
     }
-    // Resolve names against declarations seen so far. Bounds use the final table
-    // so duplicate declarations retain their existing last-declaration-wins behavior.
+    // Check names and bit indices against declarations seen so far.
     for operation in &program.operations[first_operation..] {
-        program.validate_classical_operation(operation, false)?;
+        program.validate_classical_operation(operation)?;
     }
     Ok(())
 }
@@ -173,10 +160,4 @@ fn add_context(error: PecosError, context: &str) -> PecosError {
         }
         _ => error,
     }
-}
-
-// Check identifiers before folding or gate argument evaluation can erase their context.
-fn references_shot_number(pair: Pair<Rule>) -> bool {
-    (pair.as_rule() == Rule::identifier && pair.as_str() == "JOB_shotnum")
-        || pair.into_inner().any(references_shot_number)
 }

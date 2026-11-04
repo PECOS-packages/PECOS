@@ -203,14 +203,14 @@ fn classical_declarations_precede_every_use() {
         let error = QASMParser::parse_str(&format!("{prefix} {statement} creg later[1];"))
             .unwrap_err()
             .to_string();
-        for fragment in ["later", "creg", "before first use"] {
+        for fragment in ["later", "creg", "before its first use"] {
             assert!(error.contains(fragment), "{statement}: {error}");
         }
         QASMParser::parse_str(&format!("{prefix} creg later[1]; {statement}")).unwrap();
     }
     let program = QASMParser::parse_str("creg c[1]; creg c[8]; c[7] = 1;").unwrap();
     assert_eq!(program.classical_registers["c"], 8);
-    QASMParser::parse_str("creg c[1]; c[7] = 1; creg c[8];").unwrap();
+    assert!(QASMParser::parse_str("creg c[1]; c[7] = 1; creg c[8];").is_err());
     assert!(QASMParser::parse_str("creg c[8]; c[7] = 1; creg c[1];").is_err());
 }
 
@@ -233,11 +233,16 @@ fn shot_number_has_a_specific_error() {
         "JOB_shotnum[0] = 0;",
         "if(JOB_shotnum) X q[0];",
         "external(JOB_shotnum);",
+        "c = external(JOB_shotnum);",
+        "c = external(nested(JOB_shotnum[0]));",
+        "c = c + JOB_shotnum;",
+        "c = JOB_shotnum + c;",
+        "c = ~JOB_shotnum;",
+        "if(c) c = JOB_shotnum;",
+        "if(c) JOB_shotnum[0] = 0;",
+        "if(c) measure q[0] -> JOB_shotnum[0];",
         "measure q -> JOB_shotnum;",
         "measure q[0] -> JOB_shotnum[0];",
-        "RZ(JOB_shotnum) q[0];",
-        "RZ(sin(JOB_shotnum)) q[0];",
-        "gate g(a) b { RZ(JOB_shotnum) b; }",
     ] {
         assert_shot_number_error(
             &QASMParser::parse_str(&format!("qreg q[1]; creg c[1]; {statement}")).unwrap_err(),
@@ -268,6 +273,7 @@ fn assert_shot_number_error(error: &PecosError) {
         "not supported",
         "PECOS Rust QASM engine",
         "shot-number built-in",
+        "Remove the reference to JOB_shotnum",
     ] {
         assert!(message.contains(fragment), "{message}");
     }
@@ -311,5 +317,87 @@ fn remainder_gate_arguments() {
             panic!("Expected native RZ");
         };
         assert!((gate.angles[0].to_radians() - 1.0).abs() < 1e-12);
+    }
+}
+
+#[test]
+fn glued_statement_keywords_are_syntax_errors() {
+    for statement in [
+        "qregq[1];",
+        "cregc[1];",
+        "measureq[0]->c[0];",
+        "resetq[0];",
+        "barrierq;",
+    ] {
+        let source = format!("qreg q[1]; creg c[1]; {statement}");
+        assert!(
+            matches!(
+                QASMParser::parse_str(&source),
+                Err(PecosError::ParseSyntax { .. })
+            ),
+            "Expected a syntax error for {statement}"
+        );
+    }
+}
+
+#[test]
+fn version_header_accepts_no_space() {
+    for source in ["OPENQASM2.0;", "OPENQASM 2.0;", "OPENQASM2.0; qreg q[1];"] {
+        assert_eq!(QASMParser::parse_str(source).unwrap().version, "2.0");
+    }
+}
+
+#[test]
+fn classical_bounds_use_current_declaration() {
+    for statement in [
+        "c[7] = 1;",
+        "out = c[1];",
+        "out = 1 + c[1];",
+        "out = ~c[1];",
+        "measure q[1] -> c[1];",
+        "if(c[1] == 1) X q[0];",
+        "external(c[1]);",
+        "out = external(c[1]);",
+        "if(out) c[1] = 1;",
+        "if(out) measure q[1] -> c[1];",
+    ] {
+        let source = format!("qreg q[2]; creg out[8]; creg c[1]; {statement} creg c[8];");
+        let error = QASMParser::parse_str(&source).unwrap_err().to_string();
+        assert!(error.contains("Classical bit 'c["), "{statement}: {error}");
+        assert!(
+            error.contains("out of bounds for register size 1"),
+            "{statement}: {error}"
+        );
+        QASMParser::parse_str(&format!("qreg q[2]; creg out[8]; creg c[8]; {statement}")).unwrap();
+    }
+}
+
+#[test]
+fn shot_number_is_an_ordinary_quantum_or_gate_name() {
+    for body in [
+        "qreg JOB_shotnum[1]; h JOB_shotnum[0];",
+        "gate g(JOB_shotnum) a { rz(JOB_shotnum) a; } qreg q[1]; g(pi) q[0];",
+        "gate JOB_shotnum a { h a; } qreg q[1]; JOB_shotnum q[0];",
+    ] {
+        QASMParser::parse_str(&format!("include \"qelib1.inc\"; {body}")).unwrap();
+    }
+}
+
+#[test]
+fn shot_number_in_gate_expressions_gets_ordinary_errors() {
+    // Retain the original gate-expression cases, but compare them to an ordinary name:
+    // these are gate parameter references, not classical register references.
+    for statement in [
+        "RZ(JOB_shotnum) q[0];",
+        "RZ(sin(JOB_shotnum)) q[0];",
+        "gate g(a) b { RZ(JOB_shotnum) b; }",
+    ] {
+        let source = format!("qreg q[1]; {statement}");
+        let error = QASMParser::parse_str(&source).unwrap_err().to_string();
+        let ordinary = QASMParser::parse_str(&source.replace("JOB_shotnum", "ordinary"))
+            .unwrap_err()
+            .to_string();
+        assert_eq!(error.replace("JOB_shotnum", "ordinary"), ordinary);
+        assert!(!error.contains("shot-number built-in"), "{error}");
     }
 }

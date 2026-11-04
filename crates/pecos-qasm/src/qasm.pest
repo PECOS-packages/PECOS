@@ -7,7 +7,7 @@ COMMENT = _{ "//" ~ (!"\n" ~ ANY)* }
 program = { SOI ~ oqasm? ~ statement* ~ EOI }
 
 // Version statement
-oqasm = { &keyword ~ "OPENQASM" ~ WHITE_SPACE* ~ version_num ~ ";" }
+oqasm = { "OPENQASM" ~ WHITE_SPACE* ~ version_num ~ ";" }
 version_num = @{ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT+ }
 
 // Any statement in the program
@@ -118,7 +118,7 @@ real = @{
 
 // Keyword lookahead is atomic so the boundary is checked before whitespace.
 // Lookahead produces no pairs, preserving statement parser inputs.
-keyword = @{ ("OPENQASM" | "include" | "qreg" | "creg" | "measure" | "reset" | "barrier" | "if" | "gate" | "opaque") ~ !identifier_continue }
+keyword = @{ ("include" | "qreg" | "creg" | "measure" | "reset" | "barrier" | "if" | "gate" | "opaque") ~ !identifier_continue }
 
 // Basic tokens
 identifier_continue = _{ ASCII_ALPHANUMERIC | "_" }

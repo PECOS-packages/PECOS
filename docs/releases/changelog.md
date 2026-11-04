@@ -6,12 +6,15 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
-- **Breaking:** the PECOS QASM parser rejects a reference to an undeclared
-  classical register, or to a bit beyond a declared register's size, anywhere a
+- **Breaking:** classical registers must be declared with `creg` before their
+  first use, and bit indices must fit the width declared so far, anywhere a
   classical value is read or written: conditions, assignments, operands,
   function arguments and measurement targets. Before, the engine evaluated an
   undeclared name as 0, so `if(i == 0) x q[0];` with no `creg i` ran the gate.
-  The error names the identifier and says to declare it with `creg`. A gate body
+  Errors name the register and explain the required declaration or width;
+  undeclared `JOB_shotnum` instead gets the unsupported-built-in error below.
+  A later redeclaration cannot shrink a register below a bit already used;
+  keep the larger size or use a different register name. A gate body
   referencing a name that is not one of its declared parameters is also rejected,
   even if the gate is unused or a classical register has that name. Gate and
   opaque formal parameters are unaffected. `pecos_qasm::bitvec_expression::evaluate_expression_bitvec`
@@ -20,7 +23,9 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 - **Breaking:** a QASM statement keyword must be followed by a non-identifier
   character. Glued forms such as `cregc[1];`, previously read as `creg c[1];`,
-  are now syntax errors. The version header still accepts `OPENQASM2.0;`.
+  are no longer read as keywords. Depending on the surrounding syntax, they
+  may instead be read as identifiers or rejected. The version header still
+  accepts `OPENQASM2.0;`.
 
 - The PECOS QASM parser recognizes `pi` only at a word boundary, so `pivot`,
   `pi_2` and `pi2` can be used as identifiers in expressions.
@@ -35,12 +40,6 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 - The PECOS Rust QASM engine rejects an empty classical measurement target
   as an unknown register instead of substituting `c`.
-
-- **Breaking:** classical registers must be declared with `creg` before their
-  first use, including conditions, assignments, function arguments and
-  measurement targets. Bit indices are also checked against the width declared
-  so far. Move a later declaration before the first reference, and declare a
-  width large enough for each bit used.
 
 - An undeclared classical reference to `JOB_shotnum` now reports that the PECOS
   Rust QASM engine does not provide the shot-number built-in and says to remove

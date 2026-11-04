@@ -210,8 +210,22 @@ fn classical_declarations_precede_every_use() {
     }
     let program = QASMParser::parse_str("creg c[1]; creg c[8]; c[7] = 1;").unwrap();
     assert_eq!(program.classical_registers["c"], 8);
-    assert!(QASMParser::parse_str("creg c[1]; c[7] = 1; creg c[8];").is_err());
-    assert!(QASMParser::parse_str("creg c[8]; c[7] = 1; creg c[1];").is_err());
+    let error = QASMParser::parse_str("creg c[1]; c[7] = 1; creg c[8];")
+        .unwrap_err()
+        .to_string();
+    for fragment in [
+        "Classical bit 'c[7]'",
+        "out of bounds for register size 1",
+        "Declare 'c' with creg large enough to contain bit 7",
+    ] {
+        assert!(error.contains(fragment), "{error}");
+    }
+    assert_eq!(
+        QASMParser::parse_str("creg c[8]; c[7] = 1; creg c[1];")
+            .unwrap_err()
+            .to_string(),
+        "Invalid QASM operation: Classical register 'c' was redeclared with size 1, but bit 'c[7]' was already used. Do not redeclare the register with a smaller size; use the larger size or a different register name"
+    );
 }
 
 #[test]
@@ -385,8 +399,7 @@ fn shot_number_is_an_ordinary_quantum_or_gate_name() {
 
 #[test]
 fn shot_number_in_gate_expressions_gets_ordinary_errors() {
-    // Retain the original gate-expression cases, but compare them to an ordinary name:
-    // these are gate parameter references, not classical register references.
+    // Gate parameters named JOB_shotnum resolve like any other name.
     for statement in [
         "RZ(JOB_shotnum) q[0];",
         "RZ(sin(JOB_shotnum)) q[0];",
@@ -400,4 +413,68 @@ fn shot_number_in_gate_expressions_gets_ordinary_errors() {
         assert_eq!(error.replace("JOB_shotnum", "ordinary"), ordinary);
         assert!(!error.contains("shot-number built-in"), "{error}");
     }
+}
+
+#[test]
+fn shrinking_redeclaration_names_the_conflict() {
+    for statement in [
+        "d[7] = 1;",
+        "out = d[7];",
+        "out = 1 + d[7];",
+        "out = ~d[7];",
+        "external(d[7]);",
+        "measure q[7] -> d[7];",
+        "if(d[7]) X q[0];",
+        "if(out) d[7] = 1;",
+    ] {
+        let source = format!("qreg q[8]; creg out[8]; creg d[8]; {statement} creg d[1];");
+        assert_eq!(
+            QASMParser::parse_str(&source).unwrap_err().to_string(),
+            "Invalid QASM operation: Classical register 'd' was redeclared with size 1, but bit 'd[7]' was already used. Do not redeclare the register with a smaller size; use the larger size or a different register name",
+            "{statement}"
+        );
+    }
+    // An AST supplied by a caller has no declaration history to diagnose.
+    let mut program = QASMParser::parse_str("creg d[8]; d[7] = 1;").unwrap();
+    program.classical_registers.insert("d".into(), 1);
+    assert_eq!(
+        program
+            .validate_classical_references()
+            .unwrap_err()
+            .to_string(),
+        "Invalid QASM operation: Classical bit 'd[7]' is out of bounds for register size 1. Declare 'd' with creg large enough to contain bit 7"
+    );
+}
+
+#[test]
+fn glued_gate_is_not_a_definition() {
+    assert!(matches!(
+        QASMParser::parse_str("gateg a { }"),
+        Err(PecosError::ParseSyntax { .. })
+    ));
+}
+
+#[test]
+fn glued_opaque_is_a_gate_call() {
+    use crate::parser::Rule;
+    use pest::Parser;
+    assert_eq!(
+        QASMParser::parse_str("opaqueo a;").unwrap_err().to_string(),
+        "Invalid QASM operation: Unknown quantum register: a"
+    );
+    // The full grammar tries gate calls first; check the declaration rule as well.
+    assert!(QASMParser::parse(Rule::opaque_def, "opaqueo a;").is_err());
+    assert!(QASMParser::parse(Rule::opaque_def, "opaque o a;").is_ok());
+}
+
+#[test]
+fn glued_if_is_not_a_conditional() {
+    use crate::parser::Rule;
+    use pest::Parser;
+    assert!(matches!(
+        QASMParser::parse_str("qreg q[1]; ifc(1) X q[0];"),
+        Err(PecosError::ParseSyntax { .. })
+    ));
+    assert!(QASMParser::parse(Rule::if_stmt, "ifc(1) X q[0];").is_err());
+    assert!(QASMParser::parse(Rule::if_stmt, "if(1) X q[0];").is_ok());
 }

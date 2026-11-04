@@ -45,6 +45,14 @@ pub fn classical_bit_out_of_bounds(name: &str, index: usize, size: usize) -> Pec
     ))
 }
 
+/// A later declaration cannot shrink storage below a bit already used.
+pub(crate) fn classical_register_shrunk(name: &str, index: usize, size: usize) -> PecosError {
+    invalid_operation(format!(
+        "Classical register '{name}' was redeclared with size {size}, but bit '{name}[{index}]' was already used. \
+         Do not redeclare the register with a smaller size; use the larger size or a different register name"
+    ))
+}
+
 /// Create an error for undefined gate
 #[must_use]
 pub fn undefined_gate(name: &str) -> PecosError {

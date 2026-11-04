@@ -315,7 +315,7 @@ impl QASMParser {
             }
         }
 
-        program.validate_classical_references()?;
+        program.validate_classical_references_after_parsing()?;
         Ok(program)
     }
 

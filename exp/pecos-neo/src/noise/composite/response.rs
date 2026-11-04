@@ -13,6 +13,7 @@
 //! Noise response types for the composite-based noise system.
 
 use crate::command::GateCommand;
+use crate::noise::NoiseResponse;
 
 /// Result of applying a noise primitive.
 ///
@@ -48,6 +49,9 @@ pub enum CompositeResponse {
     /// than 0 or 1.
     LeakedMeasurement,
 
+    /// A wrapped channel response, retaining every named qubit.
+    Channel(Box<NoiseResponse>),
+
     /// Multiple responses to combine
     Multiple(Vec<CompositeResponse>),
 }
@@ -64,6 +68,10 @@ impl CompositeResponse {
     pub fn skips_gate(&self) -> bool {
         match self {
             Self::SkipGate => true,
+            Self::Channel(response) => channel_any(
+                response,
+                |r| matches!(r, NoiseResponse::SkipGate(qubits) if !qubits.is_empty()),
+            ),
             Self::Multiple(responses) => responses.iter().any(Self::skips_gate),
             _ => false,
         }
@@ -74,7 +82,25 @@ impl CompositeResponse {
     pub fn causes_leak(&self) -> bool {
         match self {
             Self::Leak => true,
+            Self::Channel(response) => channel_any(
+                response,
+                |r| matches!(r, NoiseResponse::MarkLeaked(qubits) if !qubits.is_empty()),
+            ),
             Self::Multiple(responses) => responses.iter().any(Self::causes_leak),
+            _ => false,
+        }
+    }
+
+    /// Check if this response clears leakage for any qubit.
+    #[must_use]
+    pub fn causes_unleak(&self) -> bool {
+        match self {
+            Self::Unleak => true,
+            Self::Channel(response) => channel_any(
+                response,
+                |r| matches!(r, NoiseResponse::MarkUnleaked(qubits) if !qubits.is_empty()),
+            ),
+            Self::Multiple(responses) => responses.iter().any(Self::causes_unleak),
             _ => false,
         }
     }
@@ -84,6 +110,10 @@ impl CompositeResponse {
     pub fn flips_outcome(&self) -> bool {
         match self {
             Self::FlipOutcome => true,
+            Self::Channel(response) => channel_any(
+                response,
+                |r| matches!(r, NoiseResponse::FlipOutcomes(qubits) if !qubits.is_empty()),
+            ),
             Self::Multiple(responses) => responses.iter().any(Self::flips_outcome),
             _ => false,
         }
@@ -94,6 +124,7 @@ impl CompositeResponse {
     pub fn forces_outcome(&self) -> Option<bool> {
         match self {
             Self::ForceOutcome(value) => Some(*value),
+            Self::Channel(response) => channel_forced_outcome(response),
             Self::Multiple(responses) => {
                 // Return the last forced outcome (in case of multiple)
                 responses
@@ -110,6 +141,10 @@ impl CompositeResponse {
     pub fn is_leaked_measurement(&self) -> bool {
         match self {
             Self::LeakedMeasurement => true,
+            Self::Channel(response) => channel_any(
+                response,
+                |r| matches!(r, NoiseResponse::LeakedMeasurement(qubits) if !qubits.is_empty()),
+            ),
             Self::Multiple(responses) => responses.iter().any(Self::is_leaked_measurement),
             _ => false,
         }
@@ -142,15 +177,102 @@ impl CompositeResponse {
     pub fn collect_gates(&self) -> Vec<GateCommand> {
         match self {
             Self::InjectGates(gates) => gates.clone(),
+            Self::Channel(response) => channel_gates(response),
             Self::Multiple(responses) => responses.iter().flat_map(Self::collect_gates).collect(),
             _ => Vec::new(),
         }
     }
 }
 
+/// Query all leaves without allocating or discarding their qubit targets.
+fn channel_any(response: &NoiseResponse, predicate: fn(&NoiseResponse) -> bool) -> bool {
+    match response {
+        NoiseResponse::Multiple(responses) => responses.iter().any(|r| channel_any(r, predicate)),
+        response => predicate(response),
+    }
+}
+
+fn channel_forced_outcome(response: &NoiseResponse) -> Option<bool> {
+    match response {
+        NoiseResponse::ForceOutcomes(outcomes) => outcomes.last().map(|(_, value)| *value),
+        NoiseResponse::Multiple(responses) => responses
+            .iter()
+            .filter_map(channel_forced_outcome)
+            .next_back(),
+        _ => None,
+    }
+}
+
+fn channel_gates(response: &NoiseResponse) -> Vec<GateCommand> {
+    match response {
+        NoiseResponse::InjectGates(gates) => gates.to_vec(),
+        NoiseResponse::Multiple(responses) => responses.iter().flat_map(channel_gates).collect(),
+        _ => Vec::new(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn channel_helpers_answer_for_every_named_qubit() {
+        use pecos_core::QubitId;
+        use smallvec::smallvec;
+        let qubits = smallvec![QubitId(0), QubitId(1)];
+        let cases = [
+            NoiseResponse::SkipGate(qubits.clone()),
+            NoiseResponse::MarkLeaked(qubits.clone()),
+            NoiseResponse::MarkUnleaked(qubits.clone()),
+            NoiseResponse::FlipOutcomes(qubits.clone()),
+            NoiseResponse::LeakedMeasurement(qubits),
+            NoiseResponse::ForceOutcomes(smallvec![(QubitId(0), false), (QubitId(1), true)]),
+            NoiseResponse::inject_gates(smallvec![
+                GateCommand::x(QubitId(0)),
+                GateCommand::z(QubitId(1))
+            ]),
+        ];
+        for (i, response) in cases.into_iter().enumerate() {
+            let r = CompositeResponse::Channel(Box::new(NoiseResponse::Multiple(vec![
+                NoiseResponse::ForceOutcomes(smallvec![(QubitId(0), false)]),
+                NoiseResponse::Multiple(vec![response]),
+            ])));
+            assert!(!r.is_none());
+            assert_eq!(r.skips_gate(), i == 0);
+            assert_eq!(r.causes_leak(), i == 1);
+            assert_eq!(r.causes_unleak(), i == 2);
+            assert_eq!(r.flips_outcome(), i == 3);
+            assert_eq!(r.is_leaked_measurement(), i == 4);
+            assert_eq!(r.forces_outcome(), Some(i == 5));
+            let gates = if i == 6 {
+                vec![GateCommand::x(QubitId(0)), GateCommand::z(QubitId(1))]
+            } else {
+                vec![]
+            };
+            assert_eq!(r.collect_gates(), gates);
+            let combined = CompositeResponse::None
+                .combine(r)
+                .combine(CompositeResponse::Unleak);
+            assert_eq!(combined.skips_gate(), i == 0);
+            assert_eq!(combined.forces_outcome(), Some(i == 5));
+            assert_eq!(combined.collect_gates(), gates);
+        }
+        let empty = CompositeResponse::Channel(Box::new(NoiseResponse::Multiple(vec![
+            NoiseResponse::SkipGate(smallvec![]),
+            NoiseResponse::MarkLeaked(smallvec![]),
+            NoiseResponse::MarkUnleaked(smallvec![]),
+            NoiseResponse::FlipOutcomes(smallvec![]),
+            NoiseResponse::LeakedMeasurement(smallvec![]),
+            NoiseResponse::ForceOutcomes(smallvec![]),
+        ])));
+        assert!(!empty.skips_gate());
+        assert!(!empty.causes_leak());
+        assert!(!empty.causes_unleak());
+        assert!(!empty.flips_outcome());
+        assert!(!empty.is_leaked_measurement());
+        assert_eq!(empty.forces_outcome(), None);
+        assert_eq!(empty.collect_gates(), Vec::<GateCommand>::new());
+    }
 
     #[test]
     fn test_response_none() {

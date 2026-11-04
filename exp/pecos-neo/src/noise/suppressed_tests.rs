@@ -648,6 +648,7 @@ impl NoiseChannel for AdapterProbe {
         assert_eq!(*gate_type, GateType::I);
         assert_eq!(group_size.get(), 2);
         assert_eq!(qubits.len(), 2);
+        assert_eq!(qubits[1].0, qubits[0].0 + 1);
         assert_eq!(*leaked_suppressed, &[]);
         NoiseResponse::inject_gate(GateCommand::x(qubits[0]))
     }
@@ -670,13 +671,11 @@ fn channel_adapter_preserves_custom_group_size() {
         group_size: std::num::NonZeroUsize::new(2).unwrap(),
         angles: &[],
     };
-    let mut gates = injected(channel.apply(
+    let gates = injected(channel.apply(
         &event,
         &mut NoiseContext::new(),
         &mut PecosRng::seed_from_u64(42),
     ));
-    // Each group reaches the probe whole; how often it is repeated is not the contract here.
-    gates.dedup();
     assert_eq!(
         gates,
         vec![GateCommand::x(QubitId(0)), GateCommand::x(QubitId(2))]
@@ -744,7 +743,7 @@ fn nested_composite_keeps_the_enclosing_gate_for_every_member() {
             };
             channel.apply(&event, &mut ctx, &mut rng);
             let views = probe.0.lock().unwrap().clone();
-            assert_ne!(views, Vec::<NestedView>::new());
+            assert_eq!(views.len(), pair.len());
             for (_, seen_suppressed, gate, qubits) in views {
                 assert_eq!(seen_suppressed, suppressed);
                 assert_eq!(gate, GateType::CX);
@@ -771,7 +770,7 @@ fn nested_composite_keeps_non_gate_operands_for_every_member() {
             &mut PecosRng::seed_from_u64(42),
         );
         let views = probe.0.lock().unwrap().clone();
-        assert_ne!(views, Vec::<NestedView>::new());
+        assert_eq!(views.len(), qubits.len());
         for (_, _, _, seen) in views {
             assert_eq!(seen, qubits);
         }
@@ -794,6 +793,7 @@ fn nested_composite_restores_all_enclosing_event_state() {
         // The inner channel ends on member 1, so restoring member 0 is observable.
         ctx.set_current_qubit_index(0, &pair);
         ctx.set_current_gate_suppressed(true);
+        ctx.set_group_leader(Some(0));
         ctx.set_sampled_correlation(7);
         ctx.set_fired(0, true);
         Primitive::apply(
@@ -807,6 +807,7 @@ fn nested_composite_restores_all_enclosing_event_state() {
         assert_eq!(ctx.current_qubit_index(), 0);
         assert_eq!(ctx.current_gate_qubits(), pair);
         assert!(ctx.is_current_gate_suppressed());
+        assert_eq!(ctx.group_leader(), Some(0));
         assert_eq!(ctx.sampled_correlation(), Some(7));
         assert!(ctx.is_fired(0));
     }
@@ -1170,7 +1171,7 @@ impl Primitive for MemberIndexProbe {
 }
 
 #[test]
-fn composite_non_gate_context_linear_and_two_pass() {
+fn composite_non_gate_context_all_paths() {
     fn make_channel(
         primitive: impl Primitive + Clone + 'static,
         batch: bool,
@@ -1214,27 +1215,22 @@ fn composite_non_gate_context_linear_and_two_pass() {
                     &mut ctx,
                     &mut PecosRng::seed_from_u64(42),
                 ));
-                if two_pass || !geometric {
-                    assert_eq!(gates, qubits.map(GateCommand::x));
-                    let probe = MemberIndexProbe::default();
-                    let channel = if two_pass {
-                        make_channel(two_stage(nothing(), probe.clone()), batch, threshold)
-                    } else {
-                        make_channel(probe.clone(), batch, threshold)
-                    };
-                    channel.apply(
-                        &NoiseEvent::AfterPreparation {
-                            gate_type: GateType::PZ,
-                            qubits: &qubits,
-                        },
-                        &mut ctx,
-                        &mut PecosRng::seed_from_u64(42),
-                    );
-                    assert_eq!(*probe.0.lock().unwrap(), [0, 1, 2]);
+                assert_eq!(gates, qubits.map(GateCommand::x));
+                let probe = MemberIndexProbe::default();
+                let channel = if two_pass {
+                    make_channel(two_stage(nothing(), probe.clone()), batch, threshold)
                 } else {
-                    // Single-pass geometric processing retains its existing non-gate context policy.
-                    assert_eq!(gates, Vec::<GateCommand>::new());
-                }
+                    make_channel(probe.clone(), batch, threshold)
+                };
+                channel.apply(
+                    &NoiseEvent::AfterPreparation {
+                        gate_type: GateType::PZ,
+                        qubits: &qubits,
+                    },
+                    &mut ctx,
+                    &mut PecosRng::seed_from_u64(42),
+                );
+                assert_eq!(*probe.0.lock().unwrap(), [0, 1, 2]);
             }
         }
     }

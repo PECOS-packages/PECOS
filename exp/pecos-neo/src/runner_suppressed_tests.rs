@@ -630,3 +630,41 @@ fn suppressed_adapter_seepage() {
         assert!(!sim.mz(&[QubitId(1)])[0].outcome);
     }
 }
+
+#[test]
+fn channel_adapter_marks_every_named_qubit() {
+    use crate::noise::composite::prelude::*;
+    #[derive(Clone)]
+    struct MarkBoth;
+    impl NoiseChannel for MarkBoth {
+        fn responds_to(&self, _: &NoiseEvent<'_>) -> bool {
+            true
+        }
+        fn apply(
+            &self,
+            event: &NoiseEvent<'_>,
+            _: &mut NoiseContext,
+            _: &mut PecosRng,
+        ) -> NoiseResponse {
+            NoiseResponse::MarkLeaked(event.qubits().iter().copied().collect())
+        }
+        fn name(&self) -> &'static str {
+            "mark both"
+        }
+        fn clone_box(&self) -> Box<dyn NoiseChannel> {
+            Box::new(self.clone())
+        }
+    }
+    let noise = ComposableNoiseModel::new().add_channel(
+        CompositeChannel::new("marks", channel_action(MarkBoth))
+            .with_filter(CompositeEventFilter::TwoQubitGate),
+    );
+    let mut runner = CircuitRunner::new().with_noise(noise);
+    let mut sim = SparseStab::with_seed(2, 42);
+    runner
+        .apply_gate(&mut sim, GateType::CX, &[QubitId(0), QubitId(1)], &[])
+        .unwrap();
+    let ctx = runner.noise.as_ref().unwrap().context();
+    assert!(ctx.is_leaked(QubitId(0)));
+    assert!(ctx.is_leaked(QubitId(1)));
+}

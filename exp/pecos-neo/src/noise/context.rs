@@ -225,6 +225,7 @@ pub(crate) struct EnclosingEvent {
     qubit_index: usize,
     sampled_correlation: Option<usize>,
     gate_qubits: SmallVec<[QubitId; 2]>,
+    group_leader: Option<usize>,
     fired_flags: [bool; 4],
 }
 
@@ -278,6 +279,9 @@ pub struct NoiseContext {
     sampled_correlation: Option<usize>,
     /// The qubits involved in the current gate.
     current_gate_qubits: SmallVec<[QubitId; 2]>,
+    /// Stable eligible leader of the selected composite operand group.
+    #[cfg(feature = "composite-noise")]
+    group_leader: Option<usize>,
     /// Per-qubit "fired" flags for two-stage processing.
     /// Index corresponds to qubit position in gate (0, 1, ...).
     fired_flags: [bool; 4],
@@ -322,6 +326,8 @@ impl NoiseContext {
             current_qubit_index: 0,
             sampled_correlation: None,
             current_gate_qubits: SmallVec::new(),
+            #[cfg(feature = "composite-noise")]
+            group_leader: None,
             fired_flags: [false; 4],
             gate_definitions: None,
         }
@@ -457,6 +463,7 @@ impl NoiseContext {
             qubit_index: std::mem::take(&mut self.current_qubit_index),
             sampled_correlation: self.sampled_correlation.take(),
             gate_qubits: std::mem::take(&mut self.current_gate_qubits),
+            group_leader: self.group_leader.take(),
             fired_flags: std::mem::take(&mut self.fired_flags),
         }
     }
@@ -470,6 +477,7 @@ impl NoiseContext {
         self.current_qubit_index = enclosing.qubit_index;
         self.sampled_correlation = enclosing.sampled_correlation;
         self.current_gate_qubits = enclosing.gate_qubits;
+        self.group_leader = enclosing.group_leader;
         self.fired_flags = enclosing.fired_flags;
     }
 
@@ -512,10 +520,22 @@ impl NoiseContext {
         self.current_gate_qubits = gate_qubits.iter().copied().collect();
     }
 
-    /// Select a member of the operands already in context, without copying them.
+    /// Select a member without copying operands, which may be installed lazily.
     #[cfg(feature = "composite-noise")]
     pub(crate) fn set_current_member_index(&mut self, index: usize) {
         self.current_qubit_index = index;
+    }
+
+    /// Set the leader when a composite selects an operand group.
+    #[cfg(feature = "composite-noise")]
+    pub(crate) fn set_group_leader(&mut self, leader: Option<usize>) {
+        self.group_leader = leader;
+    }
+
+    /// Get the selected group's stable leader, or `None` for standalone actions.
+    #[cfg(feature = "composite-noise")]
+    pub(crate) fn group_leader(&self) -> Option<usize> {
+        self.group_leader
     }
 
     /// Get the current qubit index within a multi-qubit gate.
@@ -525,6 +545,9 @@ impl NoiseContext {
     }
 
     /// Get the qubits involved in the current gate.
+    ///
+    /// On geometric single-pass non-gate events, this is empty unless member 0
+    /// was sampled and installed the full operand list.
     #[must_use]
     pub fn current_gate_qubits(&self) -> &[QubitId] {
         &self.current_gate_qubits
@@ -561,6 +584,8 @@ impl NoiseContext {
         self.current_qubit_index = 0;
         self.sampled_correlation = None;
         self.current_gate_qubits.clear();
+        #[cfg(feature = "composite-noise")]
+        self.set_group_leader(None);
         self.fired_flags = [false; 4];
     }
 

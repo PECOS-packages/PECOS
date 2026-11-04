@@ -6,6 +6,21 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Breaking:** pecos-neo `channel_action` now runs its wrapped channel once per
+  operand group per invocation site and stage (#1568), on the group's fixed first
+  eligible member. Rates change, not only seeds: on a k-member group, a wrapped
+  channel with rate p no longer fires at about `1 - (1 - p)^k`. This includes
+  wrapped single-qubit channels on multi-operand preparation, measurement and
+  idle events (one group of all operands), and composites nested through
+  `channel_action`. Guards around an adapter are decided on the leader's
+  invocation; a guard true only on another member runs nothing for the group.
+  Geometric single-pass composites on non-gate events install the full operand
+  list only when member 0 is sampled, and retain the correct member index.
+  The new `CompositeResponse::Channel(Box<NoiseResponse>)` retains all response
+  targets, and the public `CompositeResponse::causes_unleak` queries unleak
+  effects. Nested `CompositeCrosstalkChannel` now isolates its event state so
+  adapters inside it act on each crosstalk target.
+
 - **Breaking:** pecos-neo always suppresses gates on leaked operands in all three
   noise builders, including noiseless gates and models with no configured leak
   source (#1574, #1575). Noiseless operations suppress faults, including composite,

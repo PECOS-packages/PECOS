@@ -840,9 +840,16 @@ class AstToGuppy:
     def _emit_register_initializers(self) -> list[str]:
         lines: list[str] = []
         for decl in self.context.registers.values():
-            values = ", ".join("False" for _ in range(decl.size))
-            lines.append(f"{self.context.indent()}{decl.name} = array({values})")
+            value = self._render_bool_array(["False"] * decl.size)
+            lines.append(f"{self.context.indent()}{decl.name} = {value}")
         return lines
+
+    @staticmethod
+    def _render_bool_array(values: list[str]) -> str:
+        """Keep the element type inferable even for an empty classical register."""
+        if not values:
+            return "array(False for _ in range(0))"
+        return f"array({', '.join(values)})"
 
     def _validate_return_position(self, body: list[Statement]) -> ReturnOp | None:
         return_count = self._count_returns(body)
@@ -1326,10 +1333,14 @@ class AstToGuppy:
         """Render a single-bit write, rejecting values Guppy cannot store in a bool."""
         is_literal = isinstance(expr, LiteralExpr) and isinstance(expr.value, numbers.Integral)
         if not is_literal and self._expression_type(expr) != "bool":
-            msg = (
-                f"Unsupported single-bit assignment from {expr!r}. "
-                "Guppy supports 0, 1, single bits and boolean expressions here."
-            )
+            value = self._render_expression(expr)
+            if isinstance(expr, VarExpr) and expr.name in self.context.loop_variables:
+                fix = f"Compare the loop variable, such as {value} == 1."
+            elif self._is_whole_register(expr):
+                fix = f"Index a bit of the register, such as {value}[0]."
+            else:
+                fix = "Use 0, 1, a bit or a boolean expression."
+            msg = f"Unsupported single-bit assignment from {value!r}. {fix}"
             raise GuppyCodegenError(msg)
         return self._render_expression(expr, bool_context=True)
 
@@ -1342,14 +1353,14 @@ class AstToGuppy:
         as scalar integers.
         """
         decl = self.context.registers[target]
-        if decl.size <= 0:
+        if decl.size < 0:
             msg = f"Cannot assign to classical register {target!r} with unsupported width {decl.size}"
             raise GuppyCodegenError(msg)
         if isinstance(expr, LiteralExpr) and isinstance(expr.value, int):
             # QASM stores the low N bits, least significant bit first. Expand
             # in Python so literals need not fit Guppy's fixed-width int.
-            bits = ", ".join(str(bool((expr.value >> index) & 1)) for index in range(decl.size))
-            return f"array({bits})"
+            bits = [str(bool((expr.value >> index) & 1)) for index in range(decl.size)]
+            return self._render_bool_array(bits)
         if self._is_whole_register(expr):
             source = self.context.registers[expr.name]
             if source.size != decl.size:
@@ -1432,6 +1443,19 @@ class AstToGuppy:
         return lines
 
     def _emit_for(self, node: ForStmt) -> list[str]:
+        collision = None
+        if node.variable in self.context.registers:
+            collision = "classical register"
+        elif node.variable in self.context.root_allocators:
+            collision = "quantum register/allocator"
+        elif node.variable in self.context.slot_locals.values():
+            collision = "generated qubit binding"
+        elif node.variable in self.context.loop_variables:
+            collision = "enclosing loop variable"
+        if collision is not None:
+            scope = f" in block {self.context.block_name!r} (including block inputs)" if self.context.block_name else ""
+            msg = f"For loop label {node.variable!r} collides with {collision}{scope}. Rename the loop label."
+            raise GuppyCodegenError(msg)
         linearity = self._linearity()
         start = self._render_loop_bound(node.start)
         stop = self._render_loop_bound(node.stop)
@@ -2058,7 +2082,7 @@ class AstToGuppy:
             if bool_context:
                 if value in {0, 1}:
                     return "True" if value else "False"
-                msg = f"Cannot render integer literal {value!r} as a Guppy bool"
+                msg = f"Cannot render integer literal {value!r} as a Guppy bool; use 0 or 1."
                 raise GuppyCodegenError(msg)
             if not -(2**63) <= value < 2**63:
                 msg = f"Integer literal {value!r} does not fit Guppy's signed 64-bit int"
@@ -2121,7 +2145,7 @@ class AstToGuppy:
         raise GuppyCodegenError(msg)
 
     def _is_whole_register(self, expr: Expression) -> bool:
-        """Report a register read. A loop variable of the same name shadows the register."""
+        """Report a whole classical-register read, excluding loop variables."""
         return (
             isinstance(expr, VarExpr)
             and expr.name in self.context.registers

@@ -6,6 +6,26 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Breaking:** Guppy code generation rejects `For` labels that shadow a register,
+  allocator, block input or other tracked local binding. These programs previously
+  generated source that could fail at HUGR compilation. The error names the
+  collision and asks the user to rename the loop label.
+
+- QASM code generation renders boolean literals as `1` and `0`, including
+  assignments and expressions in the deprecated QASM generator.
+
+- SLR conversion recognizes NumPy boolean scalars as boolean literals rather
+  than references to variables named `True` or `False`.
+
+- Guppy supports zero-width classical registers, including literal assignments,
+  copies and returns, by preserving the element type of empty bool arrays.
+
+- The deprecated QuantumCircuit generator handles empty `For` loops in both
+  range and start/stop forms and restores outer bindings after nested loops.
+
+- Guppy single-bit assignment errors name the SLR value and suggest a comparison,
+  bit index or valid bit value. Integer-to-bool errors suggest using `0` or `1`.
+
 - **Breaking:** pecos-neo always suppresses gates on leaked operands in all three
   noise builders, including noiseless gates and models with no configured leak
   source (#1574, #1575). Noiseless operations suppress faults, including composite,

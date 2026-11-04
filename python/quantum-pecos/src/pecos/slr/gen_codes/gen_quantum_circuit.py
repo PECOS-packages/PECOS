@@ -141,20 +141,13 @@ class QuantumCircuitGenerator(Generator):
         if block_name == "For":
             # For loops - unroll them properly
             self._flush_tick()
-            loop_var = block.var  # LoopVar object
             # Check if we can determine the iteration count
             if hasattr(block, "iterable") and block.iterable is not None:
                 # For(i, range(n)) or For(i, iterable)
                 if hasattr(block.iterable, "__iter__"):
                     # Unroll the loop for each iteration
                     iterations = list(block.iterable)
-                    for iter_val in iterations:
-                        self.loop_var_values[loop_var] = iter_val
-                        for op in block.ops:
-                            resolved_op = self._resolve_symbolic(op, loop_var, iter_val)
-                            self._handle_op(resolved_op)
-                    # Clean up loop variable
-                    del self.loop_var_values[loop_var]
+                    self._unroll_for(block, iterations)
                 else:
                     msg = f"Cannot unroll For loop with non-iterable: {block.iterable}"
                     raise ValueError(
@@ -171,13 +164,7 @@ class QuantumCircuitGenerator(Generator):
                     raise ValueError(
                         msg,
                     )
-                for iter_val in range(block.start, block.stop, step):
-                    self.loop_var_values[loop_var] = iter_val
-                    for op in block.ops:
-                        resolved_op = self._resolve_symbolic(op, loop_var, iter_val)
-                        self._handle_op(resolved_op)
-                # Clean up loop variable
-                del self.loop_var_values[loop_var]
+                self._unroll_for(block, range(block.start, block.stop, step))
             else:
                 msg = f"For loop missing required attributes (iterable or start/stop): {block}"
                 raise ValueError(
@@ -213,6 +200,18 @@ class QuantumCircuitGenerator(Generator):
 
         self.current_scope = previous_scope
         self.exit_block(block)
+
+    def _unroll_for(self, block, iterations):
+        """Restore the enclosing bindings even when an inner loop is empty."""
+        outer_values = self.loop_var_values
+        self.loop_var_values = outer_values.copy()
+        try:
+            for value in iterations:
+                self.loop_var_values[block.var] = value
+                for op in block.ops:
+                    self._handle_op(self._resolve_symbolic(op, block.var, value))
+        finally:
+            self.loop_var_values = outer_values
 
     def _resolve_symbolic(self, op, loop_var: LoopVar, value: int):
         """Resolve symbolic elements in an operation to concrete elements.

@@ -130,6 +130,15 @@ including noiselessly prepared and `QAlloc` qubits. Presets and user-composed co
 channels retain their chosen primitives. Tables retain their sampled-state behavior.
 
 ```rust
+// Local crosstalk targets the neighbors of the measured qubits in a linear chain.
+fn neighbors(qubits: &[QubitId]) -> Vec<QubitId> {
+    qubits
+        .iter()
+        .flat_map(|q| [QubitId(q.0.saturating_sub(1)), QubitId(q.0 + 1)])
+        .filter(|n| !qubits.contains(n))
+        .collect()
+}
+
 CompositeNoiseModelBuilder::new()
     .with_p_prep_crosstalk(0.001)?
     .with_p_meas_crosstalk(0.001, 0.01)?

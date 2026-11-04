@@ -293,7 +293,7 @@ fn noiseless_leaked_readout_keeps_its_result() {
 #[test]
 fn noiseless_operations_are_not_crosstalk_sources() {
     for composite in [false, true] {
-        for prep in [true, false] {
+        for prep in [false, true] {
             let control = match (composite, prep) {
                 (false, true) => GeneralNoiseModelBuilder::new()
                     .with_p_prep_crosstalk(1.0)

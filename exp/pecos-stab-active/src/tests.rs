@@ -646,3 +646,10 @@ fn signed_clifford_paulis_match_dense_matrix() {
         }
     }
 }
+
+#[test]
+#[cfg(target_pointer_width = "64")]
+fn platform_maximum_active_width() {
+    const MAX_WIDTH: usize = StabActive::max_supported_active_width();
+    assert_eq!(MAX_WIDTH, 58);
+}

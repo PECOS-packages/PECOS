@@ -4888,6 +4888,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pecos-selene-stab-active"
+version = "0.2.0-dev.0"
+dependencies = [
+ "anyhow",
+ "pecos-core",
+ "pecos-simulators",
+ "pecos-stab-active",
+ "selene-core",
+]
+
+[[package]]
 name = "pecos-selene-stab-mps"
 version = "0.2.0-dev.0"
 dependencies = [

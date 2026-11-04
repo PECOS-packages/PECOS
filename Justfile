@@ -1201,7 +1201,7 @@ build-selene profile="release":
             NEEDS_BUILD=true
             break
         fi
-        NEWER=$(find "crates/" "$DIR" -name "*.rs" -newer "$LIB" 2>/dev/null | head -1 || true)
+        NEWER=$(find "crates/" "exp/pecos-stab-active/" "$DIR" -name "*.rs" -newer "$LIB" 2>/dev/null | head -1 || true)
         if [ -n "$NEWER" ]; then
             NEEDS_BUILD=true
             break

@@ -6,6 +6,12 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- Added the `pecos-selene-stab-active` Selene plugin with current and peak active
+  width metrics, using the platform maximum width. `StabActive` exposes
+  `max_supported_active_width()` and the configured `max_active_width()`.
+  `HeisenbergProgram::compile` now accepts T/Tdg as exact +/-pi/4 Z rotations
+  (up to global phase).
+
 - `pecos-simulators` now contains the stabilizer tensor-network simulators (StabMps,
   MAST) as `pecos_simulators::stab_tn`, formerly the unpublished `pecos-stab-tn`
   crate; `rayon` is now always a dependency and `parallel` only selects parallel gate

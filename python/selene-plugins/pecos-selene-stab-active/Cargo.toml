@@ -1,0 +1,26 @@
+[package]
+name = "pecos-selene-stab-active"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "PECOS StabActive simulator plugin for the Selene quantum emulator"
+
+[lib]
+name = "pecos_selene_stab_active"
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+anyhow = { workspace = true }
+pecos-core = { workspace = true }
+pecos-simulators = { workspace = true }
+pecos-stab-active = { path = "../../../exp/pecos-stab-active" }
+# selene-core is a git dependency since it's not published to crates.io
+# Use the same revision as the other selene plugins for consistency
+selene-core = { git = "https://github.com/Quantinuum/selene.git", rev = "458d640dc4cf84a7a7988ea65ce5a9f7bcb8c511" }
+
+[lints]
+workspace = true

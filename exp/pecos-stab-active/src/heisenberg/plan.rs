@@ -10,7 +10,7 @@ use super::{AffineSign, HeisenbergOp, HeisenbergProgram, NoiseChannel, ShotResul
 use crate::{ActiveStructure, kernels, structure::clifford_turns};
 use num_complex::Complex64;
 use pecos_core::{Angle64, PauliBitmaskVec};
-use pecos_stab_tn::stab_mps::coordinate_tableau::{CoordinateGate, MeasurementCase};
+use pecos_simulators::stab_tn::stab_mps::coordinate_tableau::{CoordinateGate, MeasurementCase};
 pub use sampler::Sampler;
 use std::fmt;
 
@@ -68,7 +68,9 @@ pub(super) struct Descriptor {
 }
 
 impl Descriptor {
-    fn new(parts: &pecos_stab_tn::stab_mps::coordinate_tableau::CoordinateDecomposition) -> Self {
+    fn new(
+        parts: &pecos_simulators::stab_tn::stab_mps::coordinate_tableau::CoordinateDecomposition,
+    ) -> Self {
         Self {
             flip: kernels::mask(&parts.active_flips),
             sign: kernels::mask(&parts.active_signs),

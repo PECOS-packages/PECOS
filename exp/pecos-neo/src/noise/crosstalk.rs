@@ -61,6 +61,10 @@ impl PayloadKind {
         ctx: &NoiseContext,
         rng: &mut PecosRng,
     ) -> NoiseResponse {
+        if rate == 0.0 {
+            return NoiseResponse::None;
+        }
+
         let targets = match self {
             Self::Global => ctx.global_crosstalk_targets(qubits),
             Self::Local => ctx.local_crosstalk_targets(&[], qubits),
@@ -283,6 +287,7 @@ impl NoiseChannel for CrosstalkChannel {
     fn priority(&self) -> i32 {
         -10
     }
+
     fn clone_box(&self) -> Box<dyn NoiseChannel> {
         Box::new(self.clone())
     }

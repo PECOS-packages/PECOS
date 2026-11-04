@@ -419,10 +419,8 @@ retain their separate measurement behavior without a leakage check.
 
 ## Crosstalk payload execution
 
-Measurement crosstalk fires only on `MeasCrosstalkGlobalPayload` or
-`MeasCrosstalkLocalPayload`, both `GateCategory::Metadata`. Global operands
-exclude victims; local operands name potential victims. An empty global payload
-targets every existing, non-leaked qubit. Measured qubits remain eligible.
+For victim selection, rates and transition behavior, see
+[payload crosstalk](../user-guides/noise-model.md#payload-crosstalk).
 
 The payload emits `CrosstalkPayload`. Each victim independently fires at its
 kind's rate. A nonempty `MeasureHidden { gate_type, qubits }` response measures
@@ -431,10 +429,6 @@ lifecycle changes. `AfterHiddenMeasurement` carries the raw outcomes; the option
 table selects stay, X, or leakage from the actual victim outcome. Without a
 table, only collapse occurs. This continuation finishes before the next command.
 No fired victims returns `None`. Noiseless payloads produce no hidden measurement.
-
-Preparation crosstalk still fires only on noisy PZ and defaults to a fair Z coin.
-Neither ordinary gates nor ordinary measurements trigger measurement crosstalk.
-Neo rates are post-scale; engine parity is scoped to `leakage_scale = 1`.
 
 Both queue execution and adapted gate execution recognize payloads after
 operand validation and before gate-event dispatch. No simulator gate, override,

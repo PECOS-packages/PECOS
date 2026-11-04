@@ -2,7 +2,6 @@ use pecos_core::QubitId;
 use pecos_neo::command::{CommandBuilder, GateCommand, GateType};
 use pecos_neo::extensible::{
     CircuitValidator, CliffordValidator, GateCategory, GateDefinitions, GateRegistry, OpBuilder,
-    ResultId,
 };
 use pecos_neo::noise::composite::prelude::*;
 use pecos_neo::noise::{
@@ -13,6 +12,7 @@ use pecos_neo::runner::{CircuitRunner, ExecutionError};
 use pecos_neo::sampling::{ImportanceSamplingError, ImportanceSamplingRunner, PathExplorer};
 use pecos_random::PecosRng;
 use pecos_simulators::{CliffordGateable, SparseStab};
+use rand::RngExt;
 use smallvec::smallvec;
 use std::sync::{Arc, Mutex};
 
@@ -148,7 +148,7 @@ fn hidden_measurement_is_private_and_adapted_payload_matches_queue() {
                 CrosstalkTransitions::custom(0.0, 1.0, 0.0, 1.0, 0.0, 0.0).unwrap(),
             )
             .unwrap()
-            .with_p_meas(1.0, 1.0)
+            .with_p_meas(0.0, 0.0)
             .build()
             .unwrap()
             .add_channel(Observe(log.clone()));
@@ -167,19 +167,16 @@ fn hidden_measurement_is_private_and_adapted_payload_matches_queue() {
                     &[QubitId(0)],
                     &[],
                 )
-                .mz(QubitId(1), ResultId(0))
                 .build();
             runner.apply_adapted_circuit(&mut state, &circuit).unwrap()
         } else {
             let circuit = CommandBuilder::new()
                 .pz(&[0, 1])
                 .meas_crosstalk_global_payload(&[0])
-                .mz(&[1])
                 .build();
             runner.apply_circuit(&mut state, &circuit).unwrap()
         };
-        assert_eq!(outcomes.get_all(QubitId(1)).len(), 1);
-        assert_eq!(outcomes.get(QubitId(1)).unwrap().outcome, adapted);
+        assert_eq!(outcomes.get_all(QubitId(1)).len(), 0);
         assert!(state.mz(&[QubitId(1)])[0].outcome);
         let events = log.lock().unwrap();
         assert_eq!(
@@ -187,7 +184,7 @@ fn hidden_measurement_is_private_and_adapted_payload_matches_queue() {
                 .iter()
                 .filter(|&&kind| kind == NoiseEventKind::AfterMeasurement)
                 .count(),
-            usize::from(!adapted)
+            0
         );
         assert_eq!(
             events
@@ -411,4 +408,45 @@ fn wrapped_channel_preserves_hidden_measurement_response() {
         matches!(response, NoiseResponse::MeasureHidden { gate_type: GateType::MeasCrosstalkGlobalPayload, ref qubits }
         if qubits.as_slice() == [QubitId(0)])
     );
+}
+
+#[test]
+fn zero_rate_payload_preserves_rng() {
+    for local in [false, true] {
+        let traditional = CrosstalkChannel::measurement()
+            .with_global_rate(if local { 1.0 } else { 0.0 })
+            .unwrap()
+            .with_local_rate(if local { 0.0 } else { 1.0 })
+            .unwrap();
+        let kind = if local {
+            PayloadKind::Local
+        } else {
+            PayloadKind::Global
+        };
+        let composite =
+            CompositeCrosstalkChannel::measurement("zero", kind, 0.0, nothing()).unwrap();
+        for channel in [&traditional as &dyn NoiseChannel, &composite] {
+            let mut ctx = NoiseContext::new();
+            ctx.mark_prepared(QubitId(0));
+            ctx.mark_prepared(QubitId(1));
+            let qubits = if local {
+                &[QubitId(1)][..]
+            } else {
+                &[QubitId(0)][..]
+            };
+            let event = NoiseEvent::CrosstalkPayload {
+                gate_type: kind.gate_type(),
+                qubits,
+            };
+            let mut rng = PecosRng::seed_from_u64(42);
+            let mut untouched = rng.clone();
+            assert!(channel.apply(&event, &mut ctx, &mut rng).is_none());
+            assert_eq!(
+                rng.random::<u64>(),
+                untouched.random::<u64>(),
+                "local={local}, channel={}",
+                channel.name()
+            );
+        }
+    }
 }

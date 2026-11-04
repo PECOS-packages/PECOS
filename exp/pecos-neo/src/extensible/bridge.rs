@@ -66,9 +66,11 @@ impl GateType {
             Self::QAlloc => gates::QALLOC,
             Self::QFree => gates::QFREE,
 
-            // Idle
+            // Crosstalk metadata
             Self::MeasCrosstalkGlobalPayload => gates::MEAS_CROSSTALK_GLOBAL_PAYLOAD,
             Self::MeasCrosstalkLocalPayload => gates::MEAS_CROSSTALK_LOCAL_PAYLOAD,
+
+            // Idle
             Self::Idle => gates::IDLE,
         }
     }
@@ -152,9 +154,11 @@ impl GateId {
             121 => GateType::QFree,
 
             // Idle
+            130 => GateType::Idle,
+
+            // Crosstalk metadata
             140 => GateType::MeasCrosstalkGlobalPayload,
             141 => GateType::MeasCrosstalkLocalPayload,
-            130 => GateType::Idle,
 
             // Unknown core gate ID
             _ => return None,

@@ -163,14 +163,14 @@ Measurement crosstalk fires only on `MeasCrosstalkGlobalPayload` or
 exclude victims; local operands name potential victims. An empty global payload
 targets every existing, non-leaked qubit. Measured qubits remain eligible.
 
-The payload emits `CrosstalkPayload`. Each victim independently fires at its
-kind's rate. A nonempty `MeasureHidden { gate_type, qubits }` response measures
-victims directly, without user outcomes, readout noise, measurement events or
-lifecycle changes. `AfterHiddenMeasurement` carries the raw outcomes; the optional
-table selects stay, X, or leakage from the actual victim outcome. Without a
-table, only collapse occurs. This continuation finishes before the next command.
-No fired victims returns `None`. Noiseless payloads produce no hidden measurement.
+Each fired victim collapses in the computational basis. An optional transition
+table uses its actual outcome to choose stay, X, or leakage; without a table,
+there is no further effect. Noiseless payloads suppress crosstalk. A zero rate
+selects no victims and consumes no random numbers.
 
 Preparation crosstalk still fires only on noisy PZ and defaults to a fair Z coin.
 Neither ordinary gates nor ordinary measurements trigger measurement crosstalk.
 Neo rates are post-scale; engine parity is scoped to `leakage_scale = 1`.
+
+For event dispatch and hidden measurements, see the
+[runner protocol](../dev/runner.md#crosstalk-payload-execution).

@@ -404,8 +404,8 @@ impl<S: CliffordGateable + ForcedMeasurement> PathExplorer<S> {
                     | GateType::MeasureFree
                     | GateType::PZ
                     | GateType::QAlloc
-                    | GateType::MeasCrosstalkLocalPayload
                     | GateType::MeasCrosstalkGlobalPayload
+                    | GateType::MeasCrosstalkLocalPayload
             )
     }
 

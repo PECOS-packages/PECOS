@@ -20,6 +20,7 @@ env:
   RUSTFLAGS: -C debuginfo=0
   LLVM_VERSION: "21.1"
   LLVM_RELEASE_VERSION: "21.1.8"
+  CARGO_NET_RETRY: "10"
 
 jobs:
   extended-semantics:

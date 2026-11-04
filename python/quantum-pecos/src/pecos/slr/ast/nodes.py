@@ -368,6 +368,7 @@ class AllocatorDecl(Declaration):
     name: str
     capacity: int
     parent: str | None = None  # Name of parent allocator
+    offset: int | None = None  # Required first slot within parent; None or zero for roots
 
 
 @dataclass(frozen=True, kw_only=True)

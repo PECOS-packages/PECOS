@@ -255,3 +255,20 @@ Source-annotated flat lowering retains its separate provenance boundary.
 The shared [timing and noise contract](scheduled-idle-simulation.md#timing-and-noise-contract)
 applies to every scheduled consumer: use native timestamps without rescheduling.
 Explicit source barriers and terminal draining still apply.
+
+## Encoded input snapshots
+
+Python adapters can call `batch.to_bytes()` to obtain an owned `bytes` value
+containing exactly one original batch in the existing checked v7 transport.
+Native extensions can decode it with `pecos_engines::scheduled_events::decode_event_batches`.
+The snapshot preserves timing, batch and shot IDs, custom event order and payloads,
+exact native angle bits, and both measurement identity namespaces. It remains valid
+after the callback returns. Encoding applies the transport's field and size checks
+and raises `ValueError` on invalid input.
+
+This accessor is optional; existing operation and measurement list accessors are
+unchanged. It does not cache callbacks or validation, alter batch boundaries, or
+accept encoded adapter output. Adapters must still independently validate each
+input and return the existing checked output list. Native angle bits can retain
+more precision than converting the Python gate angle floats back to native angles;
+consumers migrating from that conversion must choose and test their rounding semantics.

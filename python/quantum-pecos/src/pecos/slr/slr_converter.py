@@ -330,6 +330,7 @@ class SlrConverter:
         Note:
             - QuantumCircuit's parallel gate structure is preserved
             - Assumes standard gate names from PECOS
+            - qvars and qvar_spec metadata, when present, give the quantum registers
         """
         try:
             from pecos.slr.converters.from_quantum_circuit import quantum_circuit_to_slr

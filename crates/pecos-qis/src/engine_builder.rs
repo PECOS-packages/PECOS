@@ -11,6 +11,8 @@ use std::path::{Path, PathBuf};
 pub struct QisEngineBuilder {
     runtime: Option<Box<dyn crate::runtime::QisRuntime>>,
     decoder_factory: Option<crate::runtime_decoder::RuntimeDecoderFactory>,
+    decoder_batch_capture: bool,
+    decoder_control_capture: bool,
     scheduled_transport: ScheduledTransport,
     interface: Option<OperationCollector>,
     interface_builder: Option<Box<dyn crate::program::QisInterfaceBuilder>>,
@@ -23,6 +25,8 @@ impl Clone for QisEngineBuilder {
     fn clone(&self) -> Self {
         Self {
             decoder_factory: self.decoder_factory.clone(),
+            decoder_batch_capture: self.decoder_batch_capture,
+            decoder_control_capture: self.decoder_control_capture,
             scheduled_transport: self.scheduled_transport,
             runtime: self.runtime.as_ref().map(|r| dyn_clone::clone_box(&**r)),
             interface: self.interface.clone(),
@@ -45,6 +49,8 @@ impl QisEngineBuilder {
         Self {
             runtime: None,
             decoder_factory: None,
+            decoder_batch_capture: false,
+            decoder_control_capture: false,
             scheduled_transport: ScheduledTransport::Off,
             interface: None,
             interface_builder: None,
@@ -62,6 +68,23 @@ impl QisEngineBuilder {
         factory: crate::runtime_decoder::RuntimeDecoderFactory,
     ) -> Self {
         self.decoder_factory = Some(factory);
+        self
+    }
+
+    /// Give observed decoder sessions a bounded runtime-emitted prefix.
+    /// Only the ordinary dynamic native path is supported; scheduled transport
+    /// has its own batch execution contract and is rejected here.
+    #[must_use]
+    pub fn decoder_batch_capture(mut self, enabled: bool) -> Self {
+        self.decoder_batch_capture = enabled;
+        self
+    }
+
+    /// Instrument the supported LLVM subset for compiler-owned control provenance.
+    /// Requires batch capture and observed decoding; unsupported programs reject.
+    #[must_use]
+    pub fn decoder_control_capture(mut self, enabled: bool) -> Self {
+        self.decoder_control_capture = enabled;
         self
     }
 
@@ -331,7 +354,7 @@ impl ClassicalControlEngineBuilder for QisEngineBuilder {
         log::debug!("QisEngineBuilder::build() called");
 
         // Check that a runtime was provided
-        let runtime = self.runtime.ok_or_else(|| {
+        let mut runtime = self.runtime.ok_or_else(|| {
             PecosError::Processing(
                 "No runtime specified. Please provide a runtime using .runtime().\n\
                 Reference runtime:\n\
@@ -341,6 +364,24 @@ impl ClassicalControlEngineBuilder for QisEngineBuilder {
             )
         })?;
 
+        if self.decoder_control_capture && !self.decoder_batch_capture {
+            return Err(PecosError::Input(
+                "compiler control provenance requires batch capture".into(),
+            ));
+        }
+        if self.decoder_batch_capture {
+            if self.decoder_factory.is_none()
+                || self.scheduled_transport.enabled()
+                || self.program_source.is_none()
+                || self.interface_builder.is_none()
+                || !runtime.uses_native_runtime_protocol()
+            {
+                return Err(PecosError::Input("decoder batch provenance requires a decoder and ordinary dynamic native execution".into()));
+            }
+            runtime
+                .enable_decoder_batch_capture()
+                .map_err(|e| PecosError::Input(e.to_string()))?;
+        }
         // Dynamic execution: when we have a program source and interface builder,
         // always use dynamic execution which properly handles measurement-dependent conditionals
         if let Some(program_source) = &self.program_source
@@ -350,13 +391,26 @@ impl ClassicalControlEngineBuilder for QisEngineBuilder {
                 "Creating dynamic interface from program source ({} bytes)",
                 program_source.len()
             );
-            let qis_prog = pecos_programs::Qis::from_string(program_source);
+            let (compiled_source, manifest) = if self.decoder_control_capture {
+                let (source, manifest) = crate::control_provenance::instrument(program_source)
+                    .map_err(|error| PecosError::Input(error.to_string()))?;
+                (source, Some(manifest))
+            } else {
+                (program_source.clone(), None)
+            };
+            let qis_prog = pecos_programs::Qis::from_string(&compiled_source);
             let dynamic_interface = builder.create_dynamic_interface_from_qis(qis_prog)?;
             log::debug!("Dynamic interface created successfully");
 
             let mut engine = QisEngine::new(dynamic_interface, runtime);
             engine.scheduled_transport = self.scheduled_transport;
             engine.decoder_factory = self.decoder_factory;
+            engine.control_state = manifest.map(crate::control_provenance::ControlState::new);
+            engine.decoder_input_mode = if self.decoder_batch_capture {
+                crate::runtime_decoder::DecoderInputMode::RuntimeBatches
+            } else {
+                crate::runtime_decoder::DecoderInputMode::Program
+            };
             if let Some(trace_dir) = self.operation_trace_dir {
                 engine.set_operation_trace_dir(trace_dir);
             }
@@ -365,7 +419,7 @@ impl ClassicalControlEngineBuilder for QisEngineBuilder {
             }
 
             // Store the builder and program source so clones can recreate their interfaces
-            engine.set_dynamic_config(dyn_clone::clone_box(&**builder), program_source);
+            engine.set_dynamic_config(dyn_clone::clone_box(&**builder), &compiled_source);
 
             log::debug!(
                 "Dynamic engine created, interface present: {}",

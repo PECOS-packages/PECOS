@@ -515,9 +515,10 @@ jobs:
           - runner: macos-15-intel
             os: macos-15-intel
             architecture: x86_64
-          # Build on macOS 15, then exercise the arm64 wheel on the oldest
-          # standard macOS runner still available from GitHub.
-          - runner: macos-14
+          # macOS 15 is both the arm64 build host and the oldest standard arm64
+          # runner GitHub still offers. The wheel's macOS 13 floor is enforced
+          # at build time by --maximum-version, not by running it there.
+          - runner: macos-15
             os: macos-15
             architecture: aarch64
     steps:

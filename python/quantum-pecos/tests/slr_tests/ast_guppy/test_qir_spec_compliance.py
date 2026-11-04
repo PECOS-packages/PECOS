@@ -130,8 +130,8 @@ _EXPECTED_BUILD_FAILED: dict[str, tuple[str, str]] = {
     #    -- that would defeat the guard). `docs.prep_basis_x` moved
     #    BUILD_FAILED -> QIS_OK (now a clean `PX` program; re-pinned
     #    from the actual `_qir_state()`, never guessed).
-    "docs.inline_measure_creg": ("NotImplementedError", "was not declared at Main scope"),
-    "docs.surface_syndrome_block18": ("NotImplementedError", "was not declared at Main scope"),
+    "docs.inline_measure_creg": ("ValueError", "was not declared at Main scope"),
+    "docs.surface_syndrome_block18": ("ValueError", "was not declared at Main scope"),
     # The "XYZ" generic_check programs (use `CY`) were
     # BUILD_FAILED on `gate 'CY' has no QIR lowering`. A verified CY
     # decomposition (CY = Sdg(t); CX; S(t)) was added, so

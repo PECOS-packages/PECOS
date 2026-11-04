@@ -421,6 +421,8 @@ struct PendingMeasurements {
 /// This allows conditionals that depend on measurement results to work correctly.
 pub struct QisEngine {
     pub(crate) decoder_factory: Option<crate::runtime_decoder::RuntimeDecoderFactory>,
+    pub(crate) decoder_input_mode: crate::runtime_decoder::DecoderInputMode,
+    pub(crate) control_state: Option<crate::control_provenance::ControlState>,
     decoder_session: Option<Box<dyn crate::runtime_decoder::RuntimeDecoderSession>>,
     pending_decode: Option<crate::runtime_decoder::PendingDecode>,
     next_decode_instance: u64,
@@ -628,6 +630,8 @@ impl QisEngine {
 
         Self {
             decoder_factory: None,
+            decoder_input_mode: crate::runtime_decoder::DecoderInputMode::Program,
+            control_state: None,
             decoder_session: None,
             pending_decode: None,
             next_decode_instance: 0,
@@ -738,6 +742,8 @@ impl QisEngine {
     pub fn with_runtime(runtime: Box<dyn QisRuntime>) -> Self {
         Self {
             decoder_factory: None,
+            decoder_input_mode: crate::runtime_decoder::DecoderInputMode::Program,
+            control_state: None,
             decoder_session: None,
             pending_decode: None,
             next_decode_instance: 0,
@@ -1143,6 +1149,13 @@ impl QisEngine {
         &mut self,
         ops: &[Operation],
     ) -> Result<LoweredCommandBatch, PecosError> {
+        let controlled;
+        let ops = if let Some(control) = &mut self.control_state {
+            controlled = control.filter(ops)?;
+            controlled.as_slice()
+        } else {
+            ops
+        };
         // A decoder call is the final synchronous request in this exported
         // prefix. Submit preceding physical work normally, retaining the request
         // until all ready runtime batches and their feedback have been processed.
@@ -1167,6 +1180,7 @@ impl QisEngine {
                         instance_id,
                         syndrome,
                         context,
+                        observed_reads,
                     },
                 result_id: Some(id),
             } = &ops[index]
@@ -1175,14 +1189,19 @@ impl QisEngine {
                     "decoder request requires dynamic execution".into(),
                 ));
             };
-            if *id != pecos_qis_ffi_types::RUNTIME_REQUEST_RESULT_ID
-                || *instance_id != self.next_decode_instance
-                || syndrome.len() > pecos_qis_ffi_types::MAX_RUNTIME_DETECTORS
+            if *id != pecos_qis_ffi_types::RUNTIME_REQUEST_RESULT_ID {
+                return Err(PecosError::Input("invalid decoder response slot".into()));
+            }
+            if *instance_id != self.next_decode_instance {
+                return Err(PecosError::Input(format!(
+                    "invalid decoder instance sequence: expected {}, received {instance_id}",
+                    self.next_decode_instance
+                )));
+            }
+            if syndrome.len() > pecos_qis_ffi_types::MAX_RUNTIME_DETECTORS
                 || syndrome.iter().any(|&bit| bit > 1)
             {
-                return Err(PecosError::Input(
-                    "invalid decoder response slot, instance sequence or syndrome".into(),
-                ));
+                return Err(PecosError::Input("invalid decoder syndrome".into()));
             }
             if let Some(context) = context
                 && (context.is_empty()
@@ -1191,11 +1210,20 @@ impl QisEngine {
             {
                 return Err(PecosError::Input("invalid decoder context envelope".into()));
             }
+            if let Some(reads) = observed_reads {
+                if context.is_none() {
+                    return Err(PecosError::Input(
+                        "observed decoding requires context v1".into(),
+                    ));
+                }
+                pecos_qis_ffi_types::validate_observed_reads(reads).map_err(PecosError::Input)?;
+            }
             self.pending_decode = Some(crate::runtime_decoder::PendingDecode {
                 window: *window_id,
                 instance: *instance_id,
                 syndrome: syndrome.clone(),
                 context: context.clone(),
+                observed_reads: observed_reads.clone(),
             });
             &ops[..index]
         } else {
@@ -1402,6 +1430,11 @@ impl Clone for QisEngine {
 
         Self {
             decoder_factory: self.decoder_factory.clone(),
+            decoder_input_mode: self.decoder_input_mode,
+            control_state: self
+                .control_state
+                .as_ref()
+                .map(crate::control_provenance::ControlState::fresh),
             decoder_session: None,
             pending_decode: None,
             next_decode_instance: 0,
@@ -1981,7 +2014,48 @@ impl QisEngine {
             }
             let request = self.pending_decode.take().expect("pending decode");
             let session = self.decoder_session.as_mut().expect("decoder session");
-            let response = if let Some(context) = request.context {
+            let response = if self.decoder_input_mode
+                == crate::runtime_decoder::DecoderInputMode::RuntimeBatches
+            {
+                let reads = request.observed_reads.as_deref().ok_or_else(|| {
+                    PecosError::Input(
+                        "decoder batch provenance requires observed decode calls".into(),
+                    )
+                })?;
+                let prefix = self
+                    .runtime
+                    .take_decoder_batches()
+                    .map_err(|e| PecosError::Input(e.to_string()))?;
+                if let Some(control) = &mut self.control_state {
+                    let snapshot = control.take(&prefix)?;
+                    session.decode_observed_with_control_v1(
+                        request.window,
+                        request.instance,
+                        &request.syndrome,
+                        request.context.as_deref().expect("validated context"),
+                        reads,
+                        &prefix,
+                        &snapshot,
+                    )?
+                } else {
+                    session.decode_observed_with_batches_v1(
+                        request.window,
+                        request.instance,
+                        &request.syndrome,
+                        request.context.as_deref().expect("validated context"),
+                        reads,
+                        &prefix,
+                    )?
+                }
+            } else if let Some(reads) = request.observed_reads {
+                session.decode_observed_v1(
+                    request.window,
+                    request.instance,
+                    &request.syndrome,
+                    request.context.as_deref().expect("validated context"),
+                    &reads,
+                )?
+            } else if let Some(context) = request.context {
                 session.decode_v1(
                     request.window,
                     request.instance,
@@ -2496,6 +2570,10 @@ impl QisEngine {
             return Err(error);
         }
         self.decoder_session = None;
+        self.control_state = self
+            .control_state
+            .as_ref()
+            .map(crate::control_provenance::ControlState::fresh);
         self.pending_decode = None;
         self.next_decode_instance = 0;
         self.reset_failure = None;
@@ -2854,6 +2932,10 @@ impl ControlEngine for QisEngine {
             ));
         }
         self.decoder_session = None;
+        self.control_state = self
+            .control_state
+            .as_ref()
+            .map(crate::control_provenance::ControlState::fresh);
         self.pending_decode = None;
         self.next_decode_instance = 0;
         self.shot_lifecycle = ShotLifecycle::Running;

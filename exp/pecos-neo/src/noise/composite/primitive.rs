@@ -1982,13 +1982,13 @@ mod tests {
         );
 
         // Set gate context to H (should not trigger)
-        ctx.set_current_gate(GateType::H, &[], 1);
+        ctx.set_current_gate(GateType::H, &[], std::num::NonZeroUsize::MIN);
         let response = noise.apply(QubitId(0), &mut ctx, &mut rng);
         assert!(response.is_none());
         ctx.clear_current_gate();
 
         // Set gate context to CX (should always trigger)
-        ctx.set_current_gate(GateType::CX, &[], 2);
+        ctx.set_current_gate(GateType::CX, &[], std::num::NonZeroUsize::new(2).unwrap());
         let response = noise.apply(QubitId(0), &mut ctx, &mut rng);
         assert!(!response.is_none());
         let gates = response.collect_gates();
@@ -2007,8 +2007,8 @@ mod tests {
         ] {
             let mut positive = make_test_context();
             let mut negative = make_test_context();
-            positive.set_current_gate(GateType::RZ, &[angle], 1);
-            negative.set_current_gate(GateType::RZ, &[-angle], 1);
+            positive.set_current_gate(GateType::RZ, &[angle], std::num::NonZeroUsize::MIN);
+            negative.set_current_gate(GateType::RZ, &[-angle], std::num::NonZeroUsize::MIN);
             let p = (noise.probability_fn)(positive.current_gate()).get();
             let n = (noise.probability_fn)(negative.current_gate()).get();
             assert_eq!(p, n);
@@ -2036,7 +2036,11 @@ mod tests {
         );
 
         // Half turn angle should always trigger
-        ctx.set_current_gate(GateType::RZ, &[Angle64::HALF_TURN], 1);
+        ctx.set_current_gate(
+            GateType::RZ,
+            &[Angle64::HALF_TURN],
+            std::num::NonZeroUsize::MIN,
+        );
         let mut triggered = 0;
         for _ in 0..100 {
             let response = noise.apply(QubitId(0), &mut ctx, &mut rng);
@@ -2052,7 +2056,11 @@ mod tests {
         ctx.clear_current_gate();
 
         // Quarter turn should trigger ~50%
-        ctx.set_current_gate(GateType::RZ, &[Angle64::QUARTER_TURN], 1);
+        ctx.set_current_gate(
+            GateType::RZ,
+            &[Angle64::QUARTER_TURN],
+            std::num::NonZeroUsize::MIN,
+        );
         triggered = 0;
         for _ in 0..1000 {
             let response = noise.apply(QubitId(0), &mut ctx, &mut rng);

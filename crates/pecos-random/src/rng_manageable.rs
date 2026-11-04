@@ -18,8 +18,6 @@
 //! - [`time_seed`]: A function for generating a seed from system time
 
 use crate::{PecosRng, Rng, SeedableRng};
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Derive a new seed from a base seed and a purpose string.
@@ -35,6 +33,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// # Returns
 /// A new seed value derived from the base seed and purpose
 ///
+/// The purpose is hashed with a fixed SipHash-1-3, so derived seeds do not
+/// depend on the Rust release.
+///
 /// # Example
 ///
 /// ```
@@ -49,17 +50,78 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// ```
 #[must_use]
 pub fn derive_seed(base_seed: u64, purpose: &str) -> u64 {
-    // Create a purpose-specific seed by hashing the purpose string
-    let mut purpose_hasher = DefaultHasher::new();
-    purpose.hash(&mut purpose_hasher);
-    let purpose_hash = purpose_hasher.finish();
-
     // Combine the base seed with the purpose hash
-    let combined_seed = base_seed.wrapping_add(purpose_hash);
+    let combined_seed = base_seed.wrapping_add(purpose_hash(purpose));
 
     // Use the combined seed to initialize an RNG and get a random number
     let mut rng = PecosRng::seed_from_u64(combined_seed);
     rng.next_u64()
+}
+
+/// Hash a purpose string for [`derive_seed`].
+///
+/// SipHash-1-3 with zero keys over the string's bytes followed by `0xFF`
+/// (Aumasson and Bernstein, "`SipHash`: a fast short-input PRF", INDOCRYPT 2012).
+/// This is what `std::hash::DefaultHasher::new()` computed for a `str` when it
+/// replaced that hasher here, so existing derived seeds keep their values. Unlike
+/// `DefaultHasher`, whose algorithm the standard library leaves unspecified across
+/// releases, it never changes.
+fn purpose_hash(purpose: &str) -> u64 {
+    fn sip_round(v: &mut [u64; 4]) {
+        v[0] = v[0].wrapping_add(v[1]);
+        v[1] = v[1].rotate_left(13) ^ v[0];
+        v[0] = v[0].rotate_left(32);
+        v[2] = v[2].wrapping_add(v[3]);
+        v[3] = v[3].rotate_left(16) ^ v[2];
+        v[0] = v[0].wrapping_add(v[3]);
+        v[3] = v[3].rotate_left(21) ^ v[0];
+        v[2] = v[2].wrapping_add(v[1]);
+        v[1] = v[1].rotate_left(17) ^ v[2];
+        v[2] = v[2].rotate_left(32);
+    }
+
+    // Initial state for the all-zero key: the ASCII of "somepseudorandomlygeneratedbytes".
+    let mut v: [u64; 4] = [
+        0x736f_6d65_7073_6575,
+        0x646f_7261_6e64_6f6d,
+        0x6c79_6765_6e65_7261,
+        0x7465_6462_7974_6573,
+    ];
+    let mut compress = |m: u64| {
+        v[3] ^= m;
+        sip_round(&mut v);
+        v[0] ^= m;
+    };
+
+    let bytes = purpose.as_bytes();
+    let (blocks, remainder) = bytes.as_chunks::<8>();
+    for block in blocks {
+        compress(u64::from_le_bytes(*block));
+    }
+
+    // The leftover bytes (at most 7) as a little-endian word, built with shifts.
+    let mut tail = 0u64;
+    for (i, &byte) in remainder.iter().enumerate() {
+        tail |= u64::from(byte) << (8 * i);
+    }
+
+    // The 0xFF terminator follows the leftover bytes, and the final block carries
+    // the total length (string plus terminator) mod 256 in its top byte. Seven
+    // leftover bytes plus the terminator fill a whole block, leaving the final
+    // block with only the length.
+    let total_len = (bytes.len() as u64).wrapping_add(1);
+    if remainder.len() == 7 {
+        compress(tail | (0xFF << 56));
+        compress(total_len << 56);
+    } else {
+        compress(tail | (0xFF << (8 * remainder.len())) | (total_len << 56));
+    }
+
+    v[2] ^= 0xFF;
+    for _ in 0..3 {
+        sip_round(&mut v);
+    }
+    v[0] ^ v[1] ^ v[2] ^ v[3]
 }
 
 /// Generate a seed from the current system time.

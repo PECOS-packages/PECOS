@@ -58,11 +58,19 @@ EventHandlers::new().on_before_gate(|ctx| {
 | Method | When it fires |
 |--------|---------------|
 | `on_before_gate` | Before a gate executes |
-| `on_after_gate` | After a gate executes |
+| `on_after_gate` | After a queue command with at least one retained group, or empty operands; `qubits` can be empty |
 | `on_before_measurement` | Before a measurement |
 | `on_after_measurement` | After a measurement (outcomes available) |
 | `on_after_preparation` | After state preparation |
 | `on_idle` | During idle time |
+
+Gate hooks do not run for adapted execution. After-gate `qubits` contains only
+executed groups; `leaked_suppressed` contains complete groups skipped while
+leaked immediately after before-gate dispatch. Commands with only dropped groups
+do not call the hook. Handler `MarkLeaked` and `MarkUnleaked` responses update
+the noise context and notify observers once per mark. Before-gate marks are
+visible to noise channels in that dispatch. A mark without a noise model returns
+an error explaining that a noise model must be added.
 
 All hooks have a `_with_priority` variant for controlling execution order
 (higher priority runs first).

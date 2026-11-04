@@ -172,7 +172,8 @@ impl Condition for GateTypeIs {
 /// Condition: the OTHER qubit in a two-qubit gate is leaked.
 ///
 /// This is used to apply partner depolarizing: when one qubit of a 2Q gate
-/// is leaked, the non-leaked partner should receive depolarizing noise.
+/// is leaked, an explicitly configured model can depolarize the healthy partner.
+/// `LeakageChannel` leaves partner noise off by default.
 ///
 /// Returns `false` if:
 /// - This is not a two-qubit gate

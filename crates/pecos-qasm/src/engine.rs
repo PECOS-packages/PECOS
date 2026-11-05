@@ -965,7 +965,7 @@ impl QASMEngine {
         c_index: usize,
     ) -> Result<(), PecosError> {
         let physical_qubit = qubit;
-        let c_register_name = if c_reg.is_empty() { "c" } else { c_reg };
+        let c_register_name = c_reg;
 
         // Validate classical register bounds
         if let Some(qasm_program) = &self.program {
@@ -1204,12 +1204,11 @@ impl QASMEngine {
                             }
                             Operation::ClassicalAssignment {
                                 target,
-                                is_indexed,
                                 index,
                                 expression,
                             } => {
                                 // Get the destination width for function results
-                                let target_width = if *is_indexed {
+                                let target_width = if index.is_some() {
                                     1 // Single bit assignment
                                 } else {
                                     program
@@ -1224,11 +1223,9 @@ impl QASMEngine {
                                     target_width,
                                 )?;
 
-                                if *is_indexed {
-                                    if let Some(idx) = *index {
-                                        let bit_value = value_expr.as_bool();
-                                        self.update_register_bit(target, idx, u8::from(bit_value))?;
-                                    }
+                                if let Some(idx) = *index {
+                                    let bit_value = value_expr.as_bool();
+                                    self.update_register_bit(target, idx, u8::from(bit_value))?;
                                 } else {
                                     // The checked target width above is the register size.
                                     let result_bitvec = pecos_core::bitvec::from_expr_value(
@@ -1293,14 +1290,13 @@ impl QASMEngine {
                 }
                 Operation::ClassicalAssignment {
                     target,
-                    is_indexed,
                     index,
                     expression,
                 } => {
                     debug!("Processing classical assignment: {target} = {expression:?}");
 
                     // Get the destination width for function results
-                    let target_width = if *is_indexed {
+                    let target_width = if index.is_some() {
                         1 // Single bit assignment
                     } else {
                         program
@@ -1313,11 +1309,9 @@ impl QASMEngine {
                     let value_expr =
                         self.evaluate_expression_bitvec_with_width(expression, target_width)?;
 
-                    if *is_indexed {
-                        if let Some(idx) = *index {
-                            let bit_value = value_expr.as_bool();
-                            self.update_register_bit(target, idx, u8::from(bit_value))?;
-                        }
+                    if let Some(idx) = *index {
+                        let bit_value = value_expr.as_bool();
+                        self.update_register_bit(target, idx, u8::from(bit_value))?;
                     } else {
                         // The checked target width above is the register size.
                         let result_bitvec =
@@ -2022,3 +2016,6 @@ mod tests {
 #[cfg(test)]
 #[path = "engine/expression_tests.rs"]
 mod expression_tests;
+
+#[cfg(test)]
+mod program_validation_tests;

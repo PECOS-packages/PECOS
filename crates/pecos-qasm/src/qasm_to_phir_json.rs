@@ -248,13 +248,12 @@ fn convert_op(
 
         Operation::ClassicalAssignment {
             target,
-            is_indexed,
             index,
             expression,
         } => {
             let expr = convert_expr(expression)?;
-            let returns = if *is_indexed {
-                json!([[target, index.unwrap_or(0)]])
+            let returns = if let Some(index) = index {
+                json!([[target, index]])
             } else {
                 json!([target])
             };

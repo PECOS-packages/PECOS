@@ -94,7 +94,7 @@ pub enum Operation {
     /// Classical assignment operation
     ClassicalAssignment {
         target: String,
-        is_indexed: bool,
+        /// `None` assigns the whole register; `Some(index)` assigns one bit.
         index: Option<usize>,
         expression: Expression,
     },
@@ -166,12 +166,11 @@ impl fmt::Display for Operation {
             }
             Operation::ClassicalAssignment {
                 target,
-                is_indexed,
                 index,
                 expression,
-            } => match (*is_indexed, index) {
-                (true, Some(idx)) => write!(f, "{target}[{idx}] = {expression}"),
-                _ => write!(f, "{target} = {expression}"),
+            } => match index {
+                Some(idx) => write!(f, "{target}[{idx}] = {expression}"),
+                None => write!(f, "{target} = {expression}"),
             },
             Operation::OpaqueGate {
                 name,
@@ -427,6 +426,7 @@ impl Expression {
                     "-" => Ok(left_val - right_val),
                     "*" => Ok(left_val * right_val),
                     "/" => Ok(left_val / right_val),
+                    "%" => Ok(left_val % right_val),
                     "**" => Ok(left_val.powf(right_val)),
                     "&" | "|" | "^" | "<<" | ">>" => {
                         Err(PecosError::ParseInvalidExpression(format!(
@@ -434,7 +434,7 @@ impl Expression {
                         )))
                     }
                     _ => Err(PecosError::ParseInvalidExpression(format!(
-                        "Operation '{op}' is not supported in gate parameter expressions. Only +, -, *, /, ** are allowed."
+                        "Operation '{op}' is not supported in gate parameter expressions. Only +, -, *, /, %, ** are allowed."
                     ))),
                 }
             }

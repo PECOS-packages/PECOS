@@ -315,7 +315,8 @@ impl QASMParser {
             }
         }
 
-        program.validate_classical_references()?;
+        // Statements and gate definitions validate their own references. Register
+        // declarations cannot replace earlier declarations and invalidate those checks.
         Ok(program)
     }
 

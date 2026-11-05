@@ -454,9 +454,11 @@ fn fuzz_circuit_with_tol(num_qubits: usize, num_gates: usize, seed: u64, tol: f6
 
     for _ in 0..num_gates {
         let gate_type = next_rng(&mut rng_state) % 8;
-        let q0 = (next_rng(&mut rng_state) % num_qubits as u64) as usize;
+        let q0 = usize::try_from(next_rng(&mut rng_state) % num_qubits as u64)
+            .expect("remainder is below the usize qubit count");
         let q1 = loop {
-            let q = (next_rng(&mut rng_state) % num_qubits as u64) as usize;
+            let q = usize::try_from(next_rng(&mut rng_state) % num_qubits as u64)
+                .expect("remainder is below the usize qubit count");
             if q != q0 {
                 break q;
             }
@@ -537,9 +539,11 @@ fn fuzz_circuit_with_tol(num_qubits: usize, num_gates: usize, seed: u64, tol: f6
         };
         for step in 0..num_gates {
             let gt = next2(&mut rng2) % 8;
-            let q0s = (next2(&mut rng2) % num_qubits as u64) as usize;
+            let q0s = usize::try_from(next2(&mut rng2) % num_qubits as u64)
+                .expect("remainder is below the usize qubit count");
             let q1s = loop {
-                let q = (next2(&mut rng2) % num_qubits as u64) as usize;
+                let q = usize::try_from(next2(&mut rng2) % num_qubits as u64)
+                    .expect("remainder is below the usize qubit count");
                 if q != q0s {
                     break q;
                 }
@@ -961,9 +965,11 @@ fn test_debug_seed_502() {
 
     for step in 0..num_gates {
         let gate_type = next_rng(&mut rng_state) % 8;
-        let q0 = (next_rng(&mut rng_state) % num_qubits as u64) as usize;
+        let q0 = usize::try_from(next_rng(&mut rng_state) % num_qubits as u64)
+            .expect("remainder is below the usize qubit count");
         let q1 = loop {
-            let q = (next_rng(&mut rng_state) % num_qubits as u64) as usize;
+            let q = usize::try_from(next_rng(&mut rng_state) % num_qubits as u64)
+                .expect("remainder is below the usize qubit count");
             if q != q0 {
                 break q;
             }
@@ -1547,9 +1553,11 @@ fn measurement_probability_check(num_qubits: usize, num_gates: usize, seed: u64)
 
     for _ in 0..num_gates {
         let gate_type = next_rng(&mut rng_state) % 8;
-        let q0 = (next_rng(&mut rng_state) % num_qubits as u64) as usize;
+        let q0 = usize::try_from(next_rng(&mut rng_state) % num_qubits as u64)
+            .expect("remainder is below the usize qubit count");
         let q1 = loop {
-            let q = (next_rng(&mut rng_state) % num_qubits as u64) as usize;
+            let q = usize::try_from(next_rng(&mut rng_state) % num_qubits as u64)
+                .expect("remainder is below the usize qubit count");
             if q != q0 {
                 break q;
             }
@@ -2042,9 +2050,11 @@ fn fuzz_with_rzz(num_qubits: usize, num_gates: usize, seed: u64) {
 
     for _ in 0..num_gates {
         let gate_type = next_rng(&mut rng_state) % 10; // expanded set includes rzz
-        let q0 = (next_rng(&mut rng_state) % num_qubits as u64) as usize;
+        let q0 = usize::try_from(next_rng(&mut rng_state) % num_qubits as u64)
+            .expect("remainder is below the usize qubit count");
         let q1 = loop {
-            let q = (next_rng(&mut rng_state) % num_qubits as u64) as usize;
+            let q = usize::try_from(next_rng(&mut rng_state) % num_qubits as u64)
+                .expect("remainder is below the usize qubit count");
             if q != q0 {
                 break q;
             }
@@ -2251,14 +2261,17 @@ fn seeded_clifford_t_circuit(
     for _ in 0..t_count {
         for _ in 0..3 {
             let gate_type = next_seeded_gate_choice(&mut state) % 3;
-            let q0 = (next_seeded_gate_choice(&mut state) % num_qubits as u64) as usize;
+            let q0 = usize::try_from(next_seeded_gate_choice(&mut state) % num_qubits as u64)
+                .expect("remainder is below the usize qubit count");
             match gate_type {
                 0 => gates.push(SeededCliffordTGate::H(q0)),
                 1 => gates.push(SeededCliffordTGate::Sz(q0)),
                 _ => {
                     let q1 = loop {
-                        let candidate =
-                            (next_seeded_gate_choice(&mut state) % num_qubits as u64) as usize;
+                        let candidate = usize::try_from(
+                            next_seeded_gate_choice(&mut state) % num_qubits as u64,
+                        )
+                        .expect("remainder is below the usize qubit count");
                         if candidate != q0 {
                             break candidate;
                         }
@@ -2267,7 +2280,8 @@ fn seeded_clifford_t_circuit(
                 }
             }
         }
-        let target = (next_seeded_gate_choice(&mut state) % num_qubits as u64) as usize;
+        let target = usize::try_from(next_seeded_gate_choice(&mut state) % num_qubits as u64)
+            .expect("remainder is below the usize qubit count");
         gates.push(SeededCliffordTGate::T(target));
 
         // Exercise correction timing across a target-qubit basis change.
@@ -3781,9 +3795,11 @@ fn fuzz_with_tdg(num_qubits: usize, num_gates: usize, seed: u64) {
 
     for _ in 0..num_gates {
         let gate_type = next_rng(&mut rng_state) % 10;
-        let q0 = (next_rng(&mut rng_state) % num_qubits as u64) as usize;
+        let q0 = usize::try_from(next_rng(&mut rng_state) % num_qubits as u64)
+            .expect("remainder is below the usize qubit count");
         let q1 = loop {
-            let q = (next_rng(&mut rng_state) % num_qubits as u64) as usize;
+            let q = usize::try_from(next_rng(&mut rng_state) % num_qubits as u64)
+                .expect("remainder is below the usize qubit count");
             if q != q0 {
                 break q;
             }
@@ -4539,7 +4555,8 @@ fn test_property_mast_bond_dim_stays_low() {
             rng_state ^= rng_state << 13;
             rng_state ^= rng_state >> 7;
             rng_state ^= rng_state << 17;
-            let q = (rng_state % num_qubits as u64) as usize;
+            let q = usize::try_from(rng_state % num_qubits as u64)
+                .expect("remainder is below the usize qubit count");
             mast.rz(t, &[QubitId(q)]);
         }
 
@@ -4689,7 +4706,8 @@ fn large_scale_bond_dim_check(
         }
         // T gates on random qubits
         for _ in 0..t_per_layer {
-            let q = (next(&mut rng) % num_qubits as u64) as usize;
+            let q = usize::try_from(next(&mut rng) % num_qubits as u64)
+                .expect("remainder is below the usize qubit count");
             stn.rz(t, &[QubitId(q)]);
         }
     }
@@ -4715,7 +4733,8 @@ fn large_scale_bond_dim_check(
             }
         }
         for _ in 0..t_per_layer {
-            let q = (next(&mut rng) % num_qubits as u64) as usize;
+            let q = usize::try_from(next(&mut rng) % num_qubits as u64)
+                .expect("remainder is below the usize qubit count");
             mast.rz(t, &[QubitId(q)]);
         }
     }

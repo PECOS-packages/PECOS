@@ -10,8 +10,8 @@
 // either express or implied. See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Test casts use bounded indices, trial counts, and discrete angles.
-#![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+// Layer indices and shot counts are converted to f64 for angles and frequencies; they stay far below 2^53.
+#![allow(clippy::cast_precision_loss)]
 
 //! Statistical falsifier for the default `StabMps` random-measurement route.
 //!

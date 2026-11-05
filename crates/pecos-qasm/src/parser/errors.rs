@@ -17,11 +17,38 @@ pub fn unknown_register(reg_type: &str, name: &str) -> PecosError {
     invalid_operation(format!("Unknown {reg_type} register: {name}"))
 }
 
+/// Create an error for an undeclared classical register.
+#[must_use]
+pub fn unknown_classical_register(name: &str) -> PecosError {
+    if name == "JOB_shotnum" {
+        return unsupported_shot_number();
+    }
+    invalid_operation(format!(
+        "Unknown classical register: {name}. Declare '{name}' with creg before its first use"
+    ))
+}
+
 /// Create an error for register index out of bounds
 #[must_use]
 pub fn index_out_of_bounds(reg_name: &str, idx: usize, size: usize) -> PecosError {
     invalid_operation(format!(
         "Register index out of bounds: {reg_name}[{idx}] (register size: {size})"
+    ))
+}
+
+/// Create an error for a bit outside a classical register's declaration.
+#[must_use]
+pub fn classical_bit_out_of_bounds(name: &str, index: usize, size: usize) -> PecosError {
+    invalid_operation(format!(
+        "Classical bit '{name}[{index}]' is out of bounds for register size {size}. \
+         Declare '{name}' with creg large enough to contain bit {index}"
+    ))
+}
+
+/// Create an error for a name already used by a register of either kind.
+pub(crate) fn register_already_declared(name: &str, kind: &str) -> PecosError {
+    invalid_operation(format!(
+        "Register '{name}' is already declared as {kind}. Declare each register once, or use a different name"
     ))
 }
 
@@ -53,4 +80,11 @@ pub fn wrong_qubit_count(gate: &str, expected: usize, actual: usize) -> PecosErr
 #[must_use]
 pub fn register_size_mismatch(operation: &str, details: &str) -> PecosError {
     invalid_operation(format!("Register size mismatch in {operation}: {details}"))
+}
+
+/// The Rust engine has no implicit shot-number register.
+pub(crate) fn unsupported_shot_number() -> PecosError {
+    invalid_operation(
+        "JOB_shotnum is not supported: the PECOS Rust QASM engine does not provide the shot-number built-in. Remove the reference to JOB_shotnum",
+    )
 }

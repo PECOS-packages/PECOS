@@ -109,6 +109,7 @@ struct OperandSelection<'a> {
 }
 
 impl OperandSelection<'_> {
+    #[inline]
     fn prepare(self, index: usize, ctx: &mut NoiseContext) -> bool {
         if self.suppressed && !ctx.is_leaked(self.qubits[index]) {
             return false;
@@ -117,7 +118,14 @@ impl OperandSelection<'_> {
             let size = gate.num_qubits;
             let start = index / size * size;
             let end = (start + size).min(self.qubits.len());
-            ctx.set_current_qubit_index(index - start, &self.qubits[start..end]);
+            let group = &self.qubits[start..end];
+            if ctx.select_operand_group(index - start, group) {
+                ctx.set_group_leader(
+                    group
+                        .iter()
+                        .position(|q| !self.suppressed || ctx.is_leaked(*q)),
+                );
+            }
             ctx.set_current_gate_suppressed(self.suppressed);
         }
         true
@@ -127,7 +135,23 @@ impl OperandSelection<'_> {
     fn begin_non_gate_scan(self, ctx: &mut NoiseContext) {
         if ctx.current_gate().is_none() {
             ctx.set_current_qubit_index(0, self.qubits);
+            ctx.set_group_leader(
+                self.qubits
+                    .iter()
+                    .position(|q| !self.suppressed || ctx.is_leaked(*q)),
+            );
         }
+    }
+
+    /// Freeze the stage's leader within the already installed group.
+    fn begin_stage(self, ctx: &mut NoiseContext) {
+        ctx.set_current_member_index(0);
+        ctx.set_current_gate_suppressed(self.suppressed);
+        ctx.set_group_leader(
+            self.qubits
+                .iter()
+                .position(|q| !self.suppressed || ctx.is_leaked(*q)),
+        );
     }
 
     fn select_non_gate_member(index: usize, ctx: &mut NoiseContext) {
@@ -157,9 +181,10 @@ fn apply_two_pass(
             qubits: group,
             suppressed: operands.suppressed,
         };
-        selection.begin_non_gate_scan(ctx);
+        ctx.set_current_qubit_index(0, group);
         // Stage 2 is arbitrary work and runs even when stage 1 selected no members.
         for stage in [1, 2] {
+            selection.begin_stage(ctx);
             for (i, &q) in group.iter().enumerate() {
                 let index = group_start + i;
                 if stage == 1 && !select_stage1(index, rng) {
@@ -199,7 +224,11 @@ fn apply_two_pass(
 ///
 /// When a probability is set via `.with_probability().unwrap()`, the channel uses
 /// geometric sampling for O(n*p) complexity instead of O(n). This enables
-/// efficient processing of millions of qubits:
+/// efficient processing of millions of qubits for primitives such as `pauli()`.
+/// On geometric single-pass non-gate events, primitives declaring
+/// [`Primitive::reads_operands`] install the full operand list before sampling,
+/// adding O(n) setup. Other primitives install no operands and retain O(n*p)
+/// processing. Every sampled member still receives its correct member index.
 ///
 /// - 1M qubits at p=1e-4: ~7 µs (vs ~16 seconds with linear)
 /// - Automatically falls back to linear for high probability or small counts
@@ -332,6 +361,10 @@ impl<P: Primitive> CompositeChannel<P> {
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> NoiseResponse {
+        let two_pass = self.primitive.needs_two_pass();
+        if !two_pass && self.primitive.reads_operands() {
+            operands.begin_non_gate_scan(ctx);
+        }
         let qubits = operands.qubits;
         let sampler = self
             .sampler
@@ -339,7 +372,7 @@ impl<P: Primitive> CompositeChannel<P> {
             .expect("sampler must be set for geometric");
         let indices = sampler.sample_range(0, qubits.len(), rng);
 
-        if self.primitive.needs_two_pass() {
+        if two_pass {
             let outcomes = match event {
                 NoiseEvent::AfterMeasurement { outcomes, .. } => Some(*outcomes),
                 _ => None,
@@ -370,6 +403,7 @@ impl<P: Primitive> CompositeChannel<P> {
             if !operands.prepare(idx, ctx) {
                 continue;
             }
+            OperandSelection::select_non_gate_member(idx, ctx);
 
             // Only set outcome context for measurement events
             if let Some(outcomes) = outcomes
@@ -559,10 +593,11 @@ impl<P: Primitive + Clone + 'static> NoiseChannel for CompositeChannel<P> {
 /// Convert a `CompositeResponse` to a `NoiseResponse`.
 ///
 /// The qubit parameter is used for leak/unleak/flip responses since
-/// `CompositeResponse` doesn't track which qubit is affected (it's applied per-qubit).
+/// ordinary primitive responses are per-qubit. Wrapped channel responses retain their targets.
 fn composite_to_noise_response(response: CompositeResponse, qubit: QubitId) -> NoiseResponse {
     match response {
-        CompositeResponse::None => NoiseResponse::None,
+        CompositeResponse::None | CompositeResponse::SkipGateAlreadyReported => NoiseResponse::None,
+        CompositeResponse::Channel(response) => *response,
         CompositeResponse::SkipGate => NoiseResponse::SkipGate(smallvec![qubit]),
         CompositeResponse::Leak => NoiseResponse::MarkLeaked(smallvec![qubit]),
         CompositeResponse::Unleak => NoiseResponse::MarkUnleaked(smallvec![qubit]),
@@ -905,11 +940,15 @@ impl<P: Primitive> BatchCompositeChannel<P> {
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> NoiseResponse {
+        let two_pass = self.primitive.needs_two_pass();
+        if !two_pass && self.primitive.reads_operands() {
+            operands.begin_non_gate_scan(ctx);
+        }
         let qubits = operands.qubits;
         // Sample indices using geometric distribution (O(n*p))
         let indices = self.sampler.sample_range(0, qubits.len(), rng);
 
-        if self.primitive.needs_two_pass() {
+        if two_pass {
             return apply_two_pass(
                 &self.primitive,
                 operands,
@@ -930,6 +969,7 @@ impl<P: Primitive> BatchCompositeChannel<P> {
             if !operands.prepare(idx, ctx) {
                 continue;
             }
+            OperandSelection::select_non_gate_member(idx, ctx);
             let composite_response = self.primitive.apply(qubit, ctx, rng);
             if !composite_response.is_none() {
                 let noise_response = composite_to_noise_response(composite_response, qubit);
@@ -1323,6 +1363,8 @@ impl<P: Primitive + Clone + 'static> NoiseChannel for CompositeCrosstalkChannel<
             return NoiseResponse::None;
         }
 
+        let enclosing = ctx.enter_event();
+
         // Apply the primitive to each target qubit and combine responses
         let mut combined = NoiseResponse::None;
         for target in targets {
@@ -1330,6 +1372,8 @@ impl<P: Primitive + Clone + 'static> NoiseChannel for CompositeCrosstalkChannel<
             let noise_response = composite_to_noise_response(composite_response, target);
             combined = combined.combine(noise_response);
         }
+
+        ctx.exit_event(enclosing);
 
         combined
     }

@@ -118,8 +118,11 @@ only on currently leaked members.
 The seepage parameter is conditional on an emission fault: its marginal rate is
 `p * emission_ratio * seepage`, where `p` includes angle scaling. Leakage scale
 does not scale seepage. Two-qubit channels share the outer fault and emission
-draws per pair, except through `channel_action` (#1568); composite builders
+draws per pair, including through `channel_action`; composite builders
 preserve the per-qubit marginal rate.
+
+See [channel adapter semantics](noise-channels.md#going-deeper) for stage leaders,
+member-specific sequence stops through guards, and operand-read capabilities.
 
 `SingleQubitChannel` and `TwoQubitChannel` discard a seeping qubit's state by
 sampling I, X, Y or Z uniformly and independently for each seeping qubit. Identity

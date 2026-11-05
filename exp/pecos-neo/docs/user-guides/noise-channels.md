@@ -194,8 +194,37 @@ only on currently leaked members.
 The seepage parameter is conditional on an emission fault: its marginal rate is
 `p * emission_ratio * seepage`, where `p` includes angle scaling. Leakage scale
 does not scale seepage. Two-qubit channels share the outer fault and emission
-draws per pair, except through `channel_action` (#1568); composite builders
+draws per pair, including through `channel_action`; composite builders
 preserve the per-qubit marginal rate.
+
+`channel_action` returns a `ValidationResult` and rejects wrapped channels whose
+`event_kinds()` omit `AfterGate`, naming the channel in the error. It calls the
+wrapped channel's `apply` with a synthesized `AfterGate` event for the operand
+group and runs that channel once per group per stage. The
+leader is the first eligible member at the start of each stage (the first leaked
+member of a suppressed group, otherwise member 0), and remains fixed within that
+stage. Probability and condition guards decide on the leader's invocation. Each
+sequence records wrapped-channel skip targets at the step that returned them.
+After evaluating that step, the sequence stops only for a named member, even if
+a guard on that member bypasses the adapter or an inner sequence. Unnamed members,
+including the leader, continue. Earlier steps and the evaluated step retain their
+effects; later steps do not run on skipped members. Skip targets reach the runner
+only once. This stop guarantee applies to later steps of every enclosing sequence
+for named members. Without an enclosing sequence, guard branches are evaluated
+per member as usual, even for members named in a wrapped skip. Leak and unleak
+marks retain all named targets.
+
+On geometric single-pass non-gate events, `Primitive::reads_operands` opts into
+installing all operands before sampling, independently of whether member 0 is
+sampled. Actions and conditions declare the same capability, and combinators
+forward it from their children. Custom readers using `current_gate_qubits()`,
+`other_qubit()` or partner conditions must declare it; otherwise they see no
+operands on that path. Function conditions opt in with
+`FnCondition::with_operand_reads()`. `channel_action` declares operand reads;
+`pauli()` does not and keeps O(n*p) processing. Linear and two-pass paths always
+install operands once per group, sharing the same list between stages.
+`CompositeChannel` and `BatchCompositeChannel` set member indices on their linear,
+geometric and two-pass paths; crosstalk's per-target loop keeps index 0.
 
 `SingleQubitChannel` and `TwoQubitChannel` discard a seeping qubit's state by
 sampling I, X, Y or Z uniformly and independently for each seeping qubit. Identity

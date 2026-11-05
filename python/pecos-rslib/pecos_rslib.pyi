@@ -2328,8 +2328,11 @@ class TickCircuit:
     def circuit_definitions(self) -> dict[str, Any]:
         """Return measurement-readout definitions resolved to absolute emission positions.
 
-        Detector dictionaries always include ``fault_sector`` (an opaque non-empty string,
-        or ``None`` for an unknown fault sector).
+        Detector dictionaries always include the effective ``fault_sector`` (an opaque
+        non-empty string, or ``None`` when unknown). With ``measurement_classes``, labels
+        are derived from parity-reduced support and explicit labels must agree; the
+        result also includes the validated classes in emission order. Without classes,
+        explicit labels pass through unchanged.
         Observable dictionaries include ``reference`` (integer 0 or 1) when
         metadata supplies a noiseless value, or ``None`` when absent.
         """
@@ -2995,7 +2998,33 @@ class qec:
             p_prep: float,
             **noise_options: Any,
         ) -> qec.DemBuilder: ...
+        def with_circuit_metadata(self, circuit: TickCircuit) -> qec.DemBuilder:
+            """Copy detectors, observables, measurement_classes and num_measurements.
+
+            Absent attributes preserve earlier settings, as do blank detectors,
+            observables and num_measurements strings. A blank measurement_classes
+            string is kept, and build() rejects it as malformed, as it does malformed
+            class JSON. Only attributes are copied, after checking them against the
+            circuit. ValueError is raised for non-string attributes, a circuit that does
+            not convert to a DAG, a count that is invalid or differs from the circuit's,
+            an influence map whose measurement records differ from those of
+            circuit.to_dag_circuit(), malformed detectors or observables, repeated ids,
+            unresolved references, attributes that disagree with annotations on ids,
+            measurements or labels, and annotations whose matching attribute defines
+            nothing. The map check compares only each measurement's node, qubit, basis
+            and id, so a map from another circuit with the same records passes whatever
+            its other gates, as do annotated outputs merged into the map from elsewhere.
+            Build the map from this circuit. Use
+            DetectorErrorModel.from_circuit for circuits defined by annotation alone. A
+            map that already carries annotated observables, from a circuit with no
+            observables attribute, needs the separate setters. Those setters do not check
+            agreement with observables the map carries, so omit those observables.
+            Tracked Pauli annotations are not copied; they reach the DEM only through the
+            influence map.
+            """
+
         def with_detectors_json(self, json: str) -> qec.DemBuilder: ...
+        def with_measurement_classes_json(self, json: str) -> qec.DemBuilder: ...
         def with_observables_json(self, json: str) -> qec.DemBuilder: ...
         def with_num_measurements(self, num: int) -> qec.DemBuilder: ...
         def with_exact_branch_replay_circuit(self, circuit: DagCircuit) -> qec.DemBuilder: ...
@@ -4374,6 +4403,10 @@ def scheduled_idle_z(
 
 class ScheduledEventBatch:
     """Read-only original native batch supplied to a scheduled adapter."""
+
+    def to_bytes(self) -> bytes:
+        """Owned checked v7 message containing this one batch; may raise ValueError."""
+        ...
 
     @property
     def runtime_shot_id(self) -> int: ...

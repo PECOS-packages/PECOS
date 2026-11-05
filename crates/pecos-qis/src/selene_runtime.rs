@@ -378,9 +378,18 @@ pub enum RuntimeClockModel {
     ShotRelative,
 }
 
+/// A validated descriptor and the library that owns all of its callback pointers.
+/// Resolve once per load, as Selene's own runtime interface does. Keeping these
+/// together prevents a retired library from leaving a separately cached table.
+struct LoadedRuntimeLibrary {
+    descriptor: RuntimePluginDescriptorV1,
+    // Retain the existing no-dlclose policy, including explicit retirement.
+    _library: ManuallyDrop<Arc<libloading::Library>>,
+}
+
 /// Selene runtime implementation
 ///
-/// The `library` field is wrapped in `ManuallyDrop` to prevent calling `dlclose()`
+/// The loaded library handle is wrapped in `ManuallyDrop` to prevent calling `dlclose()`
 /// during process exit. Calling `dlclose()` during shutdown can cause hangs because
 /// thread-local storage may already be partially torn down, or other static
 /// destructors may be running concurrently.
@@ -398,10 +407,8 @@ pub struct SeleneRuntime {
     /// Additional dynamic library search directories needed by the plugin.
     library_search_dirs: Vec<PathBuf>,
 
-    /// Loaded library (if any)
-    /// Wrapped in `ManuallyDrop` to prevent `dlclose()` during process exit.
-    #[allow(dead_code)]
-    library: Option<ManuallyDrop<Arc<libloading::Library>>>,
+    /// Loaded library and its validated callback table (if any).
+    library: Option<LoadedRuntimeLibrary>,
 
     /// Runtime instance pointer
     #[allow(dead_code)]
@@ -939,7 +946,7 @@ impl SeleneRuntime {
                     RuntimeError::FfiError("Selene runtime is not initialized".into())
                 })?;
                 unsafe {
-                    let descriptor = Self::runtime_plugin_descriptor(lib)?;
+                    let descriptor = lib.descriptor;
                     self.native_shot.work_submitted = true;
                     self.native_work.submitted();
                     if leakage_aware {
@@ -1070,22 +1077,12 @@ impl SeleneRuntime {
             && let Some(lib) = &self.library
             && let Some(instance) = self.instance
         {
-            // Missing shot_end fails closed like the other lifecycle hooks: the
-            // plugin's own finalization validation is part of what shot
-            // completion certifies.
-            let finalized = unsafe {
-                Self::runtime_plugin_descriptor(lib).and_then(|descriptor| {
-                    let errno = (descriptor.shot_end_fn)(instance);
-                    if errno == 0 {
-                        Ok(())
-                    } else {
-                        Err(RuntimeError::FfiError(format!(
-                            "selene_runtime_shot_end failed with errno {errno}"
-                        )))
-                    }
-                })
-            };
-            if let Err(error) = finalized {
+            // Native finalization is part of what shot completion certifies.
+            let errno = unsafe { (lib.descriptor.shot_end_fn)(instance) };
+            if errno != 0 {
+                let error = RuntimeError::FfiError(format!(
+                    "selene_runtime_shot_end failed with errno {errno}"
+                ));
                 // The active shot is already taken and the plugin may have
                 // finalized part of it, so a retry must not certify the shot:
                 // block every operation until a reset succeeds.
@@ -1528,7 +1525,10 @@ impl SeleneRuntime {
                 ));
             }
 
-            self.library = Some(ManuallyDrop::new(lib));
+            self.library = Some(LoadedRuntimeLibrary {
+                descriptor,
+                _library: ManuallyDrop::new(lib),
+            });
             self.instance = Some(instance);
             self.initialized_num_qubits = Some(plugin_num_qubits);
             self.native_shot.plugin_engaged = true;
@@ -1681,7 +1681,7 @@ impl SeleneRuntime {
             && let Some(instance) = self.instance
         {
             unsafe {
-                if let Some(exit_fn) = Self::runtime_plugin_descriptor(lib)?.exit_fn {
+                if let Some(exit_fn) = lib.descriptor.exit_fn {
                     let errno = exit_fn(instance);
                     if errno != 0 {
                         // Selene ends an instance once exit is called, whatever errno
@@ -1706,10 +1706,6 @@ impl SeleneRuntime {
 
     fn reset_plugin_instance(&mut self) -> Result<()> {
         let exit_result = self.retire_plugin_instance();
-        if self.instance.is_some() {
-            // Descriptor lookup can fail before exit, leaving the instance live.
-            return exit_result;
-        }
         self.program_to_runtime_qubits.clear();
         self.explicit_qubit_handles.clear();
         self.released_qubit_handles.clear();
@@ -1740,11 +1736,9 @@ impl SeleneRuntime {
             let lib = runtime.library.as_ref().expect("checked loaded library");
             let instance = runtime.instance.expect("checked native instance");
             unsafe {
-                // The shot lifecycle hooks are part of the certified protocol: a
-                // plugin that cannot receive shot boundaries cannot run its own
-                // per-shot validation, so a missing symbol fails closed (both
-                // PECOS-built runtimes export the full lifecycle).
-                let shot_start_fn = Self::runtime_plugin_descriptor(lib)?.shot_start_fn;
+                // The descriptor was validated at load; lifecycle errors still
+                // fail closed so a shot cannot bypass native validation.
+                let shot_start_fn = lib.descriptor.shot_start_fn;
                 let errno = shot_start_fn(instance, shot_id, seed.unwrap_or(0));
                 runtime.native_work.poll_needed = true;
                 if errno != 0 {
@@ -1881,7 +1875,7 @@ impl SeleneRuntime {
         })?;
 
         unsafe {
-            let qalloc_fn = Self::runtime_plugin_descriptor(lib)?.qalloc_fn;
+            let qalloc_fn = lib.descriptor.qalloc_fn;
             let mut runtime_qubit = 0;
             self.native_shot.work_submitted = true;
             self.native_work.submitted();
@@ -1904,7 +1898,7 @@ impl SeleneRuntime {
         };
 
         unsafe {
-            let qfree_fn = Self::runtime_plugin_descriptor(lib)?.qfree_fn;
+            let qfree_fn = lib.descriptor.qfree_fn;
             self.native_shot.work_submitted = true;
             self.native_work.submitted();
             let errno = qfree_fn(instance, runtime_qubit);
@@ -1928,7 +1922,7 @@ impl SeleneRuntime {
         })?;
 
         unsafe {
-            let rxy_fn = Self::runtime_plugin_descriptor(lib)?.rxy_gate_fn;
+            let rxy_fn = lib.descriptor.rxy_gate_fn;
             self.native_shot.work_submitted = true;
             self.native_work.submitted();
             let errno = rxy_fn(instance, runtime_qubit, theta, phi);
@@ -1950,7 +1944,7 @@ impl SeleneRuntime {
         })?;
 
         unsafe {
-            let rz_fn = Self::runtime_plugin_descriptor(lib)?.rz_gate_fn;
+            let rz_fn = lib.descriptor.rz_gate_fn;
             self.native_shot.work_submitted = true;
             self.native_work.submitted();
             let errno = rz_fn(instance, runtime_qubit, theta);
@@ -1977,7 +1971,7 @@ impl SeleneRuntime {
         })?;
 
         unsafe {
-            let rzz_fn = Self::runtime_plugin_descriptor(lib)?.rzz_gate_fn;
+            let rzz_fn = lib.descriptor.rzz_gate_fn;
             self.native_shot.work_submitted = true;
             self.native_work.submitted();
             let errno = rzz_fn(instance, runtime_qubit_1, runtime_qubit_2, theta);
@@ -2005,7 +1999,7 @@ impl SeleneRuntime {
         })?;
 
         unsafe {
-            let rpp_fn = Self::runtime_plugin_descriptor(lib)?.rpp_gate_fn;
+            let rpp_fn = lib.descriptor.rpp_gate_fn;
             self.native_shot.work_submitted = true;
             self.native_work.submitted();
             let errno = rpp_fn(instance, runtime_qubit_1, runtime_qubit_2, theta, phi);
@@ -2035,7 +2029,7 @@ impl SeleneRuntime {
         })?;
 
         unsafe {
-            let reset_fn = Self::runtime_plugin_descriptor(lib)?.reset_fn;
+            let reset_fn = lib.descriptor.reset_fn;
             self.native_shot.work_submitted = true;
             self.native_work.submitted();
             let errno = reset_fn(instance, runtime_qubit);
@@ -2059,7 +2053,7 @@ impl SeleneRuntime {
         })?;
 
         let runtime_result = unsafe {
-            let measure_fn = Self::runtime_plugin_descriptor(lib)?.measure_fn;
+            let measure_fn = lib.descriptor.measure_fn;
             let mut runtime_result = 0;
             self.native_shot.work_submitted = true;
             self.native_work.submitted();
@@ -2095,7 +2089,7 @@ impl SeleneRuntime {
         })?;
 
         let runtime_result = unsafe {
-            let measure_fn = Self::runtime_plugin_descriptor(lib)?.measure_leaked_fn;
+            let measure_fn = lib.descriptor.measure_leaked_fn;
             let mut runtime_result = 0;
             self.native_shot.work_submitted = true;
             self.native_work.submitted();
@@ -2129,7 +2123,7 @@ impl SeleneRuntime {
         self.native_work.submitted();
         // SAFETY: the slice remains live throughout the synchronous plugin call.
         let errno = unsafe {
-            (Self::runtime_plugin_descriptor(lib)?.local_barrier_fn)(
+            (lib.descriptor.local_barrier_fn)(
                 instance,
                 qubits.as_ptr(),
                 qubits.len() as u64,
@@ -2154,7 +2148,7 @@ impl SeleneRuntime {
         })?;
 
         unsafe {
-            let force_fn = Self::runtime_plugin_descriptor(lib)?.force_result_fn;
+            let force_fn = lib.descriptor.force_result_fn;
             self.native_shot.work_submitted = true;
             self.native_work.submitted();
             let errno = force_fn(instance, runtime_result);
@@ -2178,7 +2172,7 @@ impl SeleneRuntime {
         })?;
 
         unsafe {
-            let global_barrier_fn = Self::runtime_plugin_descriptor(lib)?.global_barrier_fn;
+            let global_barrier_fn = lib.descriptor.global_barrier_fn;
             self.native_shot.work_submitted = true;
             self.native_work.submitted();
             let errno = global_barrier_fn(instance, sleep_time);
@@ -2329,7 +2323,7 @@ impl SeleneRuntime {
                 let instance = self.instance.ok_or_else(|| {
                     RuntimeError::FfiError("Selene runtime is not initialized".into())
                 })?;
-                let descriptor = unsafe { Self::runtime_plugin_descriptor(lib)? };
+                let descriptor = lib.descriptor;
                 let call = if *increment {
                     descriptor.increment_future_refcount_fn
                 } else {
@@ -2402,13 +2396,11 @@ impl SeleneRuntime {
                 let instance = self.instance.ok_or_else(|| {
                     RuntimeError::FfiError("Selene runtime is not initialized".into())
                 })?;
-                let call = unsafe { Self::runtime_plugin_descriptor(lib)? }
-                    .simulate_delay_fn
-                    .ok_or_else(|| {
-                        RuntimeError::FfiError(
-                            "simulate_delay is not supported by the runtime plugin".into(),
-                        )
-                    })?;
+                let call = lib.descriptor.simulate_delay_fn.ok_or_else(|| {
+                    RuntimeError::FfiError(
+                        "simulate_delay is not supported by the runtime plugin".into(),
+                    )
+                })?;
                 self.native_shot.work_submitted = true;
                 self.native_work.submitted();
                 let errno = unsafe { call(instance, *nanoseconds) };
@@ -2437,7 +2429,7 @@ impl SeleneRuntime {
                 let instance = self.instance.ok_or_else(|| {
                     RuntimeError::FfiError("Selene runtime is not initialized".into())
                 })?;
-                let descriptor = unsafe { Self::runtime_plugin_descriptor(lib)? };
+                let descriptor = lib.descriptor;
                 let (name, call) =
                     if matches!(request, RuntimeRequest::IncrementFutureRefcount { .. }) {
                         (
@@ -2473,13 +2465,11 @@ impl SeleneRuntime {
                 let instance = self.instance.ok_or_else(|| {
                     RuntimeError::FfiError("Selene runtime is not initialized".into())
                 })?;
-                let call = unsafe { Self::runtime_plugin_descriptor(lib)? }
-                    .custom_call_fn
-                    .ok_or_else(|| {
-                        RuntimeError::FfiError(
-                            "custom_call is not supported by the runtime plugin".into(),
-                        )
-                    })?;
+                let call = lib.descriptor.custom_call_fn.ok_or_else(|| {
+                    RuntimeError::FfiError(
+                        "custom_call is not supported by the runtime plugin".into(),
+                    )
+                })?;
                 self.native_shot.work_submitted = true;
                 self.native_work.submitted();
                 let mut result = 0;
@@ -2760,9 +2750,7 @@ impl SeleneRuntime {
                     let get_next_fn: unsafe extern "C" fn(
                         RuntimeInstance,
                         SeleneRuntimeGetOperationHandle,
-                    ) -> i32 = std::mem::transmute(
-                        Self::runtime_plugin_descriptor(lib)?.get_next_operations_fn,
-                    );
+                    ) -> i32 = std::mem::transmute(lib.descriptor.get_next_operations_fn);
                     get_next_fn(
                         instance,
                         SeleneRuntimeGetOperationHandle {
@@ -3993,7 +3981,7 @@ impl QisRuntime for SeleneRuntime {
             let instance = runtime.instance.ok_or_else(|| {
                 RuntimeError::FfiError("Selene runtime is not initialized".into())
             })?;
-            let descriptor = unsafe { Self::runtime_plugin_descriptor(lib)? };
+            let descriptor = lib.descriptor;
             let (errno, result) = if leaked {
                 let mut value = u64::MAX;
                 let errno =
@@ -6061,6 +6049,124 @@ mod tests {
 
     #[cfg(feature = "selene-runtimes")]
     #[test]
+    fn descriptor_is_resolved_once_per_loaded_instance() {
+        // The accessor fixture has process-wide state. Isolate it from other tests.
+        const CHILD_ENV: &str = "PECOS_TEST_RUNTIME_DESCRIPTOR_CACHE";
+        if std::env::var_os(CHILD_ENV).is_none() {
+            crate::test_env::run_test_in_child(
+                "selene_runtime::tests::descriptor_is_resolved_once_per_loaded_instance",
+                &[(CHILD_ENV, "1".as_ref())],
+            );
+            return;
+        }
+        let executable = std::env::current_exe().unwrap();
+        let plugin = crate::selene_runtimes::find_library_in_dir(
+            executable.parent().unwrap(),
+            pecos_qis_test_runtime::LIBRARY_NAME,
+        )
+        .expect("Cargo-built runtime fixture beside the test executable");
+        let public_runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
+        // SAFETY: The public library, fixture and descriptor outlive all runtime
+        // instances. The descriptor retains the public runtime's callback ABI.
+        let public_library =
+            unsafe { libloading::Library::new(&public_runtime.plugin_path).unwrap() };
+        let mut descriptor =
+            Box::new(unsafe { SeleneRuntime::runtime_plugin_descriptor(&public_library).unwrap() });
+        let fixture = unsafe { libloading::Library::new(&plugin).unwrap() };
+        let reads = unsafe {
+            fixture
+                .get::<unsafe extern "C" fn() -> usize>(b"descriptor_reads")
+                .unwrap()
+        };
+        unsafe {
+            fixture
+                .get::<unsafe extern "C" fn(*mut c_void)>(b"set_descriptor")
+                .unwrap()((&raw mut *descriptor).cast());
+        }
+        for mode in LoweringRoute::ALL {
+            let before = unsafe { reads() };
+            let mut runtime = SeleneRuntime::new(&plugin);
+            runtime.init_args.clone_from(&public_runtime.init_args);
+            runtime.set_num_qubits(1);
+            runtime.shot_start(0, Some(7)).unwrap();
+            mode.lower(
+                &mut runtime,
+                &[Operation::AllocateQubit { id: 0 }, QuantumOp::X(0).into()],
+            )
+            .unwrap();
+            // A loaded instance owns a validated snapshot; later foreign header
+            // changes are relevant only to subsequent loads.
+            let struct_size = descriptor.struct_size;
+            descriptor.struct_size = 0;
+            mode.drain(&mut runtime);
+            runtime.shot_end().unwrap();
+            assert_eq!(unsafe { reads() }, before + 1, "{mode:?}: ordinary calls");
+
+            // A clean reset reuses the instance and its loaded descriptor.
+            runtime.reset().unwrap();
+            runtime.shot_start(1, Some(8)).unwrap();
+            mode.lower(&mut runtime, &[Operation::AllocateQubit { id: 0 }])
+                .unwrap();
+            assert_eq!(unsafe { reads() }, before + 1, "{mode:?}: clean reuse");
+
+            // Clones carry configuration, never pointers from an active owner.
+            let mut cloned = runtime.clone();
+            assert!(cloned.library.is_none());
+            assert!(cloned.instance.is_none());
+            cloned.reset().unwrap();
+            cloned.shot_start(2, Some(9)).unwrap();
+            let error = mode
+                .lower(&mut cloned, &[Operation::AllocateQubit { id: 0 }])
+                .unwrap_err();
+            assert!(error.to_string().contains("descriptor is too small"));
+            assert!(cloned.library.is_none());
+            assert!(cloned.instance.is_none());
+            assert_eq!(unsafe { reads() }, before + 2, "{mode:?}: clone admission");
+            assert!(cloned.shot_end().is_err());
+            assert_eq!(unsafe { reads() }, before + 2, "{mode:?}: latched failure");
+            cloned.reset().unwrap();
+            descriptor.struct_size = struct_size;
+            cloned.shot_start(2, Some(9)).unwrap();
+            mode.lower(&mut cloned, &[Operation::AllocateQubit { id: 0 }])
+                .unwrap();
+            assert_eq!(unsafe { reads() }, before + 3, "{mode:?}: clone reload");
+            cloned.reset().unwrap();
+            assert!(cloned.library.is_none());
+
+            // Resetting an active shot retires both the instance and descriptor.
+            runtime.reset().unwrap();
+            assert!(runtime.library.is_none());
+            let api_version = descriptor.api_version;
+            descriptor.api_version = u64::MAX;
+            runtime.shot_start(3, Some(10)).unwrap();
+            let error = mode
+                .lower(&mut runtime, &[Operation::AllocateQubit { id: 0 }])
+                .unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("incompatible Selene API version")
+            );
+            assert!(runtime.library.is_none());
+            assert!(runtime.instance.is_none());
+            assert_eq!(
+                unsafe { reads() },
+                before + 4,
+                "{mode:?}: version admission"
+            );
+            runtime.reset().unwrap();
+            descriptor.api_version = api_version;
+            runtime.shot_start(3, Some(10)).unwrap();
+            mode.lower(&mut runtime, &[Operation::AllocateQubit { id: 0 }])
+                .unwrap();
+            assert_eq!(unsafe { reads() }, before + 5, "{mode:?}: retired reload");
+            runtime.reset().unwrap();
+            assert_eq!(unsafe { reads() }, before + 5, "{mode:?}: cleanup");
+        }
+    }
+
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
     fn failed_init_is_latched_until_reset() {
         use std::sync::Mutex;
         use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
@@ -6348,11 +6454,8 @@ mod tests {
                 .unwrap();
             set((&raw mut *descriptor).cast());
         }
-        for (mode, fail_descriptor) in LoweringRoute::ALL
-            .into_iter()
-            .flat_map(|mode| [false, true].map(|fail_descriptor| (mode, fail_descriptor)))
-        {
-            FAIL_SHOT_END.store(!fail_descriptor, Ordering::SeqCst);
+        for mode in LoweringRoute::ALL {
+            FAIL_SHOT_END.store(true, Ordering::SeqCst);
             SHOT_END_CALLS.store(0, Ordering::SeqCst);
             let mut runtime = SeleneRuntime::new(&plugin);
             runtime.init_args.clone_from(&public_runtime.init_args);
@@ -6362,25 +6465,14 @@ mod tests {
                 .unwrap();
             mode.drain(&mut runtime);
 
-            // Invalidate only the descriptor header after a successful drain so
-            // the lookup fails inside shot_end, after it takes active_shot.
-            let struct_size = descriptor.struct_size;
-            let message = if fail_descriptor {
-                descriptor.struct_size = 0;
-                "runtime plugin descriptor is too small"
-            } else {
-                "shot_end failed with errno 9"
-            };
-            let finalized = runtime.shot_end();
-            descriptor.struct_size = struct_size;
-            let error = finalized.unwrap_err();
+            let message = "shot_end failed with errno 9";
+            let error = runtime.shot_end().unwrap_err();
             assert!(error.to_string().contains(message), "{mode:?}: {error}");
             assert!(runtime.active_shot.is_none());
-            let failed_calls = usize::from(!fail_descriptor);
+            let failed_calls = 1;
             assert_eq!(SHOT_END_CALLS.load(Ordering::SeqCst), failed_calls);
             // The shot is not certified on retry, and an otherwise valid gate
-            // reports the latched failure without reaching the plugin, even
-            // after repairing the descriptor.
+            // reports the latched failure without reaching the plugin.
             let retry = runtime.shot_end().unwrap_err();
             assert_eq!(retry.to_string(), error.to_string(), "{mode:?}");
             assert_eq!(SHOT_END_CALLS.load(Ordering::SeqCst), failed_calls);

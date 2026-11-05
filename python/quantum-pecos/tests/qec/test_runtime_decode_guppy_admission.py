@@ -58,13 +58,14 @@ def test_guppy_control_capture_still_rejects_before_provider():
 
 
 @pytest.mark.parametrize("runtime", ["selene_simple_runtime", "selene_soft_rz_runtime"])
-def test_branch_loop_cannot_silently_return_a_wrong_success(runtime):
-    report = probe("--case", "branch-loop", "--runtime", runtime)
+@pytest.mark.parametrize("correct", [False, True])
+def test_branch_loop_cannot_silently_return_a_wrong_success(runtime, correct):
+    report = probe("--case", "branch-loop", "--runtime", runtime, *([] if correct else ["--no-correction"]))
     if report["outcome"] == "completed":
         # A compiler fix may make the probe work. Require the actual contract,
         # rather than locking the test to a particular bad compilation.
         assert report["sessions"] == [[0, 1, 2]] * 4
-        assert report["results"] == [[[0, 0, 0]] * 2] * 2
+        assert report["results"] == [[[int(not correct)] * 3] * 2] * 2
     else:
         # On the documented affected stack, the loop repeats instance zero.
         # Only that precise fail-closed outcome is accepted, not arbitrary

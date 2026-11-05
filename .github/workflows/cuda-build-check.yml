@@ -1,6 +1,6 @@
 # CUDA Build Check - Verifies CUDA-related crates compile correctly
-# Note: Full runtime testing requires cuQuantum SDK which is not available in CI
-# For actual GPU testing, use a self-hosted runner with CUDA and cuQuantum installed
+# This CPU lane does not execute NVIDIA kernels. Use the local CUDA checklist
+# and record hardware evidence (or NOT EXECUTED) in GPU-affecting pull requests.
 
 name: CUDA Build Check
 
@@ -227,25 +227,19 @@ jobs:
         with:
           egress-policy: audit
 
-      - name: CUDA Testing Requirements
+      - name: Report CUDA hardware validation gap
         run: |
-          echo "=============================================="
-          echo "CUDA GPU Testing Requirements"
-          echo "=============================================="
-          echo ""
-          echo "Full runtime tests for pecos-rslib-cuda require:"
-          echo "  1. NVIDIA GPU with CUDA support"
-          echo "  2. CUDA Toolkit 12.x installed"
-          echo "  3. cuQuantum SDK installed"
-          echo ""
-          echo "To run GPU tests locally:"
-          echo "  1. Install CUDA Toolkit: https://developer.nvidia.com/cuda-downloads"
-          echo "  2. Install cuQuantum SDK: https://developer.nvidia.com/cuquantum-sdk"
-          echo "  3. Run: cargo test -p pecos-cuquantum"
-          echo "  4. Build Python package: maturin develop -m python/pecos-rslib-cuda/Cargo.toml"
-          echo ""
-          echo "For self-hosted CI runners with GPU support:"
-          echo "  - Use runners labeled with 'cuda' or 'gpu'"
-          echo "  - Ensure cuQuantum SDK is pre-installed"
-          echo "  - Run: cargo test -p pecos-cuquantum"
-          echo "=============================================="
+          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          ### CUDA hardware tests: NOT EXECUTED
+
+          This workflow checks compilation and stub behavior on a CPU runner.
+          It does not execute CUDA kernels. A green result is not CUDA hardware validation.
+
+          For CUDA-affecting PRs, run the
+          [local NVIDIA checklist](https://github.com/PECOS-packages/PECOS/blob/dev/docs/user-guide/cuda-setup.md#before-merging-cuda-changes)
+          and record the tested commit, GPU/driver/SDK, commands, counts, and logs in the PR.
+          If no NVIDIA hardware is available, explicitly record **NOT EXECUTED** and the reason.
+
+          wgpu GPU tests in the full macOS Rust lane are separate from CUDA validation;
+          see the [CI evidence policy](https://github.com/PECOS-packages/PECOS/blob/dev/.github/CI.md#gpu-and-cuda-validation-evidence).
+          EOF

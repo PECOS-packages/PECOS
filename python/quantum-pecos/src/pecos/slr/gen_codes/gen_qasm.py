@@ -92,18 +92,20 @@ class QASMGenerator(Generator):
                 self.write('include "qelib1.inc";')
             if self.add_versions:
                 self.write(f"// Generated using: PECOS version {pc.__version__}")
-            for var in block.vars:
+            # QASM allows one declaration per register name.
+            declared: dict[str, str] = {}
+            op_vars = [var for op in block.ops if type(op).__name__ == "Vars" for var in op.vars]
+            for var in [*block.vars, *op_vars]:
                 var_def = self.process_var_def(var)
-                if var_def:
+                if not var_def:
+                    continue
+                previous = declared.get(var.sym)
+                if previous is None:
+                    declared[var.sym] = var_def
                     self.write(var_def)
-
-            for op in block.ops:
-                op_name = type(op).__name__
-                if op_name == "Vars":
-                    for var in op.vars:
-                        var_def = self.process_var_def(var)
-                        if var_def:
-                            self.write(var_def)
+                elif previous != var_def:
+                    msg = f"Register {var.sym!r} is declared as both {previous!r} and {var_def!r}; rename one."
+                    raise ValueError(msg)
         return previous_scope
 
     def process_var_def(self, var) -> str:

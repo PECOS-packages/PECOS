@@ -16,7 +16,58 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 - Both SLR QASM generators emit a Python `bool` literal as `1` or `0`. Before,
   `c[1].set(True)` and `c[1].set(c[0] ^ True)` emitted `True`, which is not
-  OpenQASM and which the PECOS QASM simulator silently read as `0`.
+  OpenQASM: the PECOS QASM engine read it as `0`, and now rejects it as an
+  undeclared register.
+
+- **Breaking:** classical registers must be declared with `creg` before their
+  first use, and bit indices must fit the declared width, anywhere a
+  classical value is read or written: conditions, assignments, operands,
+  function arguments and measurement targets. Before, the engine evaluated an
+  undeclared name as 0, so `if(i == 0) x q[0];` with no `creg i` ran the gate.
+  Errors name the register and explain the required declaration or width:
+  move a later declaration before the first reference, or declare it wider;
+  undeclared `JOB_shotnum` instead gets the unsupported-built-in error below.
+  A gate body referencing a name that is not one of its declared parameters
+  is also rejected, even if the gate is unused or a classical register has that
+  name. Gate and opaque formal parameters are unaffected.
+  `pecos_qasm::bitvec_expression::evaluate_expression_bitvec`
+  drops its unused width argument, and `pecos_qasm::dag_bridge::QasmBridgeError`
+  gains an `InvalidProgram` variant.
+
+- **Breaking:** a register may be declared only once with `qreg` or `creg`,
+  including across kinds. Previously a later declaration of the same kind
+  replaced the earlier one, and a `qreg` and a `creg` could share a name.
+  Declare each register once, or use a different name.
+  The deprecated SLR `QASMGenerator` now emits one declaration per register
+  name and raises `ValueError` when one name is declared with different kinds
+  or sizes.
+
+- **Breaking:** a QASM statement keyword must be followed by a non-identifier
+  character. Glued forms such as `cregc[1];`, previously read as `creg c[1];`,
+  are no longer read as keywords. Depending on the surrounding syntax, they
+  may instead be read as identifiers or rejected. The version header still
+  accepts `OPENQASM2.0;`.
+
+- The PECOS QASM parser recognizes `pi` only at a word boundary, so `pivot`,
+  `pi_2` and `pi2` can be used as identifiers in expressions.
+  Classical expressions support integer remainder (`%`) with the precedence
+  of multiplication and division, including PHIR-JSON export. Gate arguments
+  retain floating-point arithmetic for remainder, as they do for division.
+
+- **Breaking:** `pecos_qasm::ast::Operation::ClassicalAssignment` removes
+  `is_indexed`. Its `index: Option<usize>` is the sole assignment selector:
+  `None` writes the whole register and `Some(index)` writes that bit. Invalid
+  indexed assignments can no longer silently write bit 0 or skip the write.
+
+- The PECOS Rust QASM engine rejects an empty classical measurement target
+  as an unknown register instead of substituting `c`.
+
+- An undeclared classical reference to `JOB_shotnum` now reports that the PECOS
+  Rust QASM engine does not provide the shot-number built-in and says to remove
+  the reference, instead of advising a `creg` declaration. Quantum registers,
+  gate names and gate parameters named `JOB_shotnum` follow ordinary name
+  resolution. An explicitly declared `creg JOB_shotnum` remains an ordinary
+  writable register, initially zero.
 
 - **Breaking:** pecos-neo always suppresses gates on leaked operands in all three
   noise builders, including noiseless gates and models with no configured leak
@@ -474,6 +525,10 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   (surface, color, bivariate bicycle, hypergraph product and tricycle codes),
   refactor plus bit-reversed order is 1.18x slower than the default (geomean),
   so it stays opt-in.
+
+- Python: C4-Helix two-block transversal-CNOT circuits render to certified Guppy
+  programs with block-prefixed gadget functions and result tags, using 44 qubits.
+  `cnot_definitions` supplies typed parities for `build_dem_from_guppy`.
 
 - Python: C4-Helix two-block circuits apply a transversal CNOT between syndrome
   rounds, with block-prefixed measurement labels and discovered detectors

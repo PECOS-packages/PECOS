@@ -191,9 +191,21 @@ pub fn encode_event_batches(batches: &[ScheduledEventBatch]) -> Result<ByteMessa
     let mut w = Writer(Vec::new());
     w.bytes(&[0; 16])?;
     for b in batches {
-        let nested = scheduled_frame::encode_timed_batches(&[b.source_gates()])?;
-        w.word(nested.as_bytes().len() as u64)?;
-        w.bytes(nested.as_bytes())?;
+        let gates = b.operations.iter().filter_map(|op| match op {
+            ScheduledEventOp::Gate(gate) => Some(gate.as_ref()),
+            ScheduledEventOp::Custom { .. } => None,
+        });
+        let nested = scheduled_frame::encode_borrowed_batch(
+            [
+                b.runtime_shot_id,
+                b.batch_index,
+                b.start_nanos,
+                b.duration_nanos,
+            ],
+            gates,
+        )?;
+        w.word(nested.len() as u64)?;
+        w.bytes(&nested)?;
         w.word(
             b.operations
                 .iter()
@@ -261,7 +273,7 @@ pub fn decode_event_batches(input: &ByteMessage) -> Result<Vec<ScheduledEventBat
     let mut result = Vec::new();
     for _ in 0..count {
         let nested_bytes = r.size()?;
-        let mut nested = scheduled_frame::decode(&ByteMessage::new(r.take(nested_bytes)?))?;
+        let mut nested = scheduled_frame::decode_bytes(r.take(nested_bytes)?)?;
         if nested.len() != 1 {
             return Err(error("expected one nested scheduled batch"));
         }

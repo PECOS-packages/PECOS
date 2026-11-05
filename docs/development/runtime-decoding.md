@@ -8,6 +8,10 @@ windows, possibly assembled with `DemSliceRoundSchedule` and cached slices.
 `RuntimeDecoder` accepts either a collection indexed by window ID or a factory
 of shot-local providers. It uses `DetectorErrorModel.build_decoder`, including
 its existing structured windowed-decoder path and unsupported-model checks.
+
+The [Guppy admission probe](runtime-decoding-guppy.md) records real-frontend
+feedback experiments and the remaining compiler/control-provenance blockers.
+It does not expose a production Guppy decoder primitive.
 It does not compile a DEM from runtime operations.
 
 The program calls this C ABI (LLVM declaration shown):
@@ -35,9 +39,97 @@ ordinary QIS. The host does not apply a simulator-only correction. This first
 ABI supports any admitted detector count and at most 64 destination frame bits;
 wide model outputs can still be explicitly routed or projected into those bits.
 
-See [the runnable example](../../examples/runtime_decoding.py). Language frontends
-can emit the intrinsic; this PR does not add a Guppy library primitive or modify
-the HUGR compiler.
+See [the runnable example](../../examples/runtime_decoding.py). The [schema-driven QIS helper example](../../examples/runtime_decoder_qis.py)
+generates the observed intrinsic and its storage from the existing detector
+schema. It does not add a Guppy library primitive or modify the HUGR compiler.
+
+## Schema-driven QIS lowering
+
+`RuntimeDecodeQisSite` is a small lowering helper for frontend authors emitting
+native QIS. One `RuntimeDecodeBinding` supplies the detector parities, reference
+signs, read names, frame identities and semantic program/site revisions used by
+both the generated program and supplied windows. The helper emits LLVM text
+fragments; it does not parse or rewrite an existing program.
+
+```python
+from pecos.qec import (
+    RuntimeDecodeBinding,
+    RuntimeDecodeQisSite,
+    RuntimeDecodeSchema,
+    RuntimeDetectorBinding,
+    RuntimeRecordRef,
+)
+
+read = RuntimeRecordRef(name="check", occurrence=0)
+site = RuntimeDecodeQisSite(
+    name="correction",
+    window_id=7,
+    binding=RuntimeDecodeBinding(
+        program_revision="example-v1",
+        compiler_revision="frontend-v1",
+        decode_site="qis:qmain/correction",
+        schema=RuntimeDecodeSchema(
+            detectors=(RuntimeDetectorBinding(detector_id="D0", records=(read,)),),
+            frame_ids=("frame_x",),
+        ),
+    ),
+)
+imports = site.declarations_ir()  # Once per complete module.
+globals_ = site.globals_ir()  # Before qmain, once per site.
+entry = site.entry_ir()  # In qmain's named entry block.
+getter = site.read_ir(read, future="%m")  # Where this native future should be read.
+observed = site.read_value(read)  # Boolean SSA operand for later control.
+decode = site.decode_ir(instance="%i")  # After all required reads.
+frame = site.frame_value  # i64 SSA operand for live feedback.
+assert "@pecos_runtime_decode_observed_v1" in decode
+```
+
+The surrounding frontend still emits physical operations, future reference-count
+management, control flow and frame application. `read_ir` inserts the actual
+observed getter at the selected position; the selected runtime owns its forcing
+and timing. `decode_ir` emits all XOR/reference arithmetic and byte conversions
+before a consecutive run of stores and the observed decode call. It does not
+insert additional reads, gates, delays or barriers.
+
+Each helper describes one lexical decode site and one lexical getter per unique
+schema record. Enclosing loops may execute them repeatedly. Use distinct `name`
+values for distinct sites and reserve each `pecos.decode.<name>.` namespace.
+The host requires decode instance numbers to advance across all sites in a shot.
+All same-name reads must execute in their declared occurrence order within the
+current decode interval. A record's requested occurrence is **not** passed to
+the runtime; it is checked against execution-derived numbering and expected
+source identities. These checks do not prove the frontend's semantic placement
+of named reads: equal values can conceal a wrong SSA-to-record association even
+when observed source identities match.
+
+For an existing unbound `RuntimeDecodeWindow`, call
+`site.bind_window(window, source_ids={read: expected_measurement_id})` in the
+provider. This derives the program-to-model detector permutation by exact named
+identity and attaches the same binding and explicit read-source expectations.
+The existing window constructor still requires a complete initial
+`detector_order`; binding replaces it with the schema-derived permutation.
+Output routing, physical model, fault ownership, commit region and independence
+attestation remain explicit and are preserved. Conflicting window IDs, bindings
+or source mappings reject. An empty source mapping is explicit and valid for
+constant detectors. Measurement IDs must come from a caller-supplied model or
+schedule expectation; they are never inferred from future handles or hidden
+simulator state. The runnable example's simple source-ID arithmetic applies only
+to its fixed synthetic schedule.
+
+Build the assembled program with `capture_batches=True` and
+`capture_control_flow=True` on `selene_engine(...).runtime_decoder(...)` to use the
+[checked LLVM subset](runtime-decoder-contract.md#compiler-owned-llvm-control-opt-in).
+The helper checks identifiers, byte lengths and per-site bounds (1–4,096 detectors
+and at most 4,096 total parity terms); complete-module admission still checks SSA,
+dominance, resource types, allocation/pointer/site limits and supported control.
+Individually valid fragments can exceed aggregate module limits. Missing or
+duplicated getters, namespace collisions and unsupported insertion sites reject.
+
+Generated caller context has empty branch, loop and classical-input arrays.
+Actual control comes from compiler capture. Semantic `compiler_revision` remains
+a caller declaration, separate from the captured module digest; no HUGR mapping
+is inferred. All physical model, adaptive-branch, leakage and cross-window
+restrictions below continue to apply. This helper performs no JIT DEM generation.
 
 ## Execution and lifecycle
 

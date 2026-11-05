@@ -12,9 +12,12 @@ from pecos.qec.helix import (
     LogicalGate,
     c4_helix_code,
     c4_helix_gates,
+    compile_logical_clifford,
     helix_code,
     logical_action,
     logical_pauli_fixup,
+    logical_pauli_ops,
+    logical_token_ops,
     min_cost_words,
     parse_signed_logical_pauli,
     symplectic_action,
@@ -132,13 +135,6 @@ def test_four_block_cz_rejected():
         logical_action(c4_helix_code(), broken)
 
 
-@pytest.fixture(scope="module")
-def compiled():
-    matrices = {name: symplectic_action(c4_helix_code(), gate) for name, gate in c4_helix_gates().items()}
-    costs = {name: int(name == "S0S1") for name in matrices}
-    return matrices, min_cost_words(matrices, costs)
-
-
 def test_group_orders_and_cost_distribution(compiled):
     matrices, words = compiled
     automorphisms = {name: matrix for name, matrix in matrices.items() if name != "S0S1"}
@@ -156,17 +152,6 @@ def multiply(left, right):
     )
 
 
-def pauli_ops(spelling, code):
-    """Physical representative; global phase of Y is irrelevant to conjugation."""
-    _, bits = parse_signed_logical_pauli("+" + spelling, code.k)
-    ops = []
-    for j in range(code.k):
-        for has, rows in ((bits[j], code.logical_x), (bits[code.k + j], code.logical_z)):
-            if has:
-                ops.extend((p.lower(), (q,)) for q, p in enumerate(rows[j]) if p != "I")
-    return tuple(ops)
-
-
 def test_physical_round_trips(compiled):
     matrices, words = compiled
     code = c4_helix_code()
@@ -174,6 +159,7 @@ def test_physical_round_trips(compiled):
     sampled = sorted(words)[::13]
     assert len(sampled) >= 50
     group = PauliStabilizerGroup.from_str("\n".join(code.stabilizers))
+    saw_fixup = False
     for index, element in enumerate(sampled):
         word = words[element]
         matrix = tuple(tuple(int(i == j) for j in range(4)) for i in range(4))
@@ -190,9 +176,14 @@ def test_physical_round_trips(compiled):
         target[label] = ("-" if actual[label][0] == "+" else "+") + actual[label][1:]
         if all(value[0] == "+" for value in target.values()):
             target[label] = "-" + target[label][1:]
+        tokens = compile_logical_clifford(target)
+        compiled_ops = tuple(op for token in tokens for op in logical_token_ops(token))
+        assert logical_action(code, LogicalGate("compiled", compiled_ops)) == target
+        assert tokens.count("S0S1") == word.count("S0S1")
+        saw_fixup |= bool(tokens and tokens[-1] not in gates)
         correction = logical_pauli_fixup(actual, target)
-        corrected = physical(ops + pauli_ops(correction, code))
-        assert logical_action(code, LogicalGate("fixed", ops + pauli_ops(correction, code))) == target
+        corrected = physical(ops + logical_pauli_ops(correction))
+        assert logical_action(code, LogicalGate("fixed", ops + logical_pauli_ops(correction))) == target
         for label, representative in zip(("X0", "X1", "Z0", "Z1"), code.logical_x + code.logical_z, strict=True):
             image = corrected.apply(PauliString.from_str(representative))
             desired = PauliString.I()
@@ -209,6 +200,8 @@ def test_physical_round_trips(compiled):
             if sign:
                 desired = -desired
             assert group.contains_with_phase(image * desired)
+
+    assert saw_fixup
 
 
 def test_compiler_generic_and_validation():

@@ -17,6 +17,7 @@ use std::sync::Arc;
 
 use crate::ast::{Expression, Operation};
 use crate::bitvec_expression::{BitVecExpressionContext, evaluate_expression_bitvec};
+use crate::parser::errors::unknown_classical_register;
 use crate::program::QASMProgram;
 
 /// Gate handler function type
@@ -36,6 +37,9 @@ pub struct QASMEngine {
     /// through an `Arc` so the batch loop can hold a handle without copying
     /// the AST.
     program: Option<Arc<QASMProgram>>,
+
+    /// Direct AST callers also require validation, once per immutable program.
+    classical_references_validated: bool,
 
     /// Mapping from measurement order to register names and bit indices
     /// Each entry is (`register_name`, `bit_index`) mapped by the order of measurements
@@ -152,6 +156,7 @@ impl QASMEngine {
         self.raw_measurements.clear();
         self.register_result_mappings.clear();
 
+        self.classical_references_validated = false;
         self.program = Some(Arc::new(program));
         self.reset_state();
     }
@@ -960,7 +965,7 @@ impl QASMEngine {
         c_index: usize,
     ) -> Result<(), PecosError> {
         let physical_qubit = qubit;
-        let c_register_name = if c_reg.is_empty() { "c" } else { c_reg };
+        let c_register_name = c_reg;
 
         // Validate classical register bounds
         if let Some(qasm_program) = &self.program {
@@ -1074,6 +1079,10 @@ impl QASMEngine {
             .ok_or_else(|| PecosError::Input("No QASM program loaded".to_string()))?;
 
         let program = qasm_program.program();
+        if !self.classical_references_validated {
+            program.validate_classical_references()?;
+            self.classical_references_validated = true;
+        }
 
         let total_ops = program.operations.len();
 
@@ -1195,19 +1204,18 @@ impl QASMEngine {
                             }
                             Operation::ClassicalAssignment {
                                 target,
-                                is_indexed,
                                 index,
                                 expression,
                             } => {
-                                // Get the destination width for function results and missing registers
-                                let target_width = if *is_indexed {
+                                // Get the destination width for function results
+                                let target_width = if index.is_some() {
                                     1 // Single bit assignment
                                 } else {
                                     program
                                         .classical_registers
                                         .get(target.as_str())
                                         .copied()
-                                        .unwrap_or(64)
+                                        .ok_or_else(|| unknown_classical_register(target))?
                                 };
 
                                 let value_expr = self.evaluate_expression_bitvec_with_width(
@@ -1215,17 +1223,14 @@ impl QASMEngine {
                                     target_width,
                                 )?;
 
-                                if *is_indexed {
-                                    if let Some(idx) = *index {
-                                        let bit_value = value_expr.as_bool();
-                                        self.update_register_bit(target, idx, u8::from(bit_value))?;
-                                    }
-                                } else if let Some(register_size) =
-                                    program.classical_registers.get(target.as_str())
-                                {
+                                if let Some(idx) = *index {
+                                    let bit_value = value_expr.as_bool();
+                                    self.update_register_bit(target, idx, u8::from(bit_value))?;
+                                } else {
+                                    // The checked target width above is the register size.
                                     let result_bitvec = pecos_core::bitvec::from_expr_value(
                                         &value_expr,
-                                        *register_size,
+                                        target_width,
                                     )?;
 
                                     debug!(
@@ -1285,36 +1290,32 @@ impl QASMEngine {
                 }
                 Operation::ClassicalAssignment {
                     target,
-                    is_indexed,
                     index,
                     expression,
                 } => {
                     debug!("Processing classical assignment: {target} = {expression:?}");
 
-                    // Get the destination width for function results and missing registers
-                    let target_width = if *is_indexed {
+                    // Get the destination width for function results
+                    let target_width = if index.is_some() {
                         1 // Single bit assignment
                     } else {
                         program
                             .classical_registers
                             .get(target.as_str())
                             .copied()
-                            .unwrap_or(64)
+                            .ok_or_else(|| unknown_classical_register(target))?
                     };
 
                     let value_expr =
                         self.evaluate_expression_bitvec_with_width(expression, target_width)?;
 
-                    if *is_indexed {
-                        if let Some(idx) = *index {
-                            let bit_value = value_expr.as_bool();
-                            self.update_register_bit(target, idx, u8::from(bit_value))?;
-                        }
-                    } else if let Some(register_size) =
-                        program.classical_registers.get(target.as_str())
-                    {
+                    if let Some(idx) = *index {
+                        let bit_value = value_expr.as_bool();
+                        self.update_register_bit(target, idx, u8::from(bit_value))?;
+                    } else {
+                        // The checked target width above is the register size.
                         let result_bitvec =
-                            pecos_core::bitvec::from_expr_value(&value_expr, *register_size)?;
+                            pecos_core::bitvec::from_expr_value(&value_expr, target_width)?;
 
                         debug!(
                             "Setting register {} with BitVec of length {}",
@@ -1383,7 +1384,7 @@ impl QASMEngine {
         arg: &Expression,
         scalar_width: u16,
     ) -> Result<u64, PecosError> {
-        let value = evaluate_expression_bitvec(arg, self, 64)?;
+        let value = evaluate_expression_bitvec(arg, self)?;
         match &value {
             ExprValue::Boolean(value) => Ok(u64::from(*value)),
             ExprValue::Signed(bits) if bits.get_bit(bits.size() - 1) => {
@@ -1476,7 +1477,7 @@ impl QASMEngine {
     ) -> Result<ExprValue, PecosError> {
         let mut arg_values = Vec::new();
         for (position, arg) in args.iter().enumerate() {
-            let val = evaluate_expression_bitvec(arg, self, target_width)?;
+            let val = evaluate_expression_bitvec(arg, self)?;
             if let ExprValue::Signed(bits) | ExprValue::Unsigned(bits) = &val
                 && bits.size() > 64
             {
@@ -1530,7 +1531,7 @@ impl QASMEngine {
                 return self.evaluate_wasm_expr(name, args, target_width);
             }
         }
-        // The target width only sizes function results and undeclared missing registers
+        // The target width only sizes function results.
         debug!("Falling back to regular evaluate_expression_bitvec for expr: {expr:?}");
 
         // If this is a function call and we reached here, it means:
@@ -1548,7 +1549,7 @@ impl QASMEngine {
             );
         }
 
-        evaluate_expression_bitvec(expr, self, target_width)
+        evaluate_expression_bitvec(expr, self)
     }
 }
 
@@ -1694,6 +1695,9 @@ impl ClassicalEngine for QASMEngine {
     }
 
     fn compile(&self) -> Result<(), PecosError> {
+        if let Some(program) = &self.program {
+            program.program().validate_classical_references()?;
+        }
         Ok(())
     }
 
@@ -1715,6 +1719,7 @@ impl Clone for QASMEngine {
     fn clone(&self) -> Self {
         let mut engine = Self {
             program: self.program.clone(),
+            classical_references_validated: self.classical_references_validated,
             allow_complex_conditionals: self.allow_complex_conditionals,
             ..Self::default()
         };
@@ -1827,6 +1832,7 @@ impl Default for QASMEngine {
         debug!("Creating new QASMEngine");
         Self {
             program: None,
+            classical_references_validated: false,
             register_result_mappings: Vec::new(),
             classical_registers: BTreeMap::new(),
             raw_measurements: BTreeMap::new(),
@@ -2010,3 +2016,6 @@ mod tests {
 #[cfg(test)]
 #[path = "engine/expression_tests.rs"]
 mod expression_tests;
+
+#[cfg(test)]
+mod program_validation_tests;

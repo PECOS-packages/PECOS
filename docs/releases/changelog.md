@@ -7,7 +7,7 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 ## Unreleased
 
 - **Breaking:** classical registers must be declared with `creg` before their
-  first use, and bit indices must fit the width declared so far, anywhere a
+  first use, and bit indices must fit the declared width, anywhere a
   classical value is read or written: conditions, assignments, operands,
   function arguments and measurement targets. Before, the engine evaluated an
   undeclared name as 0, so `if(i == 0) x q[0];` with no `creg i` ran the gate.
@@ -25,6 +25,9 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   including across kinds. Previously a later declaration of the same kind
   replaced the earlier one, and a `qreg` and a `creg` could share a name.
   Declare each register once, or use a different name.
+  The deprecated SLR `QASMGenerator` now emits one declaration per register
+  name and raises `ValueError` when one name is declared with different kinds
+  or sizes.
 
 - **Breaking:** a QASM statement keyword must be followed by a non-identifier
   character. Glued forms such as `cregc[1];`, previously read as `creg c[1];`,

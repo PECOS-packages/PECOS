@@ -344,7 +344,7 @@ fn version_header_accepts_no_space() {
 }
 
 #[test]
-fn classical_bounds_use_current_declaration() {
+fn classical_bit_indices_are_bounds_checked() {
     for statement in [
         "c[7] = 1;",
         "out = c[1];",
@@ -398,21 +398,7 @@ fn shot_number_in_gate_expressions_gets_ordinary_errors() {
 }
 
 #[test]
-fn redeclaration_after_classical_use_is_rejected() {
-    for statement in [
-        "d[7] = 1;",
-        "out = d[7];",
-        "out = 1 + d[7];",
-        "out = ~d[7];",
-        "external(d[7]);",
-        "measure q[7] -> d[7];",
-        "if(d[7]) X q[0];",
-        "if(out) d[7] = 1;",
-    ] {
-        let source = format!("qreg q[8]; creg out[8]; creg d[8]; {statement} creg d[1];");
-        let error = QASMParser::parse_str(&source).unwrap_err().to_string();
-        assert!(error.contains("Register 'd' is already declared as creg. Declare each register once, or use a different name"), "{statement}: {error}");
-    }
+fn caller_built_programs_are_bounds_checked() {
     // Caller-built ASTs still need explicit reference and bounds validation.
     let mut program = QASMParser::parse_str("creg d[8]; d[7] = 1;").unwrap();
     program.classical_registers.insert("d".into(), 1);

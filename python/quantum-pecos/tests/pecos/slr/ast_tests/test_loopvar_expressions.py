@@ -52,6 +52,15 @@ def test_reflected_comparison_builds_expression() -> None:
     assert expr.left is i
 
 
+@pytest.mark.parametrize(("build", "expected"), [(operator.add, PLUS), (operator.sub, MINUS)])
+def test_reflected_arithmetic_keeps_operand_order(build, expected) -> None:
+    i = LoopVar("i")
+    expr = build(1, i)
+    assert type(expr) is expected
+    assert expr.left == 1
+    assert expr.right is i
+
+
 def test_loopvar_stays_hashable_by_identity() -> None:
     i, j = LoopVar("i"), LoopVar("i")
     values = {i: 0, j: 1}
@@ -84,6 +93,9 @@ def test_loopvar_condition_reaches_the_ast() -> None:
         (lambda i: i >= 1, 0),
         (lambda i: i > 1, 1),
         (lambda i: i - 1 == 0, 1),
+        (lambda i: 1 + i == 2, 1),
+        # True only at i == 0; with the operands swapped (i - 2 > 1) it is never true.
+        (lambda i: 2 - i > 1, 1),
     ],
 )
 def test_loopvar_condition_runs_in_guppy(condition, measured) -> None:

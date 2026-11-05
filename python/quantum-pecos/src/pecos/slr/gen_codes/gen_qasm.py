@@ -509,7 +509,8 @@ class QASMGenerator(Generator):
             op_str = f"{op.reg.sym}[{op.index}]"
 
         elif isinstance(op, int):
-            op_str = str(op)
+            # int() turns a bool into the bit value 1 or 0; OpenQASM has no True/False.
+            op_str = str(int(op))
 
         elif hasattr(op, "is_qgate") and op.is_qgate:
             stat = True

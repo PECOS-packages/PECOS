@@ -6,6 +6,18 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- SLR classical registers, bits, expressions and `LoopVar` accept a literal on
+  the left of their operators: `3 - c` builds `MINUS(3, c)` and `1 + i` builds
+  `PLUS(1, i)`, matching `c - 3` and `i + 1`. Registers, bits and expressions
+  cover `+`, `-`, `&`, `|`, `^`, `<<` and `>>`; `LoopVar` covers `+` and `-`.
+  Before, a literal left operand raised `TypeError`. Only an `int` literal is
+  accepted on the left, so a mistyped `Measure(q[0]) >> c` still raises
+  `TypeError` instead of building an expression the converter would drop.
+
+- Both SLR QASM generators emit a Python `bool` literal as `1` or `0`. Before,
+  `c[1].set(True)` and `c[1].set(c[0] ^ True)` emitted `True`, which is not
+  OpenQASM and which the PECOS QASM simulator silently read as `0`.
+
 - **Breaking:** pecos-neo always suppresses gates on leaked operands in all three
   noise builders, including noiseless gates and models with no configured leak
   source (#1574, #1575). Noiseless operations suppress faults, including composite,

@@ -45,11 +45,10 @@ pub fn classical_bit_out_of_bounds(name: &str, index: usize, size: usize) -> Pec
     ))
 }
 
-/// A later declaration cannot shrink storage below a bit already used.
-pub(crate) fn classical_register_shrunk(name: &str, index: usize, size: usize) -> PecosError {
+/// Create an error for a name already used by a register of either kind.
+pub(crate) fn register_already_declared(name: &str, kind: &str) -> PecosError {
     invalid_operation(format!(
-        "Classical register '{name}' was redeclared with size {size}, but bit '{name}[{index}]' was already used. \
-         Do not redeclare the register with a smaller size; use the larger size or a different register name"
+        "Register '{name}' is already declared as {kind}. Declare each register once, or use a different name"
     ))
 }
 

@@ -14,13 +14,17 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   Errors name the register and explain the required declaration or width:
   move a later declaration before the first reference, or declare it wider;
   undeclared `JOB_shotnum` instead gets the unsupported-built-in error below.
-  A later redeclaration cannot shrink a register below a bit already used;
-  keep the larger size or use a different register name. A gate body
-  referencing a name that is not one of its declared parameters is also rejected,
-  even if the gate is unused or a classical register has that name. Gate and
-  opaque formal parameters are unaffected. `pecos_qasm::bitvec_expression::evaluate_expression_bitvec`
+  A gate body referencing a name that is not one of its declared parameters
+  is also rejected, even if the gate is unused or a classical register has that
+  name. Gate and opaque formal parameters are unaffected.
+  `pecos_qasm::bitvec_expression::evaluate_expression_bitvec`
   drops its unused width argument, and `pecos_qasm::dag_bridge::QasmBridgeError`
   gains an `InvalidProgram` variant.
+
+- **Breaking:** a register may be declared only once with `qreg` or `creg`,
+  including across kinds. Previously a later declaration of the same kind
+  replaced the earlier one, and a `qreg` and a `creg` could share a name.
+  Declare each register once, or use a different name.
 
 - **Breaking:** a QASM statement keyword must be followed by a non-identifier
   character. Glued forms such as `cregc[1];`, previously read as `creg c[1];`,

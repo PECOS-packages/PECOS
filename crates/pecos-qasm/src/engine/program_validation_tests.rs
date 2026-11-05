@@ -208,24 +208,6 @@ fn classical_declarations_precede_every_use() {
         }
         QASMParser::parse_str(&format!("{prefix} creg later[1]; {statement}")).unwrap();
     }
-    let program = QASMParser::parse_str("creg c[1]; creg c[8]; c[7] = 1;").unwrap();
-    assert_eq!(program.classical_registers["c"], 8);
-    let error = QASMParser::parse_str("creg c[1]; c[7] = 1; creg c[8];")
-        .unwrap_err()
-        .to_string();
-    for fragment in [
-        "Classical bit 'c[7]'",
-        "out of bounds for register size 1",
-        "Declare 'c' with creg large enough to contain bit 7",
-    ] {
-        assert!(error.contains(fragment), "{error}");
-    }
-    assert_eq!(
-        QASMParser::parse_str("creg c[8]; c[7] = 1; creg c[1];")
-            .unwrap_err()
-            .to_string(),
-        "Invalid QASM operation: Classical register 'c' was redeclared with size 1, but bit 'c[7]' was already used. Do not redeclare the register with a smaller size; use the larger size or a different register name"
-    );
 }
 
 #[test]
@@ -375,7 +357,7 @@ fn classical_bounds_use_current_declaration() {
         "if(out) c[1] = 1;",
         "if(out) measure q[1] -> c[1];",
     ] {
-        let source = format!("qreg q[2]; creg out[8]; creg c[1]; {statement} creg c[8];");
+        let source = format!("qreg q[2]; creg out[8]; creg c[1]; {statement}");
         let error = QASMParser::parse_str(&source).unwrap_err().to_string();
         assert!(error.contains("Classical bit 'c["), "{statement}: {error}");
         assert!(
@@ -416,7 +398,7 @@ fn shot_number_in_gate_expressions_gets_ordinary_errors() {
 }
 
 #[test]
-fn shrinking_redeclaration_names_the_conflict() {
+fn redeclaration_after_classical_use_is_rejected() {
     for statement in [
         "d[7] = 1;",
         "out = d[7];",
@@ -428,13 +410,10 @@ fn shrinking_redeclaration_names_the_conflict() {
         "if(out) d[7] = 1;",
     ] {
         let source = format!("qreg q[8]; creg out[8]; creg d[8]; {statement} creg d[1];");
-        assert_eq!(
-            QASMParser::parse_str(&source).unwrap_err().to_string(),
-            "Invalid QASM operation: Classical register 'd' was redeclared with size 1, but bit 'd[7]' was already used. Do not redeclare the register with a smaller size; use the larger size or a different register name",
-            "{statement}"
-        );
+        let error = QASMParser::parse_str(&source).unwrap_err().to_string();
+        assert!(error.contains("Register 'd' is already declared as creg. Declare each register once, or use a different name"), "{statement}: {error}");
     }
-    // An AST supplied by a caller has no declaration history to diagnose.
+    // Caller-built ASTs still need explicit reference and bounds validation.
     let mut program = QASMParser::parse_str("creg d[8]; d[7] = 1;").unwrap();
     program.classical_registers.insert("d".into(), 1);
     assert_eq!(
@@ -479,4 +458,55 @@ fn glued_if_is_not_a_conditional() {
     ));
     assert!(QASMParser::parse(Rule::if_stmt, "ifc(1) X q[0];").is_err());
     assert!(QASMParser::parse(Rule::if_stmt, "if(1) X q[0];").is_ok());
+}
+
+#[test]
+fn register_redeclarations_are_rejected() {
+    for (first, second, kind) in [
+        ("creg c[1];", "creg c[8]; c[7] = 1;", "creg"),
+        ("creg c[8]; c[7] = 1;", "creg c[1];", "creg"),
+        ("creg c[1];", "creg c[1];", "creg"),
+        ("qreg c[1];", "qreg c[8]; X c[7];", "qreg"),
+        ("qreg c[8]; X c[7];", "qreg c[1];", "qreg"),
+        ("qreg c[1];", "qreg c[1];", "qreg"),
+        ("creg c[1];", "qreg c[1];", "creg"),
+        ("qreg c[1];", "creg c[1];", "qreg"),
+    ] {
+        let source = format!("{first} {second}");
+        let error = QASMParser::parse_str(&source).unwrap_err().to_string();
+        let expected = format!(
+            "Register 'c' is already declared as {kind}. Declare each register once, or use a different name"
+        );
+        assert!(error.contains(&expected), "{source}: {error}");
+    }
+}
+
+#[test]
+fn rejected_redeclaration_does_not_mutate_program() {
+    use crate::parser::{Program, Rule, registers::parse_register};
+    use pest::Parser;
+    for first_kind in ["qreg", "creg"] {
+        for second_kind in ["qreg", "creg"] {
+            let mut program = Program::default();
+            let first = format!("{first_kind} r[8];");
+            let pair = QASMParser::parse(Rule::register_decl, &first)
+                .unwrap()
+                .next()
+                .unwrap();
+            parse_register(pair, &mut program).unwrap();
+            let before = format!("{program:?}");
+            let second = format!("{second_kind} r[1];");
+            let pair = QASMParser::parse(Rule::register_decl, &second)
+                .unwrap()
+                .next()
+                .unwrap();
+            assert_eq!(
+                parse_register(pair, &mut program).unwrap_err().to_string(),
+                format!(
+                    "Invalid QASM operation: Register 'r' is already declared as {first_kind}. Declare each register once, or use a different name"
+                )
+            );
+            assert_eq!(format!("{program:?}"), before);
+        }
+    }
 }

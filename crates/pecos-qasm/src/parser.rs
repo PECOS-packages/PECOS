@@ -9,6 +9,7 @@ pub mod register_manager;
 pub mod registers;
 pub mod statements;
 pub mod utils;
+mod validation;
 
 // Re-export commonly used types
 pub use config::ParseConfig;
@@ -21,9 +22,6 @@ use std::fmt::Write;
 use std::path::Path;
 
 use crate::ast::{GateDefinition, Operation, OperationDisplay};
-use crate::parser::gates::parse_gate_definition;
-use crate::parser::operations::{parse_classical_operation, parse_if_statement, parse_quantum_op};
-use crate::parser::registers::parse_register;
 use crate::parser::statements::parse_statement;
 use crate::parser::utils::{expand_gates, validate_no_opaque_gate_usage};
 use crate::preprocessor::Preprocessor;
@@ -191,67 +189,13 @@ impl QASMParser {
     /// Returns an error if gate expansion fails.
     pub fn expand_all_gate_definitions(source: &str) -> Result<String, PecosError> {
         // Parse the source to get gate definitions and operations
-        let mut program = Self::parse_phase1(source)?;
+        let mut program = Self::parse_program(source)?;
 
         // Expand all gates
         expand_gates(&mut program)?;
 
         // Convert back to QASM string with expanded operations only (no gate definitions)
         Ok(Self::program_to_qasm_expanded(&program))
-    }
-
-    /// Parse only phase 1 - just enough to get gate definitions and operations
-    fn parse_phase1(source: &str) -> Result<Program, PecosError> {
-        let mut program = Program::default();
-        let mut pairs =
-            <Self as pest::Parser<Rule>>::parse(Rule::program, source).map_err(|e| {
-                PecosError::ParseSyntax {
-                    language: "QASM".to_string(),
-                    message: e.to_string(),
-                }
-            })?;
-
-        let program_pair = pairs.next().ok_or_else(|| Self::error("Empty program"))?;
-
-        for pair in program_pair.into_inner() {
-            match pair.as_rule() {
-                Rule::oqasm => {
-                    // Version declaration
-                    if let Some(version_pair) = pair.into_inner().next() {
-                        program.version = version_pair.as_str().to_string();
-                    }
-                }
-                Rule::statement => {
-                    for inner_pair in pair.into_inner() {
-                        match inner_pair.as_rule() {
-                            Rule::register_decl => parse_register(inner_pair, &mut program)?,
-                            Rule::gate_def => {
-                                parse_gate_definition(inner_pair, &mut program)?;
-                            }
-                            Rule::quantum_op => {
-                                if let Some(op) = parse_quantum_op(inner_pair, &program)? {
-                                    program.operations.push(op);
-                                }
-                            }
-                            Rule::classical_op => {
-                                if let Some(op) = parse_classical_operation(inner_pair)? {
-                                    program.operations.push(op);
-                                }
-                            }
-                            Rule::if_stmt => {
-                                if let Some(op) = parse_if_statement(inner_pair, &program)? {
-                                    program.operations.push(op);
-                                }
-                            }
-                            _ => {} // Skip other operations for phase 1
-                        }
-                    }
-                }
-                _ => {} // Skip other rules
-            }
-        }
-
-        Ok(program)
     }
 
     /// Convert a Program back to QASM string with only expanded operations (no gate definitions)
@@ -371,6 +315,7 @@ impl QASMParser {
             }
         }
 
+        program.validate_classical_references()?;
         Ok(program)
     }
 

@@ -31,6 +31,9 @@ pub fn qasm_to_phir_module(qasm_str: &str) -> Result<Module> {
 ///
 /// Returns an error if the program contains unsupported operations.
 pub fn qasm_program_to_phir_module(program: &Program) -> Result<Module> {
+    program
+        .validate_classical_references()
+        .map_err(|e| pecos_phir::PhirError::internal(format!("QASM validation error: {e}")))?;
     let mut converter = Converter::new();
     converter.convert(program)
 }

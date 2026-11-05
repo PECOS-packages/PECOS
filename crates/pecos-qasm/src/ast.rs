@@ -415,7 +415,7 @@ impl Expression {
                     }
                 } else {
                     Err(PecosError::ParseInvalidExpression(format!(
-                        "Cannot evaluate variable '{name}' without context"
+                        "Cannot evaluate variable '{name}' without context; gate arguments must be constant expressions"
                     )))
                 }
             }

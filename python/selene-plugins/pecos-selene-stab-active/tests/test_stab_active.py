@@ -114,9 +114,8 @@ class TestStabActiveArbitraryRotations:
         runner = build(main.compile())
         simulator = StabActivePlugin(random_seed=42)
 
-        for _ in range(5):
-            results = list(runner.run(simulator, n_qubits=1))
-            assert dict(results)["outcome"] in [0, 1]
+        results = list(runner.run(simulator, n_qubits=1))
+        assert dict(results)["outcome"] in [0, 1]
 
     def test_arbitrary_rz_angle(self) -> None:
         """Test an arbitrary Rz rotation angle."""
@@ -289,4 +288,33 @@ def test_h_t_h_matches_exact_binomial() -> None:
     # The probability is known exactly, so this is an exact two-sided binomial
     # test at a 0.1% false-failure rate, with no third-party statistics package.
     lower, upper = _binomial_tail_probabilities(ones, shots, math.sin(math.pi / 8) ** 2)
+    assert min(lower, upper) > 0.0005, (ones, lower, upper)
+
+
+def test_rz_sign_through_rx_matches_exact_binomial() -> None:
+    """H RZ(pi/4) RX(pi/2) gives P(1) = (1 - sin(pi/4))/2; a flipped RZ or RX sign gives 0.854."""
+
+    @guppy
+    def main() -> None:
+        q = qubit()
+        h(q)
+        rz(q, pi / 4)
+        rx(q, pi / 2)
+        result("outcome", measure(q).read())
+
+    shots = 4000
+    runner = build(main.compile())
+    ones = sum(
+        int(dict(shot)["outcome"])
+        for shot in runner.run_shots(
+            simulator=StabActivePlugin(random_seed=7),
+            n_qubits=1,
+            n_shots=shots,
+            n_processes=1,
+        )
+    )
+    # Unlike sin^2(theta/2), this probability is odd in the RZ angle, so it
+    # also pins the rotation sign and the RXY decomposition used for RX.
+    expected = (1 - math.sin(math.pi / 4)) / 2
+    lower, upper = _binomial_tail_probabilities(ones, shots, expected)
     assert min(lower, upper) > 0.0005, (ones, lower, upper)

@@ -463,6 +463,10 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   refactor plus bit-reversed order is 1.18x slower than the default (geomean),
   so it stays opt-in.
 
+- Python: C4-Helix two-block transversal-CNOT circuits render to certified Guppy
+  programs with block-prefixed gadget functions and result tags, using 44 qubits.
+  `cnot_definitions` supplies typed parities for `build_dem_from_guppy`.
+
 - Python: C4-Helix two-block circuits apply a transversal CNOT between syndrome
   rounds, with block-prefixed measurement labels and discovered detectors
   (`cnot_circuit`, `cnot_definitions`); measured distance is 5 <= d <= 6.

@@ -2088,7 +2088,7 @@ pub mod actions {
         RandomOutcome, SampleEmission, SampleEmissionWithProb, Seep, SkipGate, TwoQubitEmission,
         TwoQubitEmissionWithPartnerDepolarize, TwoQubitPauli, Unleak, ZZDephasing, ZZDephasingRate,
     };
-    use crate::noise::validation::ValidationResult;
+    use crate::noise::validation::{ValidationError, ValidationResult};
 
     /// No-op action.
     #[must_use]
@@ -2545,7 +2545,10 @@ pub mod actions {
 
     /// Adapter that wraps a `NoiseChannel` to be used as a composite primitive.
     ///
-    /// See [`channel_action`] for group leadership, sampling, guards and skip propagation.
+    /// Construction rejects channels that do not declare `AfterGate` support.
+    /// The adapter calls the wrapped channel's `apply` with a synthesized
+    /// `AfterGate` event for the operand group. See [`channel_action`] for group
+    /// leadership, sampling, guards and skip propagation.
     ///
     /// # Example
     ///
@@ -2556,7 +2559,7 @@ pub mod actions {
     /// // Use a traditional channel inside a composite decision tree
     /// let noise = seq![
     ///     skip_if_leaked(),
-    ///     prob(0.5, channel_action(SingleQubitChannel::depolarizing(1.0)?))?,
+    ///     prob(0.5, channel_action(SingleQubitChannel::depolarizing(1.0)?)?)?,
     /// ];
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
@@ -2576,12 +2579,27 @@ pub mod actions {
 
     impl ChannelAdapter {
         /// Create a new channel adapter.
-        pub fn new<C: crate::noise::NoiseChannel + 'static>(channel: C) -> Self {
+        ///
+        /// # Errors
+        /// Returns an error naming the channel if it does not declare `AfterGate` support.
+        pub fn new<C: crate::noise::NoiseChannel + 'static>(channel: C) -> ValidationResult<Self> {
+            if !channel
+                .event_kinds()
+                .contains(crate::noise::NoiseEventKind::AfterGate)
+            {
+                return Err(ValidationError::new(
+                    "channel_action",
+                    format!(
+                        "channel '{}' must handle AfterGate: the adapter only runs wrapped channels on gate events",
+                        channel.name()
+                    ),
+                ));
+            }
             let name = channel.name().to_string();
-            Self {
+            Ok(Self {
                 channel: Box::new(channel),
                 name,
-            }
+            })
         }
 
         /// Get the name of the wrapped channel.
@@ -2696,8 +2714,13 @@ pub mod actions {
     /// enclosing group installed, the adapter runs on every invocation.
     /// It synthesizes an `AfterGate` with the current gate type (or `I`), angles and
     /// complete operand group (or just the invoked qubit). Suppressed groups go in
-    /// `leaked_suppressed`. Registered group size is preserved. The wrapped channel's
-    /// `responds_to` filter is bypassed, and its response retains every named qubit.
+    /// `leaked_suppressed`. Registered group size is preserved. The adapter calls
+    /// the wrapped channel's `apply` with this synthesized `AfterGate` event for
+    /// the operand group, and its response retains every named qubit.
+    /// Construction rejects channels whose `event_kinds()` omit `AfterGate`.
+    ///
+    /// # Errors
+    /// Returns an error naming the channel if it does not declare `AfterGate` support.
     ///
     /// # Example
     ///
@@ -2708,12 +2731,13 @@ pub mod actions {
     /// // Use a traditional channel inside a composite decision tree
     /// let noise = seq![
     ///     skip_if_leaked(),
-    ///     prob(0.5, channel_action(SingleQubitChannel::depolarizing(1.0)?))?,
+    ///     prob(0.5, channel_action(SingleQubitChannel::depolarizing(1.0)?)?)?,
     /// ];
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    #[must_use]
-    pub fn channel_action<C: crate::noise::NoiseChannel + 'static>(channel: C) -> ChannelAdapter {
+    pub fn channel_action<C: crate::noise::NoiseChannel + 'static>(
+        channel: C,
+    ) -> ValidationResult<ChannelAdapter> {
         ChannelAdapter::new(channel)
     }
 
@@ -2723,10 +2747,11 @@ pub mod actions {
 
         #[test]
         fn test_channel_skip_preserves_all_named_qubits() {
-            let adapter = channel_action(crate::noise::composite::CompositeChannel::new(
-                "skip both",
-                skip_gate(),
-            ));
+            let adapter = channel_action(
+                crate::noise::composite::CompositeChannel::new("skip both", skip_gate())
+                    .with_filter(crate::noise::composite::CompositeEventFilter::AnyGate),
+            )
+            .unwrap();
             let mut ctx = NoiseContext::new();
             ctx.set_current_qubit_index(0, &[QubitId(0), QubitId(1)]);
             let response = GateAction::apply(

@@ -150,7 +150,8 @@ fn suppressed_real_gate_error_channels() {
                             .with_pauli_weights(crate::noise::PauliWeights::x_only())
                             .unwrap(),
                     ),
-                ),
+                )
+                .unwrap(),
             )
             .with_filter(CompositeEventFilter::TwoQubitGate),
         ),
@@ -599,7 +600,8 @@ fn suppressed_adapter_seepage() {
                     .unwrap()
                     .with_seepage(1.0)
                     .unwrap(),
-            ),
+            )
+            .unwrap(),
         )
         .with_filter(CompositeEventFilter::TwoQubitGate);
         let mut noise = ComposableNoiseModel::new()
@@ -656,7 +658,7 @@ fn channel_adapter_marks_every_named_qubit() {
         }
     }
     let noise = ComposableNoiseModel::new().add_channel(
-        CompositeChannel::new("marks", channel_action(MarkBoth))
+        CompositeChannel::new("marks", channel_action(MarkBoth).unwrap())
             .with_filter(CompositeEventFilter::TwoQubitGate),
     );
     let mut runner = CircuitRunner::new().with_noise(noise);

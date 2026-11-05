@@ -7,6 +7,56 @@ use std::sync::{Arc, Mutex};
 
 const PAIR: [QubitId; 2] = [QubitId(0), QubitId(1)];
 
+fn assert_adapter_rejects_channel<C: NoiseChannel + Clone + 'static>(channel: C) {
+    let name = channel.name();
+    for result in [
+        channel_action(channel.clone()),
+        ChannelAdapter::new(channel),
+    ] {
+        let error = result.expect_err("a channel without AfterGate support must be rejected");
+        let message = error.to_string();
+        assert!(message.contains(name), "{message}");
+        assert!(message.contains("AfterGate"), "{message}");
+        assert!(
+            message.contains("only runs wrapped channels on gate events"),
+            "{message}"
+        );
+    }
+}
+
+#[test]
+fn channel_adapter_rejects_channels_without_after_gate_support() {
+    for (name, filter) in [
+        ("preparation only", CompositeEventFilter::Preparation),
+        ("idle only", CompositeEventFilter::IdleTime),
+        ("before gate only", CompositeEventFilter::BeforeGate),
+    ] {
+        assert_adapter_rejects_channel(CompositeChannel::new(name, nothing()).with_filter(filter));
+    }
+    assert_adapter_rejects_channel(MeasurementChannel::symmetric(0.1).unwrap());
+    assert_adapter_rejects_channel(
+        CompositeCrosstalkChannel::new("preparation crosstalk", nothing())
+            .responds_to_preparation(),
+    );
+    assert_adapter_rejects_channel(CompositeChannel::new("no event kinds", nothing()));
+}
+
+#[test]
+fn channel_adapter_accepts_channels_declaring_after_gate_support() {
+    let channel =
+        CompositeChannel::new("gate channel", nothing()).with_filter(CompositeEventFilter::AnyGate);
+    assert_eq!(
+        channel_action(channel.clone()).unwrap().channel_name(),
+        "gate channel"
+    );
+    assert_eq!(
+        ChannelAdapter::new(channel).unwrap().channel_name(),
+        "gate channel"
+    );
+    assert!(channel_action(SingleQubitChannel::depolarizing(0.1).unwrap()).is_ok());
+    assert!(channel_action(Probe::default()).is_ok());
+}
+
 #[derive(Debug, PartialEq, Eq)]
 struct View {
     member: usize,
@@ -20,7 +70,7 @@ struct Probe {
 }
 impl NoiseChannel for Probe {
     fn responds_to(&self, _: &NoiseEvent<'_>) -> bool {
-        false // The adapter deliberately bypasses this filter.
+        false
     }
     fn apply(
         &self,
@@ -79,7 +129,7 @@ fn assert_rate(channel: &dyn NoiseChannel, qubits: &[QubitId], expected: f64) {
 fn adapter_runs_a_pair_channel_at_its_configured_rate() {
     let channel = CompositeChannel::new(
         "rate",
-        channel_action(TwoQubitChannel::depolarizing(0.1).unwrap()),
+        channel_action(TwoQubitChannel::depolarizing(0.1).unwrap()).unwrap(),
     );
     assert_rate(&channel, &PAIR, 0.1);
 }
@@ -90,7 +140,7 @@ fn adapter_prob_draws_once_per_pair() {
         "prob",
         prob(
             0.3,
-            channel_action(TwoQubitChannel::depolarizing(1.0).unwrap()),
+            channel_action(TwoQubitChannel::depolarizing(1.0).unwrap()).unwrap(),
         )
         .unwrap(),
     );
@@ -100,7 +150,7 @@ fn adapter_prob_draws_once_per_pair() {
 fn assert_channel_probability(geometric: bool) {
     let channel = CompositeChannel::new(
         "sampled",
-        channel_action(TwoQubitChannel::depolarizing(1.0).unwrap()),
+        channel_action(TwoQubitChannel::depolarizing(1.0).unwrap()).unwrap(),
     )
     .with_probability(0.3)
     .unwrap()
@@ -123,7 +173,7 @@ fn assert_batch_probability(geometric: bool) {
     let channel = BatchCompositeChannel::new(
         "sampled",
         0.3,
-        channel_action(TwoQubitChannel::depolarizing(1.0).unwrap()),
+        channel_action(TwoQubitChannel::depolarizing(1.0).unwrap()).unwrap(),
     )
     .unwrap()
     .with_geometric_threshold(if geometric { 2.0 } else { 0.0 })
@@ -147,7 +197,7 @@ fn adapter_keeps_single_qubit_rate() {
         "single",
         prob(
             0.5,
-            channel_action(SingleQubitChannel::depolarizing(1.0).unwrap()),
+            channel_action(SingleQubitChannel::depolarizing(1.0).unwrap()).unwrap(),
         )
         .unwrap(),
     );
@@ -159,7 +209,7 @@ fn adapter_condition_on_leader_decides_for_the_group() {
     let probe = Probe::default();
     let channel = CompositeChannel::new(
         "condition",
-        seq![skip_if_leaked(), channel_action(probe.clone())],
+        seq![skip_if_leaked(), channel_action(probe.clone()).unwrap()],
     );
     let mut ctx = NoiseContext::new();
     ctx.mark_leaked(PAIR[0]);
@@ -174,7 +224,7 @@ fn adapter_condition_on_leader_decides_for_the_group() {
 #[test]
 fn adapter_suppressed_group_runs_on_first_leaked_member() {
     let probe = Probe::default();
-    let channel = CompositeChannel::new("suppressed", channel_action(probe.clone()));
+    let channel = CompositeChannel::new("suppressed", channel_action(probe.clone()).unwrap());
     let mut ctx = NoiseContext::new();
     ctx.mark_leaked(PAIR[1]);
     channel.apply(
@@ -196,7 +246,10 @@ fn adapter_suppressed_group_runs_on_first_leaked_member() {
 #[test]
 fn adapter_single_pass_leader_stays_fixed_after_unleak() {
     let probe = Probe::default();
-    let channel = CompositeChannel::new("unleak", seq![channel_action(probe.clone()), unleak()]);
+    let channel = CompositeChannel::new(
+        "unleak",
+        seq![channel_action(probe.clone()).unwrap(), unleak()],
+    );
     let mut ctx = NoiseContext::new();
     for q in PAIR {
         ctx.mark_leaked(q);
@@ -239,7 +292,10 @@ fn adapter_skip_stops_the_sequence() {
         ..Probe::default()
     };
     let members = Members::default();
-    let channel = CompositeChannel::new("skip", seq![channel_action(probe), members.clone()]);
+    let channel = CompositeChannel::new(
+        "skip",
+        seq![channel_action(probe).unwrap(), members.clone()],
+    );
     channel.apply(
         &event(&PAIR, false),
         &mut NoiseContext::new(),
@@ -256,7 +312,7 @@ fn adapter_non_gate_event_runs_once_with_all_operands() {
     for geometric in [false, true] {
         let probe = Probe::default();
         let members = Members::default();
-        let primitive = seq![channel_action(probe.clone()), members.clone()];
+        let primitive = seq![channel_action(probe.clone()).unwrap(), members.clone()];
         let threshold = if geometric { 2.0 } else { 0.0 };
         let channels: Vec<Box<dyn NoiseChannel>> = vec![
             Box::new(
@@ -300,7 +356,7 @@ fn adapter_non_gate_event_runs_once_with_all_operands() {
 #[test]
 fn adapter_runs_standalone_without_a_group() {
     let probe = Probe::default();
-    let adapter = channel_action(probe.clone());
+    let adapter = channel_action(probe.clone()).unwrap();
     let mut ctx = NoiseContext::new();
     let mut rng = PecosRng::seed_from_u64(42);
     for q in PAIR {
@@ -329,7 +385,7 @@ fn adapter_unleak_reaches_fast_batch_result() {
         response: NoiseResponse::MarkUnleaked(smallvec::smallvec![PAIR[0]]),
         ..Probe::default()
     };
-    let processor = FastBatchProcessor::new(1.0, channel_action(probe)).unwrap();
+    let processor = FastBatchProcessor::new(1.0, channel_action(probe).unwrap()).unwrap();
     let result = processor.process_range(
         0,
         1,
@@ -347,7 +403,7 @@ fn fast_batch_skip_list_contains_only_invoked_qubits_that_are_skipped() {
             response: NoiseResponse::SkipGate(smallvec::smallvec![target]),
             ..Probe::default()
         };
-        let processor = FastBatchProcessor::new(1.0, channel_action(probe)).unwrap();
+        let processor = FastBatchProcessor::new(1.0, channel_action(probe).unwrap()).unwrap();
         let result = processor.process_range(
             0,
             1,
@@ -374,8 +430,11 @@ fn fast_batch_skip_list_contains_only_invoked_qubits_that_are_skipped() {
 fn adapter_sites_and_stages_each_run_once() {
     let probe = Probe::default();
     let primitive = two_stage(
-        channel_action(probe.clone()),
-        seq![channel_action(probe.clone()), channel_action(probe.clone())],
+        channel_action(probe.clone()).unwrap(),
+        seq![
+            channel_action(probe.clone()).unwrap(),
+            channel_action(probe.clone()).unwrap()
+        ],
     );
     for geometric in [false, true] {
         let threshold = if geometric { 2.0 } else { 0.0 };
@@ -435,12 +494,14 @@ fn adapter_leader_cleared_with_operand_state() {
 fn adapter_crosstalk_keeps_each_target_with_or_without_enclosing_group() {
     for nested in [false, true] {
         let probe = Probe::default();
-        let crosstalk = CompositeCrosstalkChannel::new("targets", channel_action(probe.clone()))
-            .local(|_| vec![QubitId(2), QubitId(3)]);
+        let crosstalk =
+            CompositeCrosstalkChannel::new("targets", channel_action(probe.clone()).unwrap())
+                .responds_to_gates()
+                .local(|_| vec![QubitId(2), QubitId(3)]);
         let channel: Box<dyn NoiseChannel> = if nested {
             Box::new(CompositeChannel::new(
                 "nested targets",
-                channel_action(crosstalk),
+                channel_action(crosstalk).unwrap(),
             ))
         } else {
             Box::new(crosstalk)
@@ -634,22 +695,30 @@ impl Primitive for UnleakFirst {
 fn stage_two_chooses_the_first_still_leaked_member() {
     let probe = Probe::default();
     for geometric in [false, true] {
-        let primitive = two_stage(UnleakFirst, channel_action(probe.clone()));
+        let primitive = two_stage(UnleakFirst, channel_action(probe.clone()).unwrap());
         let threshold = if geometric { 2.0 } else { 0.0 };
         let channel = CompositeChannel::new("two pass", primitive.clone())
+            .with_filter(CompositeEventFilter::AnyGate)
             .with_probability(0.999_999)
             .unwrap()
             .with_geometric_threshold(threshold)
             .with_min_qubits(0);
         let batch = BatchCompositeChannel::new("two pass", 0.999_999, primitive)
             .unwrap()
+            .with_filter(CompositeEventFilter::AnyGate)
             .with_geometric_threshold(threshold)
             .with_min_qubits(0);
         let channels: Vec<Box<dyn NoiseChannel>> = vec![
             Box::new(channel.clone()),
             Box::new(batch.clone()),
-            Box::new(CompositeChannel::new("nested", channel_action(channel))),
-            Box::new(CompositeChannel::new("nested batch", channel_action(batch))),
+            Box::new(CompositeChannel::new(
+                "nested",
+                channel_action(channel).unwrap(),
+            )),
+            Box::new(CompositeChannel::new(
+                "nested batch",
+                channel_action(batch).unwrap(),
+            )),
         ];
         for channel in channels {
             probe.views.lock().unwrap().clear();
@@ -698,8 +767,12 @@ fn adapter_skips_stop_exactly_the_named_members_without_duplicate_marks() {
                 response: NoiseResponse::SkipGate(skipped.iter().copied().collect()),
                 ..Probe::default()
             };
-            let inner = CompositeChannel::new("inner", channel_action(probe.clone()));
-            let adapters = [channel_action(probe.clone()), channel_action(inner)];
+            let inner = CompositeChannel::new("inner", channel_action(probe.clone()).unwrap())
+                .with_filter(CompositeEventFilter::AnyGate);
+            let adapters = [
+                channel_action(probe.clone()).unwrap(),
+                channel_action(inner).unwrap(),
+            ];
             for adapter in adapters {
                 probe.views.lock().unwrap().clear();
                 let channel = CompositeChannel::new("skip", seq![adapter, inject_x()]);
@@ -804,7 +877,7 @@ fn sequence_remembers_skip_when_probability_guard_misses_partner() {
                     prob(
                         0.5,
                         GuardEntry {
-                            inner: channel_action(probe.clone()),
+                            inner: channel_action(probe.clone()).unwrap(),
                             members: entered.clone(),
                         },
                     )
@@ -837,7 +910,11 @@ fn sequence_remembers_skip_when_condition_excludes_partner() {
         });
         let primitive = sequence(
             vec![
-                Box::new(when(condition, channel_action(probe.clone()), nothing())),
+                Box::new(when(
+                    condition,
+                    channel_action(probe.clone()).unwrap(),
+                    nothing(),
+                )),
                 Box::new(inject_x()),
             ],
             boxed,
@@ -859,7 +936,7 @@ fn outer_sequence_remembers_skip_when_guard_bypasses_inner_sequence() {
             let entered = Members::default();
             let inner = sequence(
                 vec![
-                    Box::new(channel_action(probe.clone())),
+                    Box::new(channel_action(probe.clone()).unwrap()),
                     Box::new(inject_x()),
                 ],
                 inner_boxed,
@@ -901,7 +978,7 @@ fn sequence_remembers_skip_through_function_and_choice_guards() {
             Box::new(prob_fn(
                 |_| Probability::new(0.5).unwrap(),
                 GuardEntry {
-                    inner: channel_action(probe.clone()),
+                    inner: channel_action(probe.clone()).unwrap(),
                     members: entered.clone(),
                 },
             )),
@@ -910,7 +987,7 @@ fn sequence_remembers_skip_through_function_and_choice_guards() {
                     (
                         0.5,
                         Box::new(GuardEntry {
-                            inner: channel_action(probe.clone()),
+                            inner: channel_action(probe.clone()).unwrap(),
                             members: entered.clone(),
                         }),
                     ),
@@ -944,7 +1021,7 @@ fn sequence_stops_at_the_recorded_step_and_keeps_earlier_effects() {
         let primitive = sequence(
             vec![
                 Box::new(inject_z()),
-                Box::new(prob(0.5, channel_action(probe.clone())).unwrap()),
+                Box::new(prob(0.5, channel_action(probe.clone()).unwrap()).unwrap()),
                 Box::new(inject_x()),
             ],
             boxed,
@@ -1176,7 +1253,7 @@ fn conditional_combinators_forward_conditions_and_both_branches() {
 fn operand_actions_conditions_and_callbacks_declare_their_reads() {
     use crate::noise::composite::FnCondition;
     let readers: Vec<Box<dyn Primitive>> = vec![
-        Box::new(channel_action(Probe::default())),
+        Box::new(channel_action(Probe::default()).unwrap()),
         Box::new(partner_depolarize()),
         Box::new(two_qubit_emission_with_partner_depolarize()),
         Box::new(independent_emission(0.1).unwrap()),

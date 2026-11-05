@@ -1305,7 +1305,10 @@ mod tests {
         .unwrap();
 
         // Wrap it in a composite primitive and use within a decision tree
-        let flow_noise = seq![skip_if_leaked(), channel_action(traditional_channel),];
+        let flow_noise = seq![
+            skip_if_leaked(),
+            channel_action(traditional_channel).unwrap(),
+        ];
 
         // Build a CompositeChannel from it
         let channel = CompositeChannelBuilder::single_qubit("adapted_channel", flow_noise);
@@ -1361,8 +1364,8 @@ mod tests {
 
         // Use channel_action in a conditional: only apply when not leaked
         let noise = when_leaked(
-            nothing(),                            // Do nothing if leaked
-            channel_action(always_error_channel), // Apply channel if not leaked
+            nothing(),                                     // Do nothing if leaked
+            channel_action(always_error_channel).unwrap(), // Apply channel if not leaked
         );
 
         let channel = CompositeChannelBuilder::single_qubit("conditional_adapted", noise);

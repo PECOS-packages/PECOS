@@ -13,6 +13,9 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   a wrapped channel with rate p no longer fires at about `1 - (1 - p)^k`. This
   includes wrapped single-qubit channels on multi-operand preparation, measurement
   and idle events (one group of all operands), and nested composites.
+  `channel_action` and `ChannelAdapter::new` now return `ValidationResult` and
+  reject wrapped channels whose `event_kinds()` omit `AfterGate`, naming the
+  channel in the error: adapters only run wrapped channels on gate events.
   Guards around an adapter are decided on the leader's invocation. A wrapped
   skip is recorded by every enclosing sequence at the step that returned it.
   After evaluating that step, the sequence stops only for named members, even if
@@ -27,7 +30,9 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   `Condition::reads_operands` capabilities opt into full operand installation
   before geometric single-pass non-gate sampling; undeclared readers see no
   operands. Linear and two-pass paths always install operands, once per group,
-  and all paths set member indices. Function conditions can opt in with
+  and `CompositeChannel` and `BatchCompositeChannel` set member indices on their
+  linear, geometric and two-pass paths. Crosstalk's per-target loop keeps index 0.
+  Function conditions can opt in with
   `FnCondition::with_operand_reads`; `FnCondition` now implements `Clone` when its
   callback does, allowing it to be used in `when` and `skip_if`.
   Nested `CompositeCrosstalkChannel` isolates event state so adapters act on each

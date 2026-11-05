@@ -670,7 +670,7 @@ impl NoiseChannel for AdapterProbe {
 
 #[test]
 fn channel_adapter_preserves_custom_group_size() {
-    let channel = CompositeChannel::new("adapter", channel_action(AdapterProbe));
+    let channel = CompositeChannel::new("adapter", channel_action(AdapterProbe).unwrap());
     let event = NoiseEvent::AfterGate {
         gate_type: GateType::I,
         gate_id: None,
@@ -717,19 +717,24 @@ impl Primitive for NestedProbe {
 }
 
 fn nested_channels(probe: &NestedProbe) -> Vec<Box<dyn NoiseChannel>> {
-    let inner = CompositeChannel::new("inner", probe.clone());
+    let inner =
+        CompositeChannel::new("inner", probe.clone()).with_filter(CompositeEventFilter::AnyGate);
     let batch_inner = BatchCompositeChannel::new("batch inner", 0.999_999, probe.clone())
         .unwrap()
+        .with_filter(CompositeEventFilter::AnyGate)
         .with_min_qubits(0)
         .with_geometric_threshold(0.0);
     vec![
         Box::new(CompositeChannel::new(
             "outer",
-            channel_action(inner.clone()),
+            channel_action(inner.clone()).unwrap(),
         )),
-        Box::new(CompositeChannel::new("outer", channel_action(batch_inner))),
+        Box::new(CompositeChannel::new(
+            "outer",
+            channel_action(batch_inner).unwrap(),
+        )),
         Box::new(
-            BatchCompositeChannel::new("outer", 0.999_999, channel_action(inner))
+            BatchCompositeChannel::new("outer", 0.999_999, channel_action(inner).unwrap())
                 .unwrap()
                 .with_min_qubits(0)
                 .with_geometric_threshold(0.0),
@@ -792,12 +797,17 @@ fn nested_composite_keeps_non_gate_operands_for_every_member() {
 #[test]
 fn nested_composite_restores_all_enclosing_event_state() {
     let pair = [QubitId(0), QubitId(1)];
-    let inner = CompositeChannel::new("inner", nothing());
+    let inner =
+        CompositeChannel::new("inner", nothing()).with_filter(CompositeEventFilter::AnyGate);
     let batch_inner = BatchCompositeChannel::new("batch inner", 0.999_999, nothing())
         .unwrap()
+        .with_filter(CompositeEventFilter::AnyGate)
         .with_min_qubits(0)
         .with_geometric_threshold(0.0);
-    for adapter in [channel_action(inner), channel_action(batch_inner)] {
+    for adapter in [
+        channel_action(inner).unwrap(),
+        channel_action(batch_inner).unwrap(),
+    ] {
         let mut ctx = NoiseContext::new();
         ctx.mark_leaked(pair[1]);
         ctx.set_current_gate(GateType::CX, &[], std::num::NonZeroUsize::new(2).unwrap());

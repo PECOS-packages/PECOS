@@ -181,7 +181,10 @@ does not scale seepage. Two-qubit channels share the outer fault and emission
 draws per pair, including through `channel_action`; composite builders
 preserve the per-qubit marginal rate.
 
-`channel_action` runs its wrapped channel once per operand group per stage. The
+`channel_action` returns a `ValidationResult` and rejects wrapped channels whose
+`event_kinds()` omit `AfterGate`, naming the channel in the error. It calls the
+wrapped channel's `apply` with a synthesized `AfterGate` event for the operand
+group and runs that channel once per group per stage. The
 leader is the first eligible member at the start of each stage (the first leaked
 member of a suppressed group, otherwise member 0), and remains fixed within that
 stage. Probability and condition guards decide on the leader's invocation. Each
@@ -203,8 +206,9 @@ forward it from their children. Custom readers using `current_gate_qubits()`,
 operands on that path. Function conditions opt in with
 `FnCondition::with_operand_reads()`. `channel_action` declares operand reads;
 `pauli()` does not and keeps O(n*p) processing. Linear and two-pass paths always
-install operands once per group, sharing the same list between stages. Every path
-sets the current member index.
+install operands once per group, sharing the same list between stages.
+`CompositeChannel` and `BatchCompositeChannel` set member indices on their linear,
+geometric and two-pass paths; crosstalk's per-target loop keeps index 0.
 
 `SingleQubitChannel` and `TwoQubitChannel` discard a seeping qubit's state by
 sampling I, X, Y or Z uniformly and independently for each seeping qubit. Identity

@@ -84,6 +84,8 @@ branch run -- provenance stays tied to the immutable ref.
 
 ## 4. Download the bundle and dry-run
 
+From a checkout of the tagged commit:
+
 ```
 gh run download <tag-run-id> -n pecos-distribution -D pecos-distribution-<version>
 ./scripts/publish-wheels.sh --dry-run -f pecos-distribution-<version>
@@ -96,7 +98,7 @@ a plain `pecos-distribution/` would mix two versions in one directory, and the
 preflight -- complete set, consistent version, only expected files -- is the
 only thing standing between that and a stray upload.
 
-The dry run must show a real `twine check ... PASSED` per file (twine must be
+The dry run must pass its `twine check` (twine must be
 installed, e.g. `uv tool install twine`). Keep it current: build tools raise the
 core-metadata version they emit over time, and a checker older than the metadata
 rejects the artifacts even though PyPI accepts them -- `uv tool upgrade twine` if a
@@ -105,13 +107,13 @@ validates every package before uploading any of them, so a stale checker stops t
 rather than surfacing after the first packages are already public. It prints only a
 `Distribution checks passed` summary and swallows `twine check` output unless it
 fails, so confirm the per-file result directly:
-`uvx twine check pecos-distribution-<version>/*/*.whl pecos-distribution-<version>/*/*.tar.gz`
+`uvx twine check --strict pecos-distribution-<version>/*/*.whl pecos-distribution-<version>/*/*.tar.gz`
 and check the `PASSED` count equals the file count.
 
 ## 5. Publish (the manual step)
 
 ```
-./scripts/publish-wheels.sh -f pecos-distribution
+./scripts/publish-wheels.sh -f pecos-distribution-<version>
 ```
 
 Confirm each package at its prompt. Every confirmation is collected before the
@@ -151,7 +153,7 @@ gh release create py-<version> --prerelease --title "py-<version>" \
 Prove the published set resolves and runs, from a clean environment:
 
 ```
-uv venv /tmp/verify && uv pip install --python /tmp/verify \
+uv venv --clear /tmp/verify && uv pip install --python /tmp/verify \
   --no-cache --prerelease=allow quantum-pecos==<version>
 /tmp/verify/bin/python -c "import pecos; print(pecos.__version__)"
 ```
@@ -163,12 +165,13 @@ Check every listed Selene plugin from PyPI in its own clean environment, run fro
 outside the checkout so the installed wheel is what loads:
 
 ```
-grep -vE '^(#|$)' python/selene-plugins/release-plugins.txt | while read -r plugin; do
-  uv venv "/tmp/verify-$plugin" --python 3.12
-  uv pip install --python "/tmp/verify-$plugin" --no-cache --prerelease=allow \
-    "$plugin==<version>"
-  (cd /tmp && "/tmp/verify-$plugin/bin/python" "$OLDPWD/scripts/ci/smoke_selene_wheel.py" \
-    "${plugin//-/_}")
+grep -vE '^[[:space:]]*(#|$)' python/selene-plugins/release-plugins.txt | while read -r plugin; do
+  uv venv --clear "/tmp/verify-$plugin" --python 3.12 &&
+    uv pip install --python "/tmp/verify-$plugin" --no-cache --prerelease=allow \
+      "$plugin==<version>" &&
+    (cd /tmp && "/tmp/verify-$plugin/bin/python" "$OLDPWD/scripts/ci/smoke_selene_wheel.py" \
+      "${plugin//-/_}") ||
+    echo "FAILED: $plugin"
 done
 ```
 

@@ -38,6 +38,11 @@ fi
 # failed first upload of a new plugin project stops before any core package is
 # public. quantum-pecos pins both rslib packages, so they precede it.
 ALL_PACKAGES=("${RELEASE_PLUGINS[@]}" pecos-rslib pecos-rslib-llvm quantum-pecos)
+duplicate_packages=$(printf '%s\n' "${ALL_PACKAGES[@]}" | sort | uniq -d)
+if [ -n "$duplicate_packages" ]; then
+    echo "Error: release-plugins.txt repeats a plugin or lists a core package: $duplicate_packages" >&2
+    exit 1
+fi
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -95,10 +100,11 @@ if [ "$ASSUME_YES" = false ] && [ "$DRY_RUN" = false ] && [ ! -t 0 ]; then
     exit 1
 fi
 
-# Check if uv is installed (preferred) or twine directly
+# Run twine as a standalone tool: `uv run` would sync this checkout's environment
+# (reinstalling its native packages) before every call.
 if command -v uv &> /dev/null; then
-    TWINE_CMD="uv run twine"
-    echo -e "${GREEN}Using uv to run twine ($($TWINE_CMD --version 2>/dev/null | head -1))${NC}"
+    TWINE_CMD="uvx twine"
+    echo -e "${GREEN}Using uvx to run twine ($($TWINE_CMD --version 2>/dev/null | head -1))${NC}"
 elif command -v twine &> /dev/null; then
     TWINE_CMD="twine"
     echo -e "${YELLOW}Using system twine ($(twine --version 2>/dev/null | head -1)); consider using uv${NC}"
@@ -121,12 +127,12 @@ else
     DIST_DIR="$TEMP_DIR"
 fi
 
-# Resolve a package's distribution directory (with or without dist/ prefix).
+# The package directories sit at the bundle's top level or under its dist/ directory.
+BUNDLE_ROOT="$DIST_DIR"
+[ -d "$BUNDLE_ROOT/dist" ] && BUNDLE_ROOT="$BUNDLE_ROOT/dist"
+
 package_dir_for() {
-    local package_name=$1
-    local dir="$DIST_DIR/$package_name"
-    [ -d "$dir" ] || dir="$DIST_DIR/dist/$package_name"
-    printf '%s\n' "$dir"
+    printf '%s\n' "$BUNDLE_ROOT/$1"
 }
 
 # Preflight one package: directory exists, contains only expected distribution
@@ -259,7 +265,7 @@ pin_exists_on_pypi() {
 
 # Main execution
 if [ -n "$PACKAGE" ]; then
-    if ! printf '%s\n' "${ALL_PACKAGES[@]}" | grep -qx "$PACKAGE"; then
+    if ! printf '%s\n' "${ALL_PACKAGES[@]}" | grep -qxF -- "$PACKAGE"; then
         echo -e "${RED}Error: Invalid package name '$PACKAGE'${NC}"
         echo "Valid options are: ${ALL_PACKAGES[*]}"
         exit 1
@@ -284,12 +290,10 @@ else
     echo -e "${GREEN}Preflighting all PECOS packages${NC}"
     # The package list comes from this checkout, not from the bundle: refuse a bundle
     # holding a package this checkout would silently skip.
-    bundle_root="$DIST_DIR"
-    [ -d "$bundle_root/dist" ] && bundle_root="$bundle_root/dist"
-    for dir in "$bundle_root"/*/; do
+    for dir in "$BUNDLE_ROOT"/*/; do
         [ -d "$dir" ] || continue
         name=$(basename "$dir")
-        if ! printf '%s\n' "${ALL_PACKAGES[@]}" | grep -qx "$name"; then
+        if ! printf '%s\n' "${ALL_PACKAGES[@]}" | grep -qxF -- "$name"; then
             echo -e "${RED}Error: the bundle contains $name, which this checkout does not publish.${NC}"
             echo "Run the script from a checkout of the tagged commit."
             exit 1

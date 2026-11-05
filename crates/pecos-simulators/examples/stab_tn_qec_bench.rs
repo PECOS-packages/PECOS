@@ -10,12 +10,8 @@
 // express or implied. See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Benchmark casts use bounded indices/counts and intentionally rounded random fractions.
-#![allow(
-    clippy::cast_possible_truncation,
-    clippy::cast_precision_loss,
-    clippy::cast_sign_loss
-)]
+// Benchmark casts turn non-negative trial indices into seeds and bond totals into f64 averages.
+#![allow(clippy::cast_precision_loss, clippy::cast_sign_loss)]
 
 //! QEC-like benchmark: syndrome-extraction rounds with small RZ noise.
 //!
@@ -184,7 +180,8 @@ fn mast_scenario(num_qubits: usize, num_t_gates: usize, seed: u64) -> (f64, usiz
         rng_state ^= rng_state << 13;
         rng_state ^= rng_state >> 7;
         rng_state ^= rng_state << 17;
-        let q = (rng_state % num_qubits as u64) as usize;
+        let q = usize::try_from(rng_state % num_qubits as u64)
+            .expect("remainder is below the usize qubit count");
         mast.rz(t, &[QubitId(q)]);
     }
     for q in (0..num_qubits - 1).rev() {

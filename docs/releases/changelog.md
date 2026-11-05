@@ -17,6 +17,9 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   effects. Without a table, victims only collapse. Measured qubits remain targets;
   leaked victims are excluded. Neo also targets noiseless preparations and QAlloc,
   unlike the engines. Noiseless payloads suppress hidden measurements.
+  Hidden-measurement continuations that request another `MeasureHidden` now
+  return `ExecutionError::RecursiveHiddenMeasurement` with the requested payload
+  type and qubits instead of recursing.
   Gate events and ordinary measurements do not trigger measurement crosstalk.
   `CrosstalkChannel::new`, `Default`, and `global_only` are replaced by
   `preparation(rate)` / `measurement()`; `with_neighbor_function`,

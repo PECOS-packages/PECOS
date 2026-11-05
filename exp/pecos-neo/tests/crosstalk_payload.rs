@@ -450,3 +450,135 @@ fn zero_rate_payload_preserves_rng() {
         }
     }
 }
+
+#[derive(Clone)]
+struct RepeatHidden {
+    nested: bool,
+    enabled: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl NoiseChannel for RepeatHidden {
+    fn responds_to(&self, event: &NoiseEvent<'_>) -> bool {
+        matches!(event, NoiseEvent::AfterHiddenMeasurement { .. })
+    }
+
+    fn apply(&self, _: &NoiseEvent<'_>, _: &mut NoiseContext, _: &mut PecosRng) -> NoiseResponse {
+        if !self.enabled.load(std::sync::atomic::Ordering::Relaxed) {
+            return NoiseResponse::None;
+        }
+        if self.nested {
+            NoiseResponse::Multiple(vec![
+                NoiseResponse::None,
+                NoiseResponse::Multiple(vec![hidden()]),
+            ])
+        } else {
+            hidden()
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        "RepeatHidden"
+    }
+
+    fn clone_box(&self) -> Box<dyn NoiseChannel> {
+        Box::new(self.clone())
+    }
+}
+
+fn check_recursive_hidden_measurement(nested: bool, wrapped: bool) {
+    for path in ["queue", "adapted", "handler", "direct event"] {
+        let enabled = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let channel = RepeatHidden {
+            nested,
+            enabled: enabled.clone(),
+        };
+        let noise = if wrapped {
+            ComposableNoiseModel::new().add_channel(
+                CompositeCrosstalkChannel::measurement(
+                    "wrapped",
+                    PayloadKind::Global,
+                    1.0,
+                    channel_action(channel),
+                )
+                .unwrap(),
+            )
+        } else {
+            ComposableNoiseModel::new()
+                .add_channel(
+                    CrosstalkChannel::measurement()
+                        .with_global_rate(1.0)
+                        .unwrap(),
+                )
+                .add_channel(channel)
+        };
+        let mut runner = CircuitRunner::new()
+            .with_noise(noise.add_plugin(&pecos_neo::noise::plugins::CorePlugin));
+        let mut state = SparseStab::with_seed(1, 42);
+        runner
+            .apply_gate(&mut state, GateType::PZ, &[QubitId(0)], &[])
+            .unwrap();
+        let payload = CommandBuilder::new()
+            .pz(&[0])
+            .meas_crosstalk_global_payload(&[] as &[usize])
+            .build();
+        let error = match path {
+            "queue" => runner.apply_circuit(&mut state, &payload).unwrap_err(),
+            "adapted" => runner
+                .apply_adapted_circuit(
+                    &mut state,
+                    &OpBuilder::new()
+                        .gate(GateType::MeasCrosstalkGlobalPayload.to_gate_id(), &[], &[])
+                        .build(),
+                )
+                .unwrap_err(),
+            "handler" => {
+                runner.on_before_gate(|_| hidden());
+                runner
+                    .apply_circuit(&mut state, &CommandBuilder::new().h(&[0]).build())
+                    .unwrap_err()
+            }
+            _ => runner
+                .apply_noise(
+                    &mut state,
+                    &NoiseEvent::AfterHiddenMeasurement {
+                        gate_type: GateType::MeasCrosstalkGlobalPayload,
+                        qubits: &[QubitId(0)],
+                        outcomes: &[false],
+                    },
+                )
+                .unwrap_err(),
+        };
+        assert!(
+            matches!(
+                &error,
+                ExecutionError::RecursiveHiddenMeasurement { gate_type, qubits }
+                if *gate_type == GateType::MeasCrosstalkGlobalPayload
+                    && qubits == &[QubitId(0)]
+            ),
+            "{path}: {error:?}"
+        );
+        let message = error.to_string();
+        assert!(message.contains("MeasCrosstalkGlobalPayload"));
+        assert!(message.contains("QubitId(0)"));
+        assert!(message.contains("transitions (stay, X, leak)"));
+        assert!(message.contains("not with another hidden measurement"));
+
+        enabled.store(false, std::sync::atomic::Ordering::Relaxed);
+        runner.apply_circuit(&mut state, &payload).unwrap();
+    }
+}
+
+#[test]
+fn recursive_hidden_measurement_is_rejected() {
+    check_recursive_hidden_measurement(false, false);
+}
+
+#[test]
+fn recursive_hidden_measurement_in_multiple_is_rejected() {
+    check_recursive_hidden_measurement(true, false);
+}
+
+#[test]
+fn recursive_hidden_measurement_in_composite_wrapper_is_rejected() {
+    check_recursive_hidden_measurement(true, true);
+}

@@ -428,6 +428,11 @@ victims directly, without user outcomes, readout noise, measurement events or
 lifecycle changes. `AfterHiddenMeasurement` carries the raw outcomes; the optional
 table selects stay, X, or leakage from the actual victim outcome. Without a
 table, only collapse occurs. This continuation finishes before the next command.
+`MeasureHidden` returned while handling `AfterHiddenMeasurement`, including
+inside `Multiple` or a composite wrapper, is rejected with
+`ExecutionError::RecursiveHiddenMeasurement` identifying the requested payload
+type and qubits because channels must return transitions (stay, X, leak)
+instead.
 No fired victims returns `None`. Noiseless payloads produce no hidden measurement.
 
 Both queue execution and adapted gate execution recognize payloads after

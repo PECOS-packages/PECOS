@@ -669,6 +669,12 @@ pub enum ExecutionError {
     /// A handler requested hidden measurement without a noise model for its continuation.
     HandlerHiddenMeasurementWithoutNoise,
 
+    /// A hidden-measurement continuation requested another hidden measurement.
+    RecursiveHiddenMeasurement {
+        gate_type: GateType,
+        qubits: Vec<QubitId>,
+    },
+
     /// Maximum decomposition depth exceeded (possible infinite recursion).
     MaxDecompositionDepthExceeded,
 }
@@ -733,6 +739,10 @@ impl std::fmt::Display for ExecutionError {
                 "Decomposition of gate ID {} uses operand index {index}, but each operand group \
                  has {group_size} qubits; check the gate's registered arity",
                 gate_id.0
+            ),
+            Self::RecursiveHiddenMeasurement { gate_type, qubits } => write!(
+                f,
+                "Rejected MeasureHidden for {gate_type:?} on qubits {qubits:?}: channels must answer AfterHiddenMeasurement with transitions (stay, X, leak), not with another hidden measurement"
             ),
             Self::HandlerHiddenMeasurementWithoutNoise => f.write_str("MeasureHidden requires a noise model to receive AfterHiddenMeasurement; attach one with with_noise"),
             Self::HandlerLeakageWithoutNoise { mark, qubits } => write!(
@@ -849,6 +859,8 @@ pub struct CircuitRunner<S: CliffordGateable> {
     signal_handlers: SignalHandlerRegistry,
     gate_handlers: GateEventHandlers,
 
+    handling_hidden_measurement: bool,
+
     // Scratch buffers (cleared at start of apply_circuit)
     outcomes: MeasurementOutcomes,
     results: Vec<bool>,
@@ -905,6 +917,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
             noise: None,
             signal_handlers: SignalHandlerRegistry::new(),
             gate_handlers: GateEventHandlers::new(),
+            handling_hidden_measurement: false,
         }
     }
 
@@ -1353,7 +1366,8 @@ impl<S: CliffordGateable> CircuitRunner<S> {
     /// # Errors
     ///
     /// Returns an error if the emitted response injects a gate the runner cannot
-    /// execute. Declared requirements are rejected by [`Self::with_noise`].
+    /// execute, or an `AfterHiddenMeasurement` response requests another hidden
+    /// measurement. Declared requirements are rejected by [`Self::with_noise`].
     pub fn apply_noise(
         &mut self,
         state: &mut S,
@@ -1363,8 +1377,13 @@ impl<S: CliffordGateable> CircuitRunner<S> {
             return Ok(NoiseResponse::None);
         };
 
+        let was_handling_hidden_measurement = self.handling_hidden_measurement;
+        self.handling_hidden_measurement |=
+            matches!(event, NoiseEvent::AfterHiddenMeasurement { .. });
         let response = noise.emit(event, &mut self.rng);
-        self.apply_noise_response(state, response.clone())?;
+        let result = self.apply_noise_response(state, response.clone());
+        self.handling_hidden_measurement = was_handling_hidden_measurement;
+        result?;
         Ok(response)
     }
 
@@ -2607,6 +2626,12 @@ impl<S: CliffordGateable> CircuitRunner<S> {
             | NoiseResponse::MarkUnleaked(_) => {}
 
             NoiseResponse::MeasureHidden { gate_type, qubits } => {
+                if self.handling_hidden_measurement {
+                    return Err(ExecutionError::RecursiveHiddenMeasurement {
+                        gate_type,
+                        qubits: qubits.to_vec(),
+                    });
+                }
                 if self.noise.is_none() {
                     return Err(ExecutionError::HandlerHiddenMeasurementWithoutNoise);
                 }

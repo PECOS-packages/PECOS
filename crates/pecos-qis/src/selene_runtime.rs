@@ -18,6 +18,7 @@ use pecos_qis_ffi_types::{
     LoweredQuantumOp, Operation, OperationCollector, QuantumOp, RuntimeRequest, SeleneRequest,
     TraceMetadata,
 };
+use pecos_selene_runtime::phase::normalize_phase;
 use selene_core::runtime::{RuntimeAPIVersion, plugin::RuntimePluginDescriptorV1};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::ffi::{CString, c_void};
@@ -98,10 +99,31 @@ impl RuntimeOperationBatch {
 struct SourceTraceMetadata {
     op: QuantumOp,
     metadata: TraceMetadata,
-    // Native records use exact angles, with a specifically predicted virtual-Z
-    // alternative for RXY. Legacy source_gate annotations retain their policy.
+    // Native records use exact angles, with predicted legacy and bounded virtual-Z
+    // alternatives for RXY. Legacy source_gate annotations retain their policy.
     native_match: bool,
-    folded_phi: Option<f64>,
+    folded_phi: Option<[f64; 2]>,
+}
+
+// The ABI does not declare a virtual-frame convention. Predict both legacy
+// SoftRZ arithmetic and bounded arithmetic, without changing plugin inputs.
+#[derive(Clone, Copy, Debug, Default)]
+struct SubmittedPhase {
+    legacy: f64,
+    bounded: f64,
+}
+impl SubmittedPhase {
+    fn add(&mut self, theta: f64) {
+        self.legacy += theta;
+        self.bounded = normalize_phase(self.bounded + normalize_phase(theta));
+    }
+
+    fn fold(self, phi: f64) -> [f64; 2] {
+        [
+            phi - self.legacy,
+            normalize_phase(normalize_phase(phi) - self.bounded),
+        ]
+    }
 }
 
 /// Selene ABI egress table. The ABI fixes this callback list; any other
@@ -486,7 +508,7 @@ pub struct SeleneRuntime {
     /// End timestamp of the last scheduled physical operation per runtime qubit.
     last_gate_time_end_nanos: Vec<u64>,
     /// Virtual-Z hypothesis for provenance matching; never alters emitted gates.
-    submitted_rz_phases: BTreeMap<usize, f64>,
+    submitted_rz_phases: BTreeMap<usize, SubmittedPhase>,
     source_trace_metadata: VecDeque<SourceTraceMetadata>,
     // Source annotations can precede their gate across synchronous native calls.
     pending_global_metadata: TraceMetadata,
@@ -832,9 +854,13 @@ impl SeleneRuntime {
                 // Preserve the existing source_gate matching contract for source
                 // programs already expressed in native gates.
                 let folded_phi = match native {
-                    NativeOp::Rxy(_, phi, q) => {
-                        Some(phi - self.submitted_rz_phases.get(&q).copied().unwrap_or(0.0))
-                    }
+                    NativeOp::Rxy(_, phi, q) => Some(
+                        self.submitted_rz_phases
+                            .get(&q)
+                            .copied()
+                            .unwrap_or_default()
+                            .fold(phi),
+                    ),
                     NativeOp::Rz(..)
                     | NativeOp::Rzz(..)
                     | NativeOp::Rpp(..)
@@ -871,13 +897,23 @@ impl SeleneRuntime {
             .unwrap_or(0);
         let mut phases: BTreeMap<_, _> = Self::quantum_op_qubits(&source)
             .into_iter()
-            .map(|q| (q, self.submitted_rz_phases.get(&q).copied().unwrap_or(0.0)))
+            .map(|q| {
+                (
+                    q,
+                    self.submitted_rz_phases
+                        .get(&q)
+                        .copied()
+                        .unwrap_or_default(),
+                )
+            })
             .collect();
         for (index, native) in sequence.into_iter().enumerate() {
             let folded_phi = match native {
-                NativeOp::Rxy(_, phi, q) => Some(phi - phases.get(&q).copied().unwrap_or(0.0)),
+                NativeOp::Rxy(_, phi, q) => {
+                    Some(phases.get(&q).copied().unwrap_or_default().fold(phi))
+                }
                 NativeOp::Rz(theta, q) => {
-                    *phases.entry(q).or_default() += theta;
+                    phases.entry(q).or_default().add(theta);
                     None
                 }
                 NativeOp::Rzz(..)
@@ -1859,7 +1895,8 @@ impl SeleneRuntime {
                 "runtime qubit {runtime_qubit} does not fit usize"
             ))
         })?;
-        self.submitted_rz_phases.insert(physical, 0.0);
+        self.submitted_rz_phases
+            .insert(physical, SubmittedPhase::default());
         self.program_to_runtime_qubits
             .insert(program_qubit, runtime_qubit);
         Ok(runtime_qubit)
@@ -2244,7 +2281,13 @@ impl SeleneRuntime {
             && let Some(qop) = native_request_quantum_op(native)?
         {
             let folded_phi = if let QuantumOp::RXY(_, phi, q) = &qop {
-                Some(phi - self.submitted_rz_phases.get(q).copied().unwrap_or(0.0))
+                Some(
+                    self.submitted_rz_phases
+                        .get(q)
+                        .copied()
+                        .unwrap_or_default()
+                        .fold(*phi),
+                )
             } else {
                 None
             };
@@ -2276,7 +2319,8 @@ impl SeleneRuntime {
                     let index = usize::try_from(qubit).map_err(|_| {
                         RuntimeError::ExecutionError("native qubit exceeds usize".into())
                     })?;
-                    self.submitted_rz_phases.insert(index, 0.0);
+                    self.submitted_rz_phases
+                        .insert(index, SubmittedPhase::default());
                 }
                 return Ok(qubit);
             }
@@ -2287,7 +2331,10 @@ impl SeleneRuntime {
             SeleneRequest::Rz { qubit, theta } => {
                 self.call_runtime_rz(*qubit, *theta)?;
                 if let Ok(index) = usize::try_from(*qubit) {
-                    *self.submitted_rz_phases.entry(index).or_default() += theta;
+                    self.submitted_rz_phases
+                        .entry(index)
+                        .or_default()
+                        .add(*theta);
                 }
             }
             SeleneRequest::Rzz { qubits, theta } => {
@@ -2662,7 +2709,10 @@ impl SeleneRuntime {
                         "runtime qubit {runtime_qubit} does not fit usize"
                     ))
                 })?;
-                *self.submitted_rz_phases.entry(physical).or_default() += theta;
+                self.submitted_rz_phases
+                    .entry(physical)
+                    .or_default()
+                    .add(*theta);
             }
             NativeOp::Rzz(theta, qubit_1, qubit_2) => {
                 let runtime_qubit_1 = self.runtime_qubit_for_program(*qubit_1)?;
@@ -2947,15 +2997,15 @@ impl SeleneRuntime {
                 (&source.op, lowered)
             {
                 // Never ignore phi. Accept the submitted axis (simple runtime) or
-                // exactly phi - accumulated RZ (virtual-Z runtimes). The plugin
-                // ABI has no phase-folding capability flag, so these two explicit
-                // angle hypotheses work without guessing from a library filename.
+                // the predicted virtual-Z axes (legacy or bounded frames). The
+                // plugin ABI has no phase-folding capability flag, so explicit
+                // angle hypotheses avoid guessing from a library filename.
                 return q == r
                     && Self::same_float(*theta, *other)
                     && (Self::same_phase(*phi, *axis)
-                        || source
-                            .folded_phi
-                            .is_some_and(|folded| Self::same_phase(folded, *axis)));
+                        || source.folded_phi.is_some_and(|folded| {
+                            folded.into_iter().any(|phi| Self::same_phase(phi, *axis))
+                        }));
             }
             return Self::source_op_matches_lowered_op(&source.op, lowered);
         }
@@ -2977,7 +3027,8 @@ impl SeleneRuntime {
     }
 
     fn same_phase(left: f64, right: f64) -> bool {
-        let delta = (left - right).rem_euclid(std::f64::consts::TAU);
+        let delta =
+            (normalize_phase(left) - normalize_phase(right)).rem_euclid(std::f64::consts::TAU);
         delta.min(std::f64::consts::TAU - delta) <= 1e-12
     }
 
@@ -7276,7 +7327,7 @@ mod tests {
                     ("source_lowering_required".into(), "true".into()),
                 ]),
                 native_match: true,
-                folded_phi: Some(0.0),
+                folded_phi: Some([0.0; 2]),
             },
             SourceTraceMetadata {
                 op: idle.clone(),
@@ -7344,7 +7395,7 @@ mod tests {
         metadata.insert("source_label".to_string(), "probe:h-prefix".to_string());
         let mut source_metadata = VecDeque::from([SourceTraceMetadata {
             native_match: !metadata.contains_key("source_gate"),
-            folded_phi: Some(-std::f64::consts::FRAC_PI_2),
+            folded_phi: Some([-std::f64::consts::FRAC_PI_2; 2]),
             op: QuantumOp::RXY(std::f64::consts::FRAC_PI_2, -std::f64::consts::FRAC_PI_2, 2),
             metadata,
         }]);
@@ -7506,7 +7557,7 @@ mod tests {
         );
         let source_metadata = VecDeque::from([SourceTraceMetadata {
             native_match: !metadata.contains_key("source_gate"),
-            folded_phi: Some(0.0),
+            folded_phi: Some([0.0; 2]),
             op: QuantumOp::RXY(std::f64::consts::FRAC_PI_2, 0.0, 4),
             metadata,
         }]);

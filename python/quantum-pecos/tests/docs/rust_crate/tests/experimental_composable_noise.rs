@@ -39,7 +39,7 @@ fn test_experimental_composable_noise_rust_2() -> Result<(), Box<dyn std::error:
     )?;
 
     // Surface code optimized noise
-    let model = surface_code_noise(0.001, true)?;
+    let model = surface_code_noise(0.001)?;
     Ok(())
 }
 
@@ -146,20 +146,26 @@ fn test_experimental_composable_noise_rust_8() -> Result<(), Box<dyn std::error:
 }
 
 
-// 1D chain crosstalk during measurement
 
 #[test]
 fn test_experimental_composable_noise_rust_9() -> Result<(), Box<dyn std::error::Error>> {
     use pecos_neo::noise::prelude::*;
-    let model = chain_measurement_crosstalk(0.01)?;
+    use pecos_neo::command::CommandBuilder;
+    let model = CompositeNoiseModelBuilder::new()
+        .with_p_meas_crosstalk(0.001, 0.01)?
+        .build()?;
+    let circuit = CommandBuilder::new()
+        .pz(&[0, 1, 2])
+        .mz(&[1])
+        .meas_crosstalk_local_payload(&[0, 2])
+        .mz(&[0, 2])
+        .build();
 
-    // 2D grid crosstalk (5 columns)
-    let model = grid_measurement_crosstalk(5, 0.01)?;
-
-    // Custom crosstalk with composite primitives
-    let crosstalk = CompositeCrosstalkChannel::new("custom", prob(0.01, inject_z())?)
-        .responds_to_measurement()
-        .local(chain_neighbors);  // Only affect adjacent qubits
+    // Custom effects run after hidden measurement, with each raw outcome in context.
+    let crosstalk = CompositeCrosstalkChannel::measurement(
+        "custom", PayloadKind::Local, 0.01,
+        crosstalk_transitions(CrosstalkTransitions::flip_only())?,
+    )?;
     Ok(())
 }
 

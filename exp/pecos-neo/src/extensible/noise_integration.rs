@@ -110,6 +110,7 @@ fn category_to_index(category: GateCategory) -> usize {
         GateCategory::Idle => 5,
         GateCategory::QubitManagement => 6,
         GateCategory::Custom(_) => 7,
+        GateCategory::Metadata => 8,
     }
 }
 
@@ -121,7 +122,7 @@ pub struct GateIdNoiseConfig {
     /// Per-gate noise parameters (indexed by `GateId`).
     core_params: Vec<Option<GateNoiseParams>>,
     /// Default by category when per-gate config is missing.
-    category_defaults: [Option<GateNoiseParams>; 8],
+    category_defaults: [Option<GateNoiseParams>; 9],
     /// Global fallback when no category default exists.
     global_default: Option<GateNoiseParams>,
 }
@@ -138,7 +139,7 @@ impl GateIdNoiseConfig {
     pub fn new() -> Self {
         Self {
             core_params: vec![None; 256],
-            category_defaults: [None, None, None, None, None, None, None, None],
+            category_defaults: [None, None, None, None, None, None, None, None, None],
             global_default: None,
         }
     }

@@ -13,7 +13,7 @@ produces a `NoiseResponse` when those events fire during simulation.
 | MeasurementChannel | `AfterMeasurement` |
 | PreparationChannel | `AfterPreparation` |
 | IdleChannel | `IdleTime` |
-| CrosstalkChannel | `AfterPreparation` (noisy `PZ`) or `AfterMeasurement`, chosen at construction |
+| CrosstalkChannel | `AfterPreparation` (noisy `PZ`) or `CrosstalkPayload` + `AfterHiddenMeasurement`, chosen at construction |
 | LeakageChannel | `BeforeGate`; `AfterGate` only with positive partner Pauli probability |
 | Custom channels | Any event, including `Signal` |
 
@@ -106,28 +106,33 @@ For more specific noise scenarios.
 
 ### CrosstalkChannel
 
-Crosstalk affects non-leaked bystanders prepared this shot, even after measurement.
-`CrosstalkChannel::preparation(rate)?` responds only to noisy `PZ`, globally.
-`CrosstalkChannel::measurement()` responds to `AfterMeasurement`, with independent
-local and global rates. Preparation channels reject local rates, neighbor functions
-and transition tables. There is no gate-event crosstalk.
+Measurement crosstalk fires only on `MeasCrosstalkGlobalPayload` or
+`MeasCrosstalkLocalPayload`, both `GateCategory::Metadata`. Global operands
+exclude victims; local operands name potential victims. An empty global payload
+targets every existing, non-leaked qubit. Measured qubits remain eligible.
 
-Without a table, each fired target receives Z with probability 1/2 (dephasing).
-With `with_leakage`, the leakage draw comes first; a surviving target then gets
-the fair Z coin. Tables retain their current uniformly sampled input state.
-`CompositeNoiseModelBuilder` also defaults to dephasing; presets and user-composed
-composite channels retain their chosen primitives. Source operands are excluded.
+The payload emits `CrosstalkPayload`. Each victim independently fires at its
+kind's rate. A nonempty `MeasureHidden { gate_type, qubits }` response measures
+victims directly, without user outcomes, readout noise, measurement events or
+lifecycle changes. `AfterHiddenMeasurement` carries the raw outcomes; the optional
+table selects stay, X, or leakage from the actual victim outcome. Without a
+table, only collapse occurs. This continuation finishes before the next command.
+No fired victims returns `None`. Noiseless payloads produce no hidden measurement.
+
+Preparation crosstalk still fires only on noisy PZ and defaults to a fair Z coin.
+Neither ordinary gates nor ordinary measurements trigger measurement crosstalk.
+Neo rates are post-scale; engine parity is scoped to `leakage_scale = 1`.
 
 ```rust
 CrosstalkChannel::measurement()
-    .with_global_rate(0.001)? // Non-leaked bystanders outside the neighbor set
-    .with_local_rate(0.01)?   // Non-leaked bystanders in the neighbor set
-    .with_neighbor_function(|_| vec![pecos_core::QubitId(1)])?
+    .with_global_rate(0.001)?
+    .with_local_rate(0.01)?
 ```
 
-The example uses q1 as the neighbor set. Targets must exist this shot and exclude
-source operands. Without a neighbor function, the local rate has no targets and
-all eligible bystanders are global targets.
+Use `CommandBuilder::meas_crosstalk_global_payload(&[...])` for exclusions or
+`meas_crosstalk_local_payload(&[...])` for explicit victims. Put the payload at
+the desired point in the command stream. Neighbor callbacks and the channel's
+`with_leakage` setter are removed; leak transitions belong in the table.
 
 ### LeakageChannel
 

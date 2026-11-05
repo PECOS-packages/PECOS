@@ -6,23 +6,37 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
-- **Breaking:** pecos-neo preparation crosstalk now fires only on noisy `PZ`, at
-  its own rate (#1573). Preparation and no-table measurement crosstalk dephase
-  fired targets (Z with probability 1/2) instead of applying a uniform Pauli.
-  Measured qubits remain targets; this includes noiselessly prepared and `QAlloc`
-  qubits, unlike the engines. Leaked qubits and source operands are excluded.
-  Gate events no longer trigger crosstalk; `CompositeCrosstalkChannel::responds_to_gates`
-  is removed. `CrosstalkChannel::new`, `Default` and `global_only` are replaced by
-  `preparation(rate)` and `measurement()`. Preparation rejects local rates,
-  neighbor functions and tables; `with_neighbor_function` now returns a validation
-  result. Channel names exposed by `channel_names()` and `describe()` change
-  from `CrosstalkChannel` to `PreparationCrosstalkChannel` /
-  `MeasurementCrosstalkChannel`. Presets and user-composed composite crosstalk
-  keep their primitives, but their targets now include measured qubits. Measurement remains on
-  `AfterMeasurement`. The measurement-crosstalk table no longer applies to
-  preparation crosstalk, which now always dephases in the builders, as in the
-  engines. Tables otherwise keep their sampled-state behavior. Seeded results
-  shift.
+- **Breaking:** pecos-neo crosstalk now follows engine payload semantics (#1573).
+  Preparation fires only on noisy PZ at its own rate and dephases fired targets.
+  New `GateType::MeasCrosstalkGlobalPayload` and `MeasCrosstalkLocalPayload`
+  (`GateId` 140/141, `GateCategory::Metadata`) carry exclusions and local victims.
+  Measurement crosstalk fires only on payloads: `CrosstalkPayload` produces
+  `NoiseResponse::MeasureHidden { gate_type, qubits }`, then
+  `AfterHiddenMeasurement` supplies the actual victim outcomes for stay/X/leak
+  transitions. Hidden outcomes have no readout noise, public records or lifecycle
+  effects. Without a table, victims only collapse. Measured qubits remain targets;
+  leaked victims are excluded. Neo also targets noiseless preparations and QAlloc,
+  unlike the engines. Noiseless payloads suppress hidden measurements.
+  Hidden-measurement continuations that request another `MeasureHidden` now
+  return `ExecutionError::RecursiveHiddenMeasurement` with the requested payload
+  type and qubits instead of recursing.
+  Gate events and ordinary measurements do not trigger measurement crosstalk.
+  `CrosstalkChannel::new`, `Default`, and `global_only` are replaced by
+  `preparation(rate)` / `measurement()`; `with_neighbor_function`,
+  `NeighborFunction`, `with_leakage`, and its `leakage_probability` accessor
+  are removed from this channel. Preparation rejects local rates and tables.
+  Channel names become `PreparationCrosstalkChannel` / `MeasurementCrosstalkChannel`.
+  `CompositeCrosstalkChannel::new`, `responds_to_gates`,
+  `responds_to_preparation`, `responds_to_measurement`, `global`, `local`,
+  and `NeighborFn` are replaced by `preparation` and `measurement` constructors
+  with `PayloadKind::{Global, Local}`. `CompositeChannelBuilder::measurement_crosstalk`
+  and `CompositeNoiseModelBuilder::with_p_meas_crosstalk_local_fn` are removed;
+  `CompositeChannelBuilder::crosstalk` now means preparation only.
+  Removed `chain_measurement_crosstalk`, `grid_measurement_crosstalk`, the
+  crosstalk option of `surface_code_noise`, and dead measurement-crosstalk fields
+  in `NoiseModelBuilder`. Importance sampling rejects payloads and hidden responses;
+  path exploration treats payloads as no-ops. Seeded results shift. Engine parity
+  is scoped to `leakage_scale = 1`; neo rates are post-scale.
 
 - **Breaking:** pecos-neo always suppresses gates on leaked operands in all three
   noise builders, including noiseless gates and models with no configured leak

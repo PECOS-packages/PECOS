@@ -189,6 +189,8 @@ declare_noise_event_kinds!(
     BeforeMeasurement,
     AfterMeasurement,
     AfterPreparation,
+    CrosstalkPayload,
+    AfterHiddenMeasurement,
     IdleTime,
     AfterReset,
     BeforeCircuit,
@@ -301,6 +303,19 @@ pub enum NoiseEvent<'a> {
         outcomes: &'a [bool],
     },
 
+    /// Runtime metadata requesting measurement crosstalk.
+    CrosstalkPayload {
+        gate_type: GateType,
+        qubits: &'a [QubitId],
+    },
+
+    /// Raw hidden outcomes, without readout noise, user results or lifecycle changes.
+    AfterHiddenMeasurement {
+        gate_type: GateType,
+        qubits: &'a [QubitId],
+        outcomes: &'a [bool],
+    },
+
     /// Emitted after state preparation.
     ///
     /// Channels can respond with bit-flip errors or leakage. `gate_type` is the
@@ -395,6 +410,8 @@ impl<'a> NoiseEvent<'a> {
             Self::BeforeMeasurement { .. } => NoiseEventKind::BeforeMeasurement,
             Self::AfterMeasurement { .. } => NoiseEventKind::AfterMeasurement,
             Self::AfterPreparation { .. } => NoiseEventKind::AfterPreparation,
+            Self::CrosstalkPayload { .. } => NoiseEventKind::CrosstalkPayload,
+            Self::AfterHiddenMeasurement { .. } => NoiseEventKind::AfterHiddenMeasurement,
             Self::IdleTime { .. } => NoiseEventKind::IdleTime,
             Self::AfterReset { .. } => NoiseEventKind::AfterReset,
             Self::BeforeCircuit { .. } => NoiseEventKind::BeforeCircuit,
@@ -504,6 +521,8 @@ impl<'a> NoiseEvent<'a> {
             | Self::BeforeMeasurement { qubits, .. }
             | Self::AfterMeasurement { qubits, .. }
             | Self::AfterPreparation { qubits, .. }
+            | Self::CrosstalkPayload { qubits, .. }
+            | Self::AfterHiddenMeasurement { qubits, .. }
             | Self::IdleTime { qubits, .. }
             | Self::AfterReset { qubits }
             | Self::BetweenLayers { qubits, .. } => qubits,
@@ -667,6 +686,8 @@ impl<'a> NoiseEvent<'a> {
             Self::BeforeGate { .. }
             | Self::AfterGate { .. }
             | Self::BeforeMeasurement { .. }
+            | Self::CrosstalkPayload { .. }
+            | Self::AfterHiddenMeasurement { .. }
             | Self::IdleTime { .. }
             | Self::BeforeCircuit { .. }
             | Self::AfterCircuit { .. }
@@ -680,8 +701,8 @@ impl<'a> NoiseEvent<'a> {
 ///
 /// This enum is optimized for size by boxing the `InjectGates` variant,
 /// which would otherwise dominate the enum size (296 bytes for inline storage
-/// vs 8 bytes for the Box pointer). This reduces `NoiseResponse` from 304 bytes
-/// to ~48 bytes, improving cache efficiency in the hot noise emission path.
+/// vs 8 bytes for the Box pointer), improving cache efficiency in the hot
+/// noise emission path.
 #[derive(Debug, Clone, Default)]
 pub enum NoiseResponse {
     /// No noise to inject.
@@ -706,6 +727,13 @@ pub enum NoiseResponse {
     /// apply that noise itself. Groups containing a leaked qubit at that decision
     /// are instead retained in `AfterGate::leaked_suppressed`, never in `qubits`.
     SkipGate(SmallVec<[QubitId; 4]>),
+
+    /// Measure victims directly, then emit `NoiseEvent::AfterHiddenMeasurement`.
+    /// No user outcome, readout noise, or lifecycle update is produced.
+    MeasureHidden {
+        gate_type: GateType,
+        qubits: SmallVec<[QubitId; 4]>,
+    },
 
     /// Flip measurement outcomes for specific qubits.
     FlipOutcomes(SmallVec<[QubitId; 4]>),

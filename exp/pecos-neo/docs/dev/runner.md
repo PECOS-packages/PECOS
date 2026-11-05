@@ -416,3 +416,32 @@ On `CircuitRunner`'s command queue, leaked MZ reads 1 and leaked MeasureLeaked
 reports leaked, including when noiseless. `LeakageChannel` never changes an
 older measurement record. `execute_measure` and `ImportanceSamplingRunner`
 retain their separate measurement behavior without a leakage check.
+
+## Crosstalk payload execution
+
+For victim selection, rates and transition behavior, see
+[payload crosstalk](../user-guides/noise-model.md#payload-crosstalk).
+
+The payload emits `CrosstalkPayload`. Each victim independently fires at its
+kind's rate. A nonempty `MeasureHidden { gate_type, qubits }` response measures
+victims directly, without user outcomes, readout noise, measurement events or
+lifecycle changes. `AfterHiddenMeasurement` carries the raw outcomes; the optional
+table selects stay, X, or leakage from the actual victim outcome. Without a
+table, only collapse occurs. This continuation finishes before the next command.
+`MeasureHidden` returned while handling `AfterHiddenMeasurement`, including
+inside `Multiple` or a composite wrapper, is rejected with
+`ExecutionError::RecursiveHiddenMeasurement` identifying the requested payload
+type and qubits because channels must return transitions (stay, X, leak)
+instead.
+No fired victims returns `None`. Noiseless payloads produce no hidden measurement.
+
+Both queue execution and adapted gate execution recognize payloads after
+operand validation and before gate-event dispatch. No simulator gate, override,
+decomposition, `BeforeGate`, `AfterGate`, or user `on_*` gate handler sees a
+payload. Hidden responses inside `Multiple` execute at their list position.
+A handler returning `MeasureHidden` without an attached noise model receives
+`HandlerHiddenMeasurementWithoutNoise`: there is no receiver for the continuation.
+
+`ImportanceSamplingRunner` rejects payloads before noise emission and returns an
+actionable error for any hidden measurement response. `PathExplorer` treats
+payloads as metadata no-ops; subset sampling accepts them.

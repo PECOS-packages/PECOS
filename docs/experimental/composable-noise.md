@@ -48,7 +48,7 @@ let model = realistic_device_noise(
 )?;
 
 // Surface code optimized noise
-let model = surface_code_noise(0.001, true)?;
+let model = surface_code_noise(0.001)?;
 ```
 
 ### 2. Builder API (Flexible)
@@ -163,22 +163,48 @@ let t2 = CompositeChannelBuilder::idle("t2", prob_linear(0.0005, inject_z())?);
 
 ### Crosstalk
 
-Operations affecting neighboring qubits:
+Measurement crosstalk fires only on `MeasCrosstalkGlobalPayload` or
+`MeasCrosstalkLocalPayload`, both `GateCategory::Metadata`. Global operands
+exclude victims; local operands name potential victims. An empty global payload
+targets every existing, non-leaked qubit. Measured qubits remain eligible.
+
+The payload emits `CrosstalkPayload`. Each victim independently fires at its
+kind's rate. A nonempty `MeasureHidden { gate_type, qubits }` response measures
+victims directly, without user outcomes, readout noise, measurement events or
+lifecycle changes. `AfterHiddenMeasurement` carries the raw outcomes; the optional
+table selects stay, X, or leakage from the actual victim outcome. Without a
+table, only collapse occurs. This continuation finishes before the next command.
+No fired victims returns `None`. Noiseless payloads produce no hidden measurement.
+
+Preparation crosstalk still fires only on noisy PZ and defaults to a fair Z coin.
+Neither ordinary gates nor ordinary measurements trigger measurement crosstalk.
+Neo rates are post-scale; engine parity is scoped to `leakage_scale = 1`.
 
 ```rust
 use pecos_neo::noise::prelude::*;
+use pecos_neo::command::CommandBuilder;
 
-// 1D chain crosstalk during measurement
-let model = chain_measurement_crosstalk(0.01)?;
+let model = CompositeNoiseModelBuilder::new()
+    .with_p_meas_crosstalk(0.001, 0.01)?
+    .build()?;
+let circuit = CommandBuilder::new()
+    .pz(&[0, 1, 2])
+    .mz(&[1])
+    .meas_crosstalk_local_payload(&[0, 2])
+    .mz(&[0, 2])
+    .build();
 
-// 2D grid crosstalk (5 columns)
-let model = grid_measurement_crosstalk(5, 0.01)?;
-
-// Custom crosstalk with composite primitives
-let crosstalk = CompositeCrosstalkChannel::new("custom", prob(0.01, inject_z())?)
-    .responds_to_measurement()
-    .local(chain_neighbors);  // Only affect adjacent qubits
+// Custom effects run after hidden measurement, with each raw outcome in context.
+let crosstalk = CompositeCrosstalkChannel::measurement(
+    "custom", PayloadKind::Local, 0.01,
+    crosstalk_transitions(CrosstalkTransitions::flip_only())?,
+)?;
 ```
+
+Topology-specific measurement presets and neighbor callbacks are removed.
+The producer supplies local victims directly. `surface_code_noise(p)` has no
+crosstalk option; compose payload channels explicitly.
+`CompositeChannelBuilder::crosstalk` maps to preparation crosstalk.
 
 ### Correlated Errors
 

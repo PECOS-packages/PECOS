@@ -563,6 +563,9 @@ impl<P: Primitive + Clone + 'static> NoiseChannel for CompositeChannel<P> {
 fn composite_to_noise_response(response: CompositeResponse, qubit: QubitId) -> NoiseResponse {
     match response {
         CompositeResponse::None => NoiseResponse::None,
+        CompositeResponse::MeasureHidden { gate_type, qubits } => {
+            NoiseResponse::MeasureHidden { gate_type, qubits }
+        }
         CompositeResponse::SkipGate => NoiseResponse::SkipGate(smallvec![qubit]),
         CompositeResponse::Leak => NoiseResponse::MarkLeaked(smallvec![qubit]),
         CompositeResponse::Unleak => NoiseResponse::MarkUnleaked(smallvec![qubit]),
@@ -1185,91 +1188,53 @@ impl CompositeChannelBuilder {
 // Crosstalk Channel
 // ============================================================================
 
-/// Type alias for neighbor functions used in crosstalk channels.
-pub type NeighborFn = fn(&[QubitId]) -> Vec<QubitId>;
+pub use crate::noise::crosstalk::PayloadKind;
 
-/// A crosstalk channel that applies noise to qubits other than the operated ones.
+/// Crosstalk with a user primitive applied per victim.
 ///
-/// Crosstalk occurs when operations on some qubits affect other qubits in the system.
-/// This channel uses a composite primitive to define what noise to apply to each affected qubit.
-/// Targets exist this shot and are not leaked, even after measurement. Source operands
-/// are excluded. Preparation subscriptions fire only on noisy `PZ`; measurement
-/// subscriptions fire on `AfterMeasurement`. User primitives retain their own effects.
-///
-/// # Example
-///
-/// ```
-/// use pecos_neo::noise::composite::prelude::*;
-///
-/// // Create crosstalk that applies Pauli errors to other qubits during measurement
-/// let crosstalk = CompositeCrosstalkChannel::new("meas_crosstalk", prob(0.01, pauli()).unwrap())
-///     .responds_to_measurement()
-///     .global();  // Affects all other existing, non-leaked qubits, including measured qubits
-/// ```
+/// Preparation applies the primitive globally after noisy PZ. Measurement
+/// selects victims on one payload kind, then runs the primitive with each
+/// victim's real hidden outcome available through `NoiseContext::current_outcome`.
+#[derive(Clone)]
 pub struct CompositeCrosstalkChannel<P: Primitive> {
     name: &'static str,
     primitive: P,
-    events: Vec<CompositeEventFilter>,
-    /// If Some, only affect these qubits as neighbors. If None, affect all
-    /// existing non-leaked qubits, including measured qubits.
-    neighbor_fn: Option<NeighborFn>,
+    payload: Option<PayloadKind>,
+    rate: f64,
     priority: i32,
 }
 
-impl<P: Primitive + Clone> Clone for CompositeCrosstalkChannel<P> {
-    fn clone(&self) -> Self {
-        Self {
-            name: self.name,
-            primitive: self.primitive.clone(),
-            events: self.events.clone(),
-            neighbor_fn: self.neighbor_fn,
-            priority: self.priority,
-        }
-    }
-}
-
 impl<P: Primitive> CompositeCrosstalkChannel<P> {
-    /// Create a new crosstalk channel.
+    /// Apply a primitive to each global preparation target after noisy PZ.
     #[must_use]
-    pub fn new(name: &'static str, primitive: P) -> Self {
+    pub fn preparation(name: &'static str, primitive: P) -> Self {
         Self {
             name,
             primitive,
-            events: Vec::new(),
-            neighbor_fn: None,
-            priority: -10, // Lower priority, run after main gate noise
+            payload: None,
+            rate: 0.0,
+            priority: -10,
         }
     }
 
-    /// Respond to measurement events.
-    #[must_use]
-    pub fn responds_to_measurement(mut self) -> Self {
-        self.events.push(CompositeEventFilter::AfterMeasurement);
-        self
-    }
-
-    /// Respond to noisy `PZ` preparation events.
-    #[must_use]
-    pub fn responds_to_preparation(mut self) -> Self {
-        self.events.push(CompositeEventFilter::Preparation);
-        self
-    }
-
-    /// Set as global crosstalk, affecting other non-leaked qubits prepared this
-    /// shot, including measured qubits.
-    #[must_use]
-    pub fn global(mut self) -> Self {
-        self.neighbor_fn = None;
-        self
-    }
-
-    /// Set as local crosstalk with a neighbor function.
+    /// Measure fired victims of one payload kind, then apply the primitive.
     ///
-    /// The function takes the gated qubits and returns their neighbors.
-    #[must_use]
-    pub fn local(mut self, neighbor_fn: NeighborFn) -> Self {
-        self.neighbor_fn = Some(neighbor_fn);
-        self
+    /// # Errors
+    /// Returns an error if the rate is not a probability.
+    pub fn measurement(
+        name: &'static str,
+        kind: PayloadKind,
+        rate: f64,
+        primitive: P,
+    ) -> ValidationResult<Self> {
+        validate_probability(rate, "rate")?;
+        Ok(Self {
+            name,
+            primitive,
+            payload: Some(kind),
+            rate,
+            priority: -10,
+        })
     }
 
     /// Set the priority of this channel.
@@ -1278,28 +1243,34 @@ impl<P: Primitive> CompositeCrosstalkChannel<P> {
         self.priority = priority;
         self
     }
-
-    /// Get the target qubits for crosstalk.
-    fn get_targets(&self, gated_qubits: &[QubitId], ctx: &NoiseContext) -> Vec<QubitId> {
-        match self.neighbor_fn {
-            Some(neighbor_fn) => {
-                let neighbors = neighbor_fn(gated_qubits);
-                ctx.local_crosstalk_targets(gated_qubits, &neighbors)
-            }
-            None => ctx.global_crosstalk_targets(gated_qubits),
-        }
-    }
 }
 
 impl<P: Primitive + Clone + 'static> NoiseChannel for CompositeCrosstalkChannel<P> {
     fn event_kinds(&self) -> EventKinds {
-        self.events
-            .iter()
-            .fold(EventKinds::NONE, |kinds, filter| kinds.with(filter.kind()))
+        if self.payload.is_some() {
+            EventKinds::of(NoiseEventKind::CrosstalkPayload)
+                .with(NoiseEventKind::AfterHiddenMeasurement)
+        } else {
+            EventKinds::of(NoiseEventKind::AfterPreparation)
+        }
     }
 
     fn responds_to(&self, event: &NoiseEvent<'_>) -> bool {
-        self.events.iter().any(|f| f.matches(event))
+        match (self.payload, event) {
+            (
+                None,
+                NoiseEvent::AfterPreparation {
+                    gate_type: GateType::PZ,
+                    ..
+                },
+            ) => true,
+            (
+                Some(kind),
+                NoiseEvent::CrosstalkPayload { gate_type, .. }
+                | NoiseEvent::AfterHiddenMeasurement { gate_type, .. },
+            ) => kind.gate_type() == *gate_type,
+            _ => false,
+        }
     }
 
     fn apply(
@@ -1308,30 +1279,35 @@ impl<P: Primitive + Clone + 'static> NoiseChannel for CompositeCrosstalkChannel<
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> NoiseResponse {
-        // BeforeGate decides suppression; its primitives must still run.
-        if !matches!(event, NoiseEvent::BeforeGate { .. }) && ctx.is_noiseless_operation(event) {
+        if !self.responds_to(event) || ctx.is_noiseless_operation(event) {
             return NoiseResponse::None;
         }
-        if matches!(event, NoiseEvent::AfterPreparation { gate_type, .. } if *gate_type != GateType::PZ)
-        {
-            return NoiseResponse::None;
+        let mut response = NoiseResponse::None;
+        match event {
+            NoiseEvent::CrosstalkPayload { qubits, .. } => {
+                if let Some(kind) = self.payload {
+                    return kind.measure(qubits, self.rate, ctx, rng);
+                }
+            }
+            NoiseEvent::AfterHiddenMeasurement {
+                qubits, outcomes, ..
+            } => {
+                for (&target, &outcome) in qubits.iter().zip(*outcomes) {
+                    ctx.set_current_outcome(outcome);
+                    let result = self.primitive.apply(target, ctx, rng);
+                    ctx.clear_current_outcome();
+                    response = response.combine(composite_to_noise_response(result, target));
+                }
+            }
+            NoiseEvent::AfterPreparation { qubits, .. } => {
+                for target in ctx.global_crosstalk_targets(qubits) {
+                    let result = self.primitive.apply(target, ctx, rng);
+                    response = response.combine(composite_to_noise_response(result, target));
+                }
+            }
+            _ => {}
         }
-        let gated_qubits = event.gated_qubits();
-        let targets = self.get_targets(&gated_qubits, ctx);
-
-        if targets.is_empty() {
-            return NoiseResponse::None;
-        }
-
-        // Apply the primitive to each target qubit and combine responses
-        let mut combined = NoiseResponse::None;
-        for target in targets {
-            let composite_response = self.primitive.apply(target, ctx, rng);
-            let noise_response = composite_to_noise_response(composite_response, target);
-            combined = combined.combine(noise_response);
-        }
-
-        combined
+        response
     }
 
     fn name(&self) -> &'static str {
@@ -1352,30 +1328,13 @@ impl<P: Primitive + Clone + 'static> NoiseChannel for CompositeCrosstalkChannel<
 }
 
 impl CompositeChannelBuilder {
-    /// Create global crosstalk targeting other non-leaked qubits prepared this
-    /// shot, including measured qubits.
-    ///
-    /// The primitive is applied to each other existing, non-leaked qubit when the specified
-    /// events occur.
+    /// Create global preparation crosstalk after noisy PZ.
     #[must_use]
     pub fn crosstalk<P: Primitive>(
         name: &'static str,
         primitive: P,
     ) -> CompositeCrosstalkChannel<P> {
-        CompositeCrosstalkChannel::new(name, primitive).global()
-    }
-
-    /// Create a measurement crosstalk channel.
-    ///
-    /// Applies noise to other qubits during measurement operations.
-    #[must_use]
-    pub fn measurement_crosstalk<P: Primitive>(
-        name: &'static str,
-        primitive: P,
-    ) -> CompositeCrosstalkChannel<P> {
-        CompositeCrosstalkChannel::new(name, primitive)
-            .responds_to_measurement()
-            .global()
+        CompositeCrosstalkChannel::preparation(name, primitive)
     }
 }
 
@@ -1422,10 +1381,18 @@ mod tests {
                     .with_filter(filter),
                 kinds,
             );
-            let mut crosstalk = CompositeCrosstalkChannel::new("crosstalk", pauli());
-            crosstalk.events.push(filter);
-            assert_channel_kinds(&crosstalk, kinds);
         }
+
+        assert_channel_kinds(
+            &CompositeCrosstalkChannel::preparation("prep", pauli()),
+            EventKinds::of(NoiseEventKind::AfterPreparation),
+        );
+        assert_channel_kinds(
+            &CompositeCrosstalkChannel::measurement("meas", PayloadKind::Global, 1.0, nothing())
+                .unwrap(),
+            EventKinds::of(NoiseEventKind::CrosstalkPayload)
+                .with(NoiseEventKind::AfterHiddenMeasurement),
+        );
 
         // Arity filters use group size: batched H stays single-qubit; incomplete CX
         // uses the documented whole-slice fallback.
@@ -1652,9 +1619,7 @@ mod tests {
     #[test]
     fn test_crosstalk_channel_global() {
         // Create crosstalk that always applies X to other qubits
-        let crosstalk = CompositeCrosstalkChannel::new("test_crosstalk", inject_x())
-            .responds_to_measurement()
-            .global();
+        let crosstalk = CompositeCrosstalkChannel::preparation("test_crosstalk", inject_x());
 
         let mut ctx = NoiseContext::new();
         let mut rng = PecosRng::seed_from_u64(42);
@@ -1666,11 +1631,9 @@ mod tests {
 
         // Measurement on qubit 0 should affect qubits 1 and 2
         let qubits = [QubitId(0)];
-        let outcomes = [false];
-        let event = NoiseEvent::AfterMeasurement {
-            gate_type: GateType::MZ,
+        let event = NoiseEvent::AfterPreparation {
+            gate_type: GateType::PZ,
             qubits: &qubits,
-            outcomes: &outcomes,
         };
 
         assert!(NoiseChannel::responds_to(&crosstalk, &event));
@@ -1701,76 +1664,12 @@ mod tests {
     }
 
     #[test]
-    fn test_crosstalk_channel_local() {
-        // Define neighbor function: qubit i has neighbors i-1 and i+1
-        fn neighbors(gated: &[QubitId]) -> Vec<QubitId> {
-            let mut result = Vec::new();
-            for &QubitId(q) in gated {
-                if q > 0 {
-                    result.push(QubitId(q - 1));
-                }
-                result.push(QubitId(q + 1));
-            }
-            result
-        }
-
-        let crosstalk = CompositeCrosstalkChannel::new("local_crosstalk", inject_z())
-            .responds_to_measurement()
-            .local(neighbors);
-
-        let mut ctx = NoiseContext::new();
-        let mut rng = PecosRng::seed_from_u64(42);
-
-        // Prepare qubits 0-10
-        for i in 0..=10 {
-            ctx.mark_prepared(QubitId(i));
-        }
-
-        // Measurement on qubit 5 should only affect neighbors (4 and 6)
-        let qubits = [QubitId(5)];
-        let event = NoiseEvent::AfterMeasurement {
-            gate_type: GateType::MZ,
-            qubits: &qubits,
-            outcomes: &[false],
-        };
-
-        assert!(NoiseChannel::responds_to(&crosstalk, &event));
-
-        let response = crosstalk.apply(&event, &mut ctx, &mut rng);
-
-        // Should only affect neighbors (4 and 6)
-        match response {
-            NoiseResponse::InjectGates(gates) => {
-                assert_eq!(gates.len(), 2);
-                for gate in gates.iter() {
-                    let qubit = gate.qubits[0];
-                    assert!(
-                        qubit == QubitId(4) || qubit == QubitId(6),
-                        "Only neighbors should be affected, got {qubit:?}"
-                    );
-                }
-            }
-            NoiseResponse::Multiple(responses) => {
-                for r in responses {
-                    if let NoiseResponse::InjectGates(gates) = r {
-                        for gate in gates.iter() {
-                            let qubit = gate.qubits[0];
-                            assert!(qubit == QubitId(4) || qubit == QubitId(6));
-                        }
-                    }
-                }
-            }
-            _ => panic!("Expected InjectGates or Multiple response"),
-        }
-    }
-
-    #[test]
     fn test_crosstalk_channel_probabilistic() {
         // Create crosstalk with 50% probability
-        let crosstalk =
-            CompositeCrosstalkChannel::new("prob_crosstalk", prob(0.5, inject_x()).unwrap())
-                .responds_to_preparation()
-                .global();
+        let crosstalk = CompositeCrosstalkChannel::preparation(
+            "prob_crosstalk",
+            prob(0.5, inject_x()).unwrap(),
+        );
 
         let mut ctx = NoiseContext::new();
         let mut rng = PecosRng::seed_from_u64(42);
@@ -1819,9 +1718,7 @@ mod tests {
     #[test]
     fn test_crosstalk_excludes_leaked_qubits() {
         // Crosstalk should not affect leaked qubits
-        let crosstalk = CompositeCrosstalkChannel::new("test", inject_x())
-            .responds_to_measurement()
-            .global();
+        let crosstalk = CompositeCrosstalkChannel::preparation("test", inject_x());
 
         let mut ctx = NoiseContext::new();
         let mut rng = PecosRng::seed_from_u64(42);
@@ -1835,11 +1732,9 @@ mod tests {
         ctx.mark_leaked(QubitId(1));
 
         let qubits = [QubitId(0)];
-        let outcomes = [false];
-        let event = NoiseEvent::AfterMeasurement {
-            gate_type: GateType::MZ,
+        let event = NoiseEvent::AfterPreparation {
+            gate_type: GateType::PZ,
             qubits: &qubits,
-            outcomes: &outcomes,
         };
 
         let response = crosstalk.apply(&event, &mut ctx, &mut rng);
@@ -1856,9 +1751,7 @@ mod tests {
 
     #[test]
     fn test_crosstalk_no_targets() {
-        let crosstalk = CompositeCrosstalkChannel::new("test", inject_x())
-            .responds_to_measurement()
-            .global();
+        let crosstalk = CompositeCrosstalkChannel::preparation("test", inject_x());
 
         let mut ctx = NoiseContext::new();
         let mut rng = PecosRng::seed_from_u64(42);
@@ -1867,11 +1760,9 @@ mod tests {
         ctx.mark_prepared(QubitId(0));
 
         let qubits = [QubitId(0)];
-        let outcomes = [false];
-        let event = NoiseEvent::AfterMeasurement {
-            gate_type: GateType::MZ,
+        let event = NoiseEvent::AfterPreparation {
+            gate_type: GateType::PZ,
             qubits: &qubits,
-            outcomes: &outcomes,
         };
 
         let response = crosstalk.apply(&event, &mut ctx, &mut rng);

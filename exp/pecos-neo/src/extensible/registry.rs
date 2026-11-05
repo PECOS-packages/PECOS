@@ -307,6 +307,16 @@ impl GateRegistry {
             &GateSpec::new("QFree").with_category(GateCategory::QubitManagement),
         );
 
+        self.set_core(
+            gates::MEAS_CROSSTALK_GLOBAL_PAYLOAD,
+            &GateSpec::new("MeasCrosstalkGlobalPayload").with_category(GateCategory::Metadata),
+        );
+
+        self.set_core(
+            gates::MEAS_CROSSTALK_LOCAL_PAYLOAD,
+            &GateSpec::new("MeasCrosstalkLocalPayload").with_category(GateCategory::Metadata),
+        );
+
         // Idle
         self.set_core(
             gates::IDLE,

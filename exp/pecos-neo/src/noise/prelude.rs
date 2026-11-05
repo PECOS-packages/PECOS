@@ -65,8 +65,7 @@ pub use super::topology::{
 
 #[cfg(feature = "composite-noise")]
 pub use super::patterns::{
-    DeviceNoiseParams, chain_measurement_crosstalk, dephasing_only, grid_measurement_crosstalk,
-    realistic_device_noise, surface_code_noise, with_leakage,
+    DeviceNoiseParams, dephasing_only, realistic_device_noise, surface_code_noise, with_leakage,
 };
 pub use super::patterns::{
     chain_correlated, depolarizing_only, depolarizing_with_measurement, measurement_only,

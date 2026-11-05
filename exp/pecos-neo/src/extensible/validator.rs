@@ -195,6 +195,10 @@ impl CliffordValidator {
         allowed_gates.insert(gates::MZ);
         allowed_gates.insert(gates::PZ);
 
+        // Runtime metadata executes no non-Clifford operation.
+        allowed_gates.insert(gates::MEAS_CROSSTALK_GLOBAL_PAYLOAD);
+        allowed_gates.insert(gates::MEAS_CROSSTALK_LOCAL_PAYLOAD);
+
         // Parameterized gates are allowed only at Clifford angles
         for &gate in crate::GateType::ALL {
             if pecos_core::is_lowerable_rotation(gate.into()) {

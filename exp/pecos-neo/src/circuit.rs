@@ -92,6 +92,8 @@ impl GateType {
             CoreGT::PZ => Self::PZ,
             CoreGT::QAlloc => Self::QAlloc,
             CoreGT::QFree => Self::QFree,
+            CoreGT::MeasCrosstalkGlobalPayload => Self::MeasCrosstalkGlobalPayload,
+            CoreGT::MeasCrosstalkLocalPayload => Self::MeasCrosstalkLocalPayload,
             CoreGT::Idle => Self::Idle,
             _ => return None,
         })
@@ -151,6 +153,8 @@ impl From<GateType> for pecos_core::gate_type::GateType {
             GateType::PZ => CoreGT::PZ,
             GateType::QAlloc => CoreGT::QAlloc,
             GateType::QFree => CoreGT::QFree,
+            GateType::MeasCrosstalkGlobalPayload => CoreGT::MeasCrosstalkGlobalPayload,
+            GateType::MeasCrosstalkLocalPayload => CoreGT::MeasCrosstalkLocalPayload,
             GateType::Idle => CoreGT::Idle,
         }
     }

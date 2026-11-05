@@ -315,12 +315,20 @@ fn noiseless_operations_are_not_crosstalk_sources() {
                     .unwrap(),
             };
             let start = CommandBuilder::new().pz(&[0, 1]).h(&[1]);
-            let circuit = if prep { start.pz(&[0]) } else { start.mz(&[0]) }
-                .h(&[1])
-                .mz(&[1])
-                .build();
+            let circuit = if prep {
+                start.pz(&[0])
+            } else {
+                start.mz(&[0]).meas_crosstalk_global_payload(&[0])
+            }
+            .h(&[1])
+            .mz(&[1])
+            .build();
             assert!((421..=579).contains(&ones(&control, &circuit, 1)));
-            let quiet = control.with_noiseless_gate(if prep { GateType::PZ } else { GateType::MZ });
+            let quiet = control.with_noiseless_gate(if prep {
+                GateType::PZ
+            } else {
+                GateType::MeasCrosstalkGlobalPayload
+            });
             assert_eq!(ones(&quiet, &circuit, 1), 0);
         }
     }
@@ -635,14 +643,21 @@ fn composite_noiseless_guard_precedes_context_mutating_primitives() {
             let mut ctx = NoiseContext::new();
             ctx.mark_prepared(QubitId(0));
             ctx.mark_prepared(QubitId(1));
-            if quiet {
-                ctx.add_noiseless_gate(GateType::X);
-            }
-            channel.apply(
-                &NoiseEvent::after_gate(GateType::X, &[QubitId(0)], &[]),
-                &mut ctx,
-                &mut PecosRng::seed_from_u64(0),
-            );
+            let event = if channel.name() == "leak_other" {
+                if quiet {
+                    ctx.add_noiseless_gate(GateType::PZ);
+                }
+                NoiseEvent::AfterPreparation {
+                    gate_type: GateType::PZ,
+                    qubits: &[QubitId(0)],
+                }
+            } else {
+                if quiet {
+                    ctx.add_noiseless_gate(GateType::X);
+                }
+                NoiseEvent::after_gate(GateType::X, &[QubitId(0)], &[])
+            };
+            channel.apply(&event, &mut ctx, &mut PecosRng::seed_from_u64(0));
             assert_eq!(
                 ctx.leaked_count(),
                 usize::from(!quiet),
@@ -856,7 +871,7 @@ fn crosstalk_rates_are_separate() {
         circuit = if preparation_source {
             circuit.pz(&[0])
         } else {
-            circuit.mz(&[0])
+            circuit.mz(&[0]).meas_crosstalk_global_payload(&[0])
         };
         let circuit = circuit.h(&[1]).mz(&[1]).build();
         for source_rate in [0.0, 0.25] {
@@ -918,6 +933,7 @@ fn crosstalk_targets_include_qalloc_and_noiseless_preparations() {
             .pz(&[0, 1])
             .h(&[1])
             .mz(&[0])
+            .meas_crosstalk_global_payload(&[0])
             .h(&[1])
             .mz(&[1])
             .build();
@@ -954,4 +970,128 @@ fn measure_free_keeps_crosstalk_target_after_measurement() {
     for composite in [false, true] {
         assert!((421..=579).contains(&ones(&preparation_crosstalk_model(composite), &circuit, 1)));
     }
+}
+
+fn measurement_crosstalk_model(composite: bool, local: bool, row: usize) -> ComposableNoiseModel {
+    let rates = if local { (0.0, 1.0) } else { (1.0, 0.0) };
+    let table = match row {
+        2 => Some(
+            pecos_neo::noise::CrosstalkTransitions::custom(1.0, 0.0, 0.0, 0.0, 1.0, 0.0).unwrap(),
+        ),
+        3 => None,
+        _ => Some(
+            pecos_neo::noise::CrosstalkTransitions::custom(0.0, 1.0, 0.0, 1.0, 0.0, 0.0).unwrap(),
+        ),
+    };
+    if composite {
+        let mut builder = CompositeNoiseModelBuilder::new()
+            .with_p_meas_crosstalk(rates.0, rates.1)
+            .unwrap();
+        if let Some(table) = table {
+            builder = builder.with_p_meas_crosstalk_model(table).unwrap();
+        }
+        builder.build().unwrap()
+    } else {
+        let mut builder = GeneralNoiseModelBuilder::new().with_p_meas_crosstalk(rates.0, rates.1);
+        if let Some(table) = table {
+            builder = builder.with_p_meas_crosstalk_transitions(table).unwrap();
+        }
+        builder.build().unwrap()
+    }
+}
+
+fn check_measurement_crosstalk_parity(row: usize) {
+    use pecos_engines::noise::GeneralNoiseModel;
+    use pecos_engines::{ByteMessage, Engine, QuantumSystem, StateVecEngine};
+    for local in [false, true] {
+        let mut circuit = CommandBuilder::new().pz(&[0, 1]);
+        let mut message = ByteMessage::quantum_operations_builder();
+        message.pz(&[0, 1]);
+        if row == 1 {
+            circuit = circuit.x(&[1]);
+            message.x(&[1]);
+        }
+        if row == 2 || row == 3 {
+            circuit = circuit.h(&[1]);
+            message.h(&[1]);
+        }
+        circuit = circuit.mz(&[0]);
+        message.mz(&[0]);
+        if row != 4 {
+            if local {
+                circuit = circuit.meas_crosstalk_local_payload(&[1]);
+                message.meas_crosstalk_local_payload(&[1]);
+            } else {
+                circuit = circuit.meas_crosstalk_global_payload(&[0]);
+                message.meas_crosstalk_global_payload(&[0]);
+            }
+        }
+        if row == 3 {
+            circuit = circuit.h(&[1]);
+            message.h(&[1]);
+        }
+        let circuit = circuit.mz(&[1]).build();
+        let message = message.mz(&[1]).build();
+        let table: BTreeMap<String, f64> = if row == 2 {
+            [("0->0".to_owned(), 1.0), ("1->0".to_owned(), 1.0)].into()
+        } else {
+            [("0->1".to_owned(), 1.0), ("1->1".to_owned(), 1.0)].into()
+        };
+        let engines = (0..1000)
+            .filter(|&seed| {
+                let mut builder = GeneralNoiseModel::builder()
+                    .with_p_meas_crosstalk(1.0)
+                    .with_seed(seed);
+                if row != 3 {
+                    builder = builder.with_p_meas_crosstalk_model(&table);
+                }
+                let mut system = QuantumSystem::new(
+                    Box::new(builder.build()),
+                    Box::new(StateVecEngine::with_seed(2, seed)),
+                );
+                system.set_seed(seed);
+                let result = system.process(message.clone()).unwrap();
+                let outcomes = result.outcomes().unwrap();
+                assert_eq!(outcomes.len(), 2);
+                *outcomes.last().unwrap() == 1
+            })
+            .count();
+        let counts = [
+            engines,
+            ones(&measurement_crosstalk_model(false, local, row), &circuit, 1),
+            ones(&measurement_crosstalk_model(true, local, row), &circuit, 1),
+        ];
+        eprintln!(
+            "measurement parity row {row}, local={local}: engines/general/composite = {counts:?}"
+        );
+        for count in counts {
+            match row {
+                0 | 1 => assert_eq!(count, 1000, "local={local}: {counts:?}"),
+                2 | 4 => assert_eq!(count, 0, "local={local}: {counts:?}"),
+                3 => assert!((421..=579).contains(&count), "local={local}: {counts:?}"),
+                _ => unreachable!(),
+            }
+        }
+    }
+}
+
+#[test]
+fn measurement_crosstalk_always_one_from_zero() {
+    check_measurement_crosstalk_parity(0);
+}
+#[test]
+fn measurement_crosstalk_always_one_from_one() {
+    check_measurement_crosstalk_parity(1);
+}
+#[test]
+fn measurement_crosstalk_resets_superposition() {
+    check_measurement_crosstalk_parity(2);
+}
+#[test]
+fn measurement_crosstalk_no_table_collapses() {
+    check_measurement_crosstalk_parity(3);
+}
+#[test]
+fn measurement_crosstalk_requires_payload() {
+    check_measurement_crosstalk_parity(4);
 }

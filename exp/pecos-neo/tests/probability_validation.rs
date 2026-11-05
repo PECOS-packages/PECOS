@@ -115,7 +115,6 @@ fn traditional_channels_reject_invalid_probabilities() {
         assert!(PreparationChannel::default().with_leakage(p).is_err());
         assert!(CrosstalkChannel::measurement().with_local_rate(p).is_err());
         assert!(CrosstalkChannel::measurement().with_global_rate(p).is_err());
-        assert!(CrosstalkChannel::measurement().with_leakage(p).is_err());
         assert!(CrosstalkChannel::preparation(p).is_err());
         assert!(
             TwoQubitChannel::new(
@@ -627,22 +626,6 @@ fn redistribution_rejects_target_count_overflow() {
 }
 
 #[test]
-fn local_crosstalk_requires_neighbors() {
-    let error = pecos_neo::noise::composite::CompositeNoiseModelBuilder::new()
-        .with_p_meas_crosstalk(0.0, 0.1)
-        .unwrap()
-        .build()
-        .err()
-        .unwrap()
-        .to_string();
-    assert!(
-        error.contains("p_meas_crosstalk_local") && error.contains("0.1"),
-        "{error}"
-    );
-    assert!(error.contains("with_p_meas_crosstalk_local_fn"), "{error}");
-}
-
-#[test]
 fn quadratic_rate_error_names_only_the_supplied_rate() {
     let error = pecos_neo::noise::composite::prelude::prob_quadratic(
         f64::MAX,
@@ -657,16 +640,12 @@ fn quadratic_rate_error_names_only_the_supplied_rate() {
 }
 
 #[test]
-fn preparation_crosstalk_rejects_local_neighbors_and_tables() {
+fn preparation_crosstalk_rejects_local_and_tables() {
     use pecos_neo::noise::{CrosstalkChannel, CrosstalkTransitions};
     for error in [
         CrosstalkChannel::preparation(1.0)
             .unwrap()
             .with_local_rate(0.0)
-            .unwrap_err(),
-        CrosstalkChannel::preparation(1.0)
-            .unwrap()
-            .with_neighbor_function(|_| vec![])
             .unwrap_err(),
         CrosstalkChannel::preparation(1.0)
             .unwrap()

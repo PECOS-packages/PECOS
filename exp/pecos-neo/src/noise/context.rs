@@ -780,6 +780,8 @@ impl NoiseContext {
             }
             super::NoiseEvent::AfterPreparation { gate_type, .. }
             | super::NoiseEvent::BeforeMeasurement { gate_type, .. }
+            | super::NoiseEvent::CrosstalkPayload { gate_type, .. }
+            | super::NoiseEvent::AfterHiddenMeasurement { gate_type, .. }
             | super::NoiseEvent::AfterMeasurement { gate_type, .. } => {
                 self.is_noiseless(*gate_type)
             }

@@ -155,3 +155,22 @@ On `CircuitRunner`'s command queue, leaked MZ reads 1 and leaked MeasureLeaked
 reports leaked, including when noiseless. `LeakageChannel` never changes an
 older measurement record. `execute_measure` and `ImportanceSamplingRunner`
 retain their separate measurement behavior without a leakage check.
+
+### Payload crosstalk
+
+Measurement crosstalk fires only on `MeasCrosstalkGlobalPayload` or
+`MeasCrosstalkLocalPayload`, both `GateCategory::Metadata`. Global operands
+exclude victims; local operands name potential victims. An empty global payload
+targets every existing, non-leaked qubit. Measured qubits remain eligible.
+
+Each fired victim collapses in the computational basis. An optional transition
+table uses its actual outcome to choose stay, X, or leakage; without a table,
+there is no further effect. Noiseless payloads suppress crosstalk. A zero rate
+selects no victims and consumes no random numbers.
+
+Preparation crosstalk still fires only on noisy PZ and defaults to a fair Z coin.
+Neither ordinary gates nor ordinary measurements trigger measurement crosstalk.
+Neo rates are post-scale; engine parity is scoped to `leakage_scale = 1`.
+
+For event dispatch and hidden measurements, see the
+[runner protocol](../dev/runner.md#crosstalk-payload-execution).

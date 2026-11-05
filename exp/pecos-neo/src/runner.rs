@@ -666,6 +666,15 @@ pub enum ExecutionError {
         mark: &'static str,
         qubits: Vec<QubitId>,
     },
+    /// A handler requested hidden measurement without a noise model for its continuation.
+    HandlerHiddenMeasurementWithoutNoise,
+
+    /// A hidden-measurement continuation requested another hidden measurement.
+    RecursiveHiddenMeasurement {
+        gate_type: GateType,
+        qubits: Vec<QubitId>,
+    },
+
     /// Maximum decomposition depth exceeded (possible infinite recursion).
     MaxDecompositionDepthExceeded,
 }
@@ -731,6 +740,11 @@ impl std::fmt::Display for ExecutionError {
                  has {group_size} qubits; check the gate's registered arity",
                 gate_id.0
             ),
+            Self::RecursiveHiddenMeasurement { gate_type, qubits } => write!(
+                f,
+                "Rejected MeasureHidden for {gate_type:?} on qubits {qubits:?}: channels must answer AfterHiddenMeasurement with transitions (stay, X, leak), not with another hidden measurement"
+            ),
+            Self::HandlerHiddenMeasurementWithoutNoise => f.write_str("MeasureHidden requires a noise model to receive AfterHiddenMeasurement; attach one with with_noise"),
             Self::HandlerLeakageWithoutNoise { mark, qubits } => write!(
                 f,
                 "Handler returned {mark} for qubits {qubits:?} without leakage tracking; add a noise model"
@@ -845,6 +859,8 @@ pub struct CircuitRunner<S: CliffordGateable> {
     signal_handlers: SignalHandlerRegistry,
     gate_handlers: GateEventHandlers,
 
+    handling_hidden_measurement: bool,
+
     // Scratch buffers (cleared at start of apply_circuit)
     outcomes: MeasurementOutcomes,
     results: Vec<bool>,
@@ -901,6 +917,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
             noise: None,
             signal_handlers: SignalHandlerRegistry::new(),
             gate_handlers: GateEventHandlers::new(),
+            handling_hidden_measurement: false,
         }
     }
 
@@ -1320,6 +1337,8 @@ impl<S: CliffordGateable> CircuitRunner<S> {
     /// Execute a single gate through the full pipeline.
     ///
     /// Runs before handlers -> noise -> gate execution -> noise -> after handlers.
+    /// Crosstalk payloads emit only their metadata event and hidden continuation;
+    /// user gate handlers do not see them.
     /// Measurement outcomes accumulate in the internal buffer; retrieve them
     /// via [`take_outcomes`](CircuitRunner::take_outcomes).
     ///
@@ -1347,7 +1366,8 @@ impl<S: CliffordGateable> CircuitRunner<S> {
     /// # Errors
     ///
     /// Returns an error if the emitted response injects a gate the runner cannot
-    /// execute. Declared requirements are rejected by [`Self::with_noise`].
+    /// execute, or an `AfterHiddenMeasurement` response requests another hidden
+    /// measurement. Declared requirements are rejected by [`Self::with_noise`].
     pub fn apply_noise(
         &mut self,
         state: &mut S,
@@ -1357,9 +1377,26 @@ impl<S: CliffordGateable> CircuitRunner<S> {
             return Ok(NoiseResponse::None);
         };
 
+        let was_handling_hidden_measurement = self.handling_hidden_measurement;
+        self.handling_hidden_measurement |=
+            matches!(event, NoiseEvent::AfterHiddenMeasurement { .. });
         let response = noise.emit(event, &mut self.rng);
-        self.apply_noise_response(state, response.clone())?;
+        let result = self.apply_noise_response(state, response.clone());
+        self.handling_hidden_measurement = was_handling_hidden_measurement;
+        result?;
         Ok(response)
+    }
+
+    /// Dispatch payload metadata without simulator gates or user gate handlers.
+    fn execute_crosstalk_payload(
+        &mut self,
+        sim: &mut S,
+        gate_type: GateType,
+        qubits: &[QubitId],
+    ) -> Result<(), ExecutionError> {
+        let event = NoiseEvent::CrosstalkPayload { gate_type, qubits };
+        self.apply_noise(sim, &event)?;
+        Ok(())
     }
 
     /// Execute a single command from a `CommandQueue`.
@@ -1373,6 +1410,9 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         let qubits = command.qubits.as_slice();
 
         match command.gate_type {
+            GateType::MeasCrosstalkGlobalPayload | GateType::MeasCrosstalkLocalPayload => {
+                self.execute_crosstalk_payload(sim, command.gate_type, qubits)?;
+            }
             // Preparation
             GateType::PZ | GateType::QAlloc => {
                 sim.pz(qubits);
@@ -1594,7 +1634,8 @@ impl<S: CliffordGateable> CircuitRunner<S> {
     /// Execute a gate using the unified precedence chain:
     /// overrides -> Clifford -> rotation -> decomposition.
     ///
-    /// Before and after the gate, noise model events are dispatched.
+    /// Before and after ordinary gates, noise model events are dispatched.
+    /// Crosstalk payload metadata instead uses the hidden-measurement protocol.
     fn execute_gate(
         &mut self,
         sim: &mut S,
@@ -1642,6 +1683,11 @@ impl<S: CliffordGateable> CircuitRunner<S> {
                     },
                 });
             }
+        }
+        if let Some(gate_type) = gate_id.try_to_gate_type()
+            && gate_type.is_crosstalk_payload()
+        {
+            return self.execute_crosstalk_payload(sim, gate_type, qubits);
         }
         // Grouping preserves the existing empty-operand execution behavior.
         let group_size = self.gate_group_size(gate_id, qubits);
@@ -1761,6 +1807,9 @@ impl<S: CliffordGateable> CircuitRunner<S> {
     ) -> Result<NoiseResponse, ExecutionError> {
         fn require_noise(response: &NoiseResponse) -> Result<(), ExecutionError> {
             match response {
+                NoiseResponse::MeasureHidden { .. } => {
+                    Err(ExecutionError::HandlerHiddenMeasurementWithoutNoise)
+                }
                 NoiseResponse::MarkLeaked(qubits) => {
                     Err(ExecutionError::HandlerLeakageWithoutNoise {
                         mark: "MarkLeaked",
@@ -2575,6 +2624,28 @@ impl<S: CliffordGateable> CircuitRunner<S> {
             | NoiseResponse::SkipGate(_)
             | NoiseResponse::MarkLeaked(_)
             | NoiseResponse::MarkUnleaked(_) => {}
+
+            NoiseResponse::MeasureHidden { gate_type, qubits } => {
+                if self.handling_hidden_measurement {
+                    return Err(ExecutionError::RecursiveHiddenMeasurement {
+                        gate_type,
+                        qubits: qubits.to_vec(),
+                    });
+                }
+                if self.noise.is_none() {
+                    return Err(ExecutionError::HandlerHiddenMeasurementWithoutNoise);
+                }
+                let results = sim.mz(&qubits);
+                let outcomes: SmallVec<[bool; 4]> = results.iter().map(|r| r.outcome).collect();
+                self.apply_noise(
+                    sim,
+                    &NoiseEvent::AfterHiddenMeasurement {
+                        gate_type,
+                        qubits: &qubits,
+                        outcomes: &outcomes,
+                    },
+                )?;
+            }
 
             NoiseResponse::InjectGates(gates) => {
                 for gate in gates.iter() {

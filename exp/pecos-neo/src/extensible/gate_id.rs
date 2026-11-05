@@ -47,8 +47,7 @@ impl From<u16> for GateId {
 
 /// Core gate ID constants.
 ///
-/// These match the discriminant values in the existing `GateType` enum
-/// to ensure compatibility during migration.
+/// Stable IDs are mapped to built-in `GateType` variants by the bridge.
 #[allow(non_upper_case_globals)]
 pub mod gates {
     use super::GateId;
@@ -124,6 +123,10 @@ pub mod gates {
 
     // Idle
     pub const IDLE: GateId = GateId(130);
+
+    // Crosstalk metadata
+    pub const MEAS_CROSSTALK_GLOBAL_PAYLOAD: GateId = GateId(140);
+    pub const MEAS_CROSSTALK_LOCAL_PAYLOAD: GateId = GateId(141);
 
     // User-defined gate ID range
     /// First ID available for user-defined gates.

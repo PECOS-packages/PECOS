@@ -89,10 +89,7 @@ fn crosstalk_builder(kind: &str) -> CompositeNoiseModelBuilder {
         "prep" => builder.with_p_prep_crosstalk(1.0).unwrap(),
         "shorthand" => builder.with_p_crosstalk(1.0).unwrap(),
         "global" => builder.with_p_meas_crosstalk(1.0, 0.0).unwrap(),
-        "local" => builder
-            .with_p_meas_crosstalk(0.0, 1.0)
-            .unwrap()
-            .with_p_meas_crosstalk_local_fn(|_| vec![QubitId(1)]),
+        "local" => builder.with_p_meas_crosstalk(0.0, 1.0).unwrap(),
         _ => unreachable!(),
     }
 }
@@ -106,8 +103,10 @@ fn check_crosstalk(kind: &str) {
         circuit = circuit.h(&[1]);
         circuit = if kind == "prep" {
             circuit.pz(&[0])
+        } else if kind == "local" {
+            circuit.mz(&[0]).meas_crosstalk_local_payload(&[1])
         } else {
-            circuit.mz(&[0])
+            circuit.mz(&[0]).meas_crosstalk_global_payload(&[0])
         };
         let circuit = circuit.h(&[1]).mz(&[1]).build();
         let ones = (0..1000)
@@ -134,10 +133,17 @@ fn check_crosstalk(kind: &str) {
             qubits: &source,
         }
     } else {
-        NoiseEvent::AfterMeasurement {
-            gate_type: GateType::MZ,
-            qubits: &source,
-            outcomes: &[false],
+        NoiseEvent::CrosstalkPayload {
+            gate_type: if kind == "local" {
+                GateType::MeasCrosstalkLocalPayload
+            } else {
+                GateType::MeasCrosstalkGlobalPayload
+            },
+            qubits: if kind == "local" {
+                &[QubitId(1)]
+            } else {
+                &source
+            },
         }
     };
     for measured in [false, true] {
@@ -146,20 +152,27 @@ fn check_crosstalk(kind: &str) {
         }
         let mut count = 0;
         for _ in 0..1000 {
-            for gate in injected(model.emit(&trigger, &mut rng)) {
+            let response = model.emit(&trigger, &mut rng);
+            if kind != "prep" {
+                assert!(
+                    matches!(response, NoiseResponse::MeasureHidden { ref qubits, .. } if qubits.as_slice() == [QubitId(1)])
+                );
+                continue;
+            }
+            for gate in injected(response) {
                 assert_eq!(gate.qubits.as_slice(), &[QubitId(1)]);
                 assert_eq!(gate.gate_type, GateType::Z);
                 count += 1;
             }
         }
         assert!(
-            (421..=579).contains(&count),
+            kind != "prep" || (421..=579).contains(&count),
             "{kind}, measured={measured}: {count}"
         );
     }
     model.context_mut().mark_leaked(QubitId(1));
     for _ in 0..1000 {
-        assert_eq!(injected(model.emit(&trigger, &mut rng)), vec![]);
+        assert!(model.emit(&trigger, &mut rng).is_none());
     }
 }
 
@@ -176,7 +189,12 @@ fn composite_global_crosstalk_reaches_prepared_qubit() {
     check_crosstalk("global");
     // The newly reachable transition action must propagate both injected
     // flips and leakage marks through the runner to the spectator.
-    let circuit = CommandBuilder::new().pz(&[0, 1]).mz(&[0]).mz(&[1]).build();
+    let circuit = CommandBuilder::new()
+        .pz(&[0, 1])
+        .mz(&[0])
+        .meas_crosstalk_global_payload(&[0])
+        .mz(&[1])
+        .build();
     for leaks in [false, true] {
         let flip = if leaks { 0.0 } else { 1.0 };
         let leak = 1.0 - flip;

@@ -122,27 +122,13 @@ CompositeNoiseModelBuilder::new()
 
 #### Crosstalk
 
-Preparation crosstalk fires only after noisy `PZ`, at its own global rate.
-Measurement crosstalk fires after measurement, at independent local/global rates.
-Both default to Z with probability 1/2 per fired target. Source operands and leaked
-qubits are excluded; other qubits prepared this shot remain targets after measurement,
-including noiselessly prepared and `QAlloc` qubits. Presets and user-composed composite
-channels retain their chosen primitives. Tables retain their sampled-state behavior.
+See [payload crosstalk behavior](../user-guides/noise-model.md#payload-crosstalk)
+and the [runner's two-phase protocol](runner.md#crosstalk-payload-execution).
 
 ```rust
-// Local crosstalk targets the neighbors of the measured qubits in a linear chain.
-fn neighbors(qubits: &[QubitId]) -> Vec<QubitId> {
-    qubits
-        .iter()
-        .flat_map(|q| [QubitId(q.0.saturating_sub(1)), QubitId(q.0 + 1)])
-        .filter(|n| !qubits.contains(n))
-        .collect()
-}
-
 CompositeNoiseModelBuilder::new()
     .with_p_prep_crosstalk(0.001)?
     .with_p_meas_crosstalk(0.001, 0.01)?
-    .with_p_meas_crosstalk_local_fn(neighbors)
     .with_p_meas_crosstalk_model(CrosstalkTransitions::symmetric_with_leakage())?
     .build()?;
 ```
@@ -286,7 +272,8 @@ When noise is applied, it produces a `NoiseResponse` that the runner processes:
 | `NoiseResponse::FlipOutcomes(qubits)` | Toggle measurement outcomes for qubits |
 | `NoiseResponse::ForceOutcomes(pairs)` | Set outcomes to specific values |
 | `NoiseResponse::MarkLeaked(qubits)` | Mark qubits as leaked in context |
-| `NoiseResponse::Multiple(responses)` | Combine multiple responses |
+| `NoiseResponse::Multiple(responses)` | Apply responses in order, including hidden measurements |
+| `NoiseResponse::MeasureHidden { gate_type, qubits }` | Measure without public results, readout noise or lifecycle changes, then emit `AfterHiddenMeasurement` |
 
 After-gate `qubits` contains executed operand groups only. `leaked_suppressed`
 contains complete groups skipped while leaked, in original order within each
@@ -640,7 +627,7 @@ AngleScaling::asymmetric(
 
 ### Crosstalk Transitions
 
-State-dependent crosstalk effects:
+State-dependent crosstalk effects selected by the real hidden victim outcome:
 
 ```rust
 // Simple flip model

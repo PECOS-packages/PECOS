@@ -185,6 +185,8 @@ pub fn is_clifford_gate_type(gate_type: GateType) -> bool {
                 | GateType::MeasureFree
                 | GateType::PZ
                 | GateType::QAlloc
+                | GateType::MeasCrosstalkGlobalPayload
+                | GateType::MeasCrosstalkLocalPayload
                 | GateType::QFree
                 | GateType::Idle
         )

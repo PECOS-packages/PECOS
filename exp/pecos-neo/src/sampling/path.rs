@@ -404,6 +404,8 @@ impl<S: CliffordGateable + ForcedMeasurement> PathExplorer<S> {
                     | GateType::MeasureFree
                     | GateType::PZ
                     | GateType::QAlloc
+                    | GateType::MeasCrosstalkGlobalPayload
+                    | GateType::MeasCrosstalkLocalPayload
             )
     }
 
@@ -493,6 +495,7 @@ impl<S: CliffordGateable + ForcedMeasurement> PathExplorer<S> {
         path: &mut MeasurementPath,
     ) {
         match command.gate_type {
+            GateType::MeasCrosstalkGlobalPayload | GateType::MeasCrosstalkLocalPayload => {}
             GateType::PZ | GateType::QAlloc => {
                 let qubits: Vec<QubitId> = command.qubits.iter().copied().collect();
                 self.simulator.pz(&qubits);
@@ -527,6 +530,7 @@ impl<S: CliffordGateable + ForcedMeasurement> PathExplorer<S> {
         path_index: &mut usize,
     ) {
         match command.gate_type {
+            GateType::MeasCrosstalkGlobalPayload | GateType::MeasCrosstalkLocalPayload => {}
             GateType::PZ | GateType::QAlloc => {
                 let qubits: Vec<QubitId> = command.qubits.iter().copied().collect();
                 self.simulator.pz(&qubits);

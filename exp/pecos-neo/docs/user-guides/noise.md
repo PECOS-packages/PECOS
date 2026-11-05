@@ -65,7 +65,6 @@ let noise = CompositeNoiseModelBuilder::new()
 
     // Crosstalk
     .with_p_meas_crosstalk(0.001, 0.01)?  // Global, local rates
-    .with_p_meas_crosstalk_local_fn(neighbors)
 
     .build()?;
 ```
@@ -160,3 +159,22 @@ On `CircuitRunner`'s command queue, leaked MZ reads 1 and leaked MeasureLeaked
 reports leaked, including when noiseless. `LeakageChannel` never changes an
 older measurement record. `execute_measure` and `ImportanceSamplingRunner`
 retain their separate measurement behavior without a leakage check.
+
+### Payload crosstalk
+
+Measurement crosstalk fires only on `MeasCrosstalkGlobalPayload` or
+`MeasCrosstalkLocalPayload`, both `GateCategory::Metadata`. Global operands
+exclude victims; local operands name potential victims. An empty global payload
+targets every existing, non-leaked qubit. Measured qubits remain eligible.
+
+The payload emits `CrosstalkPayload`. Each victim independently fires at its
+kind's rate. A nonempty `MeasureHidden { gate_type, qubits }` response measures
+victims directly, without user outcomes, readout noise, measurement events or
+lifecycle changes. `AfterHiddenMeasurement` carries the raw outcomes; the optional
+table selects stay, X, or leakage from the actual victim outcome. Without a
+table, only collapse occurs. This continuation finishes before the next command.
+No fired victims returns `None`. Noiseless payloads produce no hidden measurement.
+
+Preparation crosstalk still fires only on noisy PZ and defaults to a fair Z coin.
+Neither ordinary gates nor ordinary measurements trigger measurement crosstalk.
+Neo rates are post-scale; engine parity is scoped to `leakage_scale = 1`.

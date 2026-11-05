@@ -129,6 +129,10 @@ fn convert_gate_type(core_type: CoreGateType) -> Option<NeoGateType> {
         CoreGateType::QAlloc => NeoGateType::QAlloc,
         CoreGateType::QFree => NeoGateType::QFree,
 
+        // Crosstalk metadata
+        CoreGateType::MeasCrosstalkGlobalPayload => NeoGateType::MeasCrosstalkGlobalPayload,
+        CoreGateType::MeasCrosstalkLocalPayload => NeoGateType::MeasCrosstalkLocalPayload,
+
         // Idle
         CoreGateType::Idle => NeoGateType::Idle,
 

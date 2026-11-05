@@ -35,6 +35,34 @@ pub struct CommandBuilder {
 }
 
 impl CommandBuilder {
+    /// Emit global measurement crosstalk, excluding the listed qubits.
+    #[must_use]
+    pub fn meas_crosstalk_global_payload(mut self, qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        self.queue.push(GateCommand::new(
+            GateType::MeasCrosstalkGlobalPayload,
+            qubits
+                .iter()
+                .copied()
+                .map(Into::into)
+                .collect::<smallvec::SmallVec<[QubitId; 4]>>(),
+        ));
+        self
+    }
+
+    /// Emit local measurement crosstalk on the listed potential victims.
+    #[must_use]
+    pub fn meas_crosstalk_local_payload(mut self, qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        self.queue.push(GateCommand::new(
+            GateType::MeasCrosstalkLocalPayload,
+            qubits
+                .iter()
+                .copied()
+                .map(Into::into)
+                .collect::<smallvec::SmallVec<[QubitId; 4]>>(),
+        ));
+        self
+    }
+
     /// Create a new empty command builder.
     #[must_use]
     pub fn new() -> Self {

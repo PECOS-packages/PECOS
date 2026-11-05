@@ -656,7 +656,7 @@ impl NoiseModelBuilder {
 
             // Add measurement crosstalk if configured
             if self.p_meas_crosstalk_global > 0.0 || self.p_meas_crosstalk_local > 0.0 {
-                let mut crosstalk = CrosstalkChannel::new()
+                let mut crosstalk = CrosstalkChannel::measurement()
                     .with_global_rate(self.p_meas_crosstalk_global)?
                     .with_local_rate(self.p_meas_crosstalk_local)?;
                 if let Some(transitions) = self.p_meas_crosstalk_transitions {

@@ -492,28 +492,37 @@ fn adapter_leader_cleared_with_operand_state() {
 
 #[test]
 fn adapter_crosstalk_keeps_each_target_with_or_without_enclosing_group() {
-    for nested in [false, true] {
+    let preparation = NoiseEvent::AfterPreparation {
+        gate_type: GateType::PZ,
+        qubits: &PAIR,
+    };
+    let measurement = NoiseEvent::AfterMeasurement {
+        gate_type: GateType::MZ,
+        qubits: &PAIR,
+        outcomes: &[false, false],
+    };
+    for (crosstalk_event, enclosing) in [
+        (&preparation, false),
+        (&preparation, true),
+        (&measurement, false),
+        (&measurement, true),
+    ] {
         let probe = Probe::default();
         let crosstalk =
             CompositeCrosstalkChannel::new("targets", channel_action(probe.clone()).unwrap())
-                .responds_to_gates()
+                .responds_to_preparation()
+                .responds_to_measurement()
                 .local(|_| vec![QubitId(2), QubitId(3)]);
-        let channel: Box<dyn NoiseChannel> = if nested {
-            Box::new(CompositeChannel::new(
-                "nested targets",
-                channel_action(crosstalk).unwrap(),
-            ))
-        } else {
-            Box::new(crosstalk)
-        };
         let mut ctx = NoiseContext::new();
         ctx.mark_prepared(QubitId(2));
         ctx.mark_prepared(QubitId(3));
-        channel.apply(
-            &event(&PAIR, false),
-            &mut ctx,
-            &mut PecosRng::seed_from_u64(42),
-        );
+        if enclosing {
+            // An enclosing composite has installed its own operand group and a
+            // leader other than member 0.
+            ctx.set_current_qubit_index(0, &PAIR);
+            ctx.set_group_leader(Some(1));
+        }
+        crosstalk.apply(crosstalk_event, &mut ctx, &mut PecosRng::seed_from_u64(42));
         assert_eq!(
             *probe.views.lock().unwrap(),
             vec![

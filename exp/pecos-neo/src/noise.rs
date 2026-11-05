@@ -701,9 +701,8 @@ pub enum NoiseResponse {
     ///
     /// A suppressed group that contains no leaked qubit at the skip decision
     /// is treated as a gate that did not run: it receives no after-gate effects,
-    /// including gate error, idle-after-two-qubit-gate noise, and acting as a
-    /// crosstalk source. Its qubits can still be crosstalk targets of the groups that
-    /// ran. A channel that skips a group and wants other noise on it must
+    /// including gate error and idle-after-two-qubit-gate noise.
+    /// A channel that skips a group and wants other noise on it must
     /// apply that noise itself. Groups containing a leaked qubit at that decision
     /// are instead retained in `AfterGate::leaked_suppressed`, never in `qubits`.
     SkipGate(SmallVec<[QubitId; 4]>),
@@ -890,7 +889,7 @@ pub(crate) fn partition_gate_qubits<'a>(
 /// Each noise channel handles a specific type of noise (e.g., single-qubit depolarizing,
 /// measurement errors, leakage). The composer combines multiple channels to form
 /// a complete noise model. On `AfterGate`, `event.qubits()` contains executed
-/// groups only. Channels implementing seepage or gate-associated idle/crosstalk
+/// groups only. Channels implementing seepage or gate-associated idle
 /// effects must explicitly read `leaked_suppressed` or `gated_qubits()`.
 pub trait NoiseChannel: Send + Sync {
     /// Declare every kind on which `try_apply` can return a response.

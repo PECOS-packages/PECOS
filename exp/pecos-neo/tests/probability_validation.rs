@@ -113,10 +113,10 @@ fn traditional_channels_reject_invalid_probabilities() {
         assert!(MeasurementStateFlipChannel::new(p).is_err());
         assert!(PreparationChannel::new(p).is_err());
         assert!(PreparationChannel::default().with_leakage(p).is_err());
-        assert!(CrosstalkChannel::new().with_local_rate(p).is_err());
-        assert!(CrosstalkChannel::new().with_global_rate(p).is_err());
-        assert!(CrosstalkChannel::new().with_leakage(p).is_err());
-        assert!(CrosstalkChannel::global_only(p).is_err());
+        assert!(CrosstalkChannel::measurement().with_local_rate(p).is_err());
+        assert!(CrosstalkChannel::measurement().with_global_rate(p).is_err());
+        assert!(CrosstalkChannel::measurement().with_leakage(p).is_err());
+        assert!(CrosstalkChannel::preparation(p).is_err());
         assert!(
             TwoQubitChannel::new(
                 p,
@@ -654,4 +654,29 @@ fn quadratic_rate_error_names_only_the_supplied_rate() {
     assert!(error.contains("rate_per_time_unit"), "{error}");
     assert!(!error.contains("factor"), "{error}");
     assert!(error.contains("Reduce"), "{error}");
+}
+
+#[test]
+fn preparation_crosstalk_rejects_local_neighbors_and_tables() {
+    use pecos_neo::noise::{CrosstalkChannel, CrosstalkTransitions};
+    for error in [
+        CrosstalkChannel::preparation(1.0)
+            .unwrap()
+            .with_local_rate(0.0)
+            .unwrap_err(),
+        CrosstalkChannel::preparation(1.0)
+            .unwrap()
+            .with_neighbor_function(|_| vec![])
+            .unwrap_err(),
+        CrosstalkChannel::preparation(1.0)
+            .unwrap()
+            .with_transitions(CrosstalkTransitions::flip_only())
+            .unwrap_err(),
+    ] {
+        assert!(
+            error
+                .to_string()
+                .contains("the engines have no local or table-driven preparation crosstalk")
+        );
+    }
 }

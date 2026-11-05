@@ -108,64 +108,6 @@ fn suppressed_idle_after_two_qubit() {
 }
 
 #[test]
-fn suppressed_crosstalk_sources_and_exclusions() {
-    fn neighbors(sources: &[QubitId]) -> Vec<QubitId> {
-        sources.iter().map(|q| QubitId(q.0 + 6)).collect()
-    }
-    for composite in [false, true] {
-        for local in [false, true] {
-            let channel: Box<dyn NoiseChannel> = if composite {
-                let c = CompositeCrosstalkChannel::new("crosstalk", inject_x()).responds_to_gates();
-                Box::new(if local {
-                    c.local(neighbors)
-                } else {
-                    c.global()
-                })
-            } else {
-                let c = CrosstalkChannel::new();
-                Box::new(if local {
-                    c.with_local_rate(1.0)
-                        .unwrap()
-                        .with_neighbor_function(neighbors)
-                } else {
-                    c.with_global_rate(1.0).unwrap()
-                })
-            };
-            let mut ctx = NoiseContext::new();
-            for q in 0..12 {
-                ctx.mark_prepared(QubitId(q));
-            }
-            ctx.mark_leaked(QubitId(0));
-            // (0,1) was suppressed, (2,3) dropped, (4,5) executed.
-            let event = after(&[QubitId(4), QubitId(5)], &[QubitId(0), QubitId(1)]);
-            let targets: Vec<_> =
-                injected(channel.apply(&event, &mut ctx, &mut PecosRng::seed_from_u64(42)))
-                    .into_iter()
-                    .flat_map(|g| g.qubits)
-                    .collect();
-            for q in [0, 1, 4, 5] {
-                assert!(
-                    !targets.contains(&QubitId(q)),
-                    "composite={composite} local={local}"
-                );
-            }
-            if local {
-                for q in [6, 7, 10, 11] {
-                    assert!(targets.contains(&QubitId(q)));
-                }
-                for q in [8, 9] {
-                    assert!(!targets.contains(&QubitId(q)));
-                }
-            } else {
-                for q in [2, 3] {
-                    assert!(targets.contains(&QubitId(q)));
-                }
-            }
-        }
-    }
-}
-
-#[test]
 fn suppressed_leakage_partner_noise() {
     for mixed in [false, true] {
         let mut ctx = NoiseContext::new();

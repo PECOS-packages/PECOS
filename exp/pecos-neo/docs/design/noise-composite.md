@@ -259,6 +259,12 @@ Measurement Outcome
 
 ### Crosstalk (Tricky Case #2)
 
+The two-phase protocol below is a design sketch, not the current implementation.
+Current channels run on noisy `PZ` preparation or after measurement, never gates.
+They target other non-leaked qubits prepared this shot, including measured qubits.
+Builder defaults dephase each fired target with a fair Z coin; custom primitives
+and presets retain their effects. Transition tables still sample an input state.
+
 **Why it's tricky:** Non-local (affects OTHER qubits). Spans before/after boundary (inject measurements, wait, process outcomes). Coordinated operation.
 
 **Solution:** Crosstalk is a special construct (not primitives), but its internal transitions use primitives.

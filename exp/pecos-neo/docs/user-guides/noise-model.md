@@ -27,9 +27,10 @@ let noise = ComposableNoiseModel::new()
 register `CorePlugin` automatically. Its `AfterPreparation` handler marks qubits
 active and clears previous leakage before preparation noise runs, so a new leak
 from that same preparation remains. Its `AfterMeasurement` handler marks qubits
-inactive without clearing leakage. Thus crosstalk targets other prepared,
-unmeasured, non-leaked qubits, and custom `active()` conditions follow this
-lifecycle. A bare `ComposableNoiseModel` needs `.add_plugin(&CorePlugin)` for
+inactive without clearing leakage. Crosstalk targets other non-leaked qubits
+prepared this shot, including measured, noiselessly prepared and `QAlloc` qubits.
+Custom `active()` conditions still exclude measured qubits. A bare
+`ComposableNoiseModel` needs `.add_plugin(&CorePlugin)` for
 these preparation and measurement state updates.
 
 The noise model is event-driven. During simulation, the runner emits events
@@ -58,7 +59,7 @@ let noise = GeneralNoiseModelBuilder::new()
     .with_p1(0.001)
     .with_p2(0.01)
     .build()?
-    .add_channel(CrosstalkChannel::new()
+    .add_channel(CrosstalkChannel::measurement()
         .with_global_rate(0.001)?
         .with_transitions(CrosstalkTransitions::symmetric_with_leakage())?);
 ```

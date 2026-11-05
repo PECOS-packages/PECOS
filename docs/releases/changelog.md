@@ -6,6 +6,24 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Breaking:** pecos-neo preparation crosstalk now fires only on noisy `PZ`, at
+  its own rate (#1573). Preparation and no-table measurement crosstalk dephase
+  fired targets (Z with probability 1/2) instead of applying a uniform Pauli.
+  Measured qubits remain targets; this includes noiselessly prepared and `QAlloc`
+  qubits, unlike the engines. Leaked qubits and source operands are excluded.
+  Gate events no longer trigger crosstalk; `CompositeCrosstalkChannel::responds_to_gates`
+  is removed. `CrosstalkChannel::new`, `Default` and `global_only` are replaced by
+  `preparation(rate)` and `measurement()`. Preparation rejects local rates,
+  neighbor functions and tables; `with_neighbor_function` now returns a validation
+  result. Channel names exposed by `channel_names()` and `describe()` change
+  from `CrosstalkChannel` to `PreparationCrosstalkChannel` /
+  `MeasurementCrosstalkChannel`. Presets and user-composed composite crosstalk
+  keep their primitives, but their targets now include measured qubits. Measurement remains on
+  `AfterMeasurement`. The measurement-crosstalk table no longer applies to
+  preparation crosstalk, which now always dephases in the builders, as in the
+  engines. Tables otherwise keep their sampled-state behavior. Seeded results
+  shift.
+
 - **Breaking:** pecos-neo `channel_action` now runs its wrapped channel once per
   operand group per invocation site and stage (#1568). Each stage chooses its
   first eligible member (first leaked member for suppressed groups); that leader

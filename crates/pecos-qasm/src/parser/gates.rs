@@ -61,6 +61,7 @@ pub fn parse_gate_definition(pair: Pair<Rule>, program: &mut Program) -> Result<
         body,
     };
 
+    gate_def.validate_parameter_references()?;
     program.gate_definitions.insert(name, gate_def);
 
     Ok(())

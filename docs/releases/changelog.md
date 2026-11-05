@@ -44,6 +44,18 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 - Guppy single-bit assignment errors name the SLR value and suggest a comparison,
   bit index or valid bit value. Integer-to-bool errors suggest using `0` or `1`.
 
+- **Breaking:** the PECOS QASM parser rejects a reference to an undeclared
+  classical register, or to a bit beyond a declared register's size, anywhere a
+  classical value is read or written: conditions, assignments, operands,
+  function arguments and measurement targets. Before, the engine evaluated an
+  undeclared name as 0, so `if(i == 0) x q[0];` with no `creg i` ran the gate.
+  The error names the identifier and says to declare it with `creg`. A gate body
+  referencing a name that is not one of its declared parameters is also rejected,
+  even if the gate is unused or a classical register has that name. Gate and
+  opaque formal parameters are unaffected. `pecos_qasm::bitvec_expression::evaluate_expression_bitvec`
+  drops its unused width argument, and `pecos_qasm::dag_bridge::QasmBridgeError`
+  gains an `InvalidProgram` variant.
+
 - **Breaking:** pecos-neo always suppresses gates on leaked operands in all three
   noise builders, including noiseless gates and models with no configured leak
   source (#1574, #1575). Noiseless operations suppress faults, including composite,
@@ -500,6 +512,20 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   (surface, color, bivariate bicycle, hypergraph product and tricycle codes),
   refactor plus bit-reversed order is 1.18x slower than the default (geomean),
   so it stays opt-in.
+
+- Python: C4-Helix two-block circuits apply a transversal CNOT between syndrome
+  rounds, with block-prefixed measurement labels and discovered detectors
+  (`cnot_circuit`, `cnot_definitions`); measured distance is 5 <= d <= 6.
+
+- Python: C4-Helix logic words render to certified Guppy programs with reusable
+  gate gadgets and data relabels. `logic_definitions` supplies typed detectors
+  and signed observable references for `build_dem_from_guppy`.
+
+- Python: C4-Helix logical gate gadgets flag all seven physical CZs and compile
+  signed two-qubit Cliffords with minimal S0S1 count. Logic circuits discover
+  detectors using pulled-back logical conjugates. Distance tests pin the
+  gate-only weight-six witness, full-noise Z bounds of 5 <= d <= 6, and the
+  owner-accepted full-noise X distance of four.
 
 - Python: `pecos.guppy_gen.helix` renders certified C4-Helix memory programs
   with scalar, round-free result tags and `mem_swap` swap-out gadgets.

@@ -93,7 +93,9 @@ fn error(gate: Batch<'_>, tick: usize, reason: impl Into<String>) -> CompileErro
 
 fn validate_gate(gate: Batch<'_>, tick: usize) -> Result<(), CompileError> {
     match gate.gate_type {
-        g if dispatch::named_clifford(g) || dispatch::rotation_axis(g).is_some() => {}
+        g if dispatch::named_clifford(g)
+            || dispatch::rotation_axis(g).is_some()
+            || dispatch::fixed_rotation(g).is_some() => {}
         GateType::MZ | GateType::MX | GateType::MPZ | GateType::PZ | GateType::PX => {}
         GateType::I | GateType::Idle | GateType::TrackedPauliMeta => return Ok(()),
         GateType::Channel => {
@@ -295,8 +297,10 @@ impl Builder {
     }
 
     fn gate(&mut self, gate: Batch<'_>, ids: &BTreeMap<MeasId, usize>) {
-        if let Some(axis) = dispatch::rotation_axis(gate.gate_type) {
-            let angle = gate.angles[0];
+        let rotation = dispatch::rotation_axis(gate.gate_type)
+            .map(|axis| (axis, gate.angles[0]))
+            .or_else(|| dispatch::fixed_rotation(gate.gate_type));
+        if let Some((axis, angle)) = rotation {
             for qs in gate.qubits.chunks_exact(gate.gate_type.quantum_arity()) {
                 let physical: Vec<_> = qs.iter().map(|q| (q.index(), axis)).collect();
                 if let Some(turns) = clifford_turns(angle) {

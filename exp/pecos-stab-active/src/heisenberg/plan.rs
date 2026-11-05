@@ -3,6 +3,7 @@
 
 //! Model A lowering: `C_real = P C_plan`. Corrections change signs only.
 
+pub(super) mod batch;
 mod sampler;
 mod validation;
 
@@ -182,7 +183,7 @@ impl HeisenbergProgram {
         max_width: usize,
         mut observe: impl FnMut(&ActiveStructure, &Corrections, &PlannedOp, usize),
     ) -> Result<SamplingPlan, PlanError> {
-        if max_width > (isize::MAX.unsigned_abs() / size_of::<Complex64>()).ilog2() as usize {
+        if max_width > crate::StabActive::max_supported_active_width() {
             return Err(PlanError::InvalidMaxWidth { limit: max_width });
         }
         let mut structure = ActiveStructure::with_seed(self.num_qubits, 0);

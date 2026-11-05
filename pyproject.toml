@@ -34,6 +34,7 @@ members = [
   "python/quantum-pecos",
   "python/selene-plugins/pecos-selene-general-noise",
   "python/selene-plugins/pecos-selene-mast",
+  "python/selene-plugins/pecos-selene-stab-active",
   "python/selene-plugins/pecos-selene-stab-mps",
   "python/selene-plugins/pecos-selene-stab-vec",
   "python/selene-plugins/pecos-selene-stabilizer",

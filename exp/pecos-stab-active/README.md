@@ -83,8 +83,19 @@ records, detector and observable XORs, and peak active width. There is no
 scheduler, rotation fusion, or reordering. Each shot uses one continuous RNG
 stream for joint Pauli-noise alternatives and quantum measurements.
 
+`program.plan(limit)` and `plan_scheduled(&program, limit)` build a reusable
+`SamplingPlan`. `plan.run_batch(&seeds, lane_budget_bytes)` shares amplitudes
+between shots with equal rotation signs and projection values so far; result i
+is bit-identical to `plan.run(seeds[i])` for every budget. Amplitude
+memory is bounded by `max(lane_budget_bytes, 16 * 2^peak)`. A budget smaller than
+one lane, including zero, runs one shot at a time. `plan.par_run_batch` executes
+chunks on the Rayon pool and returns results in seed order, with up to one such
+memory bound per thread. The budget covers amplitudes, not per-shot buffers or
+returned results.
+
 The accepted gates are named Cliffords, exact fixed-axis RX/RY/RZ/RXX/RYY/RZZ
-rotations at any angle, Pauli channels, MZ/MX/MPZ/PZ/PX, and I/Idle/TrackedPauliMeta.
+rotations at any angle, T/Tdg (compiled as RZ(+-pi/4), dropping their global
+phase), Pauli channels, MZ/MX/MPZ/PZ/PX, and I/Idle/TrackedPauliMeta.
 Other gates produce errors with their tick, batch index, type, and support.
 Quarter-turn multiples take the Clifford path using exact `Angle64` equality.
 Pauli channel expressions preserve all positive alternative weights, including

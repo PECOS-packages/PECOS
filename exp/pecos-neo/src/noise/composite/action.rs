@@ -119,7 +119,9 @@ impl GateAction for Leak {
     }
 }
 
-/// Mark qubit as unleaked (seeped back to computational basis).
+/// Clear the leakage flag only, preserving the qubit's simulator state.
+///
+/// Use [`seep()`](actions::seep) for physical seepage that also randomizes the state.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Unleak;
 
@@ -1818,8 +1820,9 @@ impl GateAction for ErasureWithReplacement {
 /// - `Flip`: qubit flips to opposite value (X gate applied)
 /// - `Leak`: qubit transitions to leaked state
 ///
-/// This matches `GeneralNoiseModel`'s `p_meas_crosstalk_model` which uses
-/// state-dependent transition probabilities.
+/// The table has the same shape as `GeneralNoiseModel`'s `p_meas_crosstalk_model`.
+/// With no measurement outcome in context the state is drawn uniformly, because
+/// this action does not measure the qubit.
 #[derive(Debug, Clone)]
 pub struct CrosstalkAction {
     transitions: crate::noise::CrosstalkTransitions,
@@ -2077,7 +2080,9 @@ pub mod actions {
         Leak
     }
 
-    /// Mark qubit as unleaked.
+    /// Clear the leakage flag only, preserving the qubit's simulator state.
+    ///
+    /// Use [`seep()`] for physical seepage that also randomizes the state.
     #[must_use]
     pub fn unleak() -> Unleak {
         Unleak
@@ -2532,9 +2537,10 @@ pub mod actions {
     ///
     /// # Limitations
     ///
-    /// - The adapter creates a synthetic event for the current qubit only
-    /// - For two-qubit channels, use with caution as the event may not have
-    ///   full partner qubit information depending on context
+    /// - The synthetic event contains the current operand group when available,
+    ///   otherwise just the current qubit. Registered group size is preserved.
+    /// - Its suppressed slice is empty; the enclosing composite controls which
+    ///   members invoke this action, including leaked members of suppressed groups.
     /// - The channel's `responds_to` filter is bypassed (assumed to match)
     pub struct ChannelAdapter {
         channel: Box<dyn crate::noise::NoiseChannel>,
@@ -2600,8 +2606,26 @@ pub mod actions {
 
             let gate_type = gate_info.map_or(GateType::I, |g| g.gate_type);
 
-            // Create the event using helper constructor
-            let event = NoiseEvent::after_gate(gate_type, &qubits, &angles);
+            // Preserve registered custom arity even when the gate type is I.
+            let event = NoiseEvent::AfterGate {
+                gate_type,
+                gate_id: Some(gate_type.to_gate_id()),
+                qubits: if ctx.is_current_gate_suppressed() {
+                    &[]
+                } else {
+                    &qubits
+                },
+                angles: &angles,
+                leaked_suppressed: if ctx.is_current_gate_suppressed() {
+                    &qubits
+                } else {
+                    &[]
+                },
+                group_size: std::num::NonZeroUsize::new(
+                    gate_info.map_or(qubits.len(), |g| g.num_qubits),
+                )
+                .expect("gate context has positive arity and adapter operands are nonempty"),
+            };
 
             // Apply the wrapped channel
             let response = self.channel.apply(&event, ctx, rng);
@@ -2965,7 +2989,7 @@ mod tests {
         use pecos_core::Angle64;
         let apply = |angle| {
             let mut ctx = make_test_context();
-            ctx.set_current_gate(GateType::RZ, &[angle], 1);
+            ctx.set_current_gate(GateType::RZ, &[angle], std::num::NonZeroUsize::MIN);
             OverRotation::rz(0.01)
                 .unwrap()
                 .apply(QubitId(0), &mut ctx, &mut PecosRng::seed_from_u64(42))
@@ -2998,7 +3022,7 @@ mod tests {
     fn over_rotation_preserves_full_precision_angle() {
         let mut ctx = make_test_context();
         let angle = pecos_core::radians!(-0.73);
-        ctx.set_current_gate(GateType::RZ, &[angle], 1);
+        ctx.set_current_gate(GateType::RZ, &[angle], std::num::NonZeroUsize::MIN);
         let response = OverRotation::rz(1.0).unwrap().apply(
             QubitId(0),
             &mut ctx,

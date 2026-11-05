@@ -22,6 +22,8 @@ fn bench_scale(num_qubits: usize, prob: f64, iterations: usize) {
         qubits: &qubits,
         angles: &angles,
         gate_id: None,
+        group_size: pecos_neo::noise::gate_group_size(GateType::H.quantum_arity(), qubits.len()),
+        leaked_suppressed: &[],
     };
 
     let mut ctx = NoiseContext::new();

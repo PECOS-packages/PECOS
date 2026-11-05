@@ -93,16 +93,16 @@ fn fold_float_binary_op(op: &str, l: f64, r: f64) -> Expression {
         "+" => Expression::Float(l + r),
         "-" => Expression::Float(l - r),
         "*" => Expression::Float(l * r),
-        "/" => {
+        "/" | "%" => {
             if r == 0.0 {
-                // Preserve division by zero as-is for proper error handling
+                // Preserve a zero divisor for the evaluator, as for division
                 Expression::BinaryOp {
-                    op: "/".to_string(),
+                    op: op.to_string(),
                     left: Box::new(Expression::Float(l)),
                     right: Box::new(Expression::Float(r)),
                 }
             } else {
-                Expression::Float(l / r)
+                Expression::Float(if op == "/" { l / r } else { l % r })
             }
         }
         "**" => Expression::Float(l.powf(r)),

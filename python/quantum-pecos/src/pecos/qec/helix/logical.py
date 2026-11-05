@@ -3,13 +3,15 @@
 
 """Signed physical automorphisms and logical actions of C4-Helix."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass
+from functools import cache
 from itertools import product
 
 from pecos_rslib import CliffordRep, PauliStabilizerGroup, PauliString
 
-from pecos.qec.helix.code import HelixCode
-from pecos.qec.helix.compile import Matrix, parse_signed_logical_pauli
+from pecos.qec.helix.code import HelixCode, c4_helix_code
+from pecos.qec.helix.compile import Matrix, logical_pauli_fixup, min_cost_words, parse_signed_logical_pauli
 
 
 @dataclass(frozen=True)
@@ -41,6 +43,7 @@ def c4_helix_gates() -> dict[str, LogicalGate]:
         "CNOT_SWAP": tuple(("swap", (4 * b, 4 * b + 3)) for b in range(5)) + swaps,
         "H_SWAP": tuple(("h", (q,)) for q in range(20)),
         "CZ": tuple(("szdg" if j in (0, 3) else "sz", (4 * b + j,)) for b in range(5) for j in range(4)),
+        # Circuits flag all seven CZs: any partial flag set lowers gate-fault distance to five.
         "S0S1": (
             ("cz", (8, 19)),
             ("cz", (9, 17)),
@@ -126,3 +129,82 @@ def symplectic_action(code: HelixCode, gate: LogicalGate) -> Matrix:
     labels = [f"X{j}" for j in range(code.k)] + [f"Z{j}" for j in range(code.k)]
     columns = [parse_signed_logical_pauli(action[label], code.k)[1] for label in labels]
     return tuple(zip(*columns, strict=True))
+
+
+def logical_pauli_string(spelling: str) -> str:
+    """Return the dense sign-free product of a canonical unsigned logical Pauli.
+
+    Shared physical factors cancel; only the global phase is discarded.
+    """
+    if not isinstance(spelling, str):
+        msg = f"Expected a canonical logical Pauli string, got {spelling!r}"
+        raise TypeError(msg)
+    code = c4_helix_code()
+    _, bits = parse_signed_logical_pauli("+" + spelling, code.k)
+    pauli = PauliString.I()
+    for bit, row in zip(bits, code.logical_x + code.logical_z, strict=True):
+        if bit:
+            pauli = pauli * PauliString.from_str(row)
+    return pauli.to_dense_str(code.n).lstrip("+-i")
+
+
+def logical_pauli_ops(spelling: str) -> tuple[tuple[str, tuple[int, ...]], ...]:
+    """Return one physical op per nonidentity slot of a canonical unsigned logical Pauli.
+
+    Products cancel shared factors; global phase is irrelevant to conjugation.
+    """
+    return tuple((axis.lower(), (q,)) for q, axis in enumerate(logical_pauli_string(spelling)) if axis != "I")
+
+
+def logical_token_ops(token: str) -> tuple[tuple[str, tuple[int, ...]], ...]:
+    """Return the physical ops of a paper gate name or a nonidentity canonical logical Pauli."""
+    if not isinstance(token, str):
+        msg = f"Logical gate tokens must be strings, got {token!r}"
+        raise TypeError(msg)
+    gates = c4_helix_gates()
+    if token in gates:
+        return gates[token].ops
+    try:
+        ops = logical_pauli_ops(token)
+    except ValueError as error:
+        msg = f"Invalid logical gate token {token!r}"
+        raise ValueError(msg) from error
+    if not ops:
+        msg = f"Invalid logical gate token {token!r}"
+        raise ValueError(msg)
+    return ops
+
+
+@cache
+def _clifford_words() -> dict[Matrix, tuple[str, ...]]:
+    matrices = {name: symplectic_action(c4_helix_code(), gate) for name, gate in c4_helix_gates().items()}
+    return min_cost_words(matrices, {name: int(name == "S0S1") for name in matrices})
+
+
+def compile_logical_clifford(target: Mapping[str, str]) -> tuple[str, ...]:
+    """Compile a signed two-logical-qubit Clifford with the fewest S0S1 gadgets.
+
+    A final canonical Pauli token corrects signs when necessary; identity is omitted.
+    """
+    labels = ("X0", "X1", "Z0", "Z1")
+    if set(target) != set(labels):
+        msg = f"Expected keys {labels!r}, got {tuple(target)!r}"
+        raise ValueError(msg)
+    columns = []
+    for label in labels:
+        try:
+            columns.append(parse_signed_logical_pauli(target[label], 2)[1])
+        except (TypeError, ValueError) as error:
+            msg = f"Invalid image for {label}: {error}"
+            raise type(error)(msg) from error
+    matrix = tuple(zip(*columns, strict=True))
+    words = _clifford_words()
+    if matrix not in words:
+        msg = f"Target is not symplectic: {target!r}"
+        raise ValueError(msg)
+    word = words[matrix]
+    gates = c4_helix_gates()
+    ops = tuple(op for name in word for op in gates[name].ops)
+    actual = logical_action(c4_helix_code(), LogicalGate("compiled", ops))
+    fixup = logical_pauli_fixup(actual, target)
+    return word if fixup == "I" else (*word, fixup)

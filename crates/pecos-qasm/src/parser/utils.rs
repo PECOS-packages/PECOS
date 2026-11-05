@@ -4,8 +4,8 @@ use std::fmt::Write;
 
 use crate::ast::{GateDefinition, Operation};
 use crate::parser::errors::{
-    invalid_operation, register_size_mismatch, undefined_gate, unknown_register, wrong_param_count,
-    wrong_qubit_count,
+    invalid_operation, register_size_mismatch, undefined_gate, unknown_classical_register,
+    unknown_register, wrong_param_count, wrong_qubit_count,
 };
 use crate::parser::gates::evaluate_param_expr;
 use crate::parser::native_gates::{is_native_operation, parse_native_gate};
@@ -276,7 +276,7 @@ fn check_register_measure<'a>(
 
     let c_size = classical_registers
         .get(c_reg)
-        .ok_or_else(|| unknown_register("classical", c_reg))?;
+        .ok_or_else(|| unknown_classical_register(c_reg))?;
 
     if q_qubits.len() != *c_size {
         return Err(register_size_mismatch(

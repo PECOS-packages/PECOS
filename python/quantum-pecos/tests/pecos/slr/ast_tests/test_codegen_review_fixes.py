@@ -93,7 +93,7 @@ def test_qasm_rejects_mixed_element_collections(classical_first) -> None:
 def test_permute_rejects_undeclared_slots(backend, ref) -> None:
     """Indexed permutation refs must resolve to existing storage."""
     program = replace(slr_to_ast(Main(QReg("q", 2))), body=(PermuteOp(sources=(ref,), targets=(ref,)),))
-    with pytest.raises(NotImplementedError, match="Permute"):
+    with pytest.raises(ValueError, match="Permute"):
         generate(program, backend)
 
 
@@ -210,3 +210,17 @@ def test_barrier_block_inputs_resolve_before_widening(nested) -> None:
         2 if nested else 1
     )
     assert "barrier6__body" in SlrConverter(program).qir()
+
+
+def test_legacy_qasm_declares_each_register_once() -> None:
+    """The legacy generator emits one declaration per name, which the QASM parser requires."""
+    q = QReg("q", 1)
+    generator = QASMGenerator(_internal=True)
+    generator.generate_block(Main(q, q, QReg("q", 1), CReg("c", 1)))
+    qasm = generator.get_output()
+    assert qasm.count("qreg q[1];") == 1
+    sim(Qasm.from_string(qasm)).quantum(state_vector()).run(1)
+
+    for program in (Main(QReg("x", 1), CReg("x", 1)), Main(QReg("x", 1), QReg("x", 2))):
+        with pytest.raises(ValueError, match=r"Register 'x' is declared as both .*; rename one\."):
+            QASMGenerator(_internal=True).generate_block(program)

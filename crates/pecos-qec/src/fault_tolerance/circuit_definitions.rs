@@ -10,6 +10,10 @@ use super::dem_builder::{
 };
 use pecos_core::{MeasId, QubitId};
 use pecos_quantum::{AnnotationKind, Attribute, DagCircuit, PauliAnnotation, TickCircuit};
+use pecos_quantum::{
+    MeasurementClass, parse_measurement_classes, resolve_detector_fault_sector,
+    validate_measurement_classes_length,
+};
 use std::collections::BTreeMap;
 
 /// The kind of a measurement-readout annotation.
@@ -68,7 +72,8 @@ pub struct ResolvedDetector {
     pub coords: Option<Vec<f64>>,
     /// Optional human-readable name.
     pub label: Option<String>,
-    /// Fault sector supplied by metadata; annotations alone leave it unknown.
+    /// Effective fault sector derived from measurement classes when present,
+    /// with explicit metadata checked for agreement; otherwise the explicit label.
     pub fault_sector: Option<String>,
     /// Absolute emission positions, preserving source order and multiplicity.
     pub measurements: Vec<usize>,
@@ -90,6 +95,8 @@ pub struct ResolvedObservable {
 /// Definitions sorted by id, with positions indexing measurement emission order.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CircuitDefinitions {
+    /// Optional classes indexed by absolute emission position.
+    pub measurement_classes: Option<Vec<Option<MeasurementClass>>>,
     /// Detectors sorted by id.
     pub detectors: Vec<ResolvedDetector>,
     /// Observables sorted by id.
@@ -179,7 +186,10 @@ pub enum DefinitionError {
         attribute: &'static str,
         value: Attribute,
     },
-    #[error("num_measurements {value:?} does not parse as usize")]
+    #[error(
+        "num_measurements must be a non-negative integer string no greater than {}, got {value:?}; set it to the number of measurements the circuit performs",
+        usize::MAX
+    )]
     InvalidMeasurementCount { value: String },
     #[error(
         "num_measurements={declared} disagrees with the {actual} measurement(s) the circuit performs; the declared count must match so detector/observable record offsets resolve correctly"
@@ -438,6 +448,7 @@ pub fn resolve_definitions(
         );
     }
     Ok(CircuitDefinitions {
+        measurement_classes: None,
         detectors: merge("detector", detectors, annotation_detectors)?
             .into_iter()
             .map(|(id, d)| ResolvedDetector {
@@ -515,7 +526,30 @@ fn resolve_circuit<'a>(
         .iter()
         .filter_map(AnnotationDefinition::from_annotation)
         .collect();
-    resolve_definitions(detectors, observables, &annotations, emission)
+    let mut definitions = resolve_definitions(detectors, observables, &annotations, emission)?;
+    if let Some(json) =
+        string_attribute("measurement_classes", get_attribute("measurement_classes"))?
+    {
+        let mut parse = || {
+            let classes = parse_measurement_classes(json)?;
+            validate_measurement_classes_length(&classes, emission.len())?;
+            for detector in &mut definitions.detectors {
+                detector.fault_sector = resolve_detector_fault_sector(
+                    detector.id,
+                    detector.fault_sector.as_deref(),
+                    &detector.measurements,
+                    &classes,
+                )?;
+            }
+            Ok::<_, String>(classes)
+        };
+        definitions.measurement_classes =
+            Some(parse().map_err(|message| DefinitionError::Parse {
+                kind: "measurement_classes",
+                source: DemBuilderError::ParseError(message),
+            })?);
+    }
+    Ok(definitions)
 }
 
 /// One emitted measurement record, including its qubit and optional identity.

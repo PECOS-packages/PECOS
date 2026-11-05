@@ -51,6 +51,8 @@ concurrency:
 jobs:
   cuda-build-check:
     runs-on: ubuntu-latest
+    env:
+      CARGO_NET_RETRY: "10"
     steps:
       - name: Harden the runner (egress audit)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4

@@ -2042,3 +2042,7 @@ mod tests {
 #[cfg(all(test, feature = "composite-noise"))]
 #[path = "noise/suppressed_tests.rs"]
 mod suppressed_tests;
+
+#[cfg(all(test, feature = "composite-noise"))]
+#[path = "noise/channel_action_tests.rs"]
+mod channel_action_tests;

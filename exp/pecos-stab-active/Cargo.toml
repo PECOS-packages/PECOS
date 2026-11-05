@@ -13,7 +13,6 @@ description = "Experimental exact simulation with dense active stabilizer coordi
 publish = false
 
 [dependencies]
-pecos-stab-tn.workspace = true
 pecos-simulators.workspace = true
 pecos-core.workspace = true
 pecos-quantum.workspace = true

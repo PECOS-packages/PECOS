@@ -411,7 +411,7 @@ fn malformed_channels_records_and_annotations_are_rejected() {
 
 #[test]
 fn explicit_decomposition_phases() {
-    use pecos_stab_tn::stab_mps::pauli_decomp::decompose_pauli_string;
+    use pecos_simulators::stab_tn::stab_mps::pauli_decomp::decompose_pauli_string;
     let frame = SparseStabY::new(2).with_destab_sign_tracking();
     for (physical, expected) in [
         (

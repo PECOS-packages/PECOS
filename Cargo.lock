@@ -469,7 +469,6 @@ dependencies = [
  "pecos-quantum",
  "pecos-random",
  "pecos-simulators",
- "pecos-stab-tn",
  "quizx",
  "rand 0.10.2",
  "rand_xoshiro 0.8.1",
@@ -4819,7 +4818,6 @@ dependencies = [
  "pecos-quantum",
  "pecos-random",
  "pecos-simulators",
- "pecos-stab-tn",
  "pecos-trellis",
  "pyo3",
  "rayon",
@@ -4886,7 +4884,6 @@ dependencies = [
  "anyhow",
  "pecos-core",
  "pecos-simulators",
- "pecos-stab-tn",
  "selene-core",
 ]
 
@@ -4897,7 +4894,6 @@ dependencies = [
  "anyhow",
  "pecos-core",
  "pecos-simulators",
- "pecos-stab-tn",
  "selene-core",
 ]
 
@@ -4936,6 +4932,7 @@ dependencies = [
 name = "pecos-simulators"
 version = "0.2.0-dev.0"
 dependencies = [
+ "approx 0.5.1",
  "nalgebra",
  "num-complex 0.4.6",
  "paste",
@@ -4943,8 +4940,10 @@ dependencies = [
  "pecos-quantum",
  "pecos-random",
  "rand 0.10.2",
+ "rand_chacha 0.9.0",
  "rayon",
  "smallvec",
+ "thiserror 2.0.18",
  "wide",
 ]
 
@@ -4958,24 +4957,6 @@ dependencies = [
  "pecos-quantum",
  "pecos-random",
  "pecos-simulators",
- "pecos-stab-tn",
-]
-
-[[package]]
-name = "pecos-stab-tn"
-version = "0.2.0-dev.0"
-dependencies = [
- "approx 0.5.1",
- "nalgebra",
- "num-complex 0.4.6",
- "paste",
- "pecos-core",
- "pecos-quantum",
- "pecos-random",
- "pecos-simulators",
- "rand_chacha 0.9.0",
- "rayon",
- "thiserror 2.0.18",
 ]
 
 [[package]]

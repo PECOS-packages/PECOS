@@ -18,7 +18,7 @@
 use pecos_neo::noise::ComposableNoiseModel;
 use pecos_neo::program::{DynProgramRunner, ProgramRunner};
 use pecos_neo::tool::SimulatorFactory;
-use pecos_stab_tn::stab_mps::{MeasurementMode, StabMps};
+use pecos_simulators::stab_tn::stab_mps::{MeasurementMode, StabMps};
 
 /// Configuration for the `StabMps` backend.
 ///

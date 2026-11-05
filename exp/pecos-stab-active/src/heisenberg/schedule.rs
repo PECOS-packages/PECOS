@@ -7,7 +7,7 @@ use super::passes::body;
 use super::plan::Instruction;
 use super::{HeisenbergOp, HeisenbergProgram, PlanError, SamplingPlan, replay_width_operation};
 use crate::ActiveStructure;
-use pecos_stab_tn::stab_mps::coordinate_tableau::MeasurementCase;
+use pecos_simulators::stab_tn::stab_mps::coordinate_tableau::MeasurementCase;
 
 /// Reorder commuting operations greedily to reduce active width.
 /// Preserves the joint distribution of measurement-symbol outcomes and records,

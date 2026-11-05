@@ -7,7 +7,7 @@
 fn test_user_guide_stabilizer_tensor_networks_rust_1() {
     use pecos_core::{Angle64, QubitId};
     use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable};
-    use pecos_stab_tn::stab_mps::StabMps;
+    use pecos_simulators::stab_tn::stab_mps::StabMps;
     let mut sim = StabMps::builder(2).seed(7).build();
     sim.h(&[QubitId(0)]);
     sim.cx(&[(QubitId(0), QubitId(1))]);

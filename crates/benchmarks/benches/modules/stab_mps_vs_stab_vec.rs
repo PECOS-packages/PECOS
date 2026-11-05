@@ -15,16 +15,16 @@
 //! Measures wall time for the same circuits on both simulators to find
 //! the crossover point where STN becomes faster.
 //!
-//! Run: `cargo bench -p pecos-stab-tn`
+//! Run: `cargo bench -p benchmarks --features stab-tn`
 
 use criterion::{BenchmarkId, Criterion, measurement::Measurement};
 use nalgebra::DMatrix;
 use num_complex::Complex64;
 use pecos_core::{Angle64, QubitId};
+use pecos_simulators::stab_tn::mps::svd;
+use pecos_simulators::stab_tn::stab_mps::StabMps;
+use pecos_simulators::stab_tn::stab_mps::mast::Mast;
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StabVec};
-use pecos_stab_tn::mps::svd;
-use pecos_stab_tn::stab_mps::StabMps;
-use pecos_stab_tn::stab_mps::mast::Mast;
 use std::hint::black_box;
 
 pub fn benchmarks<M: Measurement>(c: &mut Criterion<M>) {

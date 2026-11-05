@@ -63,7 +63,7 @@ absorbing a bit-one value into the pivot stabilizer sign removes one coordinate.
 This also runs for certain active outcomes; an impossible forced outcome is ignored.
 
 The amplitude-independent API lives in
-`pecos_stab_tn::stab_mps::coordinate_tableau`: `decompose`, `promote`,
+`pecos_simulators::stab_tn::stab_mps::coordinate_tableau`: `decompose`, `promote`,
 `measure_random`, `measurement_basis`, and `demote`. `MeasurementBasis` returns
 inverse coordinate gates indexed by active bit position, a pivot bit, and the
 remaining Pauli sign. The API takes distinct physical Pauli factors plus an

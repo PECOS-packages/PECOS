@@ -11,9 +11,9 @@
 // limitations under the License.
 
 use pecos_core::QubitId;
+use pecos_simulators::stab_tn::mps::MpsConfig;
+use pecos_simulators::stab_tn::stab_mps::mast::{Mast, ProjectionOrder};
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
-use pecos_stab_tn::mps::MpsConfig;
-use pecos_stab_tn::stab_mps::mast::{Mast, ProjectionOrder};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PySet, PyTuple};
 

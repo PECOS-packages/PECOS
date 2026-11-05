@@ -21,7 +21,28 @@ DRY_RUN=false
 PACKAGE=""
 ASSUME_YES=false
 
-ALL_PACKAGES=(pecos-rslib pecos-rslib-llvm quantum-pecos)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RELEASE_PLUGINS=()
+while IFS= read -r plugin || [ -n "$plugin" ]; do
+    # Trim whitespace and ignore comments and blank lines.
+    plugin="${plugin#"${plugin%%[![:space:]]*}"}"
+    plugin="${plugin%"${plugin##*[![:space:]]}"}"
+    case "$plugin" in ''|\#*) continue ;; esac
+    RELEASE_PLUGINS+=("$plugin")
+done < "$SCRIPT_DIR/../python/selene-plugins/release-plugins.txt"
+if [ "${#RELEASE_PLUGINS[@]}" -eq 0 ]; then
+    echo "Error: no Selene release plugins listed in $SCRIPT_DIR/../python/selene-plugins/release-plugins.txt" >&2
+    exit 1
+fi
+# Upload order. The Selene plugins have no PECOS dependencies and go first, so a
+# failed first upload of a new plugin project stops before any core package is
+# public. quantum-pecos pins both rslib packages, so they precede it.
+ALL_PACKAGES=("${RELEASE_PLUGINS[@]}" pecos-rslib pecos-rslib-llvm quantum-pecos)
+duplicate_packages=$(printf '%s\n' "${ALL_PACKAGES[@]}" | sort | uniq -d)
+if [ -n "$duplicate_packages" ]; then
+    echo "Error: release-plugins.txt repeats a plugin or lists a core package: $duplicate_packages" >&2
+    exit 1
+fi
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -47,7 +68,7 @@ while [[ $# -gt 0 ]]; do
             echo ""
             echo "Options:"
             echo "  -f, --file FILE      Artifact zip OR extracted artifact directory (default: pecos-distribution.zip)"
-            echo "  -p, --package PKG    Publish only specific package (pecos-rslib, pecos-rslib-llvm, or quantum-pecos)"
+            echo "  -p, --package PKG    Publish only specific package (${ALL_PACKAGES[*]})"
             echo "  --dry-run            Show what would be uploaded without actually uploading"
             echo "  -y, --yes            Skip per-package confirmation prompts (for non-interactive use)"
             echo "  -h, --help           Show this help message"
@@ -79,10 +100,11 @@ if [ "$ASSUME_YES" = false ] && [ "$DRY_RUN" = false ] && [ ! -t 0 ]; then
     exit 1
 fi
 
-# Check if uv is installed (preferred) or twine directly
+# Run twine as a standalone tool: `uv run` would sync this checkout's environment
+# (reinstalling its native packages) before every call.
 if command -v uv &> /dev/null; then
-    TWINE_CMD="uv run twine"
-    echo -e "${GREEN}Using uv to run twine ($($TWINE_CMD --version 2>/dev/null | head -1))${NC}"
+    TWINE_CMD="uvx twine"
+    echo -e "${GREEN}Using uvx to run twine ($($TWINE_CMD --version 2>/dev/null | head -1))${NC}"
 elif command -v twine &> /dev/null; then
     TWINE_CMD="twine"
     echo -e "${YELLOW}Using system twine ($(twine --version 2>/dev/null | head -1)); consider using uv${NC}"
@@ -105,12 +127,12 @@ else
     DIST_DIR="$TEMP_DIR"
 fi
 
-# Resolve a package's distribution directory (with or without dist/ prefix).
+# The package directories sit at the bundle's top level or under its dist/ directory.
+BUNDLE_ROOT="$DIST_DIR"
+[ -d "$BUNDLE_ROOT/dist" ] && BUNDLE_ROOT="$BUNDLE_ROOT/dist"
+
 package_dir_for() {
-    local package_name=$1
-    local dir="$DIST_DIR/$package_name"
-    [ -d "$dir" ] || dir="$DIST_DIR/dist/$package_name"
-    printf '%s\n' "$dir"
+    printf '%s\n' "$BUNDLE_ROOT/$1"
 }
 
 # Preflight one package: directory exists, contains only expected distribution
@@ -243,7 +265,7 @@ pin_exists_on_pypi() {
 
 # Main execution
 if [ -n "$PACKAGE" ]; then
-    if ! printf '%s\n' "${ALL_PACKAGES[@]}" | grep -qx "$PACKAGE"; then
+    if ! printf '%s\n' "${ALL_PACKAGES[@]}" | grep -qxF -- "$PACKAGE"; then
         echo -e "${RED}Error: Invalid package name '$PACKAGE'${NC}"
         echo "Valid options are: ${ALL_PACKAGES[*]}"
         exit 1
@@ -266,6 +288,17 @@ else
     # All-packages mode: preflight EVERYTHING before uploading anything, and
     # require one consistent version across the set.
     echo -e "${GREEN}Preflighting all PECOS packages${NC}"
+    # The package list comes from this checkout, not from the bundle: refuse a bundle
+    # holding a package this checkout would silently skip.
+    for dir in "$BUNDLE_ROOT"/*/; do
+        [ -d "$dir" ] || continue
+        name=$(basename "$dir")
+        if ! printf '%s\n' "${ALL_PACKAGES[@]}" | grep -qxF -- "$name"; then
+            echo -e "${RED}Error: the bundle contains $name, which this checkout does not publish.${NC}"
+            echo "Run the script from a checkout of the tagged commit."
+            exit 1
+        fi
+    done
     versions=()
     for pkg in "${ALL_PACKAGES[@]}"; do
         v=$(preflight_package "$pkg")
@@ -284,8 +317,8 @@ else
     for pkg in "${ALL_PACKAGES[@]}"; do
         confirm_package "$pkg"
     done
-    # Dependencies first; upload_package aborts the script on failure, so quantum-pecos
-    # cannot publish without its pinned deps.
+    # ALL_PACKAGES order (see its definition); upload_package aborts the script on
+    # failure, so quantum-pecos cannot publish without its pinned deps.
     for pkg in "${ALL_PACKAGES[@]}"; do
         upload_package "$pkg"
     done

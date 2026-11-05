@@ -513,6 +513,20 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   refactor plus bit-reversed order is 1.18x slower than the default (geomean),
   so it stays opt-in.
 
+- Python: C4-Helix two-block circuits apply a transversal CNOT between syndrome
+  rounds, with block-prefixed measurement labels and discovered detectors
+  (`cnot_circuit`, `cnot_definitions`); measured distance is 5 <= d <= 6.
+
+- Python: C4-Helix logic words render to certified Guppy programs with reusable
+  gate gadgets and data relabels. `logic_definitions` supplies typed detectors
+  and signed observable references for `build_dem_from_guppy`.
+
+- Python: C4-Helix logical gate gadgets flag all seven physical CZs and compile
+  signed two-qubit Cliffords with minimal S0S1 count. Logic circuits discover
+  detectors using pulled-back logical conjugates. Distance tests pin the
+  gate-only weight-six witness, full-noise Z bounds of 5 <= d <= 6, and the
+  owner-accepted full-noise X distance of four.
+
 - Python: `pecos.guppy_gen.helix` renders certified C4-Helix memory programs
   with scalar, round-free result tags and `mem_swap` swap-out gadgets.
   `pecos.qec.helix.memory_definitions` supplies typed detectors and observables

@@ -1,6 +1,7 @@
 use pecos_core::errors::PecosError;
 use pest::iterators::Pair;
 
+use crate::parser::errors::register_already_declared;
 use crate::parser::{Program, QASMParser, Rule};
 
 /// Parse a register declaration
@@ -20,6 +21,7 @@ pub fn parse_register(pair: Pair<Rule>, program: &mut Program) -> Result<(), Pec
                 QASMParser::error("Missing indexed identifier in qreg declaration")
             })?;
             let (name, size) = parse_indexed_id(&indexed_id)?;
+            validate_new_register(&name, program)?;
 
             // Assign global qubit IDs
             let mut qubit_ids = Vec::new();
@@ -37,6 +39,7 @@ pub fn parse_register(pair: Pair<Rule>, program: &mut Program) -> Result<(), Pec
                 QASMParser::error("Missing indexed identifier in creg declaration")
             })?;
             let (name, size) = parse_indexed_id(&indexed_id)?;
+            validate_new_register(&name, program)?;
             if !(1..=usize::from(u16::MAX)).contains(&size) {
                 return Err(PecosError::CompileInvalidRegisterSize(format!(
                     "Classical register '{name}' width must be in 1..=65535, got {size}"
@@ -52,6 +55,17 @@ pub fn parse_register(pair: Pair<Rule>, program: &mut Program) -> Result<(), Pec
         }
     }
 
+    Ok(())
+}
+
+// Check both namespaces before allocating qubits or changing either register map.
+fn validate_new_register(name: &str, program: &Program) -> Result<(), PecosError> {
+    if program.quantum_registers.contains_key(name) {
+        return Err(register_already_declared(name, "qreg"));
+    }
+    if program.classical_registers.contains_key(name) {
+        return Err(register_already_declared(name, "creg"));
+    }
     Ok(())
 }
 

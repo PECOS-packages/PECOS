@@ -13,7 +13,8 @@ impl Program {
     /// gate definitions and operations inside conditions that may never execute.
     ///
     /// # Errors
-    /// Returns an error naming an undeclared classical reference or invalid gate parameter.
+    /// Returns an error naming an undeclared classical reference, a bit outside its
+    /// register, or an invalid gate parameter.
     pub fn validate_classical_references(&self) -> Result<(), PecosError> {
         for definition in self.gate_definitions.values() {
             definition.validate_parameter_references()?;
@@ -60,7 +61,10 @@ impl Program {
         }
     }
 
-    fn validate_classical_operation(&self, operation: &Operation) -> Result<(), PecosError> {
+    pub(super) fn validate_classical_operation(
+        &self,
+        operation: &Operation,
+    ) -> Result<(), PecosError> {
         match operation {
             Operation::ClassicalAssignment {
                 target,

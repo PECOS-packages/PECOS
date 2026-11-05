@@ -18,25 +18,48 @@ use pecos_simulators::{
 };
 
 // State vector simulators
-pecos_simulators::measurement_stress_test_suite!(StateVecSoA, 4, StateVecSoA::with_seed(4, 42));
-pecos_simulators::measurement_stress_test_suite!(StateVecSoA32, 4, StateVecSoA32::with_seed(4, 42));
-pecos_simulators::measurement_stress_test_suite!(StateVecAoS, 4, StateVecAoS::with_seed(4, 42));
 pecos_simulators::measurement_stress_test_suite!(
+    state_vec_soa,
+    StateVecSoA,
+    4,
+    StateVecSoA::with_seed(4, 42)
+);
+pecos_simulators::measurement_stress_test_suite!(
+    state_vec_soa32,
+    StateVecSoA32,
+    4,
+    StateVecSoA32::with_seed(4, 42)
+);
+pecos_simulators::measurement_stress_test_suite!(
+    state_vec_aos,
+    StateVecAoS,
+    4,
+    StateVecAoS::with_seed(4, 42)
+);
+pecos_simulators::measurement_stress_test_suite!(
+    sparse_state_vec_aos,
     SparseStateVecAoS,
     4,
     SparseStateVecAoS::with_seed(4, 42)
 );
 pecos_simulators::measurement_stress_test_suite!(
+    sparse_state_vec_soa,
     SparseStateVecSoA,
     4,
     SparseStateVecSoA::with_seed(4, 42)
 );
 
 // Density matrix
-pecos_simulators::measurement_stress_test_suite!(DensityMatrix, 4, DensityMatrix::with_seed(4, 42));
+pecos_simulators::measurement_stress_test_suite!(
+    density_matrix,
+    DensityMatrix,
+    4,
+    DensityMatrix::with_seed(4, 42)
+);
 
 // Clifford+Rz (exact mode)
 pecos_simulators::measurement_stress_test_suite!(
+    stab_vec,
     StabVec,
     4,
     StabVec::builder(4).seed(42).pruning_threshold(0.0).build()

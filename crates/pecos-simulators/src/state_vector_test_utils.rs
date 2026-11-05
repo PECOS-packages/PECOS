@@ -67,6 +67,8 @@ pub trait StateVectorSimulator: CliffordGateable + QuantumSimulator + Sized {
 ///
 /// # Arguments
 ///
+/// * `$name` - Name of the generated test module. It glob-imports its parent, so the
+///   simulator type and constructor resolve as they do at the call site.
 /// * `$sim_type` - The type implementing [`StateVectorSimulator`]
 /// * `$num_qubits` - Number of qubits to use for testing (default: 4)
 ///
@@ -76,31 +78,38 @@ pub trait StateVectorSimulator: CliffordGateable + QuantumSimulator + Sized {
 /// use pecos_simulators::state_vector_test_suite;
 /// use pecos_simulators::SparseStateVecAoS;
 ///
-/// state_vector_test_suite!(SparseStateVecAoS);
+/// state_vector_test_suite!(sparse_state_vec_aos, SparseStateVecAoS);
+/// # fn main() {}
 /// ```
+///
+/// # Generated Tests
+///
+/// - `$name::basic_suite`, `$name::clifford_suite`, `$name::measurement_suite`
 #[macro_export]
 macro_rules! state_vector_test_suite {
-    ($sim_type:ty) => {
-        $crate::state_vector_test_suite!($sim_type, 4);
+    ($name:ident, $sim_type:ty) => {
+        $crate::state_vector_test_suite!($name, $sim_type, 4);
     };
-    ($sim_type:ty, $num_qubits:expr) => {
-        paste::paste! {
+    ($name:ident, $sim_type:ty, $num_qubits:expr) => {
+        mod $name {
+            use super::*;
+
             #[test]
-            fn [<test_ $sim_type:snake _basic_suite>]() {
+            fn basic_suite() {
                 use $crate::state_vector_test_utils::run_basic_state_vector_test_suite;
                 let mut sim = <$sim_type>::with_seed($num_qubits, 42);
                 run_basic_state_vector_test_suite(&mut sim);
             }
 
             #[test]
-            fn [<test_ $sim_type:snake _clifford_suite>]() {
+            fn clifford_suite() {
                 use $crate::state_vector_test_utils::run_clifford_test_suite;
                 let mut sim = <$sim_type>::with_seed($num_qubits, 42);
                 run_clifford_test_suite(&mut sim);
             }
 
             #[test]
-            fn [<test_ $sim_type:snake _measurement_suite>]() {
+            fn measurement_suite() {
                 use $crate::state_vector_test_utils::run_measurement_test_suite;
                 let mut sim = <$sim_type>::with_seed($num_qubits, 42);
                 run_measurement_test_suite(&mut sim);
@@ -117,6 +126,8 @@ macro_rules! state_vector_test_suite {
 ///
 /// # Arguments
 ///
+/// * `$name` - Name of the generated test module. It glob-imports its parent, so the
+///   simulator type and constructor resolve as they do at the call site.
 /// * `$sim_type` - The type implementing [`StateVectorSimulator`] + [`ArbitraryRotationGateable`]
 /// * `$num_qubits` - Number of qubits to use for testing (default: 4)
 ///
@@ -126,20 +137,46 @@ macro_rules! state_vector_test_suite {
 /// use pecos_simulators::full_state_vector_test_suite;
 /// use pecos_simulators::StateVecAoS;
 ///
-/// full_state_vector_test_suite!(StateVecAoS);
+/// full_state_vector_test_suite!(state_vec_aos, StateVecAoS);
+/// # fn main() {}
 /// ```
+///
+/// # Generated Tests
+///
+/// - The three [`state_vector_test_suite!`] tests, plus `$name::rotation_suite` and
+///   `$name::full_suite`
 #[macro_export]
 macro_rules! full_state_vector_test_suite {
-    ($sim_type:ty) => {
-        $crate::full_state_vector_test_suite!($sim_type, 4);
+    ($name:ident, $sim_type:ty) => {
+        $crate::full_state_vector_test_suite!($name, $sim_type, 4);
     };
-    ($sim_type:ty, $num_qubits:expr) => {
-        // Include all Clifford tests
-        $crate::state_vector_test_suite!($sim_type, $num_qubits);
+    ($name:ident, $sim_type:ty, $num_qubits:expr) => {
+        mod $name {
+            use super::*;
 
-        paste::paste! {
             #[test]
-            fn [<test_ $sim_type:snake _rotation_suite>]() {
+            fn basic_suite() {
+                use $crate::state_vector_test_utils::run_basic_state_vector_test_suite;
+                let mut sim = <$sim_type>::with_seed($num_qubits, 42);
+                run_basic_state_vector_test_suite(&mut sim);
+            }
+
+            #[test]
+            fn clifford_suite() {
+                use $crate::state_vector_test_utils::run_clifford_test_suite;
+                let mut sim = <$sim_type>::with_seed($num_qubits, 42);
+                run_clifford_test_suite(&mut sim);
+            }
+
+            #[test]
+            fn measurement_suite() {
+                use $crate::state_vector_test_utils::run_measurement_test_suite;
+                let mut sim = <$sim_type>::with_seed($num_qubits, 42);
+                run_measurement_test_suite(&mut sim);
+            }
+
+            #[test]
+            fn rotation_suite() {
                 use $crate::state_vector_test_utils::run_rotation_test_suite;
 
                 let mut sim = <$sim_type>::with_seed($num_qubits, 42);
@@ -147,7 +184,7 @@ macro_rules! full_state_vector_test_suite {
             }
 
             #[test]
-            fn [<test_ $sim_type:snake _full_suite>]() {
+            fn full_suite() {
                 use $crate::state_vector_test_utils::run_full_state_vector_test_suite;
 
                 let mut sim = <$sim_type>::with_seed($num_qubits, 42);
@@ -2874,12 +2911,12 @@ mod tests {
     use crate::{SparseStateVecAoS, SparseStateVecSoA, StabVec, StateVecAoS, StateVecSoA};
 
     // Dense simulators with rotation gate support
-    full_state_vector_test_suite!(StateVecAoS, 4);
-    full_state_vector_test_suite!(StateVecSoA, 4);
+    full_state_vector_test_suite!(state_vec_aos, StateVecAoS, 4);
+    full_state_vector_test_suite!(state_vec_soa, StateVecSoA, 4);
 
     // Sparse simulators (now with rotation gate support)
-    full_state_vector_test_suite!(SparseStateVecAoS, 4);
-    full_state_vector_test_suite!(SparseStateVecSoA, 4);
+    full_state_vector_test_suite!(sparse_state_vec_aos, SparseStateVecAoS, 4);
+    full_state_vector_test_suite!(sparse_state_vec_soa, SparseStateVecSoA, 4);
 
     #[test]
     fn stab_vec_u_gate_is_phase_exact() {

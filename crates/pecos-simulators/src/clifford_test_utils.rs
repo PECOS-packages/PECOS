@@ -1619,30 +1619,35 @@ pub fn run_clifford_gate_tests<S: CliffordGateable>(sim: &mut S, num_qubits: usi
 
 /// Generates a measurement-based Clifford test suite for any `CliffordGateable` simulator.
 ///
-/// This macro creates a single test that runs all shared Clifford gate tests using
-/// only measurement outcomes. It works for any simulator type.
+/// This macro creates a single test, `$name::clifford_suite`, that runs all shared
+/// Clifford gate tests using only measurement outcomes. It works for any simulator type.
 ///
 /// # Arguments
 ///
+/// * `$name` - Name of the generated test module. It glob-imports its parent, so the
+///   simulator type and constructor resolve as they do at the call site.
 /// * `$sim_type` - The simulator type
 /// * `$num_qubits` - Number of qubits to use
-/// * `$constructor` - Expression to create the simulator (receives `$num_qubits` as identifier)
+/// * `$constructor` - Expression to create the simulator. Variables bound inside the
+///   macro are not visible to it, so it must name its own qubit count.
 ///
 /// # Example
 ///
 /// ```text
 /// use pecos_simulators::clifford_test_suite;
 ///
-/// clifford_test_suite!(MySimType, 4, MySimType::new(num_qubits));
+/// clifford_test_suite!(my_sim_type, MySimType, 4, MySimType::new(4));
 /// ```
 #[macro_export]
 macro_rules! clifford_test_suite {
-    ($sim_type:ty, $num_qubits_val:expr, $constructor:expr) => {
-        paste::paste! {
+    ($name:ident, $sim_type:ty, $num_qubits_val:expr, $constructor:expr) => {
+        mod $name {
+            use super::*;
+
             #[test]
-            fn [<test_ $sim_type:snake _clifford_suite>]() {
+            fn clifford_suite() {
                 let num_qubits = $num_qubits_val;
-                let mut sim = $constructor;
+                let mut sim: $sim_type = $constructor;
                 $crate::clifford_test_utils::run_clifford_gate_tests(&mut sim, num_qubits);
             }
         }

@@ -6,6 +6,13 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Breaking:** the simulator test-suite macros in `pecos-simulators`
+  (`stabilizer_test_suite!`, `state_vector_test_suite!`,
+  `full_state_vector_test_suite!`, `density_matrix_test_suite!`,
+  `measurement_stress_test_suite!`, `clifford_test_suite!` and
+  `rotation_test_suite!`) take a leading module name and generate their tests in
+  that module, so calling crates no longer need their own `paste` dependency.
+  Generated test paths change from `test_<type>_<suite>` to `<name>::<suite>`.
 - **Breaking:** classical registers must be declared with `creg` before their
   first use, and bit indices must fit the declared width, anywhere a
   classical value is read or written: conditions, assignments, operands,

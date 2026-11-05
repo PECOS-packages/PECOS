@@ -1111,8 +1111,12 @@ pub fn run_rotation_gate_tests<S: ArbitraryRotationGateable>(sim: &mut S, num_qu
 
 /// Generates a measurement-based rotation test suite for any `ArbitraryRotationGateable` simulator.
 ///
+/// The generated test is `$name::rotation_suite`.
+///
 /// # Arguments
 ///
+/// * `$name` - Name of the generated test module. It glob-imports its parent, so the
+///   simulator type and constructor resolve as they do at the call site.
 /// * `$sim_type` - The simulator type
 /// * `$num_qubits` - Number of qubits
 /// * `$constructor` - Expression to create the simulator
@@ -1122,16 +1126,18 @@ pub fn run_rotation_gate_tests<S: ArbitraryRotationGateable>(sim: &mut S, num_qu
 /// ```text
 /// use pecos_simulators::rotation_test_suite;
 ///
-/// rotation_test_suite!(MySimType, 4, MySimType::new(num_qubits));
+/// rotation_test_suite!(my_sim_type, MySimType, 4, MySimType::new(4));
 /// ```
 #[macro_export]
 macro_rules! rotation_test_suite {
-    ($sim_type:ty, $num_qubits_val:expr, $constructor:expr) => {
-        paste::paste! {
+    ($name:ident, $sim_type:ty, $num_qubits_val:expr, $constructor:expr) => {
+        mod $name {
+            use super::*;
+
             #[test]
-            fn [<test_ $sim_type:snake _rotation_suite>]() {
+            fn rotation_suite() {
                 let num_qubits = $num_qubits_val;
-                let mut sim = $constructor;
+                let mut sim: $sim_type = $constructor;
                 $crate::rotation_test_utils::run_rotation_gate_tests(&mut sim, num_qubits);
             }
         }

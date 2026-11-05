@@ -24,24 +24,24 @@ use pecos_simulators::{
 // Generate test suites for all stabilizer simulator implementations
 
 // Sparse stabilizer simulators
-pecos_simulators::stabilizer_test_suite!(SparseStab);
-pecos_simulators::stabilizer_test_suite!(SparseStabVecSet);
-pecos_simulators::stabilizer_test_suite!(SparseStabUnsortedVecSet);
-pecos_simulators::stabilizer_test_suite!(SparseStabHybrid);
+pecos_simulators::stabilizer_test_suite!(sparse_stab, SparseStab);
+pecos_simulators::stabilizer_test_suite!(sparse_stab_vec_set, SparseStabVecSet);
+pecos_simulators::stabilizer_test_suite!(sparse_stab_unsorted_vec_set, SparseStabUnsortedVecSet);
+pecos_simulators::stabilizer_test_suite!(sparse_stab_hybrid, SparseStabHybrid);
 
 // Dense stabilizer simulators
-pecos_simulators::stabilizer_test_suite!(DenseStab);
-pecos_simulators::stabilizer_test_suite!(DenseStabColOnly);
-pecos_simulators::stabilizer_test_suite!(DenseStabRowOnly);
-pecos_simulators::stabilizer_test_suite!(SparseColOnly);
+pecos_simulators::stabilizer_test_suite!(dense_stab, DenseStab);
+pecos_simulators::stabilizer_test_suite!(dense_stab_col_only, DenseStabColOnly);
+pecos_simulators::stabilizer_test_suite!(dense_stab_row_only, DenseStabRowOnly);
+pecos_simulators::stabilizer_test_suite!(sparse_col_only, SparseColOnly);
 
 // Default wrapper
-pecos_simulators::stabilizer_test_suite!(Stabilizer);
+pecos_simulators::stabilizer_test_suite!(stabilizer, Stabilizer);
 
 // CH-form stabilizer simulator
-pecos_simulators::stabilizer_test_suite!(CHForm);
+pecos_simulators::stabilizer_test_suite!(ch_form, CHForm);
 
 // GPU-optimized stabilizer simulators
-pecos_simulators::stabilizer_test_suite!(GpuStab);
-pecos_simulators::stabilizer_test_suite!(GpuStabOpt);
-pecos_simulators::stabilizer_test_suite!(GpuStabParallel);
+pecos_simulators::stabilizer_test_suite!(gpu_stab, GpuStab);
+pecos_simulators::stabilizer_test_suite!(gpu_stab_opt, GpuStabOpt);
+pecos_simulators::stabilizer_test_suite!(gpu_stab_parallel, GpuStabParallel);

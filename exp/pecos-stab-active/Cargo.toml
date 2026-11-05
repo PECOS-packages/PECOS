@@ -21,7 +21,6 @@ pecos-random.workspace = true
 num-complex.workspace = true
 
 [dev-dependencies]
-paste.workspace = true
 
 [lints]
 workspace = true

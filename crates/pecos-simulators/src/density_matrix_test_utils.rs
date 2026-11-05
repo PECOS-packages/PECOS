@@ -129,7 +129,7 @@ pub fn apply_oracle_gate<S: ArbitraryRotationGateable>(sim: &mut S, gate: Oracle
 /// use pecos_simulators::density_matrix_test_utils::{DensityMatrixSimulator, density_matrix_test_suite};
 ///
 /// // In your test module:
-/// density_matrix_test_suite!(DensityMatrix, 4);
+/// density_matrix_test_suite!(density_matrix, DensityMatrix, 4);
 /// ```
 pub trait DensityMatrixSimulator:
     CliffordGateable + ArbitraryRotationGateable + QuantumSimulator + Clone + Sized
@@ -145,6 +145,8 @@ pub trait DensityMatrixSimulator:
 ///
 /// # Arguments
 ///
+/// * `$name` - Name of the generated test module. It glob-imports its parent, so the
+///   simulator type and constructor resolve as they do at the call site.
 /// * `$sim_type` - The type implementing [`DensityMatrixSimulator`]
 /// * `$num_qubits` - Number of qubits to use for testing (default: 4)
 ///
@@ -154,42 +156,50 @@ pub trait DensityMatrixSimulator:
 /// use pecos_simulators::density_matrix_test_suite;
 /// use pecos_simulators::DensityMatrix;
 ///
-/// density_matrix_test_suite!(DensityMatrix);
+/// density_matrix_test_suite!(density_matrix, DensityMatrix);
 ///
 /// // Or specify a custom qubit count
-/// density_matrix_test_suite!(DensityMatrix, 3);
+/// density_matrix_test_suite!(density_matrix_3q, DensityMatrix, 3);
 /// ```
 ///
 /// # Generated Tests
 ///
 /// The macro generates the following tests:
-/// - `test_<type>_clifford_suite` - Shared Clifford gate tests
-/// - `test_<type>_rotation_suite` - Shared rotation gate tests
-/// - `test_<type>_full_suite` - Full suite (Clifford + rotation)
+/// - `$name::clifford_suite` - Shared Clifford gate tests
+/// - `$name::rotation_suite` - Shared rotation gate tests
+/// - `$name::full_suite` - Full suite (Clifford + rotation)
 #[macro_export]
 macro_rules! density_matrix_test_suite {
-    ($sim_type:ty) => {
-        $crate::density_matrix_test_suite!($sim_type, 4);
+    ($name:ident, $sim_type:ty) => {
+        $crate::density_matrix_test_suite!($name, $sim_type, 4);
     };
-    ($sim_type:ty, $num_qubits:expr) => {
-        paste::paste! {
+    ($name:ident, $sim_type:ty, $num_qubits:expr) => {
+        mod $name {
+            use super::*;
+
             #[test]
-            fn [<test_ $sim_type:snake _clifford_suite>]() {
-                use $crate::density_matrix_test_utils::{run_density_matrix_clifford_suite, DensityMatrixSimulator};
+            fn clifford_suite() {
+                use $crate::density_matrix_test_utils::{
+                    DensityMatrixSimulator, run_density_matrix_clifford_suite,
+                };
                 let mut sim = <$sim_type>::with_seed($num_qubits, 42);
                 run_density_matrix_clifford_suite(&mut sim, $num_qubits);
             }
 
             #[test]
-            fn [<test_ $sim_type:snake _rotation_suite>]() {
-                use $crate::density_matrix_test_utils::{run_density_matrix_rotation_suite, DensityMatrixSimulator};
+            fn rotation_suite() {
+                use $crate::density_matrix_test_utils::{
+                    DensityMatrixSimulator, run_density_matrix_rotation_suite,
+                };
                 let mut sim = <$sim_type>::with_seed($num_qubits, 42);
                 run_density_matrix_rotation_suite(&mut sim, $num_qubits);
             }
 
             #[test]
-            fn [<test_ $sim_type:snake _full_suite>]() {
-                use $crate::density_matrix_test_utils::{run_density_matrix_test_suite, DensityMatrixSimulator};
+            fn full_suite() {
+                use $crate::density_matrix_test_utils::{
+                    DensityMatrixSimulator, run_density_matrix_test_suite,
+                };
                 let mut sim = <$sim_type>::with_seed($num_qubits, 42);
                 run_density_matrix_test_suite(&mut sim, $num_qubits);
             }

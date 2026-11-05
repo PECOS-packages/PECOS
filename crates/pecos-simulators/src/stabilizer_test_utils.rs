@@ -68,7 +68,7 @@ pub trait ForcedMeasurement {
 /// use pecos_simulators::stabilizer_test_utils::{StabilizerSimulator, stabilizer_test_suite};
 ///
 /// // In your test module:
-/// stabilizer_test_suite!(MyStabilizerSim, 8);
+/// stabilizer_test_suite!(my_stabilizer_sim, MyStabilizerSim, 8);
 /// ```
 pub trait StabilizerSimulator:
     CliffordGateable + QuantumSimulator + StabilizerTableauSimulator + ForcedMeasurement + Clone + Sized
@@ -84,6 +84,8 @@ pub trait StabilizerSimulator:
 ///
 /// # Arguments
 ///
+/// * `$name` - Name of the generated test module. It glob-imports its parent, so the
+///   simulator type and constructor resolve as they do at the call site.
 /// * `$sim_type` - The type implementing [`StabilizerSimulator`]
 /// * `$num_qubits` - Number of qubits to use for testing (default: 8)
 ///
@@ -94,33 +96,35 @@ pub trait StabilizerSimulator:
 /// use pecos_simulators::SparseStab;
 ///
 /// // Generate tests with default 8 qubits
-/// stabilizer_test_suite!(SparseStab);
+/// stabilizer_test_suite!(sparse_stab, SparseStab);
 ///
 /// // Or specify a custom qubit count
-/// stabilizer_test_suite!(SparseStab, 4);
+/// stabilizer_test_suite!(sparse_stab_4q, SparseStab, 4);
 /// ```
 ///
 /// # Generated Tests
 ///
 /// The macro generates the following tests:
-/// - `test_<type>_basic_suite` - Basic gate and measurement tests
-/// - `test_<type>_full_suite` - Full suite including probability verification and random circuits
+/// - `$name::basic_suite` - Basic gate and measurement tests
+/// - `$name::full_suite` - Full suite including probability verification and random circuits
 #[macro_export]
 macro_rules! stabilizer_test_suite {
-    ($sim_type:ty) => {
-        $crate::stabilizer_test_suite!($sim_type, 8);
+    ($name:ident, $sim_type:ty) => {
+        $crate::stabilizer_test_suite!($name, $sim_type, 8);
     };
-    ($sim_type:ty, $num_qubits:expr) => {
-        paste::paste! {
+    ($name:ident, $sim_type:ty, $num_qubits:expr) => {
+        mod $name {
+            use super::*;
+
             #[test]
-            fn [<test_ $sim_type:snake _basic_suite>]() {
+            fn basic_suite() {
                 use $crate::stabilizer_test_utils::run_basic_stabilizer_test_suite;
                 let mut sim = <$sim_type>::with_seed($num_qubits, 42);
                 run_basic_stabilizer_test_suite(&mut sim, $num_qubits);
             }
 
             #[test]
-            fn [<test_ $sim_type:snake _full_suite>]() {
+            fn full_suite() {
                 use $crate::stabilizer_test_utils::run_full_stabilizer_test_suite;
                 let mut sim = <$sim_type>::with_seed($num_qubits, 42);
                 run_full_stabilizer_test_suite(&mut sim, $num_qubits);

@@ -1316,6 +1316,37 @@ fn bench_batch_processor(c: &mut Criterion) {
     group.finish();
 }
 
+/// Geometric single-pass preparation noise without scanning all operands.
+fn bench_geometric_preparation(c: &mut Criterion) {
+    use pecos_neo::noise::composite::BatchCompositeChannel;
+    use pecos_neo::noise::composite::prelude::*;
+    use pecos_neo::noise::{NoiseChannel, NoiseContext};
+
+    let mut group = c.benchmark_group("geometric_preparation");
+    let qubits: Vec<_> = (0..1_000_000).map(QubitId).collect();
+    let event = NoiseEvent::AfterPreparation {
+        gate_type: GateType::PZ,
+        qubits: &qubits,
+    };
+    let composite = CompositeChannel::new("preparation", pauli())
+        .with_probability(1e-4)
+        .expect("benchmark probability 1e-4 is within [0, 1]");
+    let batch = BatchCompositeChannel::new("preparation", 1e-4, pauli())
+        .expect("benchmark probability 1e-4 is within [0, 1]");
+
+    group.bench_function("composite_with_probability_1M_p1e-4", |b| {
+        let mut ctx = NoiseContext::new();
+        let mut rng = PecosRng::seed_from_u64(42);
+        b.iter(|| black_box(composite.apply(&event, &mut ctx, &mut rng)));
+    });
+    group.bench_function("batch_composite_1M_p1e-4", |b| {
+        let mut ctx = NoiseContext::new();
+        let mut rng = PecosRng::seed_from_u64(42);
+        b.iter(|| black_box(batch.apply(&event, &mut ctx, &mut rng)));
+    });
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_noise_emission,
@@ -1330,6 +1361,7 @@ criterion_group!(
     bench_composite_vs_channel_noise,
     bench_batch_filtering,
     bench_batch_processor,
+    bench_geometric_preparation,
 );
 
 criterion_main!(benches);

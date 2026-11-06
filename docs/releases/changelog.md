@@ -44,6 +44,39 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 - Guppy single-bit assignment errors name the SLR value and suggest a comparison,
   bit index or valid bit value. Integer-to-bool errors suggest using `0` or `1`.
 
+- **Breaking:** pecos-neo `channel_action` now runs its wrapped channel once per
+  operand group per invocation site and stage (#1568). Each stage chooses its
+  first eligible member (first leaked member for suppressed groups); that leader
+  stays fixed within the stage. Rates change, not only seeds: on a k-member group,
+  a wrapped channel with rate p no longer fires at about `1 - (1 - p)^k`. This
+  includes wrapped single-qubit channels on multi-operand preparation, measurement
+  and idle events (one group of all operands), and nested composites.
+  `channel_action` and `ChannelAdapter::new` now return `ValidationResult` and
+  reject wrapped channels whose `event_kinds()` omit `AfterGate`, naming the
+  channel in the error: adapters only run wrapped channels on gate events.
+  Guards around an adapter are decided on the leader's invocation. A wrapped
+  skip is recorded by every enclosing sequence at the step that returned it.
+  After evaluating that step, the sequence stops only for named members, even if
+  their guard bypasses the adapter or an inner sequence; unnamed members, including
+  the leader, continue. Earlier steps and the evaluated step retain their effects.
+  Skip propagation emits no duplicate targets. `CompositeResponse::Channel(Box<NoiseResponse>)`
+  retains all response targets, `SkipGateAlreadyReported` propagates sequence
+  stopping without another runner effect, and `CompositeResponse::causes_unleak`
+  queries unleak effects. `CompositeResponse::skips_qubit` checks a skip against
+  the current member; `skips_gate` remains a qubit-independent query.
+  The new `Primitive::reads_operands`, `GateAction::reads_operands` and
+  `Condition::reads_operands` capabilities opt into full operand installation
+  before geometric single-pass non-gate sampling; undeclared readers see no
+  operands. Linear and two-pass paths always install operands, once per group,
+  and `CompositeChannel` and `BatchCompositeChannel` set member indices on their
+  linear, geometric and two-pass paths. Crosstalk's per-target loop keeps index 0.
+  Function conditions can opt in with
+  `FnCondition::with_operand_reads`; `FnCondition` now implements `Clone` when its
+  callback does, allowing it to be used in `when` and `skip_if`.
+  Nested `CompositeCrosstalkChannel` isolates event state so adapters act on each
+  crosstalk target. Consequently its primitives no longer see the enclosing
+  `current_gate()` or `is_current_gate_suppressed()`.
+
 - **Breaking:** classical registers must be declared with `creg` before their
   first use, and bit indices must fit the declared width, anywhere a
   classical value is read or written: conditions, assignments, operands,
@@ -550,6 +583,10 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   (surface, color, bivariate bicycle, hypergraph product and tricycle codes),
   refactor plus bit-reversed order is 1.18x slower than the default (geomean),
   so it stays opt-in.
+
+- Python: C4-Helix two-block transversal-CNOT circuits render to certified Guppy
+  programs with block-prefixed gadget functions and result tags, using 44 qubits.
+  `cnot_definitions` supplies typed parities for `build_dem_from_guppy`.
 
 - Python: C4-Helix two-block circuits apply a transversal CNOT between syndrome
   rounds, with block-prefixed measurement labels and discovered detectors

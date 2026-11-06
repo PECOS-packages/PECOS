@@ -35,6 +35,7 @@ from dataclasses import replace
 from numbers import Integral, Real
 from typing import TYPE_CHECKING, Any
 
+from pecos.slr._literals import is_bool_literal
 from pecos.slr._qubit_args import expand_qubit_args, gate_target_groups, iter_qubit_args
 from pecos.slr.ast._block_substitution import BodyRemap, substitute_stmt
 from pecos.slr.ast.nodes import (
@@ -1063,8 +1064,8 @@ class SlrToAst:
             return LiteralExpr(value=expr)
 
         # Literal values
-        if isinstance(expr, bool):
-            return LiteralExpr(value=expr)
+        if is_bool_literal(expr):
+            return LiteralExpr(value=bool(expr))
         if isinstance(expr, Integral):
             return LiteralExpr(value=int(expr))
         if isinstance(expr, Real):

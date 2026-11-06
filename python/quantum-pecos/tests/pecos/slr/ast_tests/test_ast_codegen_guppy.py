@@ -181,8 +181,8 @@ class TestAstToGuppyControlFlow:
 
         code = ast_to_guppy(ast)
 
-        # Repeat becomes for _ in range(n)
-        assert "for _ in range(3):" in code
+        # Repeat uses a reserved counter, leaving user loop variables intact.
+        assert "for _repeat_0 in range(3):" in code
         assert "q_0 = h(q_0)" in code
 
 

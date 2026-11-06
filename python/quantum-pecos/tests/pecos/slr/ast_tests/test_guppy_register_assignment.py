@@ -11,14 +11,29 @@
 
 """Whole-register assignments preserve Guppy's bool arrays and QASM bit order."""
 
+import re
 from dataclasses import replace
 
+import numpy as np
 import pytest
 from pecos import Hugr, Qasm, selene_engine, sim, state_vector
-from pecos.slr import Block, CReg, For, If, Main, Parallel, QReg, Repeat, Return, SlrConverter
+from pecos.slr import Block, CReg, For, If, Main, Parallel, QAlloc, QReg, Repeat, Return, SlrConverter
 from pecos.slr.ast import ast_to_guppy, slr_to_ast
 from pecos.slr.ast.codegen.guppy import GuppyCodegenError
-from pecos.slr.ast.nodes import AssignOp, BinaryExpr, BinaryOp, LiteralExpr, VarExpr
+from pecos.slr.ast.nodes import (
+    ArrayTypeExpr,
+    AssignOp,
+    BinaryExpr,
+    BinaryOp,
+    BitTypeExpr,
+    BlockDecl,
+    BlockInput,
+    ForStmt,
+    LiteralExpr,
+    QubitTypeExpr,
+    ResourceEffect,
+    VarExpr,
+)
 from pecos.slr.qeclib import qubit as qb
 from pecos.slr.vars import LoopVar
 
@@ -115,9 +130,41 @@ def test_register_copy_rejects_different_widths(source_width: int) -> None:
         SlrConverter(Main(c, d, c.set(d))).guppy()
 
 
-def test_bool_literal_assignment_sets_the_low_bit() -> None:
+@pytest.mark.parametrize("form", ["register-true", "register-false", "bit-true"])
+def test_bool_literal_assignment_sets_the_low_bit(form: str) -> None:
     c = CReg("c", 4)
-    assert "c = array(True, False, False, False)" in SlrConverter(Main(c, c.set(True))).guppy()
+    operations, expected = {
+        "register-true": ([c.set(True)], 1),
+        "register-false": ([c.set(15), c.set(False)], 0),
+        "bit-true": ([c[0].set(True)], 1),
+    }[form]
+    converter = SlrConverter(Main(c, *operations))
+    if form == "register-true":
+        assert "c = array(True, False, False, False)" in converter.guppy()
+    _assert_matches_qasm([c], operations, {"c": expected})
+    assert "True" not in converter.qasm()
+    assert "False" not in converter.qasm()
+
+
+@pytest.mark.parametrize("value", [True, False])
+def test_numpy_bool_matches_python_bool(*, value: bool) -> None:
+    c = CReg("c", 1)
+    python = SlrConverter(Main(c, c[0].set(value)))
+    numpy = SlrConverter(Main(c, c[0].set(np.bool_(value))))
+    literal = slr_to_ast(Main(c, c[0].set(np.bool_(value)))).body[0].value
+    assert isinstance(literal, LiteralExpr)
+    assert literal.value is value
+    assert numpy.qasm() == python.qasm()
+    assert numpy.guppy() == python.guppy()
+
+
+@pytest.mark.parametrize("operation", ["declare", "literal", "bool", "copy"])
+@pytest.mark.parametrize("returned", [False, True])
+def test_zero_width_classical_register_compiles(operation: str, *, returned: bool) -> None:
+    z, source = CReg("z", 0), CReg("source", 0)
+    operations = {"declare": [], "literal": [z.set(3)], "bool": [z.set(True)], "copy": [z.set(source)]}[operation]
+    program = Main(QReg("q", 1), z, source, *operations, *([Return(z)] if returned else []))
+    assert SlrConverter(program).hugr()
 
 
 @pytest.mark.parametrize(
@@ -138,8 +185,17 @@ def test_bit_assignment_accepts_bit_values(form: str, rendered: str) -> None:
     assert rendered in SlrConverter(Main(c, d, c[0].set(values[form]))).guppy()
 
 
-@pytest.mark.parametrize("form", ["register", "bit-add", "float", "register-and", "negate"])
-def test_bit_assignment_rejects_values_that_are_not_bits(form: str) -> None:
+@pytest.mark.parametrize(
+    ("form", "message"),
+    [
+        ("register", "Unsupported single-bit assignment from 'd'. Index a bit of the register, such as d[0]."),
+        ("bit-add", "Guppy operator ADD does not accept bool and bool operands"),
+        ("float", "Unsupported single-bit assignment from '1.5'. Use 0, 1, a bit or a boolean expression."),
+        ("register-and", "Guppy operator AND does not accept register and register operands"),
+        ("negate", "Guppy operator NEG does not accept a bool operand"),
+    ],
+)
+def test_bit_assignment_rejects_values_that_are_not_bits(form: str, message: str) -> None:
     c, d = CReg("c", 4), CReg("d", 4)
     values = {
         "register": d,
@@ -148,21 +204,64 @@ def test_bit_assignment_rejects_values_that_are_not_bits(form: str) -> None:
         "register-and": d & c,
         "negate": -d[0],
     }
-    with pytest.raises(GuppyCodegenError, match=r"Unsupported single-bit assignment|Guppy operator"):
+    with pytest.raises(GuppyCodegenError, match=re.escape(message)):
         SlrConverter(Main(c, d, c[0].set(values[form]))).guppy()
 
 
 def test_bit_assignment_rejects_a_loop_variable() -> None:
     c, i = CReg("c", 4), LoopVar("i")
-    with pytest.raises(GuppyCodegenError, match="Unsupported single-bit assignment"):
+    with pytest.raises(
+        GuppyCodegenError,
+        match=re.escape("Unsupported single-bit assignment from 'i'. Compare the loop variable, such as i == 1."),
+    ):
         SlrConverter(Main(c, For(i, 0, 2).Do(c[i].set(i)))).guppy()
 
 
-def test_loop_variable_shadowing_a_register_is_not_a_register_copy() -> None:
+@pytest.mark.parametrize("method", ["guppy", "hugr"])
+def test_loop_variable_shadowing_a_register_is_not_a_register_copy(method: str) -> None:
     c, d = CReg("c", 4), CReg("d", 4)
-    assert "c = array(True, False, False, False)" in SlrConverter(Main(c, d, For("d", 0, 2).Do(c.set(1)))).guppy()
-    with pytest.raises(GuppyCodegenError, match="assignment to 'c': 'd' is not a whole classical register"):
-        SlrConverter(Main(c, d, For("d", 0, 2).Do(c.set(d)))).guppy()
+    converter = SlrConverter(Main(c, d, For("d", 0, 2).Do(c.set(1))))
+    with pytest.raises(GuppyCodegenError, match=r"'d'.*classical register.*Rename the loop label"):
+        getattr(converter, method)()
+
+
+def test_loop_variable_is_not_a_register_copy() -> None:
+    c, i = CReg("c", 4), LoopVar("i")
+    with pytest.raises(GuppyCodegenError, match="assignment to 'c': 'i' is not a whole classical register"):
+        SlrConverter(Main(c, For(i, 0, 2).Do(c.set(i)))).guppy()
+
+
+@pytest.mark.parametrize("kind", ["qreg", "qalloc", "slot"])
+def test_loop_label_rejects_quantum_bindings(kind: str) -> None:
+    q = QAlloc(1, name="q") if kind == "qalloc" else QReg("q", 1)
+    label = "q_0" if kind == "slot" else "q"
+    with pytest.raises(GuppyCodegenError, match=f"'{label}'.*(quantum register/allocator|qubit binding).*Rename"):
+        SlrConverter(Main(q, For(label, 0, 2).Do())).guppy()
+
+
+@pytest.mark.parametrize("input_type", [BitTypeExpr(), QubitTypeExpr(), ArrayTypeExpr(element=QubitTypeExpr(), size=1)])
+def test_loop_label_rejects_block_inputs(input_type) -> None:
+    program = slr_to_ast(Main())
+    block = BlockDecl(
+        name="uses_input",
+        inputs=(BlockInput(name="value", type_expr=input_type, effect=ResourceEffect.LIVE_PRESERVED),),
+        body=(ForStmt(variable="value", start=LiteralExpr(value=0), stop=LiteralExpr(value=2), body=()),),
+    )
+    with pytest.raises(GuppyCodegenError, match=r"'value'.*block inputs.*Rename the loop label"):
+        ast_to_guppy(replace(program, block_decls=(block,)))
+
+
+@pytest.mark.parametrize("backend", ["qasm", "stim", "quantum_circuit"])
+def test_string_loop_label_remains_an_unroll_label(backend: str) -> None:
+    q = QReg("q", 1)
+    program = Main(q, For("q", 0, 2).Do(qb.X(q[0])))
+    getattr(SlrConverter(program), backend)()
+
+
+def test_bit_assignment_integer_error_gives_fix() -> None:
+    c = CReg("c", 1)
+    with pytest.raises(GuppyCodegenError, match="Cannot render integer literal 2 as a Guppy bool; use 0 or 1"):
+        SlrConverter(Main(c, c[0].set(2))).guppy()
 
 
 def test_direct_ast_numbered_bit_target_is_a_bool() -> None:
@@ -194,3 +293,24 @@ def test_loop_indexed_bit_literal_is_a_bool() -> None:
     source = SlrConverter(program).guppy()
     assert "c[i] = True" in source
     assert SlrConverter(program).hugr()
+
+
+@pytest.mark.parametrize("repetitions", [1, 2])
+def test_repeat_counter_preserves_user_underscore_loop(repetitions: int) -> None:
+    q, c, u = QReg("q", 1), CReg("c", 1), LoopVar("_")
+    program = Main(
+        q,
+        c,
+        For(u, 0, 3).Do(
+            Repeat(repetitions).block(),
+            c[0].set(u == 0),
+            If(c[0] == 1).Then(qb.X(q[0])),
+            qb.Measure(q),
+            qb.PZ(q),
+        ),
+    )
+    # QASM cannot bind a referenced LoopVar. Observe each iteration directly in
+    # Selene: only iteration zero should flip the freshly prepared qubit.
+    package = SlrConverter(program).hugr()
+    result = sim(Hugr(package.to_str().encode("utf-8"))).classical(selene_engine()).qubits(1).seed(42).run(2)
+    assert result.to_dict() == {"measurement_0": [1, 1], "measurement_1": [0, 0], "measurement_2": [0, 0]}

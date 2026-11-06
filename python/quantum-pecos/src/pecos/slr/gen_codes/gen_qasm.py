@@ -15,6 +15,7 @@ import re
 import warnings
 
 import pecos as pc
+from pecos.slr._literals import is_bool_literal
 from pecos.slr._qubit_args import gate_target_groups
 from pecos.slr.gen_codes._permutation import iter_permutes, reject_permute_in_region
 from pecos.slr.gen_codes.generator import Generator
@@ -32,6 +33,8 @@ def _param_qasm(p: object) -> str:
 
     if isinstance(p, Angle):
         return str(p.value.to_radians_signed())
+    if is_bool_literal(p):
+        return "1" if p else "0"
     return str(p)
 
 
@@ -388,7 +391,7 @@ class QASMGenerator(Generator):
 
                     # Move each element's value to its predecessor in the cycle
                     for i in range(len(cycle) - 1):
-                        self.write(f"{cycle[i]} = {cycle[i+1]};")
+                        self.write(f"{cycle[i]} = {cycle[i + 1]};")
 
                     # Assign the temporary bit to the last element
                     self.write(f"{cycle[-1]} = {temp_var}[0];")
@@ -509,6 +512,9 @@ class QASMGenerator(Generator):
 
         elif op_name in {"Bit", "Qubit"}:
             op_str = f"{op.reg.sym}[{op.index}]"
+
+        elif is_bool_literal(op):
+            op_str = "1" if op else "0"
 
         elif isinstance(op, int):
             op_str = str(op)
@@ -818,7 +824,7 @@ class QASMGenerator(Generator):
         return f"({left_qasm} {op.symbol} {right_qasm})"
 
     def process_general_unary_op(self, op):
-        right_qasm = op.value.qasm() if hasattr(op.value, "qasm") else self.generate_op(op.vale)
+        right_qasm = op.value.qasm() if hasattr(op.value, "qasm") else self.generate_op(op.value)
         return f"({op.symbol}{right_qasm})"
 
     def get_output(self):

@@ -19,11 +19,15 @@ which local owns each logical slot while recursive descent emits statements.
 
 from __future__ import annotations
 
+import ast
+import keyword
 import math
 import numbers
 import re
+import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import TYPE_CHECKING, cast
 
 from pecos.slr.ast.codegen._block_flatten import validate_unique_block_decl_names
@@ -264,10 +268,21 @@ class GuppyCodegenError(LinearityError):
     """Raised when the v1 AST -> Guppy emitter rejects an unsupported construct."""
 
 
+class _TempPrefix(StrEnum):
+    """Prefixes shared by temporary generation and user-name validation."""
+
+    MEASUREMENT = "_measurement_"
+    CALL_RETURN = "_call_ret_"
+    REPEAT = "_repeat_"
+    COMPREHENSION = "_comprehension_"
+
+
 @dataclass
 class GuppyContext:
     """Mutable state for one Guppy emission run."""
 
+    reserved_names: frozenset[str] = frozenset()
+    user_bindings: dict[str, tuple[str, str]] = field(default_factory=dict)
     indent_level: int = 0
     root_allocators: dict[str, int] = field(default_factory=dict)
     child_allocators: set[str] = field(default_factory=set)
@@ -295,38 +310,53 @@ class GuppyContext:
         """Decrease indentation level."""
         self.indent_level = max(0, self.indent_level - 1)
 
-    def temp(self, prefix: str) -> str:
-        """Return a unique temporary local name."""
-        name = f"_{prefix}_{self.temp_counter}"
+    def temp(self, prefix: _TempPrefix) -> str:
+        """Allocate a prefixed temporary, avoiding emitted function/import names.
+
+        User bindings cannot start with a reserved prefix, and slot locals escape
+        those prefixes. The counter makes temporaries distinct from one another.
+        """
+        name = f"{prefix}{self.temp_counter}"
         self.temp_counter += 1
+        while name in self.reserved_names:
+            name = f"{prefix}{self.temp_counter}"
+            self.temp_counter += 1
         return name
+
+    def reserved_collision(self, name: str) -> str | None:
+        """Name the generated binding or temporary prefix reserved by the emitter."""
+        if name in self.reserved_names:
+            return name
+        for prefix in _TempPrefix:
+            if prefix in self.reserved_names and name.startswith(prefix):
+                return prefix
+        return None
 
     def populate_slot_locals(self) -> None:
         """Compute disambiguated Guppy local names for every allocator slot.
 
         Default name is `f"{allocator}_{index}"`; if that collides with
-        any declared allocator name, register name, or previously
-        assigned slot local, suffix `_` until unique. The output is the
+        any declared allocator name, register name, generated function or previously
+        assigned slot local, suffix `_` until unique. Prepend `_` to escape reserved
+        temporary prefixes. The output is the
         authority used by linearity-state binding init, so the entry-unpack
         LHS, the linearity bindings, and per-slot references all agree (this disambiguation
         prevents `q_0, q_1 = q` from shadowing a separately declared
         `QReg("q_0", ...)` parameter). Idempotent: caller may invoke
         once after `_collect_declarations` populates allocators+regs.
         """
-        taken: set[str] = set(self.root_allocators) | set(self.registers)
-        # Existing slot_locals (a re-population path; should not normally
-        # happen) are preserved -- once a slot's name is committed,
-        # everything downstream depends on it.
-        for name in self.slot_locals.values():
-            taken.add(name)
+        taken = set(self.root_allocators) | set(self.registers) | set(self.slot_locals.values())
         for allocator, size in self.root_allocators.items():
             for index in range(size):
                 slot = Slot(allocator, index)
                 if slot in self.slot_locals:
                     continue
                 candidate = f"{allocator}_{index}"
-                while candidate in taken:
-                    candidate += "_"
+                while candidate in taken or self.reserved_collision(candidate) is not None:
+                    if any(candidate.startswith(prefix) for prefix in _TempPrefix):
+                        candidate = f"_{candidate}"
+                    else:
+                        candidate += "_"
                 self.slot_locals[slot] = candidate
                 taken.add(candidate)
 
@@ -349,6 +379,15 @@ class AstToGuppy:
         self._validate_scratch_outer_slots(program)
 
         lines = self._imports()
+        imported_names = {
+            alias.asname or alias.name
+            for node in ast.parse("\n".join(lines)).body
+            if isinstance(node, ast.ImportFrom)
+            for alias in node.names
+        }
+        self.context.reserved_names = frozenset(
+            imported_names | self._block_decls.keys() | {program.name.lower()} | set(_TempPrefix),
+        )
 
         for decl in program.block_decls:
             lines.append("")
@@ -360,9 +399,10 @@ class AstToGuppy:
 
     def _generate_main(self, program: Program) -> list[str]:
         """Emit the main Guppy function for the program body."""
-        self.context = GuppyContext()
+        self.context = GuppyContext(reserved_names=self.context.reserved_names)
         self._collect_declarations(program)
         self._collect_implicit_measure_registers(program.body)
+        self._validate_storage_names()
         self.context.populate_slot_locals()
         self.context.linearity = GuppyLinearityState.from_allocators(
             self.context.root_allocators,
@@ -398,6 +438,7 @@ class AstToGuppy:
         lines.extend(self._suite(body_lines))
 
         self.context.pop_indent()
+        self._validate_generated_references(lines)
         return lines
 
     def _validate_block_decl(self, decl: BlockDecl) -> None:
@@ -471,7 +512,7 @@ class AstToGuppy:
         Future iters add qubit/bit bundles and PRODUCED/DROPPED effects.
         """
         saved_context = self.context
-        self.context = GuppyContext(block_name=decl.name)
+        self.context = GuppyContext(block_name=decl.name, reserved_names=saved_context.reserved_names)
         # Categorize each input. `_validate_block_decl` guarantees the type_expr
         # is one of: bare qubit, array[qubit, N], or bare bit. `size` is the
         # qubit-array length (1 for single qubit, unused for bit).
@@ -488,6 +529,7 @@ class AstToGuppy:
                 arr = cast("ArrayTypeExpr", inp.type_expr)
                 input_shapes.append((inp.name, "qubit_array", arr.size))
         for name, kind, size in input_shapes:
+            self.context.user_bindings[name] = ("Block input", "block input")
             if kind == "single_bit":
                 # Register the bit-input name so body BitRefs (`name[0]`) render;
                 # do NOT emit an initializer -- it's a bound parameter.
@@ -498,6 +540,7 @@ class AstToGuppy:
                 # no parameter and is seeded CONSUMED below so the first Prep
                 # allocates a fresh internal `qubit()`.
                 self.context.root_allocators[name] = size
+        self._validate_storage_names()
         self.context.populate_slot_locals()
         self.context.linearity = GuppyLinearityState.from_allocators(
             self.context.root_allocators,
@@ -586,8 +629,67 @@ class AstToGuppy:
         lines.extend(self._suite(body_lines))
 
         self.context.pop_indent()
+        self._validate_generated_references(lines)
         self.context = saved_context
         return lines
+
+    def _check_reserved_name(
+        self,
+        name: str,
+        kind: str,
+        rename: str,
+        *,
+        referenced_names: frozenset[str] = frozenset(),
+    ) -> None:
+        scope = f" in block {self.context.block_name!r}" if self.context.block_name else ""
+        reason = None
+        if not name.isidentifier() or keyword.iskeyword(name):
+            reason = "must be a valid identifier that is not a Python keyword"
+        elif name == "__debug__":
+            reason = "is reserved by Python"
+        elif unicodedata.normalize("NFKC", name) != name:
+            reason = f"must be NFKC-normalized (Python reads it as {unicodedata.normalize('NFKC', name)!r})"
+        if reason is not None:
+            msg = f"{kind} {name!r}{scope} {reason}. Rename the {rename}."
+            raise GuppyCodegenError(msg)
+        collision = next((prefix.value for prefix in _TempPrefix if name.startswith(prefix)), None)
+        if name in referenced_names:
+            collision = name
+        if collision is not None:
+            msg = f"{kind} {name!r}{scope} collides with generated Guppy name {collision!r}. Rename the {rename}."
+            raise GuppyCodegenError(msg)
+
+    def _validate_storage_names(self) -> None:
+        for name in self.context.registers:
+            self.context.user_bindings.setdefault(name, ("Classical register", "register"))
+        for name in self.context.root_allocators.keys() | self.context.child_allocators:
+            self.context.user_bindings.setdefault(name, ("Quantum register/allocator", "register or allocator"))
+        for name, (kind, rename) in self.context.user_bindings.items():
+            self._check_reserved_name(name, kind, rename)
+
+    def _validate_generated_references(self, lines: list[str]) -> None:
+        """Reject local bindings that hide generated calls in this function.
+
+        User bindings are never callable, so any direct call with the same name
+        denotes generated functionality, including builtins. Other loads (such as
+        `return h` or `h[0]`) refer to user values. Signature annotations and
+        decorators are outside the body and do not count here.
+
+        This rule is deliberately conservative: inspect the entire function even
+        when a call precedes the binding. Guppy has flow-sensitive scoping, but
+        proving those cases safe would also require analyzing enclosing loops.
+        """
+        function = cast("ast.FunctionDef", ast.parse("\n".join(lines)).body[0])
+        nodes = [node for statement in function.body for node in ast.walk(statement)]
+        bound_names = {arg.arg for arg in function.args.args} | {
+            node.id for node in nodes if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+        }
+        referenced_names = frozenset(
+            node.func.id for node in nodes if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        )
+        for name, (kind, rename) in self.context.user_bindings.items():
+            if name in bound_names:
+                self._check_reserved_name(name, kind, rename, referenced_names=referenced_names)
 
     def _collect_declarations(self, program: Program) -> None:
         for decl in program.declarations:
@@ -840,9 +942,16 @@ class AstToGuppy:
     def _emit_register_initializers(self) -> list[str]:
         lines: list[str] = []
         for decl in self.context.registers.values():
-            values = ", ".join("False" for _ in range(decl.size))
-            lines.append(f"{self.context.indent()}{decl.name} = array({values})")
+            value = self._render_bool_array(["False"] * decl.size)
+            lines.append(f"{self.context.indent()}{decl.name} = {value}")
         return lines
+
+    def _render_bool_array(self, values: list[str]) -> str:
+        """Keep the element type inferable even for an empty classical register."""
+        if not values:
+            counter = self.context.temp(_TempPrefix.COMPREHENSION)
+            return f"array(False for {counter} in range(0))"
+        return f"array({', '.join(values)})"
 
     def _validate_return_position(self, body: list[Statement]) -> ReturnOp | None:
         return_count = self._count_returns(body)
@@ -1304,7 +1413,7 @@ class AstToGuppy:
                 output = self._render_bit_ref(node.results[index])
                 lines.append(f"{self.context.indent()}{output} = measure({local}).read()")
             else:
-                temp = self.context.temp("measurement")
+                temp = self.context.temp(_TempPrefix.MEASUREMENT)
                 lines.append(f"{self.context.indent()}{temp} = measure({local}).read()")
         return lines
 
@@ -1326,10 +1435,14 @@ class AstToGuppy:
         """Render a single-bit write, rejecting values Guppy cannot store in a bool."""
         is_literal = isinstance(expr, LiteralExpr) and isinstance(expr.value, numbers.Integral)
         if not is_literal and self._expression_type(expr) != "bool":
-            msg = (
-                f"Unsupported single-bit assignment from {expr!r}. "
-                "Guppy supports 0, 1, single bits and boolean expressions here."
-            )
+            value = self._render_expression(expr)
+            if isinstance(expr, VarExpr) and expr.name in self.context.loop_variables:
+                fix = f"Compare the loop variable, such as {value} == 1."
+            elif self._is_whole_register(expr):
+                fix = f"Index a bit of the register, such as {value}[0]."
+            else:
+                fix = "Use 0, 1, a bit or a boolean expression."
+            msg = f"Unsupported single-bit assignment from {value!r}. {fix}"
             raise GuppyCodegenError(msg)
         return self._render_expression(expr, bool_context=True)
 
@@ -1342,14 +1455,14 @@ class AstToGuppy:
         as scalar integers.
         """
         decl = self.context.registers[target]
-        if decl.size <= 0:
+        if decl.size < 0:
             msg = f"Cannot assign to classical register {target!r} with unsupported width {decl.size}"
             raise GuppyCodegenError(msg)
         if isinstance(expr, LiteralExpr) and isinstance(expr.value, int):
             # QASM stores the low N bits, least significant bit first. Expand
             # in Python so literals need not fit Guppy's fixed-width int.
-            bits = ", ".join(str(bool((expr.value >> index) & 1)) for index in range(decl.size))
-            return f"array({bits})"
+            bits = [str(bool((expr.value >> index) & 1)) for index in range(decl.size)]
+            return self._render_bool_array(bits)
         if self._is_whole_register(expr):
             source = self.context.registers[expr.name]
             if source.size != decl.size:
@@ -1420,7 +1533,8 @@ class AstToGuppy:
     def _emit_repeat(self, node: RepeatStmt) -> list[str]:
         linearity = self._linearity()
         before = linearity.snapshot()
-        lines = [f"{self.context.indent()}for _ in range({node.count}):"]
+        counter = self.context.temp(_TempPrefix.REPEAT)
+        lines = [f"{self.context.indent()}for {counter} in range({node.count}):"]
 
         self.context.push_indent()
         body_lines = self._emit_block(node.body)
@@ -1432,6 +1546,21 @@ class AstToGuppy:
         return lines
 
     def _emit_for(self, node: ForStmt) -> list[str]:
+        self.context.user_bindings[node.variable] = ("For loop label", "loop label")
+        self._check_reserved_name(node.variable, "For loop label", "loop label")
+        collision = None
+        if node.variable in self.context.registers:
+            collision = "classical register"
+        elif node.variable in self.context.root_allocators:
+            collision = "quantum register/allocator"
+        elif node.variable in self.context.slot_locals.values():
+            collision = "generated qubit binding"
+        elif node.variable in self.context.loop_variables:
+            collision = "enclosing loop variable"
+        if collision is not None:
+            scope = f" in block {self.context.block_name!r} (including block inputs)" if self.context.block_name else ""
+            msg = f"For loop label {node.variable!r} collides with {collision}{scope}. Rename the loop label."
+            raise GuppyCodegenError(msg)
         linearity = self._linearity()
         start = self._render_loop_bound(node.start)
         stop = self._render_loop_bound(node.stop)
@@ -1634,12 +1763,12 @@ class AstToGuppy:
 
         if len(live_inputs_out) == 1:
             kind, info = validated_outs[0]
-            ret_temp = self.context.temp("call_ret")
+            ret_temp = self.context.temp(_TempPrefix.CALL_RETURN)
             lines.append(f"{self.context.indent()}{ret_temp} = {call_expr}")
             lines.extend(self._unpack_block_call_return(kind, info, ret_temp))
             return lines
 
-        ret_temps = [self.context.temp("call_ret") for _ in live_inputs_out]
+        ret_temps = [self.context.temp(_TempPrefix.CALL_RETURN) for _ in live_inputs_out]
         lines.append(f"{self.context.indent()}{', '.join(ret_temps)} = {call_expr}")
         for ret_temp, (kind, info) in zip(ret_temps, validated_outs, strict=True):
             lines.extend(self._unpack_block_call_return(kind, info, ret_temp))
@@ -2058,7 +2187,7 @@ class AstToGuppy:
             if bool_context:
                 if value in {0, 1}:
                     return "True" if value else "False"
-                msg = f"Cannot render integer literal {value!r} as a Guppy bool"
+                msg = f"Cannot render integer literal {value!r} as a Guppy bool; use 0 or 1."
                 raise GuppyCodegenError(msg)
             if not -(2**63) <= value < 2**63:
                 msg = f"Integer literal {value!r} does not fit Guppy's signed 64-bit int"
@@ -2121,7 +2250,7 @@ class AstToGuppy:
         raise GuppyCodegenError(msg)
 
     def _is_whole_register(self, expr: Expression) -> bool:
-        """Report a register read. A loop variable of the same name shadows the register."""
+        """Report a whole classical-register read, excluding loop variables."""
         return (
             isinstance(expr, VarExpr)
             and expr.name in self.context.registers

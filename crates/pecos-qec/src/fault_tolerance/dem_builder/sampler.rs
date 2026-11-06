@@ -487,6 +487,8 @@ impl DemSampler {
         circuit: &pecos_quantum::TickCircuit,
         noise: &super::types::NoiseConfig,
     ) -> Result<Self, DetectorValidationError> {
+        crate::fault_tolerance::noise_attributes::validate_tick_noise_attributes(circuit)
+            .map_err(|message| DetectorValidationError::InvalidConfiguration { message })?;
         if let Some(error) =
             crate::fault_tolerance::propagator::first_unsupported_tick_gate(circuit)
         {
@@ -523,6 +525,9 @@ impl DemSampler {
             crate::fault_tolerance::circuit_definitions::definitions_from_dag_circuit(circuit)
                 .map_err(super::DemBuilderError::from)?;
         let mut influence_map = DagFaultAnalyzer::new(circuit).build_influence_map_diagnostic();
+        influence_map
+            .validate_noise_attributes()
+            .map_err(|message| DetectorValidationError::InvalidConfiguration { message })?;
         if let Some(error) = influence_map.unsupported_gate() {
             return Err(DetectorValidationError::UnsupportedGate(error.clone()));
         }
@@ -1622,20 +1627,6 @@ pub(crate) fn compute_location_probs_from_noise(
             }
         })
         .collect()
-}
-
-/// Get the per-qubit error probability for a gate fault location.
-pub(crate) fn gate_location_prob_from_locations(
-    loc: &super::super::propagator::dag::GateFaultLocation<'_>,
-    loc_probs: &[f64],
-    all_locations: &[super::super::propagator::dag::DagSpacetimeLocation],
-) -> f64 {
-    for (i, l) in all_locations.iter().enumerate() {
-        if l.node == loc.node && l.before == loc.before {
-            return loc_probs[i];
-        }
-    }
-    0.0
 }
 
 #[cfg(test)]

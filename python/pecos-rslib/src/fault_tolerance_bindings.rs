@@ -637,6 +637,7 @@ pub struct PyFaultLocation {
     qubits: Vec<usize>,
     before: bool,
     gate_type: String,
+    noiseless: bool,
 }
 
 #[pymethods]
@@ -665,6 +666,12 @@ impl PyFaultLocation {
         self.gate_type.clone()
     }
 
+    /// Whether the owning gate suppresses all noise sources at this location.
+    #[getter]
+    fn noiseless(&self) -> bool {
+        self.noiseless
+    }
+
     fn __repr__(&self) -> String {
         let timing = if self.before { "before" } else { "after" };
         format!(
@@ -681,6 +688,7 @@ impl From<&DagSpacetimeLocation> for PyFaultLocation {
             qubits: loc.qubits.iter().map(QubitId::index).collect(),
             before: loc.before,
             gate_type: format!("{:?}", loc.gate_type),
+            noiseless: loc.noiseless,
         }
     }
 }
@@ -750,12 +758,19 @@ impl PyDagFaultInfluenceMap {
     ///
     /// Returns:
     ///     List of `FaultLocation` objects.
-    fn get_locations(&self) -> Vec<PyFaultLocation> {
+    ///
+    /// Raises:
+    ///     `ValueError`: A gate has a non-boolean `noiseless` attribute.
+    fn get_locations(&self) -> PyResult<Vec<PyFaultLocation>> {
         self.inner
+            .validate_noise_attributes()
+            .map_err(pyo3::exceptions::PyValueError::new_err)?;
+        Ok(self
+            .inner
             .locations
             .iter()
             .map(PyFaultLocation::from)
-            .collect()
+            .collect())
     }
 
     /// Get a specific fault location by index.
@@ -765,8 +780,14 @@ impl PyDagFaultInfluenceMap {
     ///
     /// Returns:
     ///     `FaultLocation` object or None if index is out of range.
-    fn get_location(&self, loc_idx: usize) -> Option<PyFaultLocation> {
-        self.inner.get_location(loc_idx).map(PyFaultLocation::from)
+    ///
+    /// Raises:
+    ///     `ValueError`: A gate has a non-boolean `noiseless` attribute.
+    fn get_location(&self, loc_idx: usize) -> PyResult<Option<PyFaultLocation>> {
+        self.inner
+            .validate_noise_attributes()
+            .map_err(pyo3::exceptions::PyValueError::new_err)?;
+        Ok(self.inner.get_location(loc_idx).map(PyFaultLocation::from))
     }
 
     /// Classify a fault at the given location.
@@ -928,7 +949,10 @@ impl PyDagFaultInfluenceMap {
             dem_output_data_y,
             dem_output_offsets_z,
             dem_output_data_z,
-        ) = self.inner.export_csr();
+        ) = self
+            .inner
+            .export_csr()
+            .map_err(pyo3::exceptions::PyValueError::new_err)?;
 
         let dict = pyo3::types::PyDict::new(py);
         dict.set_item("num_locations", num_locations)?;

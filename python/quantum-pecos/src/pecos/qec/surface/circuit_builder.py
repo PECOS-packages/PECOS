@@ -3194,6 +3194,24 @@ def describe_surface_memory_experiment(
     }
 
 
+def _gate_batch_noiseless(tc: TickCircuit, tick_idx: int, gate_idx: int, gate_name: str) -> bool:
+    """Resolve stored batch metadata; suppression changes only noise emission."""
+    value = tc.get_gate_meta(tick_idx, gate_idx, "noiseless")
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    msg = f"attribute 'noiseless' on gate {gate_name} at tick {tick_idx} gate {gate_idx} must be a boolean"
+    raise ValueError(msg)
+
+
+def _validate_tick_noise_attributes(tc: TickCircuit) -> None:
+    """Validate stored batches before DAG conversion loses tick provenance."""
+    for tick_idx in range(tc.num_ticks()):
+        for gate_idx, gate in enumerate(tc.get_tick(tick_idx).gate_batches()):
+            _gate_batch_noiseless(tc, tick_idx, gate_idx, gate.gate_type.name)
+
+
 def tick_circuit_to_stim(
     tc: TickCircuit,
     *,
@@ -3374,7 +3392,8 @@ def tick_circuit_to_stim(
 
     for tick_idx in range(tc.num_ticks()):
         tick = tc.get_tick(tick_idx)
-        for gate in tick.gate_batches():
+        for gate_idx, gate in enumerate(tick.gate_batches()):
+            noiseless = _gate_batch_noiseless(tc, tick_idx, gate_idx, gate.gate_type.name)
             instructions, noise_kind = _gate_to_stim(gate)
             if not instructions:
                 continue
@@ -3382,7 +3401,7 @@ def tick_circuit_to_stim(
             qubits = [int(q) for q in gate.qubits]
             qubit_str = " ".join(str(q) for q in qubits)
 
-            if noise_kind == "measure" and p_meas > 0:
+            if noise_kind == "measure" and p_meas > 0 and not noiseless:
                 lines.append(f"X_ERROR({p_meas}) {qubit_str}")
 
             for stim_name, op_qubits in instructions:
@@ -3390,11 +3409,11 @@ def tick_circuit_to_stim(
                 lines.append(f"{stim_name} {op_qubit_str}")
 
             p1_for_gate = p1 if p1_gate_rates is None else float(p1_gate_rates.get(gate.gate_type.name, p1))
-            if noise_kind == "single" and p1_for_gate > 0:
+            if noise_kind == "single" and p1_for_gate > 0 and not noiseless:
                 lines.append(f"DEPOLARIZE1({p1_for_gate}) {qubit_str}")
-            elif noise_kind == "two" and p2 > 0:
+            elif noise_kind == "two" and p2 > 0 and not noiseless:
                 lines.append(f"DEPOLARIZE2({p2}) {qubit_str}")
-            elif noise_kind == "prep" and p_prep > 0:
+            elif noise_kind == "prep" and p_prep > 0 and not noiseless:
                 lines.append(f"X_ERROR({p_prep}) {qubit_str}")
 
         # Add TICK after each tick (except the last)
@@ -3532,20 +3551,21 @@ def generate_dem_from_tick_circuit_via_pauli_frame(
             meas_to_observables[abs_meas].append(obs_id)
 
     # Build circuit structure for simulation
-    # We need: list of (tick_idx, gate_type, qubits, meas_idx_if_applicable)
-    circuit_ops: list[tuple[int, str, list[int], int | None]] = []
+    # We need: list of (tick_idx, gate_type, qubits, meas_idx_if_applicable, noiseless)
+    circuit_ops: list[tuple[int, str, list[int], int | None, bool]] = []
     meas_counter = 0
 
     for tick_idx in range(tc.num_ticks()):
         tick = tc.get_tick(tick_idx)
-        for gate in tick.gate_batches():
+        for gate_idx, gate in enumerate(tick.gate_batches()):
             gate_name = gate.gate_type.name
+            noiseless = _gate_batch_noiseless(tc, tick_idx, gate_idx, gate_name)
             qubits = list(gate.qubits)
             meas_idx = None
             if gate_name == "MZ":
                 meas_idx = meas_counter
                 meas_counter += 1
-            circuit_ops.append((tick_idx, gate_name, qubits, meas_idx))
+            circuit_ops.append((tick_idx, gate_name, qubits, meas_idx, noiseless))
 
     def simulate_error(
         start_op_idx: int,
@@ -3564,7 +3584,7 @@ def generate_dem_from_tick_circuit_via_pauli_frame(
         flipped_measurements: set[int] = set()
 
         for op_idx in range(start_op_idx, len(circuit_ops)):
-            _, gate_name, qubits, meas_idx = circuit_ops[op_idx]
+            _, gate_name, qubits, meas_idx, _ = circuit_ops[op_idx]
 
             if gate_name in ("QAlloc", "PZ"):
                 # Reset clears any error on this qubit
@@ -3691,8 +3711,8 @@ def generate_dem_from_tick_circuit_via_pauli_frame(
         two_paulis = tuple((label[0], label[1], weight) for label, weight in sorted(weights.items()) if weight > 0.0)
 
     # Process each gate as a potential error location
-    for op_idx, (_tick_idx, gate_name, qubits, meas_idx) in enumerate(circuit_ops):
-        if gate_name in ("QAlloc", "PZ") and p_prep > 0:
+    for op_idx, (_tick_idx, gate_name, qubits, meas_idx, noiseless) in enumerate(circuit_ops):
+        if gate_name in ("QAlloc", "PZ") and p_prep > 0 and not noiseless:
             # Initialization error: X error after prep
             q = qubits[0]
             dets, obs = simulate_error(op_idx + 1, {q: "X"})
@@ -3700,7 +3720,7 @@ def generate_dem_from_tick_circuit_via_pauli_frame(
                 key = (frozenset(dets), frozenset(obs))
                 error_mechanisms[key] += p_prep
 
-        elif gate_name == "H" and p1 > 0:
+        elif gate_name == "H" and p1 > 0 and not noiseless:
             # Single-qubit gate error: depolarizing (each Pauli with prob p1/3)
             q = qubits[0]
             for pauli in single_paulis:
@@ -3709,7 +3729,7 @@ def generate_dem_from_tick_circuit_via_pauli_frame(
                     key = (frozenset(dets), frozenset(obs))
                     error_mechanisms[key] += p1 / 3
 
-        elif gate_name == "CX" and p2 > 0:
+        elif gate_name == "CX" and p2 > 0 and not noiseless:
             # Two-qubit gate error: depolarizing (each Pauli pair with prob p2/15)
             ctrl, targ = qubits[0], qubits[1]
             for p_ctrl, p_targ, relative_probability in two_paulis:
@@ -3723,7 +3743,7 @@ def generate_dem_from_tick_circuit_via_pauli_frame(
                     key = (frozenset(dets), frozenset(obs))
                     error_mechanisms[key] += p2 * relative_probability
 
-        elif gate_name == "MZ" and p_meas > 0:
+        elif gate_name == "MZ" and p_meas > 0 and not noiseless:
             # Measurement error: bit flip (affects this measurement directly)
             # This is before the measurement is taken, so we track it as X error
             # that is immediately measured
@@ -4024,6 +4044,7 @@ def generate_dem_from_tick_circuit(
         raise ValueError(msg)
 
     # Convert TickCircuit to DagCircuit and build influence map
+    _validate_tick_noise_attributes(tc)
     dag = tc.to_dag_circuit()
     influence_map = _build_canonical_dem_influence_map(dag)
 
@@ -4108,6 +4129,7 @@ def generate_dem_from_tick_circuit_via_autodetection(
     from pecos.qec import PAULI_X, PAULI_Y, PAULI_Z, InfluenceBuilder
 
     # Convert TickCircuit to DagCircuit
+    _validate_tick_noise_attributes(tc)
     dag = tc.to_dag_circuit()
 
     # Build influence map with auto-discovered detectors
@@ -4129,6 +4151,8 @@ def generate_dem_from_tick_circuit_via_autodetection(
 
     # Process each fault location
     for loc_idx, loc in enumerate(locations):
+        if loc.noiseless:
+            continue
         gate_type = loc.gate_type
 
         if "PZ" in gate_type or "QAlloc" in gate_type:

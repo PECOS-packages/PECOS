@@ -603,6 +603,7 @@ impl<'a> InfluenceBuilder<'a> {
 
         // Extract locations using the cached traversal index
         map.locations = Self::extract_locations(propagator);
+        map.resolve_gate_noise(self.dag);
 
         // One order per map: measurements, meas_ids, detectors, and the
         // backward-propagation recorder all number measurements by the replay

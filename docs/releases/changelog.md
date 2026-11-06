@@ -6,6 +6,25 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- Per-gate boolean `noiseless` attributes now suppress owned noise sources in
+  DEMs, samplers, MEMs, lookup decoders, fault catalogs, CSR export and Stim
+  export. Ideal gates, record offsets and configuration validation are unchanged.
+  The attribute applies to every application in a TickCircuit gate batch;
+  absent or false leaves noise enabled. Non-boolean values are rejected.
+  `DemBuild::with_idle_after_2q` inserts separate Idle gates that carry no
+  attributes and are always noisy, even after a noiseless gate.
+  **Breaking:** Rust `DagFaultInfluenceMap::export_csr` now returns `Result`.
+  CSR export preserves location numbering with empty rows for marked locations.
+  Python `get_locations`, `get_location` and `export_csr` may now raise `ValueError` for a
+  non-boolean attribute. Pure propagation queries remain independent of the flag.
+  Python `FaultLocation` (`PyFaultLocation`) exposes a new `noiseless` property.
+  The public `DagFaultInfluenceMap::validate_noise_attributes` method validates
+  resolved attributes before noise consumers use them.
+  **Breaking:** `DagSpacetimeLocation` has a new public `noiseless` field, which
+  must be supplied by struct-literal construction. `FaultCatalogError` adds a
+  `NoiseAttribute` variant. Catalog positions compact when marked gates are
+  omitted; entries retain their original `(tick, gate_index)` provenance.
+
 - **Breaking:** Guppy code generation rejects `For` labels that shadow a register,
   allocator, block input or generated temporary. Loop labels, registers,
   allocators and block inputs are also rejected when the same generated function

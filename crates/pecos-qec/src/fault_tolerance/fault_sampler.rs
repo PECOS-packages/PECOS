@@ -59,6 +59,9 @@ use super::propagator::{
 /// Failure to build a fault catalog from circuit gates or definitions.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum FaultCatalogError {
+    /// Gate noise metadata is invalid.
+    #[error("{0}")]
+    NoiseAttribute(String),
     /// Invalid Pauli support in a circuit operation.
     #[error(transparent)]
     InvalidPauli(#[from] pecos_core::ParsePauliStringError),
@@ -705,9 +708,14 @@ impl FaultCatalog {
     /// probabilities are initialized to zero except `no_fault_probability`, which
     /// is initialized to one.
     ///
+    /// Gates marked `noiseless = true` are omitted from `catalog.locations`.
+    /// Catalog positions therefore differ from DAG location indices; retained
+    /// entries keep their original `(tick, gate_index)` batch provenance.
+    ///
     /// # Errors
     ///
-    /// Returns [`FaultCatalogError`] for unsupported gates or invalid circuit definitions.
+    /// Returns [`FaultCatalogError`] for invalid noise attributes, unsupported
+    /// gates, or invalid circuit definitions.
     pub fn from_circuit(tc: &TickCircuit) -> Result<Self, FaultCatalogError> {
         build_structural_fault_catalog(tc)
     }
@@ -1112,7 +1120,13 @@ pub fn build_fault_catalog(
     Ok(catalog)
 }
 
+/// Build only noise-enabled catalog locations, retaining `(tick, gate_index)`
+/// provenance. Suppression compacts catalog positions; they are not DAG indices.
 fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, FaultCatalogError> {
+    // Resolve batch attributes before flattening. Keep every gate in the
+    // propagation stream so suppressed measurements still consume records.
+    let noiseless_batches = super::noise_attributes::noiseless_tick_batches(tc)
+        .map_err(FaultCatalogError::NoiseAttribute)?;
     validate_tick_circuit(tc)?;
     let (gates, meas_positions) = flatten_tick_circuit(tc);
 
@@ -1129,6 +1143,9 @@ fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, Faul
     let mut effect_cache = PropagatedEffectCache::default();
 
     for (loc_idx, loc) in gates.iter().enumerate() {
+        if noiseless_batches.contains(&(loc.tick, loc.gate_index)) {
+            continue;
+        }
         let tick_idx = loc.tick;
         let gate_idx = loc.gate_index;
         let gate_type = loc.gate_type;

@@ -128,7 +128,9 @@ fn build_influence_maps(
         dem_output_data_y,
         dem_output_offsets_z,
         dem_output_data_z,
-    ) = influence_map.export_csr();
+    ) = influence_map
+        .export_csr()
+        .expect("benchmark circuit has valid noise metadata");
 
     let gpu_map = GpuInfluenceMapData::from_csr(
         num_loc,

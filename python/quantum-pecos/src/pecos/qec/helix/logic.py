@@ -9,9 +9,10 @@ The net symplectic action must preserve the prepared logical span, so readout
 is deterministic. Discovery conjugates are pulled back through the inverse
 logical action to the boundary just after preparation, using dense products.
 For two S0S1 gates, full-noise X distance is the owner-accepted floor of four
-(2026-10-29): round faults feeding a gate spread through its CZs. Gate faults
-alone give a weight-six upper bound (a stim witness); full-noise Z bounds
-are 5 <= d <= 6.
+(2026-10-29): round faults feeding a gate spread through its CZs. PECOS
+connected-cluster search gives exact distance six for one S0S1 with gate
+faults only and exact distance four for the full-noise X floor. Full-noise Z bounds are
+5 <= d <= 6: a connected-cluster lower bound and a randomized upper bound.
 """
 
 from __future__ import annotations

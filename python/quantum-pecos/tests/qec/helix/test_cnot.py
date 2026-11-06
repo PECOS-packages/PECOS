@@ -7,7 +7,6 @@ from collections import Counter
 from types import SimpleNamespace
 
 import pytest
-import stim
 from pecos.qec.circuit_steps import CircuitStep, OpType
 from pecos.qec.dem_spec import Detector, Observable, result_ref
 from pecos.qec.helix import (
@@ -22,7 +21,6 @@ from pecos.qec.helix import (
 )
 from pecos.qec.helix import cnot as cnot_module
 from pecos.qec.helix.gadgets import memory_gadgets, syndrome_round_gadgets
-from pecos.qec.surface.circuit_builder import tick_circuit_to_stim
 from pecos.testing import deterministic_parity_basis, simulate_tick_circuit
 from pecos_rslib import PauliStabilizerGroup, PauliString
 
@@ -94,11 +92,14 @@ def test_records_determinism_and_completeness(pair):
         _, fired, observables = simulate_tick_circuit(circuit, seed)
         assert fired == 0
         assert observables == dict.fromkeys(range(4), 0)
-    shots = stim.Circuit(tick_circuit_to_stim(circuit)).compile_sampler(seed=17).sample(2048)
+    # With records + 65 independent uniform shots, a miss has probability below 2**-64.
+    # A miss makes a random parity look deterministic, allowing a false pass or false failure.
+    num_shots = definitions["num_measurements"] + 65
+    shots = [simulate_tick_circuit(circuit, seed)[0] for seed in range(17, 17 + num_shots)]
     space = deterministic_parity_basis(shots)
     entries = [*definitions["detectors"], *definitions["observables"]]
     for entry in entries:
-        assert (shots[:, entry["measurements"]].sum(axis=1) % 2 == entry.get("reference", 0)).all()
+        assert all(sum(shot[r] for r in entry["measurements"]) % 2 == entry.get("reference", 0) for shot in shots)
     emitted = [sum(1 << record for record in entry["measurements"]) for entry in entries]
 
     def pauli(mask):
@@ -201,8 +202,8 @@ def test_removed_cnot_fires_original_detectors(pair):
     records = {ref: record for record, ref in enumerate(helix_result_refs(mutated))}
     detectors = original.circuit_definitions()["detectors"]
     carried = [[records[original_refs[r]] for r in entry["measurements"]] for entry in detectors]
-    shots = stim.Circuit(tick_circuit_to_stim(mutated)).compile_sampler(seed=31).sample(64)
-    fired = {index for index, parity in enumerate(carried) if (shots[:, parity].sum(axis=1) % 2).any()}
+    shots = [simulate_tick_circuit(mutated, seed)[0] for seed in range(31, 95)]
+    fired = {index for index, parity in enumerate(carried) if any(sum(shot[r] for r in parity) % 2 for shot in shots)}
     cross_block = {
         index
         for index, entry in enumerate(detectors)

@@ -1,12 +1,15 @@
 # Copyright 2026 The PECOS Developers
 # Licensed under the Apache License, Version 2.0
 
-"""Logical gate distance bounds under uniform p1=p2=p_meas=p_prep=0.001."""
+"""Logical gate distances under uniform p1=p2=p_meas=p_prep=0.001.
+
+PECOS connected-cluster searches give exact distances or lower bounds;
+randomized witnesses give upper bounds.
+"""
 
 from time import perf_counter
 
 import pytest
-import stim
 from pecos.qec import DetectorErrorModel, discover_detectors
 from pecos.qec.circuit_steps import CircuitStep, OpType
 from pecos.qec.helix import (
@@ -22,21 +25,17 @@ from pecos.qec.helix import (
     syndrome_round_gadgets,
 )
 from pecos.qec.helix.gadgets import memory_gadgets
-from pecos.qec.surface.circuit_builder import tick_circuit_to_stim
 
-from qec.helix.test_memory_distance import UNIFORM_NOISE
+from qec.helix.test_memory_distance import UNIFORM_NOISE, upper_bound_config
 
 
-def _witness(circuit, expected, label):
+def _exact_cluster(circuit, max_weight, expected, label):
+    dem = DetectorErrorModel.from_circuit(circuit, **UNIFORM_NOISE)
     start = perf_counter()
-    witness = circuit.search_for_undetectable_logical_errors(
-        dont_explore_detection_event_sets_with_size_above=6,
-        dont_explore_edges_with_degree_above=6,
-        dont_explore_edges_increasing_symptom_degree=False,
-        canonicalize_circuit_errors=True,
-    )
-    print(f"{label}: stim weight={len(witness)}, {perf_counter() - start:.3f}s", flush=True)
-    assert len(witness) == expected, str(witness)
+    result = dem.connected_cluster_fault_distance(max_weight)
+    value = None if result is None else result.distance
+    print(f"{label}: exact cluster max_weight={max_weight}: {value}, {perf_counter() - start:.3f}s", flush=True)
+    assert value == expected
 
 
 def _cluster(circuit, max_weight, label):
@@ -48,8 +47,8 @@ def _cluster(circuit, max_weight, label):
     assert values == [None, None], str(distances)
 
 
-def test_logic_gate_fault_upper_bound():
-    """A weight-six witness is an upper bound with noise on the S0S1 gate only."""
+def test_logic_gate_fault_exact_six():
+    """PECOS connected-cluster search proves distance six with S0S1 gate noise only."""
     prefix = memory_gadgets("X", 1)[0][1] + [step for _, steps in syndrome_round_gadgets("a") for step in steps]
     through_gate = [*prefix, CircuitStep(OpType.TICK), *logical_gate_steps("S0S1")]
     b0 = lower_steps(prefix, HelixAllocation.NUM_SLOTS).tick_circuit.num_ticks()
@@ -74,49 +73,57 @@ def test_logic_gate_fault_upper_bound():
     observables = [[records[(f"data:{q}", 0)] for q in sorted(x_support)]]
     found = discover_detectors(circuit, observables, memory_conjugates("X")[:1])
     set_discovered_metadata(circuit, found)
-    noisy = stim.Circuit(tick_circuit_to_stim(circuit, **UNIFORM_NOISE))
-    gate_noise = stim.Circuit()
-    tick = 0
-    for instruction in noisy:
-        if instruction.name == "TICK":
-            tick += 1
-        if instruction.name in {"X_ERROR", "DEPOLARIZE1", "DEPOLARIZE2"} and not b0 <= tick < b1:
-            continue
-        gate_noise.append(instruction)
-    _witness(gate_noise, 6, "gate only")
+    baseline = DetectorErrorModel.from_circuit(circuit, **UNIFORM_NOISE)
+    for tick in range(circuit.num_ticks()):
+        if not b0 <= tick < b1:
+            for batch_index in range(len(circuit.get_tick(tick))):
+                circuit.set_gate_meta(tick, batch_index, "noiseless", True)
+    marked = DetectorErrorModel.from_circuit(circuit, **UNIFORM_NOISE)
+    assert len(marked.contribution_effect_summaries()) < len(baseline.contribution_effect_summaries())
+    _exact_cluster(circuit, 6, 6, "gate only")
 
 
 @pytest.mark.slow
 def test_logic_full_noise_z_bounds():
     """For prepare, round, S0S1, round, S0S1, round, Z readout: 5 <= d <= 6.
 
-    Weight four is exhausted; the expensive weight-five cluster search is not attempted.
+    A PECOS randomized witness gives the upper bound. Connected-cluster
+    weight four is exhausted; the expensive weight-five cluster search is not attempted.
     """
     circuit = logic_circuit("Z", ("S0S1", "S0S1"))
-    _witness(stim.Circuit(tick_circuit_to_stim(circuit, **UNIFORM_NOISE)), 6, "full-noise Z")
+    dem = DetectorErrorModel.from_circuit(circuit, **UNIFORM_NOISE)
+    start = perf_counter()
+    # With 150 samples, seeds 0..4 all reach weight six; retain margin for future decoder or sampler changes.
+    witness = dem.randomized_fault_distance_upper_bound(
+        upper_bound_config(150, seed=0, osd_method="osd_cs", osd_order=1),
+    )
+    assert witness is not None
+    print(f"full-noise Z: randomized weight={witness.weight}, {perf_counter() - start:.3f}s", flush=True)
+    assert witness.weight == 6
     _cluster(circuit, 4, "full-noise Z")
 
 
 def test_logic_full_noise_x_floor():
     """Exact distance four is the owner-accepted full-noise X floor of 2026-10-29.
 
+    PECOS connected-cluster search through weight four proves the value.
     This circuit has prepare, round, S0S1, round, S0S1, round, and X readout.
     The floor comes from the X-basis boundaries: X preparation gives the first
     round's Z checks no reference and X readout gives no final Z values, so X
     errors next to a boundary go undetected and S0S1 turns them into Z errors.
     It stays four with both gates noiseless; six holds with gate faults only
-    (test_logic_gate_fault_upper_bound). Both a drop to three and a rise fail
+    (test_logic_gate_fault_exact_six). Both a drop to three and a rise fail
     this test.
     """
     circuit = logic_circuit("X", ("S0S1", "S0S1"))
-    _witness(stim.Circuit(tick_circuit_to_stim(circuit, **UNIFORM_NOISE)), 4, "full-noise X")
-    _cluster(circuit, 3, "full-noise X")
+    _exact_cluster(circuit, 4, 4, "full-noise X")
 
 
 @pytest.mark.slow
 def test_logic_full_noise_x_padded_exact_five():
     """Three rounds before the first S0S1 and two after the last give exactly five.
 
+    PECOS connected-cluster search through weight five proves the value.
     Padding moves both X boundaries two Z-check rounds away from the gates.
     Five is also the most an S0S1 inside a circuit reaches: four faults in the
     two rounds before it and one in its CZ flags stay undetectable with the
@@ -137,5 +144,4 @@ def test_logic_full_noise_x_padded_exact_five():
         [records[(f"data:{q}", 0)] for q, axis in enumerate(row) if axis != "I"] for row in c4_helix_code().logical_x
     ]
     set_discovered_metadata(circuit, discover_detectors(circuit, observables, logic_conjugates("X", tokens)))
-    _witness(stim.Circuit(tick_circuit_to_stim(circuit, **UNIFORM_NOISE)), 5, "padded full-noise X")
-    _cluster(circuit, 4, "padded full-noise X")
+    _exact_cluster(circuit, 5, 5, "padded full-noise X")

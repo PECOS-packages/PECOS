@@ -7,7 +7,6 @@ from itertools import product
 from random import Random
 
 import pytest
-import stim
 from pecos.qec.circuit_steps import CircuitStep, OpType
 from pecos.qec.helix import (
     HelixAllocation,
@@ -34,7 +33,6 @@ from pecos.qec.helix import gadgets as gadgets_module
 from pecos.qec.helix import logic as logic_module
 from pecos.qec.helix import logical as logical_module
 from pecos.qec.helix.gadgets import memory_gadgets
-from pecos.qec.surface.circuit_builder import tick_circuit_to_stim
 from pecos.testing import deterministic_parity_basis, group_contains, simulate_tick_circuit, stabilizer_generators_after
 from pecos_rslib import PauliStabilizerGroup, PauliString
 
@@ -266,7 +264,10 @@ def test_logic_determinism_and_completeness(basis, tokens):
     circuit = logic_circuit(basis, tokens)
     _assert_deterministic(circuit, 8)
     definitions = circuit.circuit_definitions()
-    shots = stim.Circuit(tick_circuit_to_stim(circuit)).compile_sampler(seed=17).sample(2048)
+    # With records + 65 independent uniform shots, a miss has probability below 2**-64.
+    # A miss makes a random parity look deterministic, allowing a false pass or false failure.
+    num_shots = definitions["num_measurements"] + 65
+    shots = [simulate_tick_circuit(circuit, seed)[0] for seed in range(17, 17 + num_shots)]
     space = deterministic_parity_basis(shots)
     emitted = [
         sum(1 << r for r in entry["measurements"]) for entry in [*definitions["detectors"], *definitions["observables"]]

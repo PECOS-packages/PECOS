@@ -229,6 +229,7 @@ impl FaultLocations {
                 noise_gate_type: self.noise_gate_types[i],
                 clifford: self.cliffords[i],
                 idle_duration: self.idle_durations[i],
+                noiseless: false,
             })
             .collect()
     }
@@ -258,10 +259,17 @@ pub struct DagSpacetimeLocation {
     pub clifford: CliffordLowering,
     /// Duration for idle gates. 0.0 for non-idle gates.
     pub idle_duration: f64,
+    /// Whether the owning gate has boolean `noiseless = true`, suppressing its
+    /// noise sources without changing ideal propagation or configuration checks.
+    /// Absent or false leaves noise enabled; DEM boundaries reject other types.
+    pub noiseless: bool,
 }
 
 impl DagSpacetimeLocation {
     /// Construct a location from its scheduled gate and fault targets.
+    ///
+    /// Defaults to noisy; circuit-backed maps resolve the owning node's
+    /// `noiseless` attribute after extracting locations.
     ///
     /// # Panics
     ///
@@ -277,6 +285,7 @@ impl DagSpacetimeLocation {
             noise_gate_type: noise_gate_type(gate),
             clifford: resolve_clifford_action(node, gate),
             idle_duration: gate.idle_duration(),
+            noiseless: false,
         }
     }
 }
@@ -316,6 +325,7 @@ impl PartialEq for DagSpacetimeLocation {
             && self.noise_gate_type == other.noise_gate_type
             && self.clifford == other.clifford
             && self.idle_duration.to_bits() == other.idle_duration.to_bits()
+            && self.noiseless == other.noiseless
     }
 }
 
@@ -337,6 +347,7 @@ impl Ord for DagSpacetimeLocation {
             .then_with(|| self.noise_gate_type.cmp(&other.noise_gate_type))
             .then_with(|| self.clifford.cmp(&other.clifford))
             .then_with(|| self.idle_duration.total_cmp(&other.idle_duration))
+            .then_with(|| self.noiseless.cmp(&other.noiseless))
     }
 }
 
@@ -349,6 +360,7 @@ impl Hash for DagSpacetimeLocation {
         self.noise_gate_type.hash(state);
         self.clifford.hash(state);
         self.idle_duration.to_bits().hash(state);
+        self.noiseless.hash(state);
     }
 }
 
@@ -718,6 +730,8 @@ pub struct DagFaultInfluenceMap {
     /// The analyzer remains permissive for its non-DEM callers, but every DEM
     /// construction path checks and returns this structured error.
     unsupported_gate: Option<UnsupportedGateError>,
+    /// Invalid gate noise metadata retained for every DEM construction boundary.
+    noise_attribute_error: Option<String>,
 }
 
 impl DagFaultInfluenceMap {
@@ -753,6 +767,44 @@ impl DagFaultInfluenceMap {
             dem_output_labels: Vec::new(),
             dem_output_metadata: Vec::new(),
             unsupported_gate: None,
+            noise_attribute_error: None,
+        }
+    }
+
+    /// Resolve gate noise metadata without changing location or record indices.
+    pub(crate) fn resolve_gate_noise(&mut self, circuit: &DagCircuit) {
+        let mut noiseless_nodes = BTreeSet::new();
+        for node in circuit.topological_order() {
+            if let Some(gate) = circuit.gate(node) {
+                match crate::fault_tolerance::noise_attributes::resolve_noiseless(
+                    circuit.get_gate_attr(node, "noiseless"),
+                    gate.gate_type,
+                    super::UnsupportedGateLocation::DagNode { node },
+                ) {
+                    Ok(true) => {
+                        noiseless_nodes.insert(node);
+                    }
+                    Ok(false) => {}
+                    Err(error) => {
+                        self.noise_attribute_error.get_or_insert(error);
+                    }
+                }
+            }
+        }
+        for loc in &mut self.locations {
+            loc.noiseless = noiseless_nodes.contains(&loc.node);
+        }
+    }
+
+    /// Validate the metadata retained when circuit gates became fault locations.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first non-boolean `noiseless` attribute diagnostic.
+    pub fn validate_noise_attributes(&self) -> Result<(), String> {
+        match &self.noise_attribute_error {
+            Some(error) => Err(error.clone()),
+            None => Ok(()),
         }
     }
 
@@ -922,6 +974,10 @@ impl DagFaultInfluenceMap {
         if self.unsupported_gate.is_none() {
             self.unsupported_gate.clone_from(&other.unsupported_gate);
         }
+        if self.noise_attribute_error.is_none() {
+            self.noise_attribute_error
+                .clone_from(&other.noise_attribute_error);
+        }
         self.influences.dem_outputs_x = other.influences.dem_outputs_x.clone();
         self.influences.dem_outputs_y = other.influences.dem_outputs_y.clone();
         self.influences.dem_outputs_z = other.influences.dem_outputs_z.clone();
@@ -957,6 +1013,13 @@ impl DagFaultInfluenceMap {
     /// storage but are intentionally filtered out here so decoder-oriented GPU
     /// code cannot count tracked Paulis as logical errors.
     ///
+    /// Noiseless locations retain their indices but export empty rows in all
+    /// six effect arrays. A consumer applying a uniform fault probability can
+    /// therefore never create a detector or observable event at those locations.
+    /// The stored CSR row counts are preserved, even for hand-built maps whose
+    /// rows and locations differ. Rows beyond the locations remain unchanged.
+    /// The internal propagation rows are unchanged.
+    ///
     /// Returns all CSR arrays needed to construct a GPU influence sampler:
     /// (`num_locations`, `num_detectors`, `num_dem_outputs`,
     ///  `detector_offsets_x`, `detector_data_x`,
@@ -965,27 +1028,34 @@ impl DagFaultInfluenceMap {
     ///  `dem_output_offsets_x`, `dem_output_data_x`,
     ///  `dem_output_offsets_y`, `dem_output_data_y`,
     ///  `dem_output_offsets_z`, `dem_output_data_z`)
+    ///
+    /// # Errors
+    ///
+    /// Rejects non-boolean `noiseless` attributes before exporting any data.
     #[allow(clippy::type_complexity)]
-    #[must_use]
     pub fn export_csr(
         &self,
-    ) -> (
-        u32,
-        u32,
-        u32,
-        Vec<u32>,
-        Vec<u32>,
-        Vec<u32>,
-        Vec<u32>,
-        Vec<u32>,
-        Vec<u32>,
-        Vec<u32>,
-        Vec<u32>,
-        Vec<u32>,
-        Vec<u32>,
-        Vec<u32>,
-        Vec<u32>,
-    ) {
+    ) -> Result<
+        (
+            u32,
+            u32,
+            u32,
+            Vec<u32>,
+            Vec<u32>,
+            Vec<u32>,
+            Vec<u32>,
+            Vec<u32>,
+            Vec<u32>,
+            Vec<u32>,
+            Vec<u32>,
+            Vec<u32>,
+            Vec<u32>,
+            Vec<u32>,
+            Vec<u32>,
+        ),
+        String,
+    > {
+        self.validate_noise_attributes()?;
         #[allow(clippy::cast_possible_truncation)] // location count fits in u32
         let num_locations = self.locations.len() as u32;
         #[allow(clippy::cast_possible_truncation)] // detector count fits in u32
@@ -993,47 +1063,67 @@ impl DagFaultInfluenceMap {
         #[allow(clippy::cast_possible_truncation)] // DEM-output count fits in u32
         let num_dem_outputs = self.num_dem_outputs() as u32;
         let (dem_output_offsets_x, dem_output_data_x) =
-            self.observable_csr(&self.influences.dem_outputs_x);
+            self.noise_csr(&self.influences.dem_outputs_x, true);
         let (dem_output_offsets_y, dem_output_data_y) =
-            self.observable_csr(&self.influences.dem_outputs_y);
+            self.noise_csr(&self.influences.dem_outputs_y, true);
         let (dem_output_offsets_z, dem_output_data_z) =
-            self.observable_csr(&self.influences.dem_outputs_z);
+            self.noise_csr(&self.influences.dem_outputs_z, true);
 
-        (
+        let (detector_offsets_x, detector_data_x) =
+            self.noise_csr(&self.influences.detectors_x, false);
+        let (detector_offsets_y, detector_data_y) =
+            self.noise_csr(&self.influences.detectors_y, false);
+        let (detector_offsets_z, detector_data_z) =
+            self.noise_csr(&self.influences.detectors_z, false);
+
+        Ok((
             num_locations,
             num_detectors,
             num_dem_outputs,
-            self.influences.detectors_x.offsets.clone(),
-            self.influences.detectors_x.data.clone(),
-            self.influences.detectors_y.offsets.clone(),
-            self.influences.detectors_y.data.clone(),
-            self.influences.detectors_z.offsets.clone(),
-            self.influences.detectors_z.data.clone(),
+            detector_offsets_x,
+            detector_data_x,
+            detector_offsets_y,
+            detector_data_y,
+            detector_offsets_z,
+            detector_data_z,
             dem_output_offsets_x,
             dem_output_data_x,
             dem_output_offsets_y,
             dem_output_data_y,
             dem_output_offsets_z,
             dem_output_data_z,
-        )
+        ))
     }
 
-    fn observable_csr(&self, csr: &CsrArray) -> (Vec<u32>, Vec<u32>) {
-        if self.dem_output_metadata.is_empty() {
+    fn noise_csr(&self, csr: &CsrArray, observables: bool) -> (Vec<u32>, Vec<u32>) {
+        let filter_observables = observables && !self.dem_output_metadata.is_empty();
+        let has_marked_rows = self
+            .locations
+            .iter()
+            .take(csr.num_rows())
+            .any(|loc| loc.noiseless);
+        if !has_marked_rows && !filter_observables {
             return (csr.offsets.clone(), csr.data.clone());
         }
-
         let mut offsets = Vec::with_capacity(csr.offsets.len());
         let mut data = Vec::new();
         offsets.push(0);
         for row_idx in 0..csr.num_rows() {
-            data.extend(
-                csr.row(row_idx)
-                    .iter()
-                    .filter_map(|&idx| self.observable_id_for_internal_dem_output(idx)),
+            if !self.locations.get(row_idx).is_some_and(|loc| loc.noiseless) {
+                if filter_observables {
+                    data.extend(
+                        csr.row(row_idx)
+                            .iter()
+                            .filter_map(|&idx| self.observable_id_for_internal_dem_output(idx)),
+                    );
+                } else {
+                    data.extend_from_slice(csr.row(row_idx));
+                }
+            }
+            offsets.push(
+                u32::try_from(data.len())
+                    .expect("exported CSR is a subset of u32-indexed influence data"),
             );
-            #[allow(clippy::cast_possible_truncation)] // CSR data length fits in u32
-            offsets.push(data.len() as u32);
         }
         (offsets, data)
     }
@@ -1562,10 +1652,25 @@ fn xor_sorted(acc: &mut Vec<u32>, other: &[u32]) {
 }
 
 impl DagFaultInfluenceMap {
-    /// Group per-qubit locations into per-gate fault locations.
+    /// Index each structural gate timing by its first per-qubit location.
+    /// Shared by noise consumers to avoid rescanning locations for each gate.
+    pub(crate) fn gate_location_index(&self) -> BTreeMap<(usize, bool), (usize, bool)> {
+        let mut index = BTreeMap::new();
+        for (loc_idx, loc) in self.locations.iter().enumerate() {
+            index
+                .entry((loc.node, loc.before))
+                .or_insert((loc_idx, loc.noiseless));
+        }
+        index
+    }
+
+    /// Group structural per-qubit locations into per-gate fault locations.
     ///
     /// Each returned [`GateFaultLocation`] represents a gate at a specific
     /// timing (before/after) and supports querying multi-qubit Pauli events.
+    /// Includes marked gates and preserves structural location numbering.
+    /// Noise consumers validate attributes with [`Self::validate_noise_attributes`]
+    /// and read the resolved flag when deciding which sources to retain.
     ///
     /// ```
     /// use pecos_qec::fault_tolerance::propagator::dag::DagFaultInfluenceMap;
@@ -1638,6 +1743,9 @@ impl DagFaultInfluenceMap {
     /// fault event. At weight 2, all pairs of (location, event). And so on.
     ///
     /// Uses a callback to avoid allocating a potentially huge result vec.
+    /// Uses structural locations, including marked gates, so combination indices
+    /// are independent of noise metadata. Noise consumers validate attributes
+    /// separately and suppress sources using the resolved flag.
     ///
     /// ```
     /// use pecos_qec::fault_tolerance::propagator::dag::DagFaultInfluenceMap;
@@ -2051,6 +2159,7 @@ impl<'a> DagFaultAnalyzer<'a> {
 
         // Copy locations
         map.locations = self.locations.to_dag_spacetime_locations();
+        map.resolve_gate_noise(self.propagator.dag);
 
         // Extract measurements and create detectors
         let (measurements, meas_ids) = self.extract_measurements();
@@ -3409,7 +3518,7 @@ mod tests {
             dem_output_data_y,
             dem_output_offsets_z,
             dem_output_data_z,
-        ) = map.export_csr();
+        ) = map.export_csr().expect("valid fixture noise metadata");
 
         assert_eq!(num_dem_outputs, 0);
         assert!(
@@ -3477,7 +3586,7 @@ mod tests {
             _dem_output_data_y,
             _dem_output_offsets_z,
             _dem_output_data_z,
-        ) = map.export_csr();
+        ) = map.export_csr().expect("valid fixture noise metadata");
 
         assert_eq!(num_dem_outputs, 1);
         assert_eq!(dem_output_offsets_x, vec![0, 1]);

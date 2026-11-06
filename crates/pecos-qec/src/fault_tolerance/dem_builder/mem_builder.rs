@@ -75,6 +75,9 @@ impl<'a> MemBuilder<'a> {
     /// another scheduled gate's Clifford action is rejected here too instead of
     /// being silently ignored.
     pub fn build(&self) -> Result<MeasurementNoiseModel, DemBuilderError> {
+        self.influence_map
+            .validate_noise_attributes()
+            .map_err(DemBuilderError::ConfigurationError)?;
         if let Some(error) = self.influence_map.unsupported_gate() {
             return Err(DemBuilderError::UnsupportedGate(error.clone()));
         }
@@ -110,25 +113,30 @@ impl<'a> MemBuilder<'a> {
             self.noise.idle_noise_request(),
         )?;
 
-        let locations = &self.influence_map.locations;
         let mut two_qubit_groups: std::collections::BTreeMap<usize, Vec<usize>> =
             std::collections::BTreeMap::new();
 
-        for (loc_idx, loc) in locations.iter().enumerate() {
+        for (loc_idx, loc) in self.influence_map.locations.iter().enumerate() {
+            let mut discarded = MeasurementNoiseModel::new(num_measurements);
+            let target = if loc.noiseless {
+                &mut discarded
+            } else {
+                &mut mem
+            };
             match loc.gate_type {
                 GateType::PZ | GateType::QAlloc if self.noise.p_prep > 0.0 && !loc.before => {
-                    self.process_single_pauli_fault(loc_idx, Pauli::X, self.noise.p_prep, &mut mem);
+                    self.process_single_pauli_fault(loc_idx, Pauli::X, self.noise.p_prep, target);
                 }
                 GateType::PX if self.noise.p_prep > 0.0 && !loc.before => {
-                    self.process_single_pauli_fault(loc_idx, Pauli::Z, self.noise.p_prep, &mut mem);
+                    self.process_single_pauli_fault(loc_idx, Pauli::Z, self.noise.p_prep, target);
                 }
                 GateType::MX if self.noise.p_meas > 0.0 && loc.before => {
-                    self.process_single_pauli_fault(loc_idx, Pauli::Z, self.noise.p_meas, &mut mem);
+                    self.process_single_pauli_fault(loc_idx, Pauli::Z, self.noise.p_meas, target);
                 }
                 GateType::MZ | GateType::MeasureFree | GateType::MPZ
                     if self.noise.p_meas > 0.0 && loc.before =>
                 {
-                    self.process_single_pauli_fault(loc_idx, Pauli::X, self.noise.p_meas, &mut mem);
+                    self.process_single_pauli_fault(loc_idx, Pauli::X, self.noise.p_meas, target);
                 }
                 gate_type if is_two_qubit_noise_gate(gate_type) && !loc.before => {
                     two_qubit_groups.entry(loc.node).or_default().push(loc_idx);
@@ -154,7 +162,7 @@ impl<'a> MemBuilder<'a> {
                 | GateType::RXY1Q
                     if !loc.before =>
                 {
-                    self.process_single_qubit_fault(loc_idx, &mut mem)?;
+                    self.process_single_qubit_fault(loc_idx, target)?;
                 }
                 GateType::Idle if !loc.before && self.noise.uses_dedicated_idle_noise() => {
                     let duration = loc.idle_duration;
@@ -162,7 +170,7 @@ impl<'a> MemBuilder<'a> {
                         .noise
                         .try_idle_channel_families(duration)
                         .map_err(|error| DemBuilderError::ConfigurationError(error.to_string()))?;
-                    self.process_idle_fault(loc_idx, families, &mut mem)?;
+                    self.process_idle_fault(loc_idx, families, target)?;
                 }
                 _ => {}
             }
@@ -172,7 +180,17 @@ impl<'a> MemBuilder<'a> {
             for loc_indices in two_qubit_groups.values() {
                 for pair in loc_indices.chunks(2) {
                     if pair.len() == 2 {
-                        self.process_two_qubit_fault(pair[0], pair[1], &mut mem)?;
+                        let loc = &self.influence_map.locations[pair[0]];
+                        let other = &self.influence_map.locations[pair[1]];
+                        debug_assert_eq!(loc.node, other.node);
+                        debug_assert_eq!(loc.noiseless, other.noiseless);
+                        let mut discarded = MeasurementNoiseModel::new(num_measurements);
+                        let target = if loc.noiseless {
+                            &mut discarded
+                        } else {
+                            &mut mem
+                        };
+                        self.process_two_qubit_fault(pair[0], pair[1], target)?;
                     }
                 }
             }

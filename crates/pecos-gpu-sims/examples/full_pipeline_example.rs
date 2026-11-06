@@ -111,7 +111,9 @@ fn main() {
         dem_output_data_y,
         dem_output_offsets_z,
         dem_output_data_z,
-    ) = influence_map.export_csr();
+    ) = influence_map
+        .export_csr()
+        .expect("example circuit has valid noise metadata");
 
     println!(
         "   Exported CSR: {num_locations} locations, {num_detectors} detectors, {num_dem_outputs} DEM outputs"
@@ -188,7 +190,9 @@ fn main() {
         dem_output_data_y,
         dem_output_offsets_z,
         dem_output_data_z,
-    ) = influence_map.export_csr();
+    ) = influence_map
+        .export_csr()
+        .expect("example circuit has valid noise metadata");
 
     let gpu_map = GpuInfluenceMapData::from_csr(
         num_locations,
@@ -251,7 +255,9 @@ fn main() {
             dem_output_data_y,
             dem_output_offsets_z,
             dem_output_data_z,
-        ) = influence_map.export_csr();
+        ) = influence_map
+            .export_csr()
+            .expect("example circuit has valid noise metadata");
 
         let gpu_map = GpuInfluenceMapData::from_csr(
             num_locations,

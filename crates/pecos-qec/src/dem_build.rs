@@ -386,6 +386,8 @@ impl DemBuildBuilder {
         self.noise = Some(noise);
         self
     }
+    /// Insert separate Idle gates after two-qubit operations. Inserted Idle gates
+    /// carry no attributes and are always noisy, even after a noiseless gate.
     #[must_use]
     pub fn with_idle_after_2q(mut self, duration: f64) -> Self {
         self.idle_after_2q = Some(duration);
@@ -405,6 +407,10 @@ impl DemBuildBuilder {
     /// Rejects conflicting inputs, invalid settings/metadata, failed inference,
     /// and unsupported circuits or noise models.
     pub fn build(mut self) -> Result<DemBuild, DemBuildError> {
+        if let Some(circuit) = &self.circuit {
+            crate::fault_tolerance::noise_attributes::validate_tick_noise_attributes(circuit)
+                .map_err(DemBuildError::Configuration)?;
+        }
         if let Some(error) = self.configuration_error {
             return Err(DemBuildError::Configuration(error));
         }
@@ -465,6 +471,10 @@ impl DemBuildBuilder {
             }
         };
         let mut circuit = input.circuit;
+        if self.program.is_some() {
+            crate::fault_tolerance::noise_attributes::validate_tick_noise_attributes(&circuit)
+                .map_err(DemBuildError::Configuration)?;
+        }
         let sets_definitions = needs_inference
             || self.detectors.is_some()
             || self.observables.is_some()

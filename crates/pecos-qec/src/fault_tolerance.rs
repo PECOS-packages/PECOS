@@ -31,6 +31,7 @@ pub mod gadget_checker;
 pub mod hook_errors;
 pub mod influence_builder;
 pub mod lookup_decoder;
+pub(crate) mod noise_attributes;
 pub mod pauli_frame;
 pub mod pauli_prop_checker;
 pub mod propagator;

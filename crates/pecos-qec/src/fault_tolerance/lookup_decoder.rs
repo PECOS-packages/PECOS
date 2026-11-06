@@ -33,7 +33,7 @@
 //! ```
 
 use super::dem_builder::{DemBuilderError, NoiseConfig, validate_idle_noise_targets};
-use super::propagator::dag::{DagFaultInfluenceMap, DagSpacetimeLocation, GateFaultLocation};
+use super::propagator::dag::{DagFaultInfluenceMap, DagSpacetimeLocation};
 use pecos_core::gate_type::GateType;
 use std::collections::BTreeMap;
 
@@ -76,11 +76,17 @@ impl LookupDecoder {
     /// Returns a configuration error if a fault location contains duplicate
     /// qubits, a gate-rate key would not apply as written, or `noise` requests
     /// idle noise and the map has no idle location to carry it.
+    ///
+    /// # Panics
+    /// Panics if structural gate enumeration and its index disagree. Both are
+    /// built from the same immutable map, so agreement is an internal invariant.
     pub fn build(
         map: &DagFaultInfluenceMap,
         noise: &NoiseConfig,
         max_weight: usize,
     ) -> Result<Self, DemBuilderError> {
+        map.validate_noise_attributes()
+            .map_err(DemBuilderError::ConfigurationError)?;
         noise
             .validate_gate_rate_keys(&map.locations)
             .map_err(|error| DemBuilderError::ConfigurationError(error.to_string()))?;
@@ -90,6 +96,7 @@ impl LookupDecoder {
 
         let loc_probs = compute_location_probs(&map.locations, noise);
         let locs = map.gate_fault_locations();
+        let location_index = map.gate_location_index();
 
         // Pre-compute events and no-fault probabilities per gate location.
         //
@@ -103,7 +110,10 @@ impl LookupDecoder {
         let mut loc_events: Vec<Vec<EventData>> = Vec::with_capacity(locs.len());
 
         for loc in &locs {
-            let p = gate_location_prob(loc, &loc_probs, &map.locations);
+            let &(loc_idx, noiseless) = location_index
+                .get(&(loc.node, loc.before))
+                .expect("gate locations and their index are built from the same influence map");
+            let p = loc_probs[loc_idx];
 
             let events = loc
                 .all_events()
@@ -112,11 +122,7 @@ impl LookupDecoder {
 
             // For idle gates with T1/T2, compute biased per-Pauli probabilities
             let idle_pauli_probs = if loc.gate_type == GateType::Idle {
-                let duration = map
-                    .locations
-                    .iter()
-                    .find(|l| l.node == loc.node && l.before == loc.before)
-                    .map_or(0.0, |l| l.idle_duration);
+                let duration = map.locations[loc_idx].idle_duration;
                 Some(noise.idle_pauli_probs(duration))
             } else {
                 None
@@ -201,6 +207,10 @@ impl LookupDecoder {
                 })
                 .collect();
 
+            // Structural enumeration (and its validation) includes marked gates.
+            if noiseless {
+                continue;
+            }
             loc_no_fault_probs.push(no_fault);
             loc_events.push(event_data);
         }
@@ -470,24 +480,6 @@ fn enumerate_combos(
 /// Compute per-location error probabilities from noise config.
 fn compute_location_probs(locations: &[DagSpacetimeLocation], noise: &NoiseConfig) -> Vec<f64> {
     super::dem_builder::sampler::compute_location_probs_from_noise(locations, noise)
-}
-
-/// Get the per-qubit error probability for a gate fault location.
-///
-/// Since `gate_fault_locations` groups per-qubit locations, all per-qubit
-/// locations within a gate have the same gate-type-based probability.
-fn gate_location_prob(
-    loc: &GateFaultLocation<'_>,
-    loc_probs: &[f64],
-    all_locations: &[DagSpacetimeLocation],
-) -> f64 {
-    // Find any per-qubit location in the influence map for this gate
-    for (i, l) in all_locations.iter().enumerate() {
-        if l.node == loc.node && l.before == loc.before {
-            return loc_probs[i];
-        }
-    }
-    0.0
 }
 
 fn observable_ids(map: &DagFaultInfluenceMap) -> Vec<u32> {

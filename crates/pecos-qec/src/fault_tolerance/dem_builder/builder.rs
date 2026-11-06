@@ -303,6 +303,8 @@ impl<'a> DemBuilder<'a> {
         p_meas: f64,
         p_prep: f64,
     ) -> Result<DetectorErrorModel, DemBuilderError> {
+        crate::fault_tolerance::noise_attributes::validate_tick_noise_attributes(circuit)
+            .map_err(DemBuilderError::ConfigurationError)?;
         if let Some(error) =
             crate::fault_tolerance::propagator::first_unsupported_tick_gate(circuit)
         {
@@ -333,6 +335,8 @@ impl<'a> DemBuilder<'a> {
         circuit: &pecos_quantum::TickCircuit,
         noise: NoiseConfig,
     ) -> Result<DetectorErrorModel, DemBuilderError> {
+        crate::fault_tolerance::noise_attributes::validate_tick_noise_attributes(circuit)
+            .map_err(DemBuilderError::ConfigurationError)?;
         if let Some(error) =
             crate::fault_tolerance::propagator::first_unsupported_tick_gate(circuit)
         {
@@ -866,6 +870,9 @@ impl<'a> DemBuilder<'a> {
     }
 
     fn validate_supported_gates(&self) -> Result<(), DemBuilderError> {
+        self.influence_map
+            .validate_noise_attributes()
+            .map_err(DemBuilderError::ConfigurationError)?;
         if let Some(error) = self.influence_map.unsupported_gate() {
             return Err(DemBuilderError::UnsupportedGate(error.clone()));
         }
@@ -1599,6 +1606,13 @@ impl<'a> DemBuilder<'a> {
         let locations = &self.influence_map.locations;
 
         for (loc_idx, loc) in locations.iter().enumerate() {
+            // Fitting and replay are independent of output accumulation.
+            let mut discarded = DetectorErrorModel::new();
+            let dem = if loc.noiseless {
+                &mut discarded
+            } else {
+                &mut *dem
+            };
             match loc.gate_type {
                 gate_type
                     if is_supported_prep_gate(gate_type)
@@ -1714,6 +1728,14 @@ impl<'a> DemBuilder<'a> {
         for [loc1_idx, loc2_idx] in two_qubit_after_location_pairs(locations) {
             let loc1 = &locations[loc1_idx];
             let loc2 = &locations[loc2_idx];
+            debug_assert_eq!(loc1.node, loc2.node);
+            debug_assert_eq!(loc1.noiseless, loc2.noiseless);
+            let mut discarded = DetectorErrorModel::new();
+            let dem = if loc1.noiseless {
+                &mut discarded
+            } else {
+                &mut *dem
+            };
             let rates = self.rates_2q_for_locs(loc1, loc2);
             if rates.iter().any(|r| *r != 0.0) {
                 self.process_two_qubit_fault_source_tracked(
@@ -2750,10 +2772,13 @@ fn extract_definition_label(
     }
 }
 
-/// Validate measurement counts and unique stamped IDs at sampler and MEM boundaries.
+/// Validate gate noise metadata, measurement counts and unique stamped IDs at sampler
+/// and MEM boundaries.
 pub(crate) fn validate_sampler_measurements(
     map: &DagFaultInfluenceMap,
 ) -> Result<(), DemBuilderError> {
+    map.validate_noise_attributes()
+        .map_err(DemBuilderError::ConfigurationError)?;
     DemBuilder::new(map).validate_measurement_count()
 }
 
@@ -3430,6 +3455,9 @@ fn build_dem_from_circuit(
     let definitions = definitions_from_dag_circuit(circuit)?;
 
     let mut influence_map = DagFaultAnalyzer::new(circuit).build_influence_map_diagnostic();
+    influence_map
+        .validate_noise_attributes()
+        .map_err(DemBuilderError::ConfigurationError)?;
     if let Some(error) = influence_map.unsupported_gate() {
         return Err(DemBuilderError::UnsupportedGate(error.clone()));
     }

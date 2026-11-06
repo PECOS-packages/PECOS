@@ -463,6 +463,10 @@ impl SamplingEngine {
     ) -> Result<Self, super::DemBuilderError> {
         use pecos_core::gate_type::GateType;
 
+        influence_map
+            .validate_noise_attributes()
+            .map_err(super::DemBuilderError::ConfigurationError)?;
+
         if let Some(error) = influence_map.unsupported_gate() {
             return Err(super::DemBuilderError::UnsupportedGate(error.clone()));
         }
@@ -496,8 +500,18 @@ impl SamplingEngine {
         let mut idle_noise_residuals = Vec::new();
 
         let gate_locs = influence_map.gate_fault_locations();
+        let location_index = influence_map.gate_location_index();
 
         for loc in &gate_locs {
+            let &(loc_idx, noiseless) = location_index
+                .get(&(loc.node, loc.before))
+                .expect("gate locations and their index are built from the same influence map");
+            let mut discarded = (BTreeMap::new(), Vec::new());
+            let (aggregated, idle_noise_residuals) = if noiseless {
+                (&mut discarded.0, &mut discarded.1)
+            } else {
+                (&mut aggregated, &mut idle_noise_residuals)
+            };
             let duplicates =
                 pecos_core::duplicate_qubits(loc.qubits.iter().map(pecos_core::QubitId::index));
             if !duplicates.is_empty() {
@@ -506,11 +520,7 @@ impl SamplingEngine {
                     loc.node, loc.qubits
                 )));
             }
-            let p = super::sampler::gate_location_prob_from_locations(
-                loc,
-                per_location_probs,
-                &influence_map.locations,
-            );
+            let p = per_location_probs[loc_idx];
             if p == 0.0 {
                 continue;
             }
@@ -524,11 +534,7 @@ impl SamplingEngine {
 
             let is_idle = loc.gate_type == GateType::Idle;
             if is_idle {
-                let duration = influence_map
-                    .locations
-                    .iter()
-                    .find(|l| l.node == loc.node && l.before == loc.before)
-                    .map_or(0.0, |l| l.idle_duration);
+                let duration = influence_map.locations[loc_idx].idle_duration;
                 let families = noise.try_idle_channel_families(duration).map_err(|error| {
                     super::DemBuilderError::ConfigurationError(error.to_string())
                 })?;
@@ -563,13 +569,6 @@ impl SamplingEngine {
                     .clone()
                     .unwrap_or_else(DemMechanism::empty);
                 debug_assert_eq!(y, x.xor(&z));
-                let loc_idx = influence_map
-                    .locations
-                    .iter()
-                    .position(|candidate| {
-                        candidate.node == loc.node && candidate.before == loc.before
-                    })
-                    .expect("idle gate location must have a fault location");
 
                 for (family_index, probabilities) in families.exclusive.into_iter().enumerate() {
                     let channel_weight = probabilities.total();
@@ -662,11 +661,6 @@ impl SamplingEngine {
                 vec![per_event; events.len()]
             };
 
-            let loc_idx = influence_map
-                .locations
-                .iter()
-                .position(|candidate| candidate.node == loc.node && candidate.before == loc.before)
-                .expect("gate event must have a fault location");
             let channel_kind = if n_qubits == 2 {
                 NoiseChannelKind::TwoQubitGate
             } else {
@@ -2319,6 +2313,12 @@ impl<'a> SamplingEngineBuilder<'a> {
 
         // Process each fault location
         for (loc_idx, loc) in self.influence_map.locations.iter().enumerate() {
+            let mut discarded = (BTreeMap::new(), Vec::new());
+            let (aggregated, idle_noise_residuals) = if loc.noiseless {
+                (&mut discarded.0, &mut discarded.1)
+            } else {
+                (&mut aggregated, &mut idle_noise_residuals)
+            };
             match loc.gate_type {
                 GateType::PZ | GateType::QAlloc
                     // Prep errors: only "after" locations (X error for Z-basis prep)
@@ -2331,7 +2331,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                             Pauli::X,
                             p,
                             &mechanism_context,
-                            &mut aggregated,
+                            aggregated,
                         );
                     }
                 }
@@ -2343,7 +2343,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                             Pauli::Z,
                             p,
                             &mechanism_context,
-                            &mut aggregated,
+                            aggregated,
                         );
                     }
                 }
@@ -2358,7 +2358,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                             Pauli::X,
                             p,
                             &mechanism_context,
-                            &mut aggregated,
+                            aggregated,
                         );
                     }
                 }
@@ -2370,7 +2370,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                             Pauli::Z,
                             p,
                             &mechanism_context,
-                            &mut aggregated,
+                            aggregated,
                         );
                     }
                 }
@@ -2407,8 +2407,8 @@ impl<'a> SamplingEngineBuilder<'a> {
                             loc_idx,
                             rates,
                             &mechanism_context,
-                            &mut aggregated,
-                            &mut idle_noise_residuals,
+                            aggregated,
+                            idle_noise_residuals,
                         )?;
                     }
                 }
@@ -2424,8 +2424,8 @@ impl<'a> SamplingEngineBuilder<'a> {
                             loc_idx,
                             families,
                             &mechanism_context,
-                            &mut aggregated,
-                            &mut idle_noise_residuals,
+                            aggregated,
+                            idle_noise_residuals,
                         )?;
                     }
                 }
@@ -2448,6 +2448,14 @@ impl<'a> SamplingEngineBuilder<'a> {
                     // ordered (control, target) pair.
                     let loc0 = &self.influence_map.locations[pair[0]];
                     let loc1 = &self.influence_map.locations[pair[1]];
+                    debug_assert_eq!(loc0.node, loc1.node);
+                    debug_assert_eq!(loc0.noiseless, loc1.noiseless);
+                    let mut discarded = (BTreeMap::new(), Vec::new());
+                    let (aggregated, idle_noise_residuals) = if loc0.noiseless {
+                        (&mut discarded.0, &mut discarded.1)
+                    } else {
+                        (&mut aggregated, &mut idle_noise_residuals)
+                    };
                     let gate_type = loc0.gate_type;
                     let pair_qubits: Vec<_> = loc0
                         .qubits
@@ -2462,8 +2470,8 @@ impl<'a> SamplingEngineBuilder<'a> {
                             pair[1],
                             rates,
                             &mechanism_context,
-                            &mut aggregated,
-                            &mut idle_noise_residuals,
+                            aggregated,
+                            idle_noise_residuals,
                         )?;
                     }
                 }

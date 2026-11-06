@@ -34,7 +34,8 @@ class LoopVar:
     The symbolic element is resolved to concrete indices during code generation
     when the loop is unrolled.
 
-    Comparisons, `+` and `-` build SLR expressions, so `If(i == 0)` keeps the
+    Comparisons, `+` and `-` build SLR expressions with the loop variable on
+    either side, so `If(i == 0)` and `If(2 - i > 1)` keep the
     loop variable instead of evaluating to a Python bool. Bitwise and unary
     operators are deliberately absent: code generators treat their operands as
     bools, which a loop variable is not. Because `==` builds an expression,
@@ -68,6 +69,12 @@ class LoopVar:
 
     def __sub__(self, other):
         return MINUS(self, other)
+
+    def __radd__(self, other):
+        return PLUS(other, self) if isinstance(other, int) else NotImplemented
+
+    def __rsub__(self, other):
+        return MINUS(other, self) if isinstance(other, int) else NotImplemented
 
     def __init__(self, name: str) -> None:
         """Create a loop variable.

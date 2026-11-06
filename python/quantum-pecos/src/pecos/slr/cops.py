@@ -108,6 +108,34 @@ class PyCOp:
         """A << b."""
         return LSHIFT(self, other)
 
+    def __rxor__(self, other):
+        """B ^ a, for an integer literal b."""
+        return XOR(other, self) if isinstance(other, int) else NotImplemented
+
+    def __rand__(self, other):
+        """B & a, for an integer literal b."""
+        return AND(other, self) if isinstance(other, int) else NotImplemented
+
+    def __ror__(self, other):
+        """B | a, for an integer literal b."""
+        return OR(other, self) if isinstance(other, int) else NotImplemented
+
+    def __radd__(self, other):
+        """B + a, for an integer literal b."""
+        return PLUS(other, self) if isinstance(other, int) else NotImplemented
+
+    def __rsub__(self, other):
+        """B - a, for an integer literal b."""
+        return MINUS(other, self) if isinstance(other, int) else NotImplemented
+
+    def __rrshift__(self, other):
+        """B >> a, for an integer literal b."""
+        return RSHIFT(other, self) if isinstance(other, int) else NotImplemented
+
+    def __rlshift__(self, other):
+        """B << a, for an integer literal b."""
+        return LSHIFT(other, self) if isinstance(other, int) else NotImplemented
+
 
 class COp(Expression, PyCOp):
     """Classical operation."""

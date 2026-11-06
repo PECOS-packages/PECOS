@@ -7,7 +7,6 @@ from collections import Counter
 from itertools import product
 
 import pytest
-import stim
 from pecos.qec.circuit_steps import CircuitStep, OpType
 from pecos.qec.helix import (
     HelixAllocation,
@@ -22,7 +21,6 @@ from pecos.qec.helix import (
     memory_steps,
     weight8_check_steps,
 )
-from pecos.qec.surface.circuit_builder import tick_circuit_to_stim
 from pecos.simulators import PauliProp
 from pecos.testing import deterministic_parity_basis, group_contains, simulate_tick_circuit, stabilizer_generators_after
 from pecos_rslib import PauliStabilizerGroup, PauliString
@@ -324,7 +322,10 @@ def test_memory_records_determinism_and_completeness(basis: str, rounds: int) ->
         _, fired, observables = simulate_tick_circuit(tc, seed)
         assert fired == 0
         assert observables == references
-    shots = stim.Circuit(tick_circuit_to_stim(tc)).compile_sampler(seed=17).sample(2048)
+    # With records + 65 independent uniform shots, a miss has probability below 2**-64.
+    # A miss makes a random parity look deterministic, allowing a false pass or false failure.
+    num_shots = definitions["num_measurements"] + 65
+    shots = [simulate_tick_circuit(tc, seed)[0] for seed in range(17, 17 + num_shots)]
     space = deterministic_parity_basis(shots)
     emitted = [
         sum(1 << record for record in entry["measurements"])

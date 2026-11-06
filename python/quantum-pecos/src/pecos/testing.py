@@ -468,8 +468,11 @@ def deterministic_parity_basis(shots: Iterable[Sequence[int]]) -> tuple[int, ...
     Each input row is a sequence of binary measurement outcomes. Each returned
     integer is a bit mask: bit j selects measurement j. The nullspace of shot
     differences includes both constant-zero and constant-one parities. This is
-    a sampling oracle, so callers must use enough independent noiseless shots
-    to span the random outcomes (2048 or more for small Clifford circuits).
+    a sampling oracle: use number of measurement records + 65 independent
+    uniform noiseless shots for a probability below 2^-64 of missing a random
+    direction. A miss makes a random parity look deterministic, which can
+    produce a false pass or a false failure when comparing the sampled parity
+    space with the emitted parity space.
     It does not infer the parity's constant value or prove sampling completeness.
     At least width + 1 shots are required to allow full rank of shot differences.
     A circuit with no measurements returns an empty basis.

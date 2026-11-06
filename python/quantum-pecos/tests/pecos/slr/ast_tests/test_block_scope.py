@@ -245,6 +245,14 @@ def test_guppy_loop_variable_does_not_escape() -> None:
         ast_to_guppy(program)
 
 
+def test_guppy_rejects_reuse_of_enclosing_loop_variable() -> None:
+    """An inner Python loop would overwrite the index used after its body."""
+    c, x = CReg("c", 2), LoopVar("x")
+    program = Main(c, For(x, 0, 2).Do(For(x, 0, 1).Do(c[x].set(c[x])), c[x].set(c[x])), c.set(c))
+    with pytest.raises(GuppyCodegenError, match=r"'x'.*enclosing loop variable.*Rename the loop label"):
+        SlrConverter(program).guppy()
+
+
 # Compatibility: these uses were valid before scope validation.
 def test_compat_plain_block_symbolic_bits_compile() -> None:
     qr, e, c, x = QReg("qr", 2), CReg("e", 2), CReg("c", 2), LoopVar("x")
@@ -264,12 +272,6 @@ def test_compat_block_inner_loop_bit_input_compiles() -> None:
             self.extend(For(x, 0, 1).Do(c[0].set("bit[x]")))
 
     assert SlrConverter(Main(c, Inner())).hugr() is not None
-
-
-def test_compat_guppy_shadowed_loop_variables_and_scalars() -> None:
-    c, x = CReg("c", 2), LoopVar("x")
-    program = Main(c, For(x, 0, 2).Do(For(x, 0, 1).Do(c[x].set(c[x])), c[x].set(c[x])), c.set(c))
-    assert "c = c" in SlrConverter(program).guppy()
 
 
 @pytest.mark.parametrize("reference", ["c", "c[0]", "c[x]", "bit[x]", "x"])

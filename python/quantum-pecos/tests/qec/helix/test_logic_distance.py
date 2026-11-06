@@ -14,6 +14,7 @@ from pecos.qec.helix import (
     c4_helix_code,
     helix_result_refs,
     logic_circuit,
+    logic_conjugates,
     logical_gate_steps,
     lower_steps,
     memory_conjugates,
@@ -99,11 +100,42 @@ def test_logic_full_noise_z_bounds():
 def test_logic_full_noise_x_floor():
     """Exact distance four is the owner-accepted full-noise X floor of 2026-10-29.
 
-    Round faults feeding a gate spread through its CZs. Six holds with gate
-    faults only (test_logic_gate_fault_upper_bound). This circuit has prepare,
-    round, S0S1, round, S0S1, round, and X readout. Both a drop to three and a
-    rise fail this test.
+    This circuit has prepare, round, S0S1, round, S0S1, round, and X readout.
+    The floor comes from the X-basis boundaries: X preparation gives the first
+    round's Z checks no reference and X readout gives no final Z values, so X
+    errors next to a boundary go undetected and S0S1 turns them into Z errors.
+    It stays four with both gates noiseless; six holds with gate faults only
+    (test_logic_gate_fault_upper_bound). Both a drop to three and a rise fail
+    this test.
     """
     circuit = logic_circuit("X", ("S0S1", "S0S1"))
     _witness(stim.Circuit(tick_circuit_to_stim(circuit, **UNIFORM_NOISE)), 4, "full-noise X")
     _cluster(circuit, 3, "full-noise X")
+
+
+@pytest.mark.slow
+def test_logic_full_noise_x_padded_exact_five():
+    """Three rounds before the first S0S1 and two after the last give exactly five.
+
+    Padding moves both X boundaries two Z-check rounds away from the gates.
+    Five is also the most an S0S1 inside a circuit reaches: four faults in the
+    two rounds before it and one in its CZ flags stay undetectable with the
+    gate moved two rounds deeper and four rounds after it. Both a drop to four
+    and a rise fail this test.
+    """
+    tokens = ("S0S1", "S0S1")
+    memory = memory_gadgets("X", 3)
+    steps = [step for _, gadget in memory[:-1] for step in gadget]
+    for variant in "ba":
+        steps.extend(logical_gate_steps("S0S1"))
+        steps.extend(step for _, gadget in syndrome_round_gadgets(variant) for step in gadget)
+    steps.extend(step for _, gadget in syndrome_round_gadgets("b") for step in gadget)
+    steps.extend(memory[-1][1])
+    circuit = lower_steps(steps, HelixAllocation.NUM_SLOTS).tick_circuit
+    records = {ref: record for record, ref in enumerate(helix_result_refs(circuit))}
+    observables = [
+        [records[(f"data:{q}", 0)] for q, axis in enumerate(row) if axis != "I"] for row in c4_helix_code().logical_x
+    ]
+    set_discovered_metadata(circuit, discover_detectors(circuit, observables, logic_conjugates("X", tokens)))
+    _witness(stim.Circuit(tick_circuit_to_stim(circuit, **UNIFORM_NOISE)), 5, "padded full-noise X")
+    _cluster(circuit, 4, "padded full-noise X")

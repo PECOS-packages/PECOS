@@ -14,10 +14,43 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   accepted on the left, so a mistyped `Measure(q[0]) >> c` still raises
   `TypeError` instead of building an expression the converter would drop.
 
-- Both SLR QASM generators emit a Python `bool` literal as `1` or `0`. Before,
-  `c[1].set(True)` and `c[1].set(c[0] ^ True)` emitted `True`, which is not
-  OpenQASM: the PECOS QASM engine read it as `0`, and now rejects it as an
-  undeclared register.
+- **Breaking:** Guppy code generation rejects `For` labels that shadow a register,
+  allocator, block input or generated temporary. Loop labels, registers,
+  allocators and block inputs are also rejected when the same generated function
+  both binds the name and calls it (including builtins such as `range`). This rule
+  is deliberately conservative: it rejects even when the call comes before the
+  binding, without flow analysis. Shadowing unused imports or helpers remains supported.
+  A nested `For` that reuses an enclosing loop variable is now rejected in Guppy:
+  Python leaves the variable at the inner loop's last value, silently changing
+  subsequent operations in the outer loop. Errors name the collision and ask
+  the user to rename the loop label, register, allocator or block input.
+  User names starting with the generated prefixes `_measurement_`, `_call_ret_`,
+  `_repeat_` or `_comprehension_` are now rejected.
+
+- Guppy entry wrappers avoid binding user allocator and return names, so names
+  such as `qubit`, `range`, `main`, `array` and `result` do not shadow wrapper calls.
+
+- Guppy `Repeat` counters and array-comprehension variables use reserved temporary
+  names, preserving user loop variables such as `_`.
+
+- **Breaking:** Guppy rejects invalid identifiers, Python keywords, `__debug__` and names that
+  are not NFKC-normalized when used as register, allocator, block input or loop
+  names. The code generation error names the binding and asks the user to rename it.
+
+- QASM code generation renders boolean literals as `1` and `0`, including
+  assignments and expressions in the deprecated QASM generator.
+
+- SLR conversion recognizes NumPy boolean scalars as boolean literals rather
+  than references to variables named `True` or `False`.
+
+- Guppy supports zero-width classical registers, including literal assignments,
+  copies and returns, by preserving the element type of empty bool arrays.
+
+- The deprecated QuantumCircuit generator handles empty `For` loops in both
+  range and start/stop forms and preserves outer iteration values after nested loops.
+
+- Guppy single-bit assignment errors name the SLR value and suggest a comparison,
+  bit index or valid bit value. Integer-to-bool errors suggest using `0` or `1`.
 
 - **Breaking:** pecos-neo `channel_action` now runs its wrapped channel once per
   operand group per invocation site and stage (#1568). Each stage chooses its

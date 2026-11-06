@@ -1003,8 +1003,7 @@ class AstToQasm(BaseVisitor[list[str]]):
             # OpenQASM stored rotations are emitted in radians.
             return str(node.value.value.to_radians_signed())
         if isinstance(node.value, bool):
-            # OpenQASM has no True/False; a bool literal is the bit value 1 or 0.
-            return str(int(node.value))
+            return "1" if node.value else "0"
         return str(node.value)
 
     def _render_binary(self, node: BinaryExpr) -> str:

@@ -10,30 +10,31 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! Parity of the native Relay-BP against the external `relay-bp` crate
-//! (through the `pecos-relay-bp` wrapper, a dev-dependency here) on the
-//! [[144,12,12]] gross-code circuit-level DEM shipped in `tests/data`.
+//! Parity against frozen outputs of `relay-bp` 0.2.2 on the gross-code DEM.
 //!
-//! The two implementations share the update rule, the flooding schedule, the
-//! memory term, and the relay structure, but not floating-point summation
-//! order, so per-shot agreement is high but not bitwise. Three contracts:
+//! Fixture headers are the sole source of each decoder configuration. For
+//! c1, c2, c5, c6, c7 and c8, flags and total iterations agree on at least
+//! 98/100 shots; jointly converged counts are within two of the smaller
+//! convergence count, and at least 19/20 jointly converged corrections match.
+//! Both successes and failures must occur in each such configuration.
+//! For c3, independent random streams give convergence counts within five;
+//! native shot seed equals shot index and its 76/100 count pins draw order.
+//! For c4, native must converge wherever the oracle did and have no more than
+//! five additional logical errors. Every shot checks the expected leg count.
 //!
-//! 1. Leg 0 only (`num_legs`/`num_sets` are both zero, so no relay gamma is
-//!    sampled), at iteration budgets where both successes and failures occur:
-//!    per-shot convergence flags and corrections must agree on almost every
-//!    shot.
-//! 2. Relayed legs with one explicit gamma vector shared by both decoders:
-//!    the same per-shot agreement, now exercising the memory term with
-//!    signed gammas and the warm start.
-//! 3. Relayed legs with each side's own random gammas: convergence counts
-//!    agree within a margin, and every native leg demonstrably ran.
+//! Known non-bitwise differences: floating-point summation order; hard
+//! decisions at exactly zero (external `<= 0`, native `< 0`); saturation
+//! (external `f64::MAX`, native 30); all-legs-failed fallback (external leg
+//! zero, native last leg); and check-message sign at -0.0 (external uses
+//! `is_sign_negative`, native counts -0.0 as positive).
 //!
-//! The full operating point is kept as an end-to-end smoke test.
+//! c7's external failed-shot correction is stale from a previous decode when
+//! `pre_iter = 0`. Compare flags, iterations and jointly converged corrections
+//! only, with no logical-error assertion for that configuration.
 
-use pecos_bp::BpGraph;
-use pecos_bp::relay::{RelayBp, RelayConfig, Schedule};
+use pecos_bp::{Alpha, BpGraph, RelayBp, RelayConfig, RelayOutcome, Schedule, StopRule};
 use pecos_decoder_core::dem::DemCheckMatrix;
-use pecos_relay_bp::{RelayBpBuilder, RelayBpDecoder, StoppingCriterion};
+use std::collections::BTreeMap;
 
 /// One fixture shot: `(detector bits, true observable flips)`.
 type Shot = (Vec<u8>, Vec<u8>);
@@ -85,266 +86,408 @@ fn shared_gamma_vector(n: usize, mut state: u64) -> Vec<f64> {
         .collect()
 }
 
+struct Header<'a>(BTreeMap<&'a str, &'a str>);
+
+impl<'a> Header<'a> {
+    fn get(&self, key: &str) -> &'a str {
+        self.0
+            .get(key)
+            .unwrap_or_else(|| panic!("missing fixture key {key}"))
+    }
+
+    fn number<T: std::str::FromStr>(&self, key: &str) -> T {
+        self.get(key)
+            .parse()
+            .unwrap_or_else(|_| panic!("malformed {key}={}", self.get(key)))
+    }
+
+    fn some(&self, key: &str) -> f64 {
+        let value = self.get(key);
+        value
+            .strip_prefix("Some(")
+            .and_then(|s| s.strip_suffix(')'))
+            .and_then(|s| s.parse().ok())
+            .unwrap_or_else(|| panic!("malformed {key}={value}"))
+    }
+
+    fn config(&self) -> RelayConfig {
+        let scaling_factor = self.number::<f64>("alpha_iteration_scaling_factor");
+        // Required even where informational or unused by the external builder.
+        self.get("seed");
+        self.get("max_iter");
+        match self.get("decoder") {
+            "MinSumBpBuilder" => {
+                assert_eq!(self.get("alpha"), "None");
+                assert_eq!(self.get("gamma0"), "None");
+                assert_eq!(self.get("seed"), "not applicable (plain min-sum)");
+                assert_eq!(
+                    self.get("stopping_criterion"),
+                    "not applicable (plain min-sum)"
+                );
+                RelayConfig {
+                    schedule: Schedule::Flooding,
+                    pre_iterations: self.number("max_iter"),
+                    num_legs: 0,
+                    gamma0: 0.0,
+                    alpha: Alpha::Constant(1.0),
+                    stop_rule: StopRule::Converged(1),
+                    ..RelayConfig::default()
+                }
+            }
+            "RelayBpBuilder" => {
+                let alpha = self.some("alpha");
+                let stopping = self.get("stopping_criterion");
+                let stop_rule = match stopping {
+                    "PreIter" => StopRule::PreIter,
+                    "All" => StopRule::Converged(usize::MAX),
+                    other => StopRule::Converged(
+                        other
+                            .strip_prefix("NConv { stop_after: ")
+                            .and_then(|s| s.strip_suffix(" }"))
+                            .and_then(|s| s.parse().ok())
+                            .unwrap_or_else(|| panic!("malformed stopping_criterion={other}")),
+                    ),
+                };
+                let interval = self.get("gamma_dist_interval");
+                let (lo, hi) = interval
+                    .strip_prefix('(')
+                    .and_then(|s| s.strip_suffix(')'))
+                    .and_then(|s| s.split_once(", "))
+                    .unwrap_or_else(|| panic!("malformed gamma_dist_interval={interval}"));
+                let parse_endpoint = |s: &str| {
+                    s.parse::<f64>()
+                        .unwrap_or_else(|_| panic!("malformed gamma_dist_interval={interval}"))
+                };
+                let explicit = self.get("explicit_gammas").split(" (").next().unwrap();
+                let explicit_gammas = match explicit {
+                    "None" => None,
+                    "[shared_gamma_vector(8785, 0x00C0_FFEE)]" => {
+                        Some(vec![shared_gamma_vector(8785, 0x00C0_FFEE)])
+                    }
+                    "[shared_gamma_vector(8785, 0x00C0_FFEE), shared_gamma_vector(8785, 0x0BAD_F00D)]" => {
+                        Some(vec![
+                            shared_gamma_vector(8785, 0x00C0_FFEE),
+                            shared_gamma_vector(8785, 0x0BAD_F00D),
+                        ])
+                    }
+                    other => panic!("malformed explicit_gammas={other}"),
+                };
+                if let Some(rows) = &explicit_gammas {
+                    for row in rows {
+                        assert!(row.iter().any(|&g| g < 0.0) && row.iter().any(|&g| g > 0.0));
+                    }
+                }
+                RelayConfig {
+                    schedule: Schedule::Flooding,
+                    alpha: if alpha == 0.0 {
+                        Alpha::Dynamic { scaling_factor }
+                    } else {
+                        Alpha::Constant(alpha)
+                    },
+                    gamma0: self.some("gamma0"),
+                    pre_iterations: self.number("pre_iter"),
+                    num_legs: self.number("num_sets"),
+                    leg_iterations: self.number("set_max_iter"),
+                    gamma_range: (parse_endpoint(lo), parse_endpoint(hi)),
+                    stop_rule,
+                    explicit_gammas,
+                }
+            }
+            other => panic!("unknown decoder={other}"),
+        }
+    }
+}
+
+struct OracleShot {
+    converged: bool,
+    iterations: usize,
+    correction: Vec<u8>,
+}
+
+fn parse_oracle(data: &str, mechanisms: usize) -> (RelayConfig, Vec<OracleShot>) {
+    let mut header = Header(BTreeMap::new());
+    let mut shots = Vec::new();
+    for line in data.lines() {
+        if let Some(comment) = line.strip_prefix("# ") {
+            if let Some((key, value)) = comment.split_once('=') {
+                assert!(header.0.insert(key, value).is_none(), "duplicate key {key}");
+            } else {
+                assert_eq!(
+                    comment,
+                    "relay-bp 0.2.2 external oracle, generated by crates/pecos-bp/tests/relay_oracle_dump.rs"
+                );
+            }
+            continue;
+        }
+        let fields: Vec<_> = line.split_whitespace().collect();
+        assert_eq!(fields.len(), 3, "malformed shot: {line}");
+        let converged = match fields[0] {
+            "0" => false,
+            "1" => true,
+            _ => panic!("malformed convergence flag: {line}"),
+        };
+        let iterations = fields[1]
+            .parse()
+            .unwrap_or_else(|_| panic!("malformed iterations: {line}"));
+        let mut correction = vec![0; mechanisms];
+        if fields[2] != "-" {
+            let mut previous = None;
+            for index in fields[2].split(',') {
+                let index: usize = index
+                    .parse()
+                    .unwrap_or_else(|_| panic!("malformed correction: {line}"));
+                assert!(
+                    index < mechanisms && previous.is_none_or(|p| p < index),
+                    "invalid correction index {index}"
+                );
+                correction[index] = 1;
+                previous = Some(index);
+            }
+        }
+        shots.push(OracleShot {
+            converged,
+            iterations,
+            correction,
+        });
+    }
+    assert_eq!(shots.len(), SHOTS);
+    (header.config(), shots)
+}
+
+fn assert_legs(config: &RelayConfig, outcome: &RelayOutcome) {
+    let expected = match config.stop_rule {
+        StopRule::PreIter if outcome.legs[0].converged => 1,
+        StopRule::PreIter | StopRule::Converged(usize::MAX) => config.num_legs + 1,
+        StopRule::Converged(target) => outcome
+            .legs
+            .iter()
+            .enumerate()
+            .filter(|(_, leg)| leg.converged)
+            .nth(target - 1)
+            .map_or(config.num_legs + 1, |(index, _)| index + 1),
+    };
+    assert_eq!(outcome.legs.len(), expected);
+    if config.pre_iterations == 0 {
+        assert_eq!(outcome.legs[0].iterations, 0);
+        assert!(!outcome.legs[0].converged);
+        assert_eq!(outcome.legs[0].weight, None);
+        assert_eq!(outcome.legs[0].correction, None);
+    }
+}
+
+#[derive(Default)]
 struct Tally {
     native_converged: usize,
     external_converged: usize,
     native_errors: usize,
     external_errors: usize,
     flag_agreement: usize,
+    iteration_agreement: usize,
     both_converged: usize,
     same_correction: usize,
-    native_legs_ran: Vec<usize>,
     external_max_iterations: usize,
 }
 
-fn compare(
-    dcm: &DemCheckMatrix,
-    shots: &[Shot],
-    native: &mut RelayBp,
-    external: &mut RelayBpDecoder,
-) -> Tally {
-    let mut t = Tally {
-        native_converged: 0,
-        external_converged: 0,
-        native_errors: 0,
-        external_errors: 0,
-        flag_agreement: 0,
-        both_converged: 0,
-        same_correction: 0,
-        native_legs_ran: Vec::new(),
-        external_max_iterations: 0,
-    };
-    for (shot, (syndrome, truth)) in shots.iter().enumerate() {
-        let n = native
+fn compare(name: &str, dcm: &DemCheckMatrix, shots: &[Shot]) -> Tally {
+    let path = format!(
+        "{}/tests/data/relay_oracle/{name}.txt",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let data = std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{path}: {error}"));
+    let (config, oracle) = parse_oracle(&data, dcm.num_mechanisms);
+    let mut native = RelayBp::new(BpGraph::from_dcm(dcm), config.clone()).unwrap();
+    let mut tally = Tally::default();
+    let compare_logicals = name != "c7_pre0_explicit";
+    for (shot, ((syndrome, truth), external)) in shots.iter().zip(&oracle).enumerate() {
+        let outcome = native
             .decode(syndrome, u64::try_from(shot).unwrap())
             .unwrap();
-        let e = external
-            .decode(&ndarray::ArrayView1::from(syndrome.as_slice()))
-            .unwrap();
-        let e_corr: Vec<u8> = e.decoding.iter().copied().collect();
-
-        t.native_converged += usize::from(n.converged);
-        t.external_converged += usize::from(e.converged);
-        t.native_errors += usize::from(observables(dcm, &n.correction) != *truth);
-        t.external_errors += usize::from(observables(dcm, &e_corr) != *truth);
-        t.flag_agreement += usize::from(n.converged == e.converged);
-        if n.converged && e.converged {
-            t.both_converged += 1;
-            t.same_correction += usize::from(n.correction == e_corr);
+        assert_legs(&config, &outcome);
+        tally.native_converged += usize::from(outcome.converged);
+        tally.external_converged += usize::from(external.converged);
+        if compare_logicals {
+            tally.native_errors += usize::from(observables(dcm, &outcome.correction) != *truth);
+            tally.external_errors += usize::from(observables(dcm, &external.correction) != *truth);
         }
-        t.native_legs_ran.push(n.legs.len());
-        t.external_max_iterations = t.external_max_iterations.max(e.iterations);
+        tally.flag_agreement += usize::from(outcome.converged == external.converged);
+        tally.iteration_agreement += usize::from(outcome.total_iterations == external.iterations);
+        if outcome.converged && external.converged {
+            tally.both_converged += 1;
+            tally.same_correction += usize::from(outcome.correction == external.correction);
+        }
+        tally.external_max_iterations = tally.external_max_iterations.max(external.iterations);
+        if name == "c4_operating_point" {
+            assert!(
+                !external.converged || outcome.converged,
+                "c4 lost convergence on shot {shot}"
+            );
+        }
     }
+    if config.num_legs > 0 {
+        assert!(tally.external_max_iterations > config.pre_iterations);
+    } else {
+        assert!(tally.external_max_iterations <= config.pre_iterations);
+    }
+    let logicals = if compare_logicals {
+        format!(
+            "logical errors native {}/{SHOTS}, external {}/{SHOTS}",
+            tally.native_errors, tally.external_errors
+        )
+    } else {
+        "logical errors not compared (stale external failed-shot corrections)".into()
+    };
     println!(
-        "native: converged {}/{SHOTS}, logical errors {}/{SHOTS}; external: converged {}/{SHOTS}, \
-         logical errors {}/{SHOTS}; flag agreement {}/{SHOTS}; same correction {}/{} jointly \
-         converged",
-        t.native_converged,
-        t.native_errors,
-        t.external_converged,
-        t.external_errors,
-        t.flag_agreement,
-        t.same_correction,
-        t.both_converged
+        "{name}: converged native {}/{SHOTS}, external {}/{SHOTS}; flags {}/{SHOTS}; iterations {}/{SHOTS}; corrections {}/{} jointly converged; {logicals}",
+        tally.native_converged,
+        tally.external_converged,
+        tally.flag_agreement,
+        tally.iteration_agreement,
+        tally.same_correction,
+        tally.both_converged
     );
-    t
-}
-
-fn assert_per_shot_agreement(t: &Tally, label: &str) {
-    assert!(
-        t.flag_agreement >= MIN_AGREEMENT,
-        "{label}: convergence flags agree on only {} of {SHOTS} shots",
-        t.flag_agreement
-    );
-    // Almost every shot one side converged on, the other did too.
-    assert!(
-        t.both_converged + 2 >= t.native_converged.min(t.external_converged),
-        "{label}: only {} jointly converged shots",
-        t.both_converged
-    );
-    // Corrections identical on almost every jointly converged shot.
-    assert!(
-        t.same_correction * 20 >= t.both_converged * 19,
-        "{label}: identical corrections on only {} of {} jointly converged shots",
-        t.same_correction,
-        t.both_converged
-    );
+    tally
 }
 
 #[test]
-fn leg_zero_agrees_per_shot_across_iteration_budgets() {
+fn frozen_oracle_per_shot_contracts() {
     let (dcm, shots) = load_fixture();
-    let graph = BpGraph::from_dcm(&dcm);
-    let gamma0 = 0.1;
-    for pre_iterations in [8, 16] {
-        let cfg = RelayConfig {
-            schedule: Schedule::Flooding,
-            alpha: 1.0,
-            gamma0,
-            pre_iterations,
-            num_legs: 0,
-            leg_iterations: 1,
-            gamma_range: (-0.24, 0.66),
-            stop_after_converged: 1,
-            explicit_gammas: None,
-        };
-        let mut native = RelayBp::new(graph.clone(), cfg).unwrap();
-        let mut external = RelayBpBuilder::new(&dcm.check_matrix.view())
-            .error_priors(&dcm.error_priors)
-            .alpha(Some(1.0))
-            .gamma0(Some(gamma0))
-            .pre_iter(pre_iterations)
-            .num_sets(0)
-            .set_max_iter(1)
-            .stopping_criterion(StoppingCriterion::PreIter)
-            .seed(7)
-            .build()
-            .unwrap();
-        println!("pre_iterations = {pre_iterations}");
-        let t = compare(&dcm, &shots, &mut native, &mut external);
-        assert_per_shot_agreement(&t, &format!("pre_iterations={pre_iterations}"));
-        assert!(t.native_legs_ran.iter().all(|&legs| legs == 1));
+    for name in [
+        "c1_leg0_pre8",
+        "c1_leg0_pre16",
+        "c2_explicit_one_row",
+        "c2_explicit_two_rows",
+        "c5_dynamic_alpha_pre8",
+        "c5_dynamic_alpha_pre16",
+        "c6_preiter_run_all",
+        "c7_pre0_explicit",
+        "c8_min_sum_iter8",
+        "c8_min_sum_iter16",
+        "c9_preiter_pre8_relay",
+        "c10_dynamic_alpha_relay",
+    ] {
+        let tally = compare(name, &dcm, &shots);
         assert!(
-            (1..SHOTS).contains(&t.native_converged),
-            "pre_iterations={pre_iterations}: native comparison is degenerate"
+            (1..SHOTS).contains(&tally.native_converged),
+            "{name}: native degenerate"
         );
         assert!(
-            (1..SHOTS).contains(&t.external_converged),
-            "pre_iterations={pre_iterations}: external comparison is degenerate"
+            (1..SHOTS).contains(&tally.external_converged),
+            "{name}: external degenerate"
         );
         assert!(
-            t.external_max_iterations <= pre_iterations,
-            "pre_iterations={pre_iterations}: external decoder ran a relay leg"
+            tally.flag_agreement >= MIN_AGREEMENT,
+            "{name}: flag agreement"
+        );
+        assert!(
+            tally.iteration_agreement >= MIN_AGREEMENT,
+            "{name}: iteration agreement"
+        );
+        assert!(
+            tally.both_converged + 2 >= tally.native_converged.min(tally.external_converged),
+            "{name}: jointly converged"
+        );
+        assert!(
+            tally.same_correction * 20 >= tally.both_converged * 19,
+            "{name}: correction agreement"
         );
     }
 }
 
-fn shared_explicit_gamma_case(rows: Vec<Vec<f64>>, label: &str) {
+#[test]
+fn frozen_random_gammas_aggregate_and_draw_order() {
     let (dcm, shots) = load_fixture();
-    let graph = BpGraph::from_dcm(&dcm);
-    for row in &rows {
-        assert!(row.iter().any(|&g| g < 0.0) && row.iter().any(|&g| g > 0.0));
+    let tally = compare("c3_random_gammas", &dcm, &shots);
+    assert_eq!(
+        tally.native_converged, 76,
+        "per-shot RNG draw order changed"
+    );
+    assert!(tally.native_converged.abs_diff(tally.external_converged) <= 5);
+}
+
+#[test]
+fn frozen_operating_point_contract() {
+    let (dcm, shots) = load_fixture();
+    let tally = compare("c4_operating_point", &dcm, &shots);
+    assert_eq!(tally.native_converged, SHOTS);
+    assert_eq!(tally.external_converged, SHOTS);
+    assert!(tally.native_errors <= tally.external_errors + 5);
+}
+
+#[test]
+fn frozen_headers_reject_missing_and_malformed_configuration() {
+    let relay = include_str!("data/relay_oracle/c2_explicit_two_rows.txt");
+    let min_sum = include_str!("data/relay_oracle/c8_min_sum_iter8.txt");
+    for (data, keys) in [
+        (
+            relay,
+            &[
+                "decoder",
+                "alpha",
+                "gamma0",
+                "pre_iter",
+                "num_sets",
+                "set_max_iter",
+                "stopping_criterion",
+                "gamma_dist_interval",
+                "alpha_iteration_scaling_factor",
+                "explicit_gammas",
+                "seed",
+                "max_iter",
+            ][..],
+        ),
+        (
+            min_sum,
+            &[
+                "decoder",
+                "max_iter",
+                "alpha",
+                "gamma0",
+                "stopping_criterion",
+                "seed",
+                "alpha_iteration_scaling_factor",
+            ][..],
+        ),
+    ] {
+        for key in keys {
+            let prefix = format!("# {key}=");
+            let missing = data
+                .lines()
+                .filter(|line| !line.starts_with(&prefix))
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(
+                std::panic::catch_unwind(|| parse_oracle(&missing, 8785)).is_err(),
+                "accepted missing {key}"
+            );
+        }
     }
-    let (pre_iterations, num_legs, leg_iterations, gamma0) = (2, 4, 10, 0.1);
-
-    let cfg = RelayConfig {
-        schedule: Schedule::Flooding,
-        alpha: 1.0,
-        gamma0,
-        pre_iterations,
-        num_legs,
-        leg_iterations,
-        gamma_range: (-0.24, 0.66),
-        stop_after_converged: usize::MAX,
-        explicit_gammas: Some(rows.clone()),
-    };
-    let mut native = RelayBp::new(graph, cfg).unwrap();
-    let mut external = RelayBpBuilder::new(&dcm.check_matrix.view())
-        .error_priors(&dcm.error_priors)
-        .alpha(Some(1.0))
-        .gamma0(Some(gamma0))
-        .pre_iter(pre_iterations)
-        .num_sets(num_legs)
-        .set_max_iter(leg_iterations)
-        .explicit_gammas(rows)
-        .stopping_criterion(StoppingCriterion::All)
-        .seed(7)
-        .build()
-        .unwrap();
-    let t = compare(&dcm, &shots, &mut native, &mut external);
-    assert_per_shot_agreement(&t, label);
-    assert!(t.native_legs_ran.iter().all(|&legs| legs == num_legs + 1));
-    assert!(
-        t.external_max_iterations > pre_iterations,
-        "the external decoder never ran a relay leg"
-    );
-    assert!(
-        t.native_converged >= 5,
-        "relayed legs converged on only {} shots",
-        t.native_converged
-    );
-}
-
-#[test]
-fn relayed_legs_with_one_shared_explicit_gamma_row_agree_per_shot() {
-    let rows = vec![shared_gamma_vector(8785, 0x00C0_FFEE)];
-    shared_explicit_gamma_case(rows, "one shared gamma row");
-}
-
-#[test]
-fn relayed_legs_with_two_shared_explicit_gamma_rows_agree_per_shot() {
-    // Two distinct rows: leg order (row 0 first, then cycling) must match on
-    // both sides, which the one-row case cannot detect.
-    let rows = vec![
-        shared_gamma_vector(8785, 0x00C0_FFEE),
-        shared_gamma_vector(8785, 0x0BAD_F00D),
-    ];
-    shared_explicit_gamma_case(rows, "two shared gamma rows");
-}
-
-#[test]
-fn relayed_legs_with_independent_random_gammas_agree_in_aggregate() {
-    let (dcm, shots) = load_fixture();
-    let graph = BpGraph::from_dcm(&dcm);
-    let (pre_iterations, num_legs, leg_iterations, gamma0) = (2, 8, 10, 0.1);
-    let cfg = RelayConfig {
-        schedule: Schedule::Flooding,
-        alpha: 1.0,
-        gamma0,
-        pre_iterations,
-        num_legs,
-        leg_iterations,
-        gamma_range: (-0.24, 0.66),
-        stop_after_converged: usize::MAX,
-        explicit_gammas: None,
-    };
-    let mut native = RelayBp::new(graph, cfg).unwrap();
-    let mut external = RelayBpBuilder::new(&dcm.check_matrix.view())
-        .error_priors(&dcm.error_priors)
-        .alpha(Some(1.0))
-        .gamma0(Some(gamma0))
-        .pre_iter(pre_iterations)
-        .num_sets(num_legs)
-        .set_max_iter(leg_iterations)
-        .gamma_dist_interval((-0.24, 0.66))
-        .stopping_criterion(StoppingCriterion::All)
-        .seed(7)
-        .build()
-        .unwrap();
-    let t = compare(&dcm, &shots, &mut native, &mut external);
-    assert!(t.native_legs_ran.iter().all(|&legs| legs == num_legs + 1));
-    assert!(t.external_max_iterations > pre_iterations);
-    let gap = t.native_converged.abs_diff(t.external_converged);
-    assert!(gap <= 5, "convergence counts differ by {gap} shots");
-}
-
-#[test]
-fn full_operating_point_smoke() {
-    let (dcm, shots) = load_fixture();
-    let graph = BpGraph::from_dcm(&dcm);
-    let cfg = RelayConfig::default();
-    let (pre_iterations, num_legs, leg_iterations, gamma0, gamma_range) = (
-        cfg.pre_iterations,
-        cfg.num_legs,
-        cfg.leg_iterations,
-        cfg.gamma0,
-        cfg.gamma_range,
-    );
-    let mut native = RelayBp::new(graph, cfg).unwrap();
-    let mut external = RelayBpBuilder::new(&dcm.check_matrix.view())
-        .error_priors(&dcm.error_priors)
-        .alpha(Some(1.0))
-        .gamma0(Some(gamma0))
-        .pre_iter(pre_iterations)
-        .num_sets(num_legs)
-        .set_max_iter(leg_iterations)
-        .gamma_dist_interval(gamma_range)
-        .stopping_criterion(StoppingCriterion::NConv { stop_after: 1 })
-        .seed(7)
-        .build()
-        .unwrap();
-    let t = compare(&dcm, &shots, &mut native, &mut external);
-    assert_eq!(t.native_converged, SHOTS);
-    assert_eq!(t.external_converged, SHOTS);
-    assert!(t.native_errors <= t.external_errors + 5);
+    for key in [
+        "decoder",
+        "alpha",
+        "gamma0",
+        "pre_iter",
+        "num_sets",
+        "set_max_iter",
+        "stopping_criterion",
+        "gamma_dist_interval",
+        "alpha_iteration_scaling_factor",
+        "explicit_gammas",
+    ] {
+        let prefix = format!("# {key}=");
+        let malformed = relay
+            .lines()
+            .map(|line| {
+                if line.starts_with(&prefix) {
+                    format!("{prefix}malformed")
+                } else {
+                    line.to_owned()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            std::panic::catch_unwind(|| parse_oracle(&malformed, 8785)).is_err(),
+            "accepted malformed {key}"
+        );
+    }
 }

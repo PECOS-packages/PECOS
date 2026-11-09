@@ -18,7 +18,7 @@
 use std::collections::BTreeSet;
 
 use pecos_bp::BpGraph;
-use pecos_bp::relay::{RelayBp, RelayConfig, Schedule};
+use pecos_bp::relay::{Alpha, RelayBp, RelayConfig, Schedule, StopRule};
 use pecos_decoder_core::dem::DemCheckMatrix;
 
 const TREE_DEM: &str = "\
@@ -81,13 +81,13 @@ fn check_serial_matches_exhaustive_minimum_weight_decoding() {
     let dcm = DemCheckMatrix::from_dem_str(TREE_DEM).unwrap();
     let config = RelayConfig {
         schedule: Schedule::CheckSerial,
-        alpha: 1.0,
+        alpha: Alpha::Constant(1.0),
         gamma0: 0.0,
         pre_iterations: 8,
         num_legs: 0,
         leg_iterations: 1,
         gamma_range: (-0.24, 0.66),
-        stop_after_converged: 1,
+        stop_rule: StopRule::Converged(1),
         explicit_gammas: None,
     };
     let mut decoder = RelayBp::new(BpGraph::from_dcm(&dcm), config).unwrap();

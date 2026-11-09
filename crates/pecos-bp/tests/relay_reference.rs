@@ -51,11 +51,18 @@
 //!   stops early when `H e == s`; the leg is then "converged" and its weight
 //!   is the signed prior-LLR cost `sum_v e[v] * prior[v]` (lower is more
 //!   likely; a mechanism with probability above 0.5 lowers the cost).
-//! - The relay stops after the configured number of converged legs, or when
+//! - `Alpha::Constant` scales every iteration equally. `Alpha::Dynamic` uses
+//!   `1.0 - 2_f64.powf(-(i / scaling_factor))` for one-based iteration
+//!   `i`, restarting at one in every leg and in either schedule.
+//! - With `pre_iterations == 0`, leg zero leaves the prior posterior intact,
+//!   records zero iterations and no convergence, even for a satisfied prior.
+//! - `StopRule::PreIter` stops only on leg-zero convergence; after a failed
+//!   (or empty) leg zero, every relayed leg runs, even if one converges.
+//! - `StopRule::Converged(n)` stops after `n` converged legs, or when
 //!   all legs ran. The reported correction is the minimum-weight converged
 //!   correction (first one on ties), or the last hard decision if none.
 
-use pecos_bp::relay::{RelayBp, RelayConfig, Schedule};
+use pecos_bp::relay::{Alpha, RelayBp, RelayConfig, Schedule, StopRule};
 use pecos_bp::{BpGraph, LLR_SATURATION};
 use pecos_decoder_core::dem::DemCheckMatrix;
 
@@ -190,10 +197,17 @@ impl Reference {
         &mut self,
         syndrome: &[u8],
         iterations: usize,
-        alpha: f64,
+        alpha: Alpha,
         schedule: Schedule,
     ) -> (bool, usize) {
         for it in 1..=iterations {
+            let alpha = match alpha {
+                Alpha::Constant(value) => value,
+                Alpha::Dynamic { scaling_factor } => {
+                    let i = f64::from(u32::try_from(it).expect("toy iteration counts fit u32"));
+                    1.0 - 2_f64.powf(-(i / scaling_factor))
+                }
+            };
             match schedule {
                 Schedule::Flooding => {
                     for c in 0..self.checks.len() {
@@ -240,6 +254,8 @@ struct ReferenceOutcome {
     posterior: Vec<f64>,
     legs_converged: Vec<bool>,
     legs_iterations: Vec<usize>,
+    legs_corrections: Vec<Option<Vec<u8>>>,
+    legs_weights: Vec<Option<f64>>,
 }
 
 fn reference_relay(
@@ -253,6 +269,8 @@ fn reference_relay(
     let mut r = Reference::new(dcm, prior);
     let mut legs_converged = Vec::new();
     let mut legs_iterations = Vec::new();
+    let mut legs_corrections = Vec::new();
+    let mut legs_weights = Vec::new();
     let mut best: Option<(f64, Vec<u8>)> = None;
     let mut num_converged = 0;
 
@@ -261,17 +279,26 @@ fn reference_relay(
     let (conv, its) = r.run_leg(syndrome, cfg.pre_iterations, cfg.alpha, cfg.schedule);
     legs_converged.push(conv);
     legs_iterations.push(its);
+    legs_corrections.push(conv.then(|| r.hard_decision()));
+    legs_weights.push(conv.then(|| r.weight(&r.hard_decision())));
     if conv {
         num_converged += 1;
         let e = r.hard_decision();
         best = Some((r.weight(&e), e));
     }
     let mut leg = 0;
-    while num_converged < cfg.stop_after_converged && leg < cfg.num_legs {
+    while leg < cfg.num_legs
+        && match cfg.stop_rule {
+            StopRule::Converged(target) => target == usize::MAX || num_converged < target,
+            StopRule::PreIter => !legs_converged[0],
+        }
+    {
         r.start_leg(&gammas[leg % gammas.len()]);
         let (conv, its) = r.run_leg(syndrome, cfg.leg_iterations, cfg.alpha, cfg.schedule);
         legs_converged.push(conv);
         legs_iterations.push(its);
+        legs_corrections.push(conv.then(|| r.hard_decision()));
+        legs_weights.push(conv.then(|| r.weight(&r.hard_decision())));
         if conv {
             num_converged += 1;
             let e = r.hard_decision();
@@ -295,6 +322,8 @@ fn reference_relay(
         posterior: r.posterior.clone(),
         legs_converged,
         legs_iterations,
+        legs_corrections,
+        legs_weights,
     }
 }
 
@@ -356,6 +385,8 @@ struct Coverage {
     negative_gamma: bool,
     positive_gamma: bool,
     distinct_syndromes: usize,
+    leg_zero_converged: usize,
+    relayed_converged_after_failed_zero: usize,
 }
 
 fn check_against_reference(
@@ -363,16 +394,22 @@ fn check_against_reference(
     gamma0: f64,
     num_legs: usize,
     gamma_sets: usize,
-    stop_after: usize,
-    alpha: f64,
+    stop_rule: StopRule,
+    alpha: Alpha,
+    pre_iterations: usize,
 ) -> Coverage {
-    let mut state =
-        0x5eed_u64 ^ (u64::try_from(num_legs).unwrap() << 8) ^ u64::try_from(stop_after).unwrap();
+    let stop_seed = match stop_rule {
+        StopRule::Converged(target) => u64::try_from(target).unwrap(),
+        StopRule::PreIter => 0,
+    };
+    let mut state = 0x5eed_u64 ^ (u64::try_from(num_legs).unwrap() << 8) ^ stop_seed;
     let mut coverage = Coverage {
         strict_early_stop: false,
         negative_gamma: false,
         positive_gamma: false,
         distinct_syndromes: 0,
+        leg_zero_converged: 0,
+        relayed_converged_after_failed_zero: 0,
     };
     for dem in TOY_DEMS {
         let dcm = DemCheckMatrix::from_dem_str(dem).unwrap();
@@ -392,17 +429,31 @@ fn check_against_reference(
                 schedule,
                 alpha,
                 gamma0,
-                pre_iterations: 7,
+                pre_iterations,
                 num_legs,
                 leg_iterations: 5,
                 gamma_range: (-0.24, 0.66),
-                stop_after_converged: stop_after,
+                stop_rule,
                 explicit_gammas: Some(gammas.clone()),
             };
             let expected = reference_relay(&dcm, &prior, &syndrome, &cfg, &gammas);
 
             let mut relay = RelayBp::new(graph.clone(), cfg).unwrap();
             let got = relay.decode(&syndrome, 0).unwrap();
+            coverage.leg_zero_converged += usize::from(got.legs[0].converged);
+            coverage.relayed_converged_after_failed_zero += usize::from(
+                !got.legs[0].converged && got.legs.iter().skip(1).any(|leg| leg.converged),
+            );
+            if stop_rule == StopRule::PreIter {
+                assert_eq!(
+                    got.legs.len(),
+                    if got.legs[0].converged {
+                        1
+                    } else {
+                        num_legs + 1
+                    }
+                );
+            }
 
             assert_eq!(
                 got.converged, expected.converged,
@@ -441,10 +492,15 @@ fn check_against_reference(
                 expected.legs_iterations.iter().sum::<usize>()
             );
             for (leg_index, leg) in got.legs.iter().enumerate() {
-                let limit = if leg_index == 0 { 7 } else { 5 };
-                assert!(leg.iterations >= 1 && leg.iterations <= limit);
+                let limit = if leg_index == 0 { pre_iterations } else { 5 };
+                assert!(leg.iterations >= usize::from(limit > 0) && leg.iterations <= limit);
                 assert_eq!(leg.converged, leg.correction.is_some());
                 assert_eq!(leg.converged, leg.weight.is_some());
+                assert_eq!(leg.correction, expected.legs_corrections[leg_index]);
+                assert_eq!(
+                    leg.weight.map(f64::to_bits),
+                    expected.legs_weights[leg_index].map(f64::to_bits)
+                );
                 if leg.converged && leg.iterations > 1 && leg.iterations < limit {
                     coverage.strict_early_stop = true;
                 }
@@ -470,7 +526,15 @@ fn check_against_reference(
 #[test]
 fn flooding_without_memory_matches_reference() {
     // gamma0 = 0 and no relay legs: plain normalized min-sum with early stop.
-    let cov = check_against_reference(Schedule::Flooding, 0.0, 0, 1, 1, 0.8);
+    let cov = check_against_reference(
+        Schedule::Flooding,
+        0.0,
+        0,
+        1,
+        StopRule::Converged(1),
+        Alpha::Constant(0.8),
+        7,
+    );
     assert!(
         cov.strict_early_stop,
         "no leg stopped strictly between 1 and its limit"
@@ -479,18 +543,42 @@ fn flooding_without_memory_matches_reference() {
 
 #[test]
 fn check_serial_without_memory_matches_reference() {
-    check_against_reference(Schedule::CheckSerial, 0.0, 0, 1, 1, 0.8);
+    check_against_reference(
+        Schedule::CheckSerial,
+        0.0,
+        0,
+        1,
+        StopRule::Converged(1),
+        Alpha::Constant(0.8),
+        7,
+    );
 }
 
 #[test]
 fn flooding_memory_leg_matches_reference() {
-    check_against_reference(Schedule::Flooding, 0.1, 0, 1, 1, 1.0);
+    check_against_reference(
+        Schedule::Flooding,
+        0.1,
+        0,
+        1,
+        StopRule::Converged(1),
+        Alpha::Constant(1.0),
+        7,
+    );
 }
 
 #[test]
 fn flooding_relay_legs_match_reference() {
     // Enough legs and a high stop count so every leg runs and warm-starts.
-    let cov = check_against_reference(Schedule::Flooding, 0.1, 4, 4, usize::MAX, 1.0);
+    let cov = check_against_reference(
+        Schedule::Flooding,
+        0.1,
+        4,
+        4,
+        StopRule::Converged(usize::MAX),
+        Alpha::Constant(1.0),
+        7,
+    );
     assert!(
         cov.negative_gamma && cov.positive_gamma,
         "gammas must span both signs"
@@ -499,18 +587,42 @@ fn flooding_relay_legs_match_reference() {
 
 #[test]
 fn check_serial_relay_legs_match_reference() {
-    check_against_reference(Schedule::CheckSerial, 0.1, 4, 4, usize::MAX, 0.9);
+    check_against_reference(
+        Schedule::CheckSerial,
+        0.1,
+        4,
+        4,
+        StopRule::Converged(usize::MAX),
+        Alpha::Constant(0.9),
+        7,
+    );
 }
 
 #[test]
 fn explicit_gammas_cycle_when_fewer_sets_than_legs() {
     // Four legs, two gamma vectors: legs 3 and 4 reuse vectors 1 and 2.
-    check_against_reference(Schedule::Flooding, 0.1, 4, 2, usize::MAX, 1.0);
+    check_against_reference(
+        Schedule::Flooding,
+        0.1,
+        4,
+        2,
+        StopRule::Converged(usize::MAX),
+        Alpha::Constant(1.0),
+        7,
+    );
 }
 
 #[test]
 fn relay_stops_after_requested_converged_legs() {
-    check_against_reference(Schedule::Flooding, 0.1, 6, 6, 2, 1.0);
+    check_against_reference(
+        Schedule::Flooding,
+        0.1,
+        6,
+        6,
+        StopRule::Converged(2),
+        Alpha::Constant(1.0),
+        7,
+    );
 }
 
 #[test]
@@ -529,13 +641,13 @@ fn fired_degree_one_check_pins_its_mechanism_and_converges() {
         for gamma0 in [0.0, 0.1, -0.24] {
             let cfg = RelayConfig {
                 schedule,
-                alpha: 1.0,
+                alpha: Alpha::Constant(1.0),
                 gamma0,
                 pre_iterations: 20,
                 num_legs: 0,
                 leg_iterations: 1,
                 gamma_range: (-0.24, 0.66),
-                stop_after_converged: 1,
+                stop_rule: StopRule::Converged(1),
                 explicit_gammas: None,
             };
             let expected = reference_relay(&dcm, &prior, &syndrome, &cfg, &[]);
@@ -562,13 +674,13 @@ fn gamma_range_is_honoured_when_sampling() {
     let syndrome = random_syndrome(&dcm, &mut state);
     let base = RelayConfig {
         schedule: Schedule::Flooding,
-        alpha: 1.0,
+        alpha: Alpha::Constant(1.0),
         gamma0: 0.1,
         pre_iterations: 3,
         num_legs: 4,
         leg_iterations: 4,
         gamma_range: (0.3, 0.3),
-        stop_after_converged: usize::MAX,
+        stop_rule: StopRule::Converged(usize::MAX),
         explicit_gammas: None,
     };
     let mut sampled = RelayBp::new(graph.clone(), base.clone()).unwrap();
@@ -584,43 +696,66 @@ fn gamma_range_is_honoured_when_sampling() {
     assert_eq!(a.legs.len(), 5);
 }
 
+fn assert_outcomes_identical(left: &pecos_bp::RelayOutcome, right: &pecos_bp::RelayOutcome) {
+    assert_eq!(left.converged, right.converged);
+    assert_eq!(left.correction, right.correction);
+    assert_eq!(
+        left.weight.map(f64::to_bits),
+        right.weight.map(f64::to_bits)
+    );
+    assert_eq!(bits(&left.posterior), bits(&right.posterior));
+    assert_eq!(left.total_iterations, right.total_iterations);
+    assert_eq!(left.legs.len(), right.legs.len());
+    for (a, b) in left.legs.iter().zip(&right.legs) {
+        assert_eq!(a.converged, b.converged);
+        assert_eq!(a.iterations, b.iterations);
+        assert_eq!(a.weight.map(f64::to_bits), b.weight.map(f64::to_bits));
+        assert_eq!(a.correction, b.correction);
+    }
+}
+
 #[test]
 fn decode_is_a_pure_function_of_syndrome_and_shot_seed() {
     let dcm = DemCheckMatrix::from_dem_str(TOY_DEMS[2]).unwrap();
     let graph = BpGraph::from_dcm(&dcm);
-    let cfg = RelayConfig {
-        schedule: Schedule::Flooding,
-        alpha: 1.0,
-        gamma0: 0.1,
-        pre_iterations: 3,
-        num_legs: 5,
-        leg_iterations: 4,
-        gamma_range: (-0.24, 0.66),
-        stop_after_converged: usize::MAX,
-        explicit_gammas: None,
-    };
     let mut state = 77u64;
     let syndromes: Vec<Vec<u8>> = (0..5).map(|_| random_syndrome(&dcm, &mut state)).collect();
-
-    let mut relay = RelayBp::new(graph.clone(), cfg.clone()).unwrap();
-    let in_order: Vec<_> = syndromes
-        .iter()
-        .enumerate()
-        .map(|(i, s)| relay.decode(s, u64::try_from(i).unwrap()).unwrap())
-        .collect();
-
-    // Same shots, reversed order, fresh decoder: bitwise identical outcomes.
-    let mut relay = RelayBp::new(graph.clone(), cfg.clone()).unwrap();
-    for (i, s) in syndromes.iter().enumerate().rev() {
-        let again = relay.decode(s, u64::try_from(i).unwrap()).unwrap();
-        assert_eq!(bits(&again.posterior), bits(&in_order[i].posterior));
-        assert_eq!(again.correction, in_order[i].correction);
+    for schedule in [Schedule::Flooding, Schedule::CheckSerial] {
+        for pre_iterations in [0, 3] {
+            let cfg = RelayConfig {
+                schedule,
+                pre_iterations,
+                num_legs: 5,
+                leg_iterations: 4,
+                stop_rule: StopRule::Converged(usize::MAX),
+                ..RelayConfig::default()
+            };
+            let mut relay = RelayBp::new(graph.clone(), cfg.clone()).unwrap();
+            let in_order: Vec<_> = syndromes
+                .iter()
+                .enumerate()
+                .map(|(i, s)| relay.decode(s, u64::try_from(i).unwrap()).unwrap())
+                .collect();
+            // Repeated and interleaved shots on the same decoder, including seeds
+            // unrelated to the saved shots, cannot change any outcome bits.
+            for &i in &[4, 1, 1, 3, 0, 2, 4, 0] {
+                relay.decode(&syndromes[(i + 1) % 5], u64::MAX).unwrap();
+                let again = relay
+                    .decode(&syndromes[i], u64::try_from(i).unwrap())
+                    .unwrap();
+                assert_outcomes_identical(&again, &in_order[i]);
+            }
+            let mut fresh = RelayBp::new(graph.clone(), cfg).unwrap();
+            for (i, syndrome) in syndromes.iter().enumerate().rev() {
+                assert_outcomes_identical(
+                    &fresh.decode(syndrome, u64::try_from(i).unwrap()).unwrap(),
+                    &in_order[i],
+                );
+            }
+            let other = relay.decode(&syndromes[0], 1_000_003).unwrap();
+            assert_ne!(bits(&other.posterior), bits(&in_order[0].posterior));
+        }
     }
-
-    // A different shot seed draws different gammas, so some posterior differs.
-    let mut relay = RelayBp::new(graph, cfg).unwrap();
-    let other = relay.decode(&syndromes[0], 1_000_003).unwrap();
-    assert_ne!(bits(&other.posterior), bits(&in_order[0].posterior));
 }
 
 #[test]
@@ -629,29 +764,49 @@ fn config_validation_rejects_nonsense() {
     let graph = BpGraph::from_dcm(&dcm);
     let good = RelayConfig {
         schedule: Schedule::Flooding,
-        alpha: 1.0,
+        alpha: Alpha::Constant(1.0),
         gamma0: 0.1,
         pre_iterations: 3,
         num_legs: 2,
         leg_iterations: 4,
         gamma_range: (-0.24, 0.66),
-        stop_after_converged: 1,
+        stop_rule: StopRule::Converged(1),
         explicit_gammas: None,
     };
     let rejects = |cfg: RelayConfig| RelayBp::new(graph.clone(), cfg).is_err();
     assert!(RelayBp::new(graph.clone(), good.clone()).is_ok());
+    assert_eq!(RelayConfig::default().stop_rule, StopRule::Converged(1));
+    assert_eq!(RelayConfig::default().alpha, Alpha::Constant(1.0));
+    for value in [-1.0, f64::INFINITY, f64::NEG_INFINITY] {
+        assert!(rejects(RelayConfig {
+            alpha: Alpha::Constant(value),
+            ..good.clone()
+        }));
+    }
     assert!(rejects(RelayConfig {
-        alpha: 0.0,
+        alpha: Alpha::Constant(0.0),
         ..good.clone()
     }));
     assert!(rejects(RelayConfig {
-        alpha: f64::NAN,
+        alpha: Alpha::Constant(f64::NAN),
+        ..good.clone()
+    }));
+    assert!(!rejects(RelayConfig {
+        pre_iterations: 0,
         ..good.clone()
     }));
     assert!(rejects(RelayConfig {
         pre_iterations: 0,
+        num_legs: 0,
         ..good.clone()
     }));
+    for scaling_factor in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        assert!(matches!(RelayBp::new(graph.clone(), RelayConfig {
+            alpha: Alpha::Dynamic { scaling_factor },
+            ..good.clone()
+        }), Err(pecos_decoder_core::errors::DecoderError::InvalidConfiguration(message))
+            if message.contains("scaling_factor") && message.contains(&scaling_factor.to_string())));
+    }
     assert!(rejects(RelayConfig {
         num_legs: 1,
         leg_iterations: 0,
@@ -666,10 +821,11 @@ fn config_validation_rejects_nonsense() {
         gamma_range: (-f64::MAX, f64::MAX),
         ..good.clone()
     }));
-    assert!(rejects(RelayConfig {
-        stop_after_converged: 0,
+    assert!(matches!(RelayBp::new(graph.clone(), RelayConfig {
+        stop_rule: StopRule::Converged(0),
         ..good.clone()
-    }));
+    }), Err(pecos_decoder_core::errors::DecoderError::InvalidConfiguration(message))
+        if message.contains("stop_rule") && message.contains('0')));
     // Explicit gammas must have one entry per variable.
     let short = vec![vec![0.1; dcm.num_mechanisms - 1]];
     assert!(rejects(RelayConfig {
@@ -682,4 +838,123 @@ fn config_validation_rejects_nonsense() {
     assert!(relay.decode(&[0, 1, 0], 0).is_err());
     assert!(relay.decode(&[0, 2, 0, 0], 0).is_err());
     assert!(relay.decode(&[0, 1, 0, 0], 0).is_ok());
+}
+
+#[test]
+fn dynamic_alpha_restarts_each_leg_in_both_schedules() {
+    for schedule in [Schedule::Flooding, Schedule::CheckSerial] {
+        for scaling_factor in [0.5, 1.0, 3.7] {
+            check_against_reference(
+                schedule,
+                0.1,
+                4,
+                2,
+                StopRule::Converged(usize::MAX),
+                Alpha::Dynamic { scaling_factor },
+                7,
+            );
+        }
+    }
+}
+
+#[test]
+fn preiter_stopping_matches_reference_in_both_schedules() {
+    for schedule in [Schedule::Flooding, Schedule::CheckSerial] {
+        let coverage = check_against_reference(
+            schedule,
+            0.1,
+            4,
+            2,
+            StopRule::PreIter,
+            Alpha::Constant(1.0),
+            1,
+        );
+        assert!(coverage.leg_zero_converged > 0);
+        assert!(coverage.relayed_converged_after_failed_zero > 0);
+    }
+}
+
+#[test]
+fn empty_leg_zero_matches_reference_in_both_schedules() {
+    for schedule in [Schedule::Flooding, Schedule::CheckSerial] {
+        for stop_rule in [
+            StopRule::PreIter,
+            StopRule::Converged(1),
+            StopRule::Converged(usize::MAX),
+        ] {
+            for alpha in [
+                Alpha::Constant(1.0),
+                Alpha::Dynamic {
+                    scaling_factor: 2.0,
+                },
+            ] {
+                let coverage = check_against_reference(schedule, 0.1, 4, 2, stop_rule, alpha, 0);
+                assert_eq!(coverage.leg_zero_converged, 0);
+                assert!(coverage.relayed_converged_after_failed_zero > 0);
+            }
+        }
+    }
+}
+
+#[test]
+fn empty_leg_zero_never_returns_a_previous_shots_decision() {
+    let dcm = DemCheckMatrix::from_dem_str("error(0.1) D0 D1\n").unwrap();
+    for schedule in [Schedule::Flooding, Schedule::CheckSerial] {
+        let config = RelayConfig {
+            schedule,
+            pre_iterations: 0,
+            num_legs: 2,
+            leg_iterations: 1,
+            stop_rule: StopRule::PreIter,
+            explicit_gammas: Some(vec![vec![0.0; 1]]),
+            ..RelayConfig::default()
+        };
+        let graph = BpGraph::from_dcm(&dcm);
+        let mut reused = RelayBp::new(graph.clone(), config.clone()).unwrap();
+        let satisfied_prior = reused.decode(&[0, 0], 0).unwrap();
+        assert!(!satisfied_prior.legs[0].converged);
+        assert_eq!(satisfied_prior.legs[0].iterations, 0);
+        assert_eq!(satisfied_prior.legs.len(), 3);
+        let previous = reused.decode(&[1, 1], 0).unwrap();
+        assert_eq!(previous.correction, vec![1]);
+        let failed = reused.decode(&[1, 0], 0).unwrap();
+        let fresh = RelayBp::new(graph, config)
+            .unwrap()
+            .decode(&[1, 0], 0)
+            .unwrap();
+        assert!(!failed.converged);
+        assert_eq!(failed.correction, fresh.correction);
+        assert_ne!(failed.correction, previous.correction);
+        assert_eq!(failed.legs.len(), 3);
+        assert_eq!(failed.legs[0].iterations, 0);
+        assert_eq!(failed.legs[0].correction, None);
+        assert_eq!(failed.legs[0].weight, None);
+        assert!(!failed.legs[0].converged);
+    }
+}
+
+#[test]
+fn random_gamma_decode_golden() {
+    let dcm = DemCheckMatrix::from_dem_str(TOY_DEMS[2]).unwrap();
+    let config = RelayConfig {
+        pre_iterations: 3,
+        num_legs: 5,
+        leg_iterations: 4,
+        stop_rule: StopRule::Converged(usize::MAX),
+        ..RelayConfig::default()
+    };
+    let outcome = RelayBp::new(BpGraph::from_dcm(&dcm), config)
+        .unwrap()
+        .decode(&[0, 1, 0, 1, 1], 77)
+        .unwrap();
+    assert!(outcome.converged);
+    assert_eq!(outcome.correction, vec![0, 0, 0, 0, 0, 1, 0, 1, 0]);
+    assert_eq!(
+        outcome
+            .legs
+            .iter()
+            .map(|leg| leg.iterations)
+            .collect::<Vec<_>>(),
+        vec![3, 4, 4, 4, 2, 4]
+    );
 }

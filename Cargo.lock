@@ -4125,7 +4125,6 @@ dependencies = [
  "ndarray 0.17.2",
  "pecos-decoder-core",
  "pecos-random",
- "pecos-relay-bp",
 ]
 
 [[package]]

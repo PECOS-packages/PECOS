@@ -6,6 +6,13 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Breaking:** `pecos-bp` replaces `RelayConfig`'s convergence count and scalar
+  alpha with `StopRule` and `Alpha` enums, adding `PreIter` stopping and dynamic
+  alpha schedules. Relay-BP now permits `pre_iterations = 0` when relay legs run
+  and samples random gammas from one per-shot RNG stream in leg order, changing
+  seeded outcomes. `BpGraph::from_dense_check_matrix` validates dense binary
+  matrices and per-mechanism error probabilities.
+
 - **Breaking:** Guppy code generation rejects `For` labels that shadow a register,
   allocator, block input or generated temporary. Loop labels, registers,
   allocators and block inputs are also rejected when the same generated function

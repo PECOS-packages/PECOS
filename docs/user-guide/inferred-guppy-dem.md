@@ -443,13 +443,16 @@ inferred = infer_guppy_dem_annotations(
     seed=11,
 )
 
-assert inferred.raw_measurement_ids == (0, 1, 2, 3)
+# Measurement IDs follow the compiled program's emission order, which need not
+# match source order, so name them by their raw output slot.
+s0, s1, m0, m1 = inferred.raw_measurement_ids
+assert sorted(inferred.raw_measurement_ids) == [0, 1, 2, 3]
 assert inferred.detector_supports == (
-    (0,),
-    (0, 1),
-    (1, 2, 3),
+    (s0,),
+    (s0, s1),
+    (s1, m0, m1),
 )
-assert inferred.observable_supports == ((2,),)
+assert inferred.observable_supports == ((m0,),)
 assert inferred.raw_binding == "runtime_result_ids"
 
 dem = inferred.build_dem(p1=0.001, p2=0.005, p_meas=0.005, p_prep=0.001)

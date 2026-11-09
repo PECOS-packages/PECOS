@@ -6,6 +6,8 @@
 Asymmetric noise histories make incorrect tag bindings change the DEM string.
 """
 
+import json
+
 import pytest
 from guppylang import guppy
 from guppylang.std.builtins import result
@@ -15,12 +17,13 @@ from pecos.guppy_gen import get_num_qubits, make_surface_code
 from pecos.qec import Detector, DetectorErrorModel, build_dem_from_guppy, rec, result_ref
 from pecos.qec._qis_result_tags import _CertificationError
 
+from qec._measurement_expectations import measurement_layout
+
 
 # A scrambled straight-line program: three measurements in source order
 # qa, qb, qc; ``result()`` is called for them in reverse-then-mixed order
-# (c, a, b). The QIS analyzer binds tag_a -> [0], tag_b -> [1],
-# tag_c -> [2] (ordinals of the measurements the tags actually record, not
-# the order of the result() calls).
+# (c, a, b). The QIS analyzer must bind each tag to its physical
+# measurement, independently of both source order and result() call order.
 #
 # The nontrivial pre-history entangles qb and qc after an H on qb. With
 # p1/p2 > 0 this produces distinct mechanisms for detectors anchored to qa,
@@ -66,7 +69,16 @@ def _from_guppy(detectors_json: str, *, observables_json: str = "[]") -> str:
 # 1. Correspondence: result_tags DEM == positional-records DEM (byte-identical)
 # ---------------------------------------------------------------------------
 
-# Three measurements (a, b, c) in trace order have record offsets (-3, -2, -1).
+
+def _tag_offsets(program: object = _scrambled_three_measurements) -> dict[str, int]:
+    """Identify a/b/c by their qubits, independently of the tag analyzer."""
+    _, offsets = measurement_layout(program, 3)
+    prefix = "tag_" if program is _scrambled_three_measurements else ""
+    return {prefix + tag: offsets[qubit] for qubit, tag in enumerate(("a", "b", "c"))}
+
+
+def _metadata(field: str, values: list) -> str:
+    return json.dumps([{"id": 0, field: values}])
 
 
 def test_result_tags_match_positional_records() -> None:
@@ -84,16 +96,16 @@ def test_result_tags_match_positional_records() -> None:
     )
 
     # Now the substantive claim: each tag's DEM matches the positional one.
-    assert _from_guppy('[{"id":0,"result_tags":["tag_a"]}]') == via_records[-3]
-    assert _from_guppy('[{"id":0,"result_tags":["tag_b"]}]') == via_records[-2]
-    assert _from_guppy('[{"id":0,"result_tags":["tag_c"]}]') == via_records[-1]
+    for tag, offset in _tag_offsets().items():
+        assert _from_guppy(_metadata("result_tags", [tag])) == via_records[offset], tag
 
 
 def test_result_tags_multi_tag_detector_matches_positional() -> None:
     """A detector referencing multiple tags resolves to the same DEM as
     the positional equivalent (asserts the property for combined refs too)."""
     via_tags = _from_guppy('[{"id":0,"result_tags":["tag_a","tag_c"]}]')
-    via_records = _from_guppy('[{"id":0,"records":[-3,-1]}]')
+    offsets = _tag_offsets()
+    via_records = _from_guppy(_metadata("records", [offsets["tag_a"], offsets["tag_c"]]))
     assert via_tags == via_records
 
 
@@ -105,7 +117,7 @@ def test_result_tags_observables_path_matches_positional() -> None:
     )
     via_records = _from_guppy(
         "[]",
-        observables_json='[{"id":0,"records":[-2]}]',
+        observables_json=_metadata("records", [_tag_offsets()["tag_b"]]),
     )
     assert via_tags == via_records
 
@@ -178,9 +190,9 @@ def test_result_tags_with_redundant_records_builds_unchanged() -> None:
     """When ``records`` exactly matches the resolved ``result_tags`` offsets
     (sorted-set equality), the entry is accepted and the DEM equals the
     records-only equivalent (no double-reference / parity corruption)."""
-    # tag_a resolves to record -3 in the asymmetric three-measurement program.
-    with_both = _from_guppy('[{"id":0,"records":[-3],"result_tags":["tag_a"]}]')
-    records_only = _from_guppy('[{"id":0,"records":[-3]}]')
+    offset = _tag_offsets()["tag_a"]
+    with_both = _from_guppy(json.dumps([{"id": 0, "records": [offset], "result_tags": ["tag_a"]}]))
+    records_only = _from_guppy(_metadata("records", [offset]))
     assert with_both == records_only
 
 
@@ -189,9 +201,9 @@ def test_result_tags_non_redundant_with_records_fails_loud() -> None:
     they are not redundant; the rewriter must fail loud rather than silently
     combine them additively (which would either weaken the DEM or, on
     accidental duplicate, XOR-cancel the detector's mechanisms)."""
-    # tag_c resolves to -1; records=-3 is a different measurement.
+    # tag_a and tag_c refer to different physical qubits.
     with pytest.raises(ValueError, match=r"alternatives|not additive|different measurements"):
-        _from_guppy('[{"id":0,"records":[-3],"result_tags":["tag_c"]}]')
+        _from_guppy(json.dumps([{"id": 0, "records": [_tag_offsets()["tag_a"]], "result_tags": ["tag_c"]}]))
 
 
 def test_result_tags_with_malformed_records_fails_loud() -> None:
@@ -238,7 +250,7 @@ def test_inlined_result_tags_match_positional_records() -> None:
 
     positional = {offset: build("records", str(offset)) for offset in (-3, -2, -1)}
     assert len(set(positional.values())) == 3
-    for tag, offset in (("b", -3), ("a", -2), ("c", -1)):
+    for tag, offset in _tag_offsets(_inlined_three_measurements).items():
         assert build("result_tags", f'"{tag}"') == positional[offset], tag
 
 
@@ -254,7 +266,7 @@ def test_inlined_typed_result_refs_match_positional_records() -> None:
         for offset in (-3, -2, -1)
     }
     assert len({build.dem.to_string() for build in positional.values()}) == 3
-    for tag, offset in (("b", -3), ("a", -2), ("c", -1)):
+    for tag, offset in _tag_offsets(_inlined_three_measurements).items():
         tagged = build_dem_from_guppy(
             _inlined_three_measurements,
             num_qubits=3,

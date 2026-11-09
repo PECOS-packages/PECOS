@@ -216,8 +216,8 @@ def _structured_idle_dem(entrypoint: str, **kwargs):
         return DetectorErrorModel.from_guppy(
             _structured_idle_noise_target,
             num_qubits=2,
-            detectors_json=_TWO_QUBIT_DETECTORS_JSON,
-            observables_json=_TWO_QUBIT_OBSERVABLES_JSON,
+            detectors_json='[{"id":0,"result_tags":["m0"]}]',
+            observables_json='[{"id":0,"result_tags":["m1"]}]',
             num_measurements=2,
             seed=0,
             **_NO_GATE_NOISE,
@@ -226,8 +226,8 @@ def _structured_idle_dem(entrypoint: str, **kwargs):
     return build_dem_from_guppy(
         _structured_idle_noise_target,
         num_qubits=2,
-        detectors=[Detector(rec[-2])],
-        observables=[Observable(rec[-1])],
+        detectors=[Detector("m0")],
+        observables=[Observable("m1")],
         seed=0,
         **_NO_GATE_NOISE,
         **kwargs,
@@ -272,16 +272,16 @@ def _noise_model_entrypoint_dem(entrypoint: str, **kwargs):
         return DetectorErrorModel.from_guppy(
             _structured_idle_noise_target,
             num_qubits=2,
-            detectors_json=_TWO_QUBIT_DETECTORS_JSON,
-            observables_json=_TWO_QUBIT_OBSERVABLES_JSON,
+            detectors_json='[{"id":0,"result_tags":["m0"]}]',
+            observables_json='[{"id":0,"result_tags":["m1"]}]',
             num_measurements=2,
             **kwargs,
         )
     return build_dem_from_guppy(
         _structured_idle_noise_target,
         num_qubits=2,
-        detectors=[Detector(rec[-2])],
-        observables=[Observable(rec[-1])],
+        detectors=[Detector("m0")],
+        observables=[Observable("m1")],
         **kwargs,
     ).dem
 

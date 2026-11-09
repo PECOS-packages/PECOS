@@ -13,6 +13,8 @@ from guppylang.std.quantum import cx, measure, qubit
 from pecos import NoiseParameters
 from pecos.qec import DemInferenceSettings, Detector, DetectorErrorModel, Observable, rec
 
+from qec._measurement_expectations import measurement_layout
+
 
 @guppy
 def _inferred_program() -> None:
@@ -95,12 +97,13 @@ def test_inferred_build_shares_noise_idle_and_evaluator() -> None:
     assert build.dem.to_string() == explicit.dem.to_string()
     assert build.circuit.gate_counts_by_type()["Idle"] == 2
     assert build.inference is not None
-    assert build.inference.raw_measurement_ids == (2, 0, 1)
+    ids, _ = measurement_layout(_inferred_program, 3)
+    assert build.inference.raw_measurement_ids == (ids[2], ids[0], ids[1])
     assert build.audit["inference"]["schedule_validation"] == "empirical_trace_comparison"
     assert build.audit["soundness_scope"] == "empirical_static_schedule"
     columns = {"raw measurements": [[0, 1, 1], [1, 1, 0], [1, 0, 1]]}
     assert build.evaluate_result_columns(columns) == [([1], 1), ([0], 0), ([1], 1)]
-    assert build.evaluate_runtime_record([1, 0, 0]) == ([1], 0)
+    assert build.evaluate_runtime_record([int(q == 0) for q in ids]) == ([1], 0)
     with pytest.raises(ValueError, match="expects"):
         build.evaluate_result_columns({"raw measurements": [[1]]})
     assert explicit.inference is None
@@ -254,15 +257,17 @@ def test_mixed_named_explicit_binding_keeps_compiler_provenance(monkeypatch: pyt
         )
 
 
-@pytest.mark.parametrize(("certified_ids", "agrees"), [([2, 0, 1], True), ([0, 1, 2], False)])
+@pytest.mark.parametrize("agrees", [True, False], ids=["agree", "disagree"])
 def test_mixed_build_checks_certified_raw_ids_against_inference(
     monkeypatch: pytest.MonkeyPatch,
-    certified_ids: list[int],
     *,
     agrees: bool,
 ) -> None:
     from pecos.qec import dem as dem_module
 
+    ids, _ = measurement_layout(_selected_program, 3)
+    correct_ids = [ids[2], ids[0], ids[1]]
+    certified_ids = correct_ids if agrees else [correct_ids[1], correct_ids[0], correct_ids[2]]
     original = dem_module._compiler_certified_result_traces  # noqa: SLF001
 
     def certify_raw(*args: object, **kwargs: object) -> list[dict]:
@@ -281,7 +286,8 @@ def test_mixed_build_checks_certified_raw_ids_against_inference(
     if agrees:
         assert builder.build().inference is not None
     else:
-        with pytest.raises(ValueError, match=r"raw measurements.*element 0.*ID 0.*ID 2"):
+        message = rf"raw measurements.*element 0.*ID {certified_ids[0]}.*ID {correct_ids[0]}"
+        with pytest.raises(ValueError, match=message):
             builder.build()
 
 
@@ -328,7 +334,8 @@ def test_observable_only_inference_does_not_require_detector_definitions() -> No
     )
     assert build.dem.num_detectors == 0
     assert build.inference.detector_supports == ()
-    assert build.evaluate_runtime_record([0, 1, 0]) == ([], 4)
+    ids, _ = measurement_layout(_selected_program, 3)
+    assert build.evaluate_runtime_record([int(q == 1) for q in ids]) == ([], 4)
     assert build.audit["definition_origins"] == [
         {"role": "observable", "id": 2, "source": "inferred", "tag": "logical", "element": 0},
     ]

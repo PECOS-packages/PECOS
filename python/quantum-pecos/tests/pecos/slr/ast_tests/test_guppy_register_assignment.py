@@ -16,7 +16,7 @@ from dataclasses import replace
 
 import numpy as np
 import pytest
-from pecos import Hugr, Qasm, selene_engine, sim, state_vector
+from pecos import Hugr, Qasm, selene_engine, sim, state_vector, trace_program_to_tick_circuit
 from pecos.slr import Block, CReg, For, If, Main, Parallel, QAlloc, QReg, Repeat, Return, SlrConverter
 from pecos.slr.ast import ast_to_guppy, slr_to_ast
 from pecos.slr.ast.codegen.guppy import GuppyCodegenError
@@ -55,13 +55,18 @@ def _assert_matches_qasm(registers, operations, expected) -> None:
     prog = Main(q, observed, *registers, *operations, *reads, qb.Measure(q) > observed, Return(*registers, observed))
     converter = SlrConverter(prog)
     package = converter.hugr()
-    selene = sim(Hugr(package.to_str().encode("utf-8"))).classical(selene_engine()).qubits(size).seed(42).run(2)
+    hugr = Hugr(package.to_str().encode("utf-8"))
+    measurements = trace_program_to_tick_circuit(hugr, size).measurement_emission()
+    assert len(measurements) == size
+    assert {qubit for qubit, _ in measurements} == set(range(size))
+    selene = sim(hugr).classical(selene_engine()).qubits(size).seed(42).run(2)
     records = selene.to_dict()
     qasm = sim(Qasm.from_string(converter.qasm())).quantum(state_vector()).seed(42).run(2).to_dict()
     for name, value in expected.items():
         assert qasm[name] == [value] * 2
     assert records == {
-        f"measurement_{index}": [(value >> index) & 1 for value in qasm["observed"]] for index in range(size)
+        f"measurement_{measurement_id}": [(value >> qubit) & 1 for value in qasm["observed"]]
+        for qubit, measurement_id in measurements
     }
 
 

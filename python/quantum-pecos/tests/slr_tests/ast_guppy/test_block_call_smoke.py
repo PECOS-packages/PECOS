@@ -2925,7 +2925,7 @@ class TestScratchCheck1FlagS5ProductionLockIn:
     """
 
     def test_steane_syn_extract_flagged_routes_and_runs(self) -> None:
-        from pecos import Hugr, selene_engine, sim
+        from pecos import Hugr, selene_engine, sim, trace_program_to_tick_circuit
         from pecos.slr import CReg, Main, QReg, Return, SlrConverter
         from pecos.slr.ast import slr_to_ast
         from pecos.slr.qeclib.steane.syn_extract.flagged import SynExtractFlagged
@@ -2952,29 +2952,27 @@ class TestScratchCheck1FlagS5ProductionLockIn:
         assert "LinearityError" not in guppy_src
 
         package = SlrConverter(prog).hugr()
+        hugr = Hugr(package.to_str().encode("utf-8"))
+        measurements = trace_program_to_tick_circuit(hugr, 13).measurement_emission()
         result = (
-            sim(Hugr(package.to_str().encode("utf-8")))
+            sim(hugr)
             .classical(selene_engine())
             .qubits(13)  # d(7)+a(4) declared + 2 concurrent internal scratch
             .seed(42)
             .run(4)
         )
         raw = result.to_dict() if hasattr(result, "to_dict") else result
-        # Re-pinned for global per-shot seeding (2026-10-11).
-        assert raw == {
-            "measurement_0": [0, 0, 0, 0],
-            "measurement_1": [0, 0, 0, 0],
-            "measurement_2": [0, 0, 0, 0],
-            "measurement_3": [0, 0, 0, 0],
-            "measurement_4": [0, 0, 0, 0],
-            "measurement_5": [0, 0, 0, 0],
-            "measurement_6": [0, 1, 0, 0],
-            "measurement_7": [0, 0, 0, 0],
-            "measurement_8": [1, 1, 1, 1],
-            "measurement_9": [0, 0, 0, 0],
-            "measurement_10": [0, 1, 1, 0],
-            "measurement_11": [0, 0, 0, 0],
-        }, raw
+        # The declared registers occupy 0..10. Each call allocates syndrome
+        # ancilla 11 and flag 12, then frees them for reuse by the next call.
+        # Occurrences on each reused qubit are ordered by its dependencies.
+        by_qubit = {11: [], 12: []}
+        assert set(raw) == {f"measurement_{mid}" for _, mid in measurements}
+        for qubit, mid in measurements:
+            by_qubit[qubit].append(raw[f"measurement_{mid}"])
+        assert by_qubit == {
+            11: [[0, 0, 0, 0]] * 3 + [[0, 1, 0, 0], [1, 1, 1, 1], [0, 1, 1, 0]],
+            12: [[0, 0, 0, 0]] * 6,
+        }, by_qubit
 
     def test_check1flag_h_branch_compiles_qasm_only(self) -> None:
         """The CH (`ops="H"`) branch hits a non-Clifford RXY1Q at runtime

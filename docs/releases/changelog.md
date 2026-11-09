@@ -9,6 +9,15 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 - Added Python Relay-BP explicit gamma rows and sampling interval setters, plus
   GIL-releasing flat-byte batch decoding for native Relay-BP and min-sum BP.
 
+- **Breaking:** PECOS now requires guppylang 1.2, selene-hugr-qis-compiler 0.5.1 and
+  selene-sim 0.3.7. guppylang 1.2 orders measurements only by data dependencies, so
+  the compiled program can measure independent qubits in a different order from the
+  source. Anonymous `measurement_N` result columns and positional record offsets
+  follow the compiled measurement order; refer to measurements by named result tags
+  or by physical qubit instead of by source position. The newer tket also fixes a
+  miscompilation that dropped opaque bit-output dependencies, which made the
+  gate-local canonical Z-frame output disagree with Pauli-frame lookup.
+
 - **Breaking:** Named-result measurement identity now comes from a compile-time
   shadow pass instead of read adjacency, so reordered reads and copied arrays
   retain exact measurement IDs. `NamedResultTrace` gains `provenance` and

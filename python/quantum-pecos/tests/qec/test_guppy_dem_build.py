@@ -39,6 +39,8 @@ from pecos.qec.dem import _generator_certified_result_traces, _GuppyProgramAnaly
 from pecos.qec.dem_spec import GuppyDemBuild, RecordRef, ResultRef, _resolve_dem_specs
 from pecos_rslib.quantum import TickCircuit
 
+from qec._measurement_expectations import measurement_layout
+
 
 @guppy
 def _scrambled_tagged_measurements() -> None:
@@ -195,12 +197,13 @@ def test_rec_and_result_refs_resolve_identically_after_runtime_reorder() -> None
 
 
 def test_real_guppy_rec_and_result_ref_builds_are_byte_identical() -> None:
+    _, offsets = measurement_layout(_scrambled_tagged_measurements, 2)
     noise = {"p1": 0.01, "p2": 0.02, "p_meas": 0.1, "p_prep": 0.0}
     via_records = build_dem_from_guppy(
         _scrambled_tagged_measurements,
         num_qubits=2,
-        detectors=[Detector(rec[-2])],
-        observables=[Observable(rec[-1])],
+        detectors=[Detector(rec[offsets[0]])],
+        observables=[Observable(rec[offsets[1]])],
         **noise,
     )
     via_results = build_dem_from_guppy(
@@ -292,11 +295,12 @@ def test_trace_once_build_evaluates_runtime_and_rejects_uncertified_named_result
 
 
 def test_rec_build_evaluates_compiler_certified_scalar_results() -> None:
+    _, offsets = measurement_layout(_scrambled_tagged_measurements, 2)
     build = build_dem_from_guppy(
         _scrambled_tagged_measurements,
         num_qubits=2,
-        detectors=[Detector(rec[-2])],
-        observables=[Observable(rec[-1])],
+        detectors=[Detector(rec[offsets[0]])],
+        observables=[Observable(rec[offsets[1]])],
         p1=0.0,
         p2=0.0,
         p_meas=0.1,
@@ -1351,19 +1355,22 @@ def _measurements_with_partially_traced_integer_tag() -> None:
 
 @pytest.mark.parametrize("required", [True, False], ids=["result-ref", "records"])
 def test_integer_prints_preserve_measurement_bindings(*, required: bool) -> None:
+    _, offsets = measurement_layout(_measurements_with_partially_traced_integer_tag, 2)
     built = build_dem_from_guppy(
         _measurements_with_partially_traced_integer_tag,
         num_qubits=2,
-        detectors=[Detector(result_ref("m") if required else rec[-1])],
+        detectors=[Detector(result_ref("m") if required else rec[offsets[1]])],
         p_meas=0.1,
     )
     assert built.named_result_binding == "compiler_direct_scalar_partial"
     assert built.evaluate_results({"m": 1, "k": 1}) == ([1], 0)
-    # Distinct values prove that m binds the first measurement, and rec[-1] the last.
+    # Distinct values prove that m binds q0, and the record reference binds q1.
     assert built.evaluate_results({"m": 1, "k": 0}) == ([int(required)], 0)
 
 
 def test_integer_prints_preserve_json_measurement_binding() -> None:
+    _, offsets = measurement_layout(_measurements_with_partially_traced_integer_tag, 2)
+
     def dem(detectors_json: str) -> str:
         return DetectorErrorModel.from_guppy(
             _measurements_with_partially_traced_integer_tag,
@@ -1372,7 +1379,7 @@ def test_integer_prints_preserve_json_measurement_binding() -> None:
             p_meas=0.1,
         ).to_string()
 
-    assert dem('[{"id":0,"result_tags":["m"]}]') == dem('[{"id":0,"records":[-2]}]')
+    assert dem('[{"id":0,"result_tags":["m"]}]') == dem(json.dumps([{"id": 0, "records": [offsets[0]]}]))
 
 
 @pytest.mark.parametrize("references", ["typed", "json"])

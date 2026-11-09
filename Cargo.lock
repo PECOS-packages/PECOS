@@ -48,17 +48,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "alga"
-version = "0.9.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4f823d037a7ec6ea2197046bafd4ae150e6bc36f9ca347404f46a46823fa84f2"
-dependencies = [
- "approx 0.3.2",
- "num-complex 0.2.4",
- "num-traits",
-]
-
-[[package]]
 name = "alloca"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -152,15 +141,6 @@ name = "anyhow"
 version = "1.0.103"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
-
-[[package]]
-name = "approx"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f0e60b75072ecd4168020818c0107f2857bb6c4e64252d8d3983f6263b40a5c3"
-dependencies = [
- "num-traits",
-]
 
 [[package]]
 name = "approx"
@@ -393,12 +373,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "az"
-version = "1.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be5eb007b7cacc6c660343e96f650fedf4b5a77512399eb952ca6642cf8d13f7"
-
-[[package]]
 name = "backtrace"
 version = "0.3.76"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -457,7 +431,7 @@ dependencies = [
  "cxx",
  "nalgebra",
  "num",
- "num-complex 0.4.6",
+ "num-complex",
  "pecos",
  "pecos-core",
  "pecos-cppsparsestab",
@@ -1011,7 +985,6 @@ checksum = "4fe5f465a4f6fee88fad41b85d990f84c835335e85b5d9e6e63e0d06d28cba7c"
 dependencies = [
  "encode_unicode",
  "libc",
- "unicode-width 0.2.2",
  "windows-sys 0.61.2",
 ]
 
@@ -1900,19 +1873,6 @@ name = "find-msvc-tools"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
-
-[[package]]
-name = "fixed"
-version = "1.31.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9af2cbf772fa6d1c11358f92ef554cb6b386201210bcf0e91fb7fba8a907fb40"
-dependencies = [
- "az",
- "bytemuck",
- "half",
- "num-traits",
- "typenum",
-]
 
 [[package]]
 name = "fixedbitset"
@@ -2827,20 +2787,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "indicatif"
-version = "0.18.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9433806cd6b4ec1aba79c021c7e4c58fb4c3b9977c085062e611ac929998fb0c"
-dependencies = [
- "console",
- "portable-atomic",
- "rayon",
- "unicode-width 0.2.2",
- "unit-prefix",
- "web-time",
-]
-
-[[package]]
 name = "inkwell"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3181,7 +3127,7 @@ version = "1.2.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f5f0846ee4f0299ca4c5b9ca06ff55cf88b3430a763bf591474cc734479c9b24"
 dependencies = [
- "num-complex 0.4.6",
+ "num-complex",
  "num-traits",
 ]
 
@@ -3630,7 +3576,7 @@ dependencies = [
  "glam 0.33.2",
  "matrixmultiply",
  "nalgebra-macros",
- "num-complex 0.4.6",
+ "num-complex",
  "num-rational",
  "num-traits",
  "simba",
@@ -3655,14 +3601,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "882ed72dce9365842bf196bdeedf5055305f11fc8c03dee7bb0194a6cad34841"
 dependencies = [
  "matrixmultiply",
- "num-complex 0.4.6",
+ "num-complex",
  "num-integer",
  "num-traits",
  "portable-atomic",
  "portable-atomic-util",
  "rawpointer",
  "rayon",
- "serde",
 ]
 
 [[package]]
@@ -3672,25 +3617,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "520080814a7a6b4a6e9070823bb24b4531daac8c4627e08ba5de8c5ef2f2752d"
 dependencies = [
  "matrixmultiply",
- "num-complex 0.4.6",
+ "num-complex",
  "num-integer",
  "num-traits",
  "portable-atomic",
  "portable-atomic-util",
  "rawpointer",
  "rayon",
-]
-
-[[package]]
-name = "ndarray-npy"
-version = "0.9.1"
-dependencies = [
- "byteorder",
- "ndarray 0.16.1",
- "num-complex 0.4.6",
- "num-traits",
- "py_literal",
- "zip",
 ]
 
 [[package]]
@@ -3788,7 +3721,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "35bd024e8b2ff75562e5f34e7f4905839deb4b22955ef5e73d2fea1b9813cb23"
 dependencies = [
  "num-bigint",
- "num-complex 0.4.6",
+ "num-complex",
  "num-integer",
  "num-iter",
  "num-rational",
@@ -3804,16 +3737,6 @@ dependencies = [
  "num-integer",
  "num-traits",
  "serde",
-]
-
-[[package]]
-name = "num-complex"
-version = "0.2.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6b19411a9719e753aff12e5187b74d60d3dc449ec3f4dc21e3989c3f554bc95"
-dependencies = [
- "autocfg",
- "num-traits",
 ]
 
 [[package]]
@@ -4187,7 +4110,7 @@ dependencies = [
  "anyhow",
  "approx 0.5.1",
  "bitvec",
- "num-complex 0.4.6",
+ "num-complex",
  "num-traits",
  "pecos-random",
  "rand 0.10.2",
@@ -4378,7 +4301,7 @@ dependencies = [
  "bytemuck",
  "env_logger",
  "log",
- "num-complex 0.4.6",
+ "num-complex",
  "paste",
  "pecos-core",
  "pecos-qec",
@@ -4419,7 +4342,7 @@ name = "pecos-lindblad"
 version = "0.2.0-dev.0"
 dependencies = [
  "approx 0.5.1",
- "num-complex 0.4.6",
+ "num-complex",
  "pecos-qec",
  "pecos-quantum",
  "proptest",
@@ -4460,7 +4383,7 @@ name = "pecos-neo"
 version = "0.2.0-dev.0"
 dependencies = [
  "criterion 0.8.2",
- "num-complex 0.4.6",
+ "num-complex",
  "num_cpus",
  "pecos-core",
  "pecos-engines",
@@ -4487,7 +4410,7 @@ dependencies = [
  "log",
  "nalgebra",
  "ndarray 0.17.2",
- "num-complex 0.4.6",
+ "num-complex",
  "num-traits",
  "pecos-random",
  "puruspe",
@@ -4503,7 +4426,7 @@ name = "pecos-phase-poly"
 version = "0.2.0-dev.0"
 dependencies = [
  "ndarray 0.17.2",
- "num-complex 0.4.6",
+ "num-complex",
  "pecos-core",
  "pecos-num",
  "pecos-qec",
@@ -4589,7 +4512,7 @@ version = "0.2.0-dev.0"
 dependencies = [
  "bitvec",
  "log",
- "num-complex 0.4.6",
+ "num-complex",
  "pecos-core",
  "pecos-engines",
  "pecos-phir",
@@ -4650,7 +4573,7 @@ dependencies = [
  "libc",
  "libloading 0.9.0",
  "log",
- "num-complex 0.4.6",
+ "num-complex",
  "pecos-build",
  "pecos-core",
  "pecos-engines",
@@ -4700,7 +4623,7 @@ version = "0.2.0-dev.0"
 dependencies = [
  "log",
  "nalgebra",
- "num-complex 0.4.6",
+ "num-complex",
  "pecos-core",
  "pecos-engines",
  "pecos-num",
@@ -4727,13 +4650,9 @@ dependencies = [
 name = "pecos-relay-bp"
 version = "0.2.0-dev.0"
 dependencies = [
- "ndarray 0.16.1",
  "ndarray 0.17.2",
- "ndarray-npy",
+ "pecos-bp",
  "pecos-decoder-core",
- "relay-bp",
- "sprs",
- "tempfile",
  "thiserror 2.0.18",
 ]
 
@@ -4756,8 +4675,7 @@ dependencies = [
  "log",
  "nalgebra",
  "ndarray 0.17.2",
- "ndarray-npy",
- "num-complex 0.4.6",
+ "num-complex",
  "parking_lot",
  "pecos",
  "pecos-build",
@@ -4793,7 +4711,6 @@ dependencies = [
  "env_logger",
  "highs",
  "log",
- "ndarray-npy",
  "pecos-build",
  "pecos-core",
  "pecos-cuquantum",
@@ -4806,8 +4723,7 @@ name = "pecos-rslib-exp"
 version = "0.2.0-dev.0"
 dependencies = [
  "highs",
- "ndarray-npy",
- "num-complex 0.4.6",
+ "num-complex",
  "pecos-build",
  "pecos-core",
  "pecos-decoder-core",
@@ -4834,7 +4750,6 @@ dependencies = [
  "highs",
  "inkwell",
  "log",
- "ndarray-npy",
  "pecos-build",
  "pecos-llvm",
  "pyo3",
@@ -4868,7 +4783,7 @@ version = "0.2.0-dev.0"
 dependencies = [
  "anyhow",
  "nalgebra",
- "num-complex 0.4.6",
+ "num-complex",
  "pecos-core",
  "pecos-engines",
  "pecos-quantum",
@@ -4936,7 +4851,7 @@ name = "pecos-simulators"
 version = "0.2.0-dev.0"
 dependencies = [
  "nalgebra",
- "num-complex 0.4.6",
+ "num-complex",
  "paste",
  "pecos-core",
  "pecos-quantum",
@@ -4951,7 +4866,7 @@ dependencies = [
 name = "pecos-stab-active"
 version = "0.2.0-dev.0"
 dependencies = [
- "num-complex 0.4.6",
+ "num-complex",
  "paste",
  "pecos-core",
  "pecos-quantum",
@@ -4966,7 +4881,7 @@ version = "0.2.0-dev.0"
 dependencies = [
  "approx 0.5.1",
  "nalgebra",
- "num-complex 0.4.6",
+ "num-complex",
  "paste",
  "pecos-core",
  "pecos-quantum",
@@ -5538,20 +5453,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2c9d62b4ad8b456f2ac8a171567bd475cae8cecd53ff5a46fce4f261eef17648"
 dependencies = [
  "lambert_w",
- "num-complex 0.4.6",
-]
-
-[[package]]
-name = "py_literal"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "102df7a3d46db9d3891f178dcc826dc270a6746277a9ae6436f8d29fd490a8e1"
-dependencies = [
- "num-bigint",
- "num-complex 0.4.6",
- "num-traits",
- "pest",
- "pest_derive",
+ "num-complex",
 ]
 
 [[package]]
@@ -5561,7 +5463,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cd274650b21d4bfc26a0a47587962c1edb425f69287324355cd040c3ea66071c"
 dependencies = [
  "libc",
- "num-complex 0.4.6",
+ "num-complex",
  "once_cell",
  "portable-atomic",
  "pyo3-build-config",
@@ -5980,27 +5882,6 @@ name = "relative-path"
 version = "1.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba39f3699c378cd8970968dcbff9c43159ea4cfbd88d43c00b22f2ef10a435d2"
-
-[[package]]
-name = "relay-bp"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1aad515fe7adde3d2c5508efb582dac0e34f1eb7a30631560d38846d2657b8d4"
-dependencies = [
- "dyn-clone",
- "env_logger",
- "fixed",
- "indicatif",
- "itertools 0.13.0",
- "log",
- "ndarray 0.16.1",
- "ndarray-npy",
- "num-traits",
- "rand 0.8.7",
- "rayon",
- "serde",
- "sprs",
-]
 
 [[package]]
 name = "relrc"
@@ -6720,7 +6601,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f45c644a9f3a386f9288625d9f0c1e999e1acf07a37df35d0516c7f199d9cb2"
 dependencies = [
  "approx 0.5.1",
- "num-complex 0.4.6",
+ "num-complex",
  "num-traits",
  "wide",
 ]
@@ -6834,22 +6715,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d9571ea910ebd84c86af4b3ed27f9dbdc6ad06f17c5f96146b2b671e2976744f"
 dependencies = [
  "bitflags 2.13.0",
-]
-
-[[package]]
-name = "sprs"
-version = "0.11.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8bff8419009a08f6cb7519a602c5590241fbff1446bcc823c07af15386eb801b"
-dependencies = [
- "alga",
- "ndarray 0.16.1",
- "num-complex 0.4.6",
- "num-traits",
- "num_cpus",
- "rayon",
- "serde",
- "smallvec",
 ]
 
 [[package]]
@@ -7908,12 +7773,6 @@ dependencies = [
  "phf_codegen",
  "rand 0.8.7",
 ]
-
-[[package]]
-name = "unit-prefix"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "81e544489bf3d8ef66c953931f56617f423cd4b5494be343d9b9d3dda037b9a3"
 
 [[package]]
 name = "untrusted"
@@ -9138,7 +8997,6 @@ name = "zluppy-python"
 version = "0.2.0-dev.0"
 dependencies = [
  "highs",
- "ndarray-npy",
  "pyo3",
  "serde_json",
  "zlup",

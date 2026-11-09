@@ -211,7 +211,6 @@ pub struct RelayBpConfig {
     /// A group of k identical symptoms receives the k-fold independent XOR of
     /// this rate. `None` uses the original DEM probabilities before merging.
     pub error_rate: Option<f64>,
-    pub max_iter: usize,
     pub alpha: Option<f64>,
     pub alpha_iteration_scaling_factor: f64,
     pub gamma0: Option<f64>,
@@ -227,7 +226,6 @@ impl Default for RelayBpConfig {
     fn default() -> Self {
         Self {
             error_rate: None,
-            max_iter: 200,
             alpha: None,
             alpha_iteration_scaling_factor: 1.0,
             gamma0: Some(0.65),

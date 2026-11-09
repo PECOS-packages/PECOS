@@ -727,14 +727,22 @@ mod tests {
 
     #[test]
     fn execution_traits_propagate_through_composites() {
-        let relay_ensemble = DecoderSpec::Ensemble(EnsembleConfig {
+        assert!(
+            !DecoderSpec::RelayBp(RelayBpConfig::default())
+                .execution_traits()
+                .history_dependent
+        );
+        let serial_ensemble = DecoderSpec::Ensemble(EnsembleConfig {
             members: vec![
                 correlated_pymatching(),
-                DecoderSpec::RelayBp(RelayBpConfig::default()),
+                DecoderSpec::BpOsd(BpOsdConfig {
+                    bp_schedule: super::super::BpSchedule::Serial,
+                    ..BpOsdConfig::default()
+                }),
             ],
         });
         assert_eq!(
-            relay_ensemble.execution_traits(),
+            serial_ensemble.execution_traits(),
             ExecutionTraits {
                 history_dependent: true,
                 wall_clock_dependent: false,

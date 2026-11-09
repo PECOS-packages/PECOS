@@ -42,3 +42,22 @@ impl From<RelayBpError> for pecos_decoder_core::DecoderError {
         }
     }
 }
+
+/// Preserve native messages without stacking error-category prefixes.
+pub(crate) fn native_message(error: pecos_decoder_core::DecoderError) -> String {
+    use pecos_decoder_core::DecoderError;
+    match error {
+        DecoderError::InvalidDemSyntax(message)
+        | DecoderError::InvalidConfiguration(message)
+        | DecoderError::InternalError(message)
+        | DecoderError::InvalidGraph(message)
+        | DecoderError::FfiError(message)
+        | DecoderError::MatrixError(message)
+        | DecoderError::InvalidSyndrome(message)
+        | DecoderError::InvalidEdge(message)
+        | DecoderError::DecodingFailed(message)
+        | DecoderError::NotImplemented(message) => message,
+        // Structured errors have no inner message to extract.
+        error => error.to_string(),
+    }
+}

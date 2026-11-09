@@ -64,7 +64,7 @@ _FAMILY_DECODERS = [
     (RelayBpDecoder, "relay_bp"),
     (MinSumBpDecoder, "min_sum_bp"),
 ]
-_ITERATIVE_FAMILY_DECODERS = [BpOsdDecoder, BpLsdDecoder, RelayBpDecoder, MinSumBpDecoder]
+_ITERATIVE_FAMILY_DECODERS = [BpOsdDecoder, BpLsdDecoder, MinSumBpDecoder]
 
 
 def test_dem_aware_result_is_importable() -> None:
@@ -174,7 +174,7 @@ def test_each_family_accepts_only_its_real_tuning_surface() -> None:
         random_schedule_seed=43,
     )
     assert UnionFindDecoder.from_dem(_ENCODING_DEM, method="peeling")
-    assert RelayBpDecoder.from_dem(_ENCODING_DEM, max_iter=5, alpha=0.8, seed=44)
+    assert RelayBpDecoder.from_dem(_ENCODING_DEM, alpha=0.8, seed=44)
     assert MinSumBpDecoder.from_dem(_ENCODING_DEM, max_iter=5, alpha=0.7)
 
 
@@ -214,7 +214,6 @@ def test_each_family_accepts_only_its_real_tuning_surface() -> None:
             "random_schedule_seed",
         ),
         (lambda: UnionFindDecoder.from_dem(_ENCODING_DEM, method="fast"), "method"),
-        (lambda: RelayBpDecoder.from_dem(_ENCODING_DEM, max_iter=-1), "max_iter"),
         (lambda: RelayBpDecoder.from_dem(_ENCODING_DEM, alpha=-0.1), "alpha"),
         (lambda: RelayBpDecoder.from_dem(_ENCODING_DEM, alpha=float("nan")), "alpha"),
         (lambda: RelayBpDecoder.from_dem(_ENCODING_DEM, seed=-1), "seed"),
@@ -400,3 +399,58 @@ def test_tesseract_merge_errors_override() -> None:
     assert merged.num_errors == unmerged.num_errors == 2
     assert merged.decode_from_defects([0]).cost == pytest.approx(math.log(0.82 / 0.18), abs=1e-12)
     assert unmerged.decode_from_defects([0]).cost == pytest.approx(math.log(0.9 / 0.1), abs=1e-12)
+
+
+def test_relay_dem_max_iter_removed() -> None:
+    from pecos_rslib.decoders import DemAwareDecoder
+
+    with pytest.raises(TypeError, match="max_iter"):
+        RelayBpDecoder.from_dem(_ENCODING_DEM, max_iter=5)
+    with pytest.raises(ValueError, match=r"no max_iter.*pre_iter / set_max_iter"):
+        DemAwareDecoder.from_dem(_ENCODING_DEM, "relay_bp", max_iter=5)
+    assert DemAwareDecoder.from_dem(_ENCODING_DEM, "relay_bp")
+
+
+@pytest.mark.parametrize("decoder_class", [RelayBpDecoder, MinSumBpDecoder])
+def test_relay_family_dem_tuning_is_keyword_only(decoder_class) -> None:
+    with pytest.raises(TypeError):
+        decoder_class.from_dem(_ENCODING_DEM, None, 100)
+    assert decoder_class.from_dem(_ENCODING_DEM, error_rate=0.1, alpha=0.8)
+
+
+@pytest.mark.parametrize(("decoder_class", "family"), [(RelayBpDecoder, "relay_bp"), (MinSumBpDecoder, "min_sum_bp")])
+@pytest.mark.parametrize("rate", [-0.1, 1.1, float("nan"), float("inf")])
+def test_relay_family_dem_rate_errors_name_error_rate(decoder_class, family: str, rate: float) -> None:
+    from pecos_rslib.decoders import DemAwareDecoder
+
+    with pytest.raises(ValueError, match="error_rate"):
+        decoder_class.from_dem(_ENCODING_DEM, error_rate=rate)
+    with pytest.raises(ValueError, match="error_rate"):
+        DemAwareDecoder.from_dem(_ENCODING_DEM, family, error_rate=rate)
+
+
+@pytest.mark.parametrize(("decoder_class", "family"), [(RelayBpDecoder, "relay_bp"), (MinSumBpDecoder, "min_sum_bp")])
+def test_relay_family_dem_syndrome_errors_are_value_errors(decoder_class, family: str) -> None:
+    from pecos_rslib.decoders import DemAwareDecoder
+
+    dem = "error(0.1) D0 L0\n"
+    for decoder in [decoder_class.from_dem(dem), DemAwareDecoder.from_dem(dem, family)]:
+        with pytest.raises(ValueError, match=r"syndrome.*2"):
+            decoder.decode_syndrome([2])
+
+
+def test_min_sum_dem_zero_iterations_is_value_error() -> None:
+    from pecos_rslib.decoders import DemAwareDecoder
+
+    with pytest.raises(ValueError, match=r"max_iter.*0"):
+        MinSumBpDecoder.from_dem(_ENCODING_DEM, max_iter=0)
+    with pytest.raises(ValueError, match=r"max_iter.*0"):
+        DemAwareDecoder.from_dem(_ENCODING_DEM, "min_sum_bp", max_iter=0)
+
+
+def test_union_find_dem_rejects_unused_max_iter() -> None:
+    from pecos_rslib.decoders import DemAwareDecoder
+
+    with pytest.raises(ValueError, match=r"union_find.*max_iter.*5"):
+        DemAwareDecoder.from_dem(_ENCODING_DEM, "union_find", max_iter=5)
+    assert DemAwareDecoder.from_dem(_ENCODING_DEM, "union_find")

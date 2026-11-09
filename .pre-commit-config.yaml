@@ -1,6 +1,3 @@
-# Preserve the vendored upstream source and formatting; see its PECOS-PATCH.md.
-exclude: ^vendor/ndarray-npy/
-
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0

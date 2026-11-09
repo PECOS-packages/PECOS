@@ -14,14 +14,8 @@ description = "Relay BP decoder for PECOS"
 [dependencies]
 pecos-decoder-core.workspace = true
 ndarray.workspace = true
-ndarray-016.workspace = true
 thiserror.workspace = true
-relay-bp.workspace = true
-sprs.workspace = true
-
-[dev-dependencies]
-ndarray-npy.workspace = true
-tempfile.workspace = true
+pecos-bp.workspace = true
 
 [lib]
 name = "pecos_relay_bp"

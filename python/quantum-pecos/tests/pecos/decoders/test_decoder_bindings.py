@@ -498,7 +498,6 @@ class TestRelayBpDecoder:
         H = [[1, 1, 0], [0, 1, 1]]
         decoder = (
             RelayBpBuilder(H, error_priors=[0.003, 0.003, 0.003])
-            .max_iter(100)
             .gamma0(0.9)
             .pre_iter(40)
             .num_sets(20)
@@ -551,3 +550,47 @@ def test_experimental_factory_names_the_missing_package(monkeypatch: pytest.Monk
         match=r"frontier requires the optional pecos-rslib-exp package.*not published to PyPI.*just build",
     ):
         _ = decoders.frontier
+
+
+def test_relay_builder_removed_max_iter_and_zero_convergence_target() -> None:
+    from pecos_rslib.decoders import RelayBpBuilder
+
+    builder = RelayBpBuilder([[1, 1, 0], [0, 1, 1]], [0.1] * 3)
+    with pytest.raises(AttributeError, match="max_iter"):
+        builder.max_iter(100)
+    with pytest.raises(ValueError, match="positive integer"):
+        builder.stopping("n_conv_0").build()
+
+
+@pytest.mark.parametrize("family", ["RelayBpBuilder", "MinSumBpBuilder"])
+def test_relay_family_input_errors_are_value_errors(family: str) -> None:
+    import pecos_rslib.decoders as decoders
+
+    builder = getattr(decoders, family)
+    with pytest.raises(ValueError, match=r"check_matrix.*2"):
+        builder([[1, 2]], [0.1, 0.1]).build()
+    for priors in [[-0.1, 0.1], [1.1, 0.1], [float("nan"), 0.1], [float("inf"), 0.1], [0.1]]:
+        with pytest.raises(ValueError, match="probability"):
+            builder([[1, 1]], priors).build()
+    decoder = builder([[1, 1]], [0.1, 0.1]).build()
+    with pytest.raises(ValueError, match=r"syndrome.*2"):
+        decoder.decode([2])
+    with pytest.raises(ValueError, match="syndrome length"):
+        decoder.decode([0, 0])
+    with pytest.raises(ValueError, match="alpha"):
+        builder([[1, 1]], [0.1, 0.1]).alpha(-1.0).build()
+
+
+def test_min_sum_zero_iterations_is_value_error() -> None:
+    from pecos_rslib.decoders import MinSumBpBuilder
+
+    with pytest.raises(ValueError, match=r"max_iter.*0"):
+        MinSumBpBuilder([[1, 1]], [0.1, 0.1]).max_iter(0).build()
+
+
+def test_relay_internal_decode_failure_remains_runtime_error() -> None:
+    from pecos_rslib.decoders import MinSumBpBuilder
+
+    decoder = MinSumBpBuilder([[1, 1]], [0.1, 0.1]).gamma0(1e308).build()
+    with pytest.raises(RuntimeError, match="non-finite posterior"):
+        decoder.decode([1])

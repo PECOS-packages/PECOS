@@ -1389,37 +1389,21 @@ fn union_find_config(method: Option<&str>) -> Result<UnionFindDemConfig, String>
     Ok(config)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
 struct RelayBpDemConfig {
     error_rate: Option<f64>,
-    max_iter: usize,
     alpha: Option<f64>,
     seed: u64,
 }
 
-impl Default for RelayBpDemConfig {
-    fn default() -> Self {
-        Self {
-            error_rate: None,
-            max_iter: DEFAULT_DEM_MAX_ITER,
-            alpha: None,
-            seed: 0,
-        }
-    }
-}
-
 fn relay_bp_config(
     error_rate: Option<f64>,
-    max_iter: Option<usize>,
     alpha: Option<f64>,
     seed: Option<u64>,
 ) -> RelayBpDemConfig {
     let mut config = RelayBpDemConfig::default();
     if let Some(error_rate) = error_rate {
         config.error_rate = Some(error_rate);
-    }
-    if let Some(max_iter) = max_iter {
-        config.max_iter = max_iter;
     }
     if let Some(alpha) = alpha {
         config.alpha = Some(alpha);
@@ -2635,17 +2619,43 @@ fn parse_stopping_criterion(s: &str) -> PyResult<RustStoppingCriterion> {
         "all" => Ok(RustStoppingCriterion::All),
         _ if s.starts_with("n_conv_") => {
             let n_str = &s["n_conv_".len()..];
-            let n: usize = n_str.parse().map_err(|_| {
-                PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+            let n: std::num::NonZeroUsize = n_str.parse().map_err(|_| {
+                pyo3::exceptions::PyValueError::new_err(format!(
                     "Invalid stopping criterion '{s}': expected 'n_conv_N' where N is a positive integer"
                 ))
             })?;
-            Ok(RustStoppingCriterion::NConv { stop_after: n })
+            Ok(RustStoppingCriterion::NConv {
+                stop_after: n.get(),
+            })
         }
         _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
             "Unknown stopping criterion '{s}'. Valid: 'pre_iter', 'all', 'n_conv_1', 'n_conv_N'"
         ))),
     }
+}
+
+/// Input errors from the native Relay / MinSum facade are Python value errors.
+fn relay_error_to_py(error: pecos_decoders::RelayBpError) -> PyErr {
+    use pecos_decoders::RelayBpError;
+    match error {
+        RelayBpError::Configuration(message)
+        | RelayBpError::InvalidMatrix(message)
+        | RelayBpError::InvalidSyndrome(message) => {
+            pyo3::exceptions::PyValueError::new_err(message)
+        }
+        RelayBpError::DecodingFailed(message) => pyo3::exceptions::PyRuntimeError::new_err(message),
+    }
+}
+
+fn validate_relay_error_rate(error_rate: Option<f64>) -> PyResult<()> {
+    if let Some(value) = error_rate
+        && (!value.is_finite() || !(0.0..=1.0).contains(&value))
+    {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "error_rate must be finite and in [0, 1], got {value}"
+        )));
+    }
+    Ok(())
 }
 
 /// Convert a dense check matrix from Python lists to an ndarray `Array2`.
@@ -2676,7 +2686,7 @@ fn dense_check_matrix_to_array2(check_matrix: &[Vec<u8>]) -> PyResult<Array2<u8>
 /// Builder for Relay BP ensemble decoder.
 ///
 /// Configures and constructs a `RelayBpDecoder` for qLDPC codes. Uses an
-/// ensemble of min-sum BP decoders with randomized damping parameters (relay
+/// ensemble of min-sum BP decoders with randomized memory strengths (relay
 /// strategy) to improve convergence on codes where standard BP fails.
 ///
 /// # Example
@@ -2697,7 +2707,6 @@ fn dense_check_matrix_to_array2(check_matrix: &[Vec<u8>]) -> PyResult<Array2<u8>
 pub struct PyRelayBpBuilder {
     check_matrix: Vec<Vec<u8>>,
     error_priors: Vec<f64>,
-    max_iter: usize,
     alpha: Option<f64>,
     gamma0: Option<f64>,
     pre_iter: usize,
@@ -2720,11 +2729,9 @@ impl PyRelayBpBuilder {
         Self {
             check_matrix,
             error_priors,
-            max_iter: 200,
             alpha: None,
-            // The pre-relay leg needs uniform memory to be paper-representative
-            // (measured 99/1000 vs 1/1000 failures on a 936-detector BB144
-            // circuit DEM at p=0.003 with memory off vs 0.65).
+            // Leg-zero memory default; relay legs retain sampled memory even
+            // when gamma0 is None.
             gamma0: Some(RELAY_BP_DEFAULT_GAMMA0),
             pre_iter: 80,
             num_sets: 300,
@@ -2734,16 +2741,7 @@ impl PyRelayBpBuilder {
         }
     }
 
-    /// Set maximum BP iterations (default: 200).
-    ///
-    /// Returns:
-    ///     Self for method chaining.
-    fn max_iter(mut slf: PyRefMut<'_, Self>, val: usize) -> PyRefMut<'_, Self> {
-        slf.max_iter = val;
-        slf
-    }
-
-    /// Set min-sum scaling factor (None = no scaling).
+    /// Set min-sum scaling factor (None = unit scaling; 0.0 = dynamic scaling).
     ///
     /// Returns:
     ///     Self for method chaining.
@@ -2752,10 +2750,8 @@ impl PyRelayBpBuilder {
         slf
     }
 
-    /// Enable memory-BP for the entire relay ensemble (default: 0.65). The
-    /// pre-relay leg uses this directly and relay legs draw per-leg strengths
-    /// only when it is set; None disables memory entirely and makes relay
-    /// ensembling ineffective. The optimal value is graph-dependent.
+    /// Set leg-zero memory strength (default: 0.65). None makes leg zero
+    /// memoryless; relay legs keep their sampled memory strengths.
     ///
     /// Returns:
     ///     Self for method chaining.
@@ -2792,9 +2788,8 @@ impl PyRelayBpBuilder {
     }
 
     /// Set the run-level random seed for relay parameter sampling (default: 0).
-    /// The RNG advances across decodes, so reused-decoder outcomes depend on
-    /// decode history; equal seeds reproduce the same full shot sequence, not
-    /// an individual syndrome independently.
+    /// Results are deterministic per (seed, syndrome), independent of decode
+    /// order, batch splitting and worker count.
     ///
     /// Returns:
     ///     Self for method chaining.
@@ -2820,14 +2815,13 @@ impl PyRelayBpBuilder {
     ///     A `RelayBpDecoder` ready for decoding.
     ///
     /// Raises:
-    ///     `RuntimeError`: If the configuration is invalid.
+    ///     `ValueError`: If the matrix, priors or configuration are invalid.
     fn build(&self) -> PyResult<PyRelayBpDecoder> {
         let stopping_criterion = parse_stopping_criterion(&self.stopping)?;
         let arr = dense_check_matrix_to_array2(&self.check_matrix)?;
 
         RustRelayBpBuilder::new(&arr.view())
             .error_priors(&self.error_priors)
-            .max_iter(self.max_iter)
             .alpha(self.alpha)
             .gamma0(self.gamma0)
             .pre_iter(self.pre_iter)
@@ -2837,7 +2831,7 @@ impl PyRelayBpBuilder {
             .stopping_criterion(stopping_criterion)
             .build()
             .map(|inner| PyRelayBpDecoder { inner })
-            .map_err(decoder_runtime_error_to_py)
+            .map_err(relay_error_to_py)
     }
 
     fn __repr__(&self) -> String {
@@ -2865,10 +2859,8 @@ impl PyRelayBpBuilder {
 /// assert result.converged
 /// ```
 ///
-/// The relay memory-strength RNG is seeded once at construction and advances
-/// across decodes, so a reused decoder's per-shot outcomes depend on decode
-/// history. Equal seeds reproduce the same full shot sequence, not an
-/// individual syndrome decoded in isolation.
+/// Results are a deterministic function of (seed, syndrome), independent of
+/// decode order, batch splitting and worker count.
 #[pyclass(name = "RelayBpDecoder", module = "pecos_rslib.decoders")]
 pub struct PyRelayBpDecoder {
     inner: RustRelayBpDecoder,
@@ -2881,24 +2873,17 @@ impl PyRelayBpDecoder {
     /// * `error_rate` - Uniform probability per original DEM error line, before merging
     ///   identical detector and observable sets. A group of k lines receives the
     ///   k-fold independent XOR of this rate (default: use DEM probabilities before merging).
-    /// * `max_iter` - BP iteration cap; larger values can improve convergence but increase runtime
     /// * `alpha` - Min-sum scaling factor; tuning can improve accuracy with negligible runtime cost
     /// * `seed` - Reproducible relay sampling; changes exploration without increasing its runtime bound
     #[staticmethod]
-    #[pyo3(signature = (dem, error_rate=None, max_iter=None, alpha=None, seed=None))]
+    #[pyo3(signature = (dem, *, error_rate=None, alpha=None, seed=None))]
     fn from_dem(
         dem: &str,
         error_rate: Option<f64>,
-        max_iter: Option<i128>,
         alpha: Option<f64>,
         seed: Option<i128>,
     ) -> PyResult<PyDemAwareDecoder> {
-        let config = relay_bp_config(
-            error_rate,
-            optional_usize(max_iter, "max_iter")?,
-            alpha,
-            optional_u64(seed, "seed")?,
-        );
+        let config = relay_bp_config(error_rate, alpha, optional_u64(seed, "seed")?);
         PyDemAwareDecoder::from_dem_with_config(dem, DemDecoderConfig::RelayBp(config))
     }
 
@@ -2920,7 +2905,7 @@ impl PyRelayBpDecoder {
                 converged: result.converged,
                 iterations: result.iterations,
             })
-            .map_err(decoder_runtime_error_to_py)
+            .map_err(relay_error_to_py)
     }
 
     /// Number of checks (rows in check matrix).
@@ -2996,7 +2981,7 @@ impl PyMinSumBpBuilder {
         slf
     }
 
-    /// Set min-sum scaling factor (None = no scaling).
+    /// Set min-sum scaling factor (None = unit scaling; 0.0 = dynamic scaling).
     ///
     /// Returns:
     ///     Self for method chaining.
@@ -3021,7 +3006,7 @@ impl PyMinSumBpBuilder {
     ///     A `MinSumBpDecoder` ready for decoding.
     ///
     /// Raises:
-    ///     `RuntimeError`: If the configuration is invalid.
+    ///     `ValueError`: If the matrix, priors or configuration are invalid.
     fn build(&self) -> PyResult<PyMinSumBpDecoder> {
         let arr = dense_check_matrix_to_array2(&self.check_matrix)?;
 
@@ -3032,7 +3017,7 @@ impl PyMinSumBpBuilder {
             .gamma0(self.gamma0)
             .build()
             .map(|inner| PyMinSumBpDecoder { inner })
-            .map_err(decoder_runtime_error_to_py)
+            .map_err(relay_error_to_py)
     }
 
     fn __repr__(&self) -> String {
@@ -3074,7 +3059,7 @@ impl PyMinSumBpDecoder {
     /// * `max_iter` - BP iteration cap; larger values can improve convergence but increase runtime
     /// * `alpha` - Min-sum scaling factor; tuning can improve accuracy with negligible runtime cost
     #[staticmethod]
-    #[pyo3(signature = (dem, error_rate=None, max_iter=None, alpha=None))]
+    #[pyo3(signature = (dem, *, error_rate=None, max_iter=None, alpha=None))]
     fn from_dem(
         dem: &str,
         error_rate: Option<f64>,
@@ -3103,7 +3088,7 @@ impl PyMinSumBpDecoder {
                 converged: result.converged,
                 iterations: result.iterations,
             })
-            .map_err(decoder_runtime_error_to_py)
+            .map_err(relay_error_to_py)
     }
 
     /// Number of checks (rows in check matrix).
@@ -3208,6 +3193,12 @@ impl PyDemAwareDecoder {
         dcm: DemCheckMatrix,
         config: DemDecoderConfig,
     ) -> PyResult<Self> {
+        if matches!(
+            config,
+            DemDecoderConfig::RelayBp(_) | DemDecoderConfig::MinSumBp(_)
+        ) {
+            validate_relay_error_rate(config.error_rate())?;
+        }
         // Error priors: use per-mechanism probabilities from DEM, or uniform override.
         let priors: Vec<f64> = if let Some(p) = config.error_rate() {
             vec![p; dcm.num_mechanisms]
@@ -3285,13 +3276,10 @@ impl PyDemAwareDecoder {
                 let h_view = dcm.check_matrix.view();
                 let decoder = RustRelayBpBuilderT::new(&h_view)
                     .error_priors(&priors)
-                    .max_iter(config.max_iter)
                     .alpha(config.alpha)
                     .seed(config.seed)
                     .build()
-                    .map_err(|e| {
-                        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-                    })?;
+                    .map_err(relay_error_to_py)?;
                 InnerDecoder::RelayBp(Box::new(decoder))
             }
             DemDecoderConfig::MinSumBp(config) => {
@@ -3302,9 +3290,7 @@ impl PyDemAwareDecoder {
                     .max_iter(config.max_iter)
                     .alpha(config.alpha)
                     .build()
-                    .map_err(|e| {
-                        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-                    })?;
+                    .map_err(relay_error_to_py)?;
                 InnerDecoder::MinSumBp(Box::new(decoder))
             }
         };
@@ -3384,7 +3370,9 @@ impl PyDemAwareDecoder {
     /// * `error_rate` - Uniform probability per original DEM error line (default: use DEM probabilities).
     ///   For `relay_bp` and `min_sum_bp`, this is applied before merging identical detector
     ///   and observable sets; a group of k lines receives the k-fold independent XOR of the rate.
-    /// * `max_iter` - Maximum BP iterations (default: 100)
+    /// * `max_iter` - None uses 100 for BP-OSD, BP-LSD and min-sum. Relay-BP and
+    ///   union-find reject explicit values; use `pre_iter` / `set_max_iter` on
+    ///   the Relay builder or spec factory to configure Relay iteration limits.
     ///
     /// # Example
     ///
@@ -3392,30 +3380,57 @@ impl PyDemAwareDecoder {
     /// decoder = DemAwareDecoder.from_dem(dem, decoder_type="bp_osd")
     /// ```
     #[staticmethod]
-    #[pyo3(signature = (dem, decoder_type="bp_osd", error_rate=None, max_iter=100))]
+    #[pyo3(signature = (dem, decoder_type="bp_osd", error_rate=None, max_iter=None))]
     fn from_dem(
         dem: &str,
         decoder_type: &str,
         error_rate: Option<f64>,
-        max_iter: usize,
+        max_iter: Option<usize>,
     ) -> PyResult<Self> {
         let dcm = Self::parse_dem(dem)?;
         let config = match decoder_type {
             "bp_osd" => DemDecoderConfig::BpOsd(
-                bp_osd_config(error_rate, Some(max_iter), None, None, None, None)
-                    .map_err(PyErr::new::<pyo3::exceptions::PyValueError, _>)?,
+                bp_osd_config(
+                    error_rate,
+                    Some(max_iter.unwrap_or(DEFAULT_DEM_MAX_ITER)),
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .map_err(PyErr::new::<pyo3::exceptions::PyValueError, _>)?,
             ),
             "bp_lsd" => DemDecoderConfig::BpLsd(
-                bp_lsd_config(error_rate, Some(max_iter), None, None, None)
-                    .map_err(PyErr::new::<pyo3::exceptions::PyValueError, _>)?,
+                bp_lsd_config(
+                    error_rate,
+                    Some(max_iter.unwrap_or(DEFAULT_DEM_MAX_ITER)),
+                    None,
+                    None,
+                    None,
+                )
+                .map_err(PyErr::new::<pyo3::exceptions::PyValueError, _>)?,
             ),
-            "union_find" => DemDecoderConfig::UnionFind(UnionFindDemConfig::default()),
+            "union_find" => {
+                if let Some(value) = max_iter {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "union_find has no max_iter (got {value}); omit max_iter for union_find"
+                    )));
+                }
+                DemDecoderConfig::UnionFind(UnionFindDemConfig::default())
+            }
             "relay_bp" => {
-                DemDecoderConfig::RelayBp(relay_bp_config(error_rate, Some(max_iter), None, None))
+                if let Some(value) = max_iter {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "Relay-BP has no max_iter (got {value}); use pre_iter / set_max_iter"
+                    )));
+                }
+                DemDecoderConfig::RelayBp(relay_bp_config(error_rate, None, None))
             }
-            "min_sum_bp" => {
-                DemDecoderConfig::MinSumBp(min_sum_bp_config(error_rate, Some(max_iter), None))
-            }
+            "min_sum_bp" => DemDecoderConfig::MinSumBp(min_sum_bp_config(
+                error_rate,
+                Some(max_iter.unwrap_or(DEFAULT_DEM_MAX_ITER)),
+                None,
+            )),
             _ => {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                     "Unknown decoder type: {decoder_type}. Supported: bp_osd, bp_lsd, union_find, relay_bp, min_sum_bp"
@@ -3456,15 +3471,11 @@ impl PyDemAwareDecoder {
                 (r.decoding.to_vec(), r.converged, r.iterations)
             }
             InnerDecoder::RelayBp(d) => {
-                let r = d.decode(&arr.view()).map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-                })?;
+                let r = d.decode(&arr.view()).map_err(relay_error_to_py)?;
                 (r.decoding.to_vec(), r.converged, r.iterations)
             }
             InnerDecoder::MinSumBp(d) => {
-                let r = d.decode(&arr.view()).map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-                })?;
+                let r = d.decode(&arr.view()).map_err(relay_error_to_py)?;
                 (r.decoding.to_vec(), r.converged, r.iterations)
             }
         };
@@ -3892,38 +3903,30 @@ mod dem_tuning_tests {
 
     #[test]
     fn relay_bp_error_rate_override_reaches_config() {
-        let config = relay_bp_config(Some(0.345), None, None, None);
+        let config = relay_bp_config(Some(0.345), None, None);
 
         assert_eq!(config.error_rate, Some(0.345));
     }
 
     #[test]
-    fn relay_bp_max_iter_override_reaches_config() {
-        let config = relay_bp_config(None, Some(23), None, None);
-
-        assert_eq!(config.max_iter, 23);
-    }
-
-    #[test]
     fn relay_bp_alpha_override_reaches_config() {
-        let config = relay_bp_config(None, None, Some(0.8), None);
+        let config = relay_bp_config(None, Some(0.8), None);
 
         assert_eq!(config.alpha, Some(0.8));
     }
 
     #[test]
     fn relay_bp_seed_override_reaches_config() {
-        let config = relay_bp_config(None, None, None, Some(91));
+        let config = relay_bp_config(None, None, Some(91));
 
         assert_eq!(config.seed, 91);
     }
 
     #[test]
     fn relay_bp_omitted_overrides_preserve_defaults() {
-        let config = relay_bp_config(None, None, None, None);
+        let config = relay_bp_config(None, None, None);
 
         assert_eq!(config.error_rate, None);
-        assert_eq!(config.max_iter, 100);
         assert_eq!(config.alpha, None);
         assert_eq!(config.seed, 0);
     }
@@ -4040,12 +4043,11 @@ mod dem_tuning_tests {
 
     #[test]
     fn relay_bp_overrides_reach_inner_decoder() {
-        let decoder = PyRelayBpDecoder::from_dem(DEM, None, Some(23), Some(0.8), Some(91)).unwrap();
+        let decoder = PyRelayBpDecoder::from_dem(DEM, None, Some(0.8), Some(91)).unwrap();
         let InnerDecoder::RelayBp(inner) = decoder.inner else {
             panic!("expected Relay BP inner decoder");
         };
 
-        assert_eq!(inner.max_iter(), 23);
         assert_eq!(inner.alpha(), Some(0.8));
         assert_eq!(inner.seed(), 91);
     }
@@ -4055,7 +4057,7 @@ mod dem_tuning_tests {
     fn relay_family_duplicate_dem_observables_and_override() {
         let dem = "error(0.1) D0 D1 L65\nerror(0.2) D2 L0\nerror(0.3) D0 D1 L65";
         for config in [
-            DemDecoderConfig::RelayBp(relay_bp_config(Some(0.25), None, None, None)),
+            DemDecoderConfig::RelayBp(relay_bp_config(Some(0.25), None, None)),
             DemDecoderConfig::MinSumBp(min_sum_bp_config(Some(0.25), None, None)),
         ] {
             let mut decoder = PyDemAwareDecoder::from_dem_with_config(dem, config).unwrap();
@@ -4113,11 +4115,10 @@ mod dem_tuning_tests {
         assert_eq!(bp_osd.osd_order(), 0);
         assert_eq!(bp_osd.random_schedule_seed(), -1);
 
-        let relay = PyRelayBpDecoder::from_dem(DEM, None, None, None, None).unwrap();
+        let relay = PyRelayBpDecoder::from_dem(DEM, None, None, None).unwrap();
         let InnerDecoder::RelayBp(relay) = relay.inner else {
             panic!("expected Relay BP inner decoder");
         };
-        assert_eq!(relay.max_iter(), 100);
         assert_eq!(relay.alpha(), None);
         assert_eq!(relay.seed(), 0);
     }

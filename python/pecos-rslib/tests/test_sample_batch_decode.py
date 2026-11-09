@@ -238,16 +238,34 @@ def test_wall_clock_limited_mwpf_requires_explicit_parallel_opt_in() -> None:
     assert parallel.reproducibility_warnings
 
 
-def test_history_dependent_relay_bp_planning() -> None:
-    batch = _batch()
-    spec = relay_bp()
-    automatic = batch.decode(DEM, spec)
-    assert automatic.execution_path == "sequential"
-    # Behavior pin for the history-dependent planner path.
-    assert automatic.num_errors == 5
-    assert batch.decode(DEM, spec, workers=1).num_errors == automatic.num_errors
+def test_relay_bp_parallel_matches_serial_shot_for_shot() -> None:
+    from pecos_rslib.decoders import RelayBpBuilder
+
+    dem = "error(0.1) D0 L0\nerror(0.1) D0 D1\nerror(0.1) D1 D2\nerror(0.1) D2 D3\nerror(0.1) D3\n"
+    matrix = [[1, 1, 0, 0, 0], [0, 1, 1, 0, 0], [0, 0, 1, 1, 0], [0, 0, 0, 1, 1]]
+    # Include weight-two syndromes that cannot converge in leg zero's one iteration.
+    rows = [[1, 0, 0, 1], [0, 0, 0, 0], [1, 0, 1, 0], [0, 1, 0, 1], [1, 0, 0, 1]]
+    batch = SampleBatch(rows * 300, [1, 0, 0, 1, 1] * 300)
+    direct = RelayBpBuilder(matrix, [0.1] * 5).pre_iter(1).num_sets(5).seed(42).build()
+    assert any(direct.decode(row).iterations > 1 for row in rows)
+    spec = relay_bp(pre_iter=1, num_sets=5, seed=42)
+    serial = batch.decode(dem, spec, workers=1, predictions=True)
+    parallel = batch.decode(dem, spec, workers=4, predictions=True)
+    automatic = batch.decode(dem, spec, workers=None, predictions=True)
+    assert automatic.execution_path == "parallel"
+    assert automatic.workers_used >= 2
+    # Small automatic batches still avoid thread setup.
+    assert SampleBatch(rows, [1, 0, 0, 1, 1]).decode(dem, spec, workers=None).execution_path == "sequential"
+    assert parallel.execution_path == "parallel"
+    assert parallel.predictions == serial.predictions == automatic.predictions
+    assert parallel.num_errors == serial.num_errors == automatic.num_errors
+
+
+def test_random_serial_bp_osd_still_rejects_parallel_workers() -> None:
+    spec = bp_osd(bp_schedule="serial")
+    assert spec.history_dependent
     with pytest.raises(ValueError, match=r"worker count 4"):
-        batch.decode(DEM, spec, workers=4)
+        _batch().decode(DEM, spec, workers=4)
 
 
 def test_dimension_mismatch_is_value_error_on_native_path() -> None:

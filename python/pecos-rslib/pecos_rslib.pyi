@@ -3617,7 +3617,6 @@ class decoders:
     def relay_bp(
         *,
         error_rate: float | None = ...,
-        max_iter: int = ...,
         alpha: float | None = ...,
         alpha_iteration_scaling_factor: float = ...,
         gamma0: float | None = ...,
@@ -3627,7 +3626,16 @@ class decoders:
         gamma_dist_interval: tuple[float, float] = ...,
         stopping_criterion: str | int = ...,
         seed: int = ...,
-    ) -> decoders.DecoderSpec: ...
+    ) -> decoders.DecoderSpec:
+        """Native Relay-BP, deterministic per (seed, syndrome).
+
+        gamma0=None makes leg zero memoryless; relay legs retain memory.
+        alpha=0.0 selects dynamic scaling; None means unit scaling.
+        alpha_iteration_scaling_factor must be finite and > 0.
+        Use pre_iter and set_max_iter for iteration limits.
+        """
+        ...
+
     @staticmethod
     def min_sum_bp(
         *, error_rate: float | None = ..., max_iter: int = ..., alpha: float | None = ...
@@ -4168,9 +4176,12 @@ class decoders:
             dem: str,
             decoder_type: str = ...,
             error_rate: float | None = ...,
-            max_iter: int = ...,
+            max_iter: int | None = ...,
         ) -> decoders.DemAwareDecoder:
-            """Build a DEM-aware decoder.
+            """Build a DEM decoder. None uses 100 iterations for iterative families.
+
+            Relay-BP and union_find reject explicit max_iter. For Relay-BP,
+            use pre_iter / set_max_iter through its builder or spec factory.
 
             error_rate is a uniform probability per original DEM error line; None uses
             DEM probabilities. For relay_bp and min_sum_bp, it applies before merging
@@ -4186,7 +4197,7 @@ class decoders:
         """Builder for Relay BP ensemble decoder.
 
         Configures and constructs a RelayBpDecoder for qLDPC codes. Uses an
-        ensemble of min-sum BP decoders with randomized damping parameters
+        ensemble of min-sum BP decoders with randomized memory strengths
         (relay strategy) to improve convergence on codes where standard BP fails.
 
         Args:
@@ -4203,20 +4214,14 @@ class decoders:
         """
 
         def __init__(self, check_matrix: list[list[int]], error_priors: list[float]) -> None: ...
-        def max_iter(self, val: int) -> decoders.RelayBpBuilder:
-            """Set maximum BP iterations (default: 200)."""
-            ...
-
         def alpha(self, val: float | None) -> decoders.RelayBpBuilder:
-            """Set min-sum scaling factor (None = no scaling)."""
+            """Set min-sum scaling factor (None = unit scaling; 0.0 = dynamic scaling)."""
             ...
 
         def gamma0(self, val: float | None) -> decoders.RelayBpBuilder:
-            """Enable memory-BP for the relay ensemble (default: 0.65).
+            """Set leg-zero memory strength (default: 0.65).
 
-            The pre-relay leg uses this directly and relay legs draw per-leg strengths
-            only when it is set; None disables memory entirely and makes relay
-            ensembling ineffective.
+            None makes leg zero memoryless; relay legs retain their sampled memory.
             """
             ...
 
@@ -4235,9 +4240,8 @@ class decoders:
         def seed(self, val: int) -> decoders.RelayBpBuilder:
             """Set the run-level random seed for relay strengths (default: 0).
 
-            The RNG advances across decodes, so reused-decoder outcomes depend on
-            decode history. Equal seeds reproduce only the same full shot sequence,
-            not an individual syndrome independently.
+            Results are deterministic per (seed, syndrome), independent of decode
+            order, batch splitting and worker count.
             """
             ...
 
@@ -4255,16 +4259,15 @@ class decoders:
         """Relay BP ensemble decoder for qLDPC codes.
 
         Created via ``RelayBpBuilder(...).build()``.
-        Its relay RNG advances across decodes, so a reused decoder's per-shot outcomes
-        depend on decode history. A seed reproduces the same full shot sequence, not
-        each syndrome independently.
+        Results are deterministic per (seed, syndrome), independent of decode
+        order, batch splitting and worker count.
         """
 
         @staticmethod
         def from_dem(
             dem: str,
+            *,
             error_rate: float | None = ...,
-            max_iter: int | None = ...,
             alpha: float | None = ...,
             seed: int | None = ...,
         ) -> decoders.DemAwareDecoder:
@@ -4275,7 +4278,6 @@ class decoders:
                 error_rate: Uniform probability per original DEM error line, before merging
                     identical detector and observable sets. A group of k lines receives the
                     k-fold independent XOR of this rate. None uses DEM probabilities before merging.
-                max_iter: BP iteration cap; larger values may improve convergence but increase runtime.
                 alpha: Min-sum scaling factor; tuning can improve accuracy at negligible runtime cost.
                 seed: Makes relay sampling reproducible without increasing its runtime bound.
             """
@@ -4330,11 +4332,11 @@ class decoders:
             ...
 
         def alpha(self, val: float | None) -> decoders.MinSumBpBuilder:
-            """Set min-sum scaling factor (None = no scaling)."""
+            """Set min-sum scaling factor (None = unit scaling; 0.0 = dynamic scaling)."""
             ...
 
         def gamma0(self, val: float | None) -> decoders.MinSumBpBuilder:
-            """Set initial damping factor (None = disabled)."""
+            """Set memory strength (None = plain min-sum without memory)."""
             ...
 
         def build(self) -> decoders.MinSumBpDecoder:
@@ -4352,6 +4354,7 @@ class decoders:
         @staticmethod
         def from_dem(
             dem: str,
+            *,
             error_rate: float | None = ...,
             max_iter: int | None = ...,
             alpha: float | None = ...,

@@ -395,15 +395,7 @@ impl TrellisStreamingDecoder {
     /// Returns the same no-path or internal error as the batch column walk.
     pub fn advance(&mut self) -> Result<StreamingProgress, DecoderError> {
         self.advance_prediction()?;
-        self.check_commitments();
-        let newly_committed = self.pending_commitments.clone();
-        self.pending_commitments.clear();
-        Ok(StreamingProgress {
-            columns_processed: self.next_column,
-            newly_committed,
-            committed: ObsMask::from_words(&self.committed),
-            committed_mask: ObsMask::from_words(&self.committed_mask),
-        })
+        Ok(self.take_progress())
     }
 
     /// Process ready columns and report commitments without discarded-mass bookkeeping.
@@ -424,15 +416,7 @@ impl TrellisStreamingDecoder {
     /// Returns the same no-path or internal error as [`Self::advance`].
     pub fn advance_without_dropped_mass(&mut self) -> Result<StreamingProgress, DecoderError> {
         self.advance_prediction_mode(crate::DecodeMode::PredictionOnly)?;
-        self.check_commitments();
-        let newly_committed = self.pending_commitments.clone();
-        self.pending_commitments.clear();
-        Ok(StreamingProgress {
-            columns_processed: self.next_column,
-            newly_committed,
-            committed: ObsMask::from_words(&self.committed),
-            committed_mask: ObsMask::from_words(&self.committed_mask),
-        })
+        Ok(self.take_progress())
     }
 
     /// Begin a resumable dependency-driven advance at the current detector prefix.
@@ -575,15 +559,7 @@ impl TrellisStreamingDecoder {
     pub fn finish_bounded_advance(&mut self) -> Result<StreamingProgress, DecoderError> {
         self.ensure_bounded_advance_drained()?;
         self.bounded_advance = None;
-        self.check_commitments();
-        let newly_committed = self.pending_commitments.clone();
-        self.pending_commitments.clear();
-        Ok(StreamingProgress {
-            columns_processed: self.next_column,
-            newly_committed,
-            committed: ObsMask::from_words(&self.committed),
-            committed_mask: ObsMask::from_words(&self.committed_mask),
-        })
+        Ok(self.take_progress())
     }
 
     /// Finish a fully fed, drained terminal advance with the full retained result.
@@ -609,6 +585,28 @@ impl TrellisStreamingDecoder {
         self.ensure_shot_complete()?;
         let advance = self.ensure_bounded_advance_drained()?;
         self.finish_bounded_advance()?;
+        Ok(self.terminal_result(advance.without_dropped_mass))
+    }
+
+    /// Check uncommitted logicals and report commitments found since the last snapshot.
+    fn take_progress(&mut self) -> StreamingProgress {
+        self.check_commitments();
+        let newly_committed = self.pending_commitments.clone();
+        self.pending_commitments.clear();
+        StreamingProgress {
+            columns_processed: self.next_column,
+            newly_committed,
+            committed: ObsMask::from_words(&self.committed),
+            committed_mask: ObsMask::from_words(&self.committed_mask),
+        }
+    }
+
+    /// Build the batch terminal result once every column has been processed.
+    ///
+    /// # Panics
+    /// Panics if any column remains unprocessed or a committed bit disagrees with
+    /// the final prediction; both indicate an engine invariant violation.
+    fn terminal_result(&self, omit_dropped_mass: bool) -> TrellisResult {
         let Kernel::Binary(columns) = &self.model.kernel else {
             unreachable!("streaming constructors validate the binary kernel");
         };
@@ -618,7 +616,7 @@ impl TrellisStreamingDecoder {
             "flush must process every column"
         );
         let mut result = TrellisModel::finish_binary(&self.progress, self.next_column, 0.0);
-        if advance.without_dropped_mass {
+        if omit_dropped_mass {
             result.dropped_log_mass = f64::NAN;
         }
         for logical in set_bits(&self.committed_mask) {
@@ -628,7 +626,7 @@ impl TrellisStreamingDecoder {
                 "committed logical bit {logical} differs from the terminal prediction"
             );
         }
-        Ok(result)
+        result
     }
 
     fn ensure_bounded_advance_drained(&self) -> Result<BoundedAdvance, DecoderError> {
@@ -679,14 +677,16 @@ impl TrellisStreamingDecoder {
     }
 
     fn advance_prediction_mode(&mut self, mode: crate::DecodeMode) -> Result<usize, DecoderError> {
+        // A stored failure outranks protocol errors, as in feed and flush. A
+        // failed bounded step leaves its drain pending until reset.
+        if let Some(failure) = self.failure {
+            return Err(failure.error());
+        }
         self.ensure_no_bounded_advance()?;
         if mode == crate::DecodeMode::Full && self.evidence_omitted {
             return Err(DecoderError::InvalidConfiguration(
                 "reset before requesting evidence after prediction-only streaming".into(),
             ));
-        }
-        if let Some(failure) = self.failure {
-            return Err(failure.error());
         }
         let (end, known_count) = match &self.mode {
             StreamingMode::DependencyDriven => (
@@ -763,23 +763,7 @@ impl TrellisStreamingDecoder {
 
         self.ensure_shot_complete()?;
         self.advance()?;
-        let Kernel::Binary(columns) = &self.model.kernel else {
-            unreachable!("streaming constructors validate the binary kernel");
-        };
-        assert_eq!(
-            self.next_column,
-            columns.len(),
-            "flush must process every column"
-        );
-        let result = TrellisModel::finish_binary(&self.progress, self.next_column, 0.0);
-        for logical in set_bits(&self.committed_mask) {
-            let value = self.committed[logical / WORD_BITS] & (1_u64 << (logical % WORD_BITS)) != 0;
-            assert!(
-                result.predicted.get(logical) == value,
-                "committed logical bit {logical} differs from the terminal prediction"
-            );
-        }
-        Ok(result)
+        Ok(self.terminal_result(false))
     }
 
     /// Finish a fully fed shot with complete retained results and no dropped mass.
@@ -808,24 +792,7 @@ impl TrellisStreamingDecoder {
         }
         self.ensure_shot_complete()?;
         self.advance_without_dropped_mass()?;
-        let Kernel::Binary(columns) = &self.model.kernel else {
-            unreachable!("streaming constructors validate the binary kernel");
-        };
-        assert_eq!(
-            self.next_column,
-            columns.len(),
-            "flush must process every column"
-        );
-        let mut result = TrellisModel::finish_binary(&self.progress, self.next_column, 0.0);
-        result.dropped_log_mass = f64::NAN;
-        for logical in set_bits(&self.committed_mask) {
-            let value = self.committed[logical / WORD_BITS] & (1_u64 << (logical % WORD_BITS)) != 0;
-            assert!(
-                result.predicted.get(logical) == value,
-                "committed logical bit {logical} differs from the terminal prediction"
-            );
-        }
-        Ok(result)
+        Ok(self.terminal_result(true))
     }
 
     /// Finish a fully fed shot and return only the predicted logical mask.

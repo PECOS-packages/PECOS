@@ -276,10 +276,20 @@ fn empty_kernel_and_unsupported_metric_have_explicit_outcomes() {
         },
     )
     .unwrap();
-    assert!(matches!(
-        integer.into_resumable().err().unwrap(),
-        DecoderError::InvalidConfiguration(_)
-    ));
+    // A rejected conversion hands back the unchanged decoder.
+    let mut integer_reference = integer.clone();
+    let Err((error, mut integer)) = integer.into_resumable() else {
+        panic!("integer metric must be rejected");
+    };
+    assert!(matches!(error, DecoderError::InvalidConfiguration(_)));
+    assert!(error.to_string().contains("MaxLogInt"), "{error}");
+    for shot in [&[0][..], &[1][..]] {
+        same_attempt(
+            integer_reference.decode_attempt(shot),
+            integer.decode_attempt(shot),
+            false,
+        );
+    }
     let model = FactorModel::new(
         vec![Factor {
             outcomes: vec![
@@ -305,8 +315,15 @@ fn empty_kernel_and_unsupported_metric_have_explicit_outcomes() {
     )
     .unwrap();
     let nary = TrellisDecoder::from_factor_model(&model, TrellisConfig::default()).unwrap();
-    assert!(matches!(
-        nary.into_resumable().err().unwrap(),
-        DecoderError::InvalidConfiguration(_)
-    ));
+    let mut nary_reference = nary.clone();
+    let Err((error, mut nary)) = nary.into_resumable() else {
+        panic!("N-ary kernel must be rejected");
+    };
+    assert!(matches!(error, DecoderError::InvalidConfiguration(_)));
+    assert!(error.to_string().contains("N-ary"), "{error}");
+    same_attempt(
+        nary_reference.decode_attempt(&[1]),
+        nary.decode_attempt(&[1]),
+        false,
+    );
 }

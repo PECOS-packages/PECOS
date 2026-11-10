@@ -309,11 +309,20 @@ fn decoding_failures_remain_sticky_and_reset_restores_both_diagnostic_modes() {
             error_equal(&expected, &actual);
             let sticky = bounded.step_bounded_advance(1).unwrap_err();
             let message = sticky.to_string();
+            // A failed step leaves its drain pending; every API, including the
+            // unbounded and full-diagnostic ones, must still report the failure.
             for later in [
                 bounded.feed_prefix(&[0, 0, 0]).unwrap_err(),
                 bounded.begin_bounded_advance().unwrap_err(),
                 bounded.finish_bounded_advance().unwrap_err(),
                 bounded.finish_bounded_flush().unwrap_err(),
+                bounded.advance().unwrap_err(),
+                bounded.advance_prediction().unwrap_err(),
+                bounded.advance_without_dropped_mass().unwrap_err(),
+                bounded.advance_prediction_without_evidence().unwrap_err(),
+                bounded.flush().unwrap_err(),
+                bounded.flush_without_dropped_mass().unwrap_err(),
+                bounded.flush_prediction().unwrap_err(),
             ] {
                 assert_eq!(later.to_string(), message);
             }

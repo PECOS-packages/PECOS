@@ -238,16 +238,25 @@ impl FrontierCommittee {
 
     /// Consume this committee into an owning exact resumable wrapper.
     ///
-    /// # Errors
-    /// Returns the resumable decoder's kernel/configuration error. Committees
-    /// constructed from sparse DEMs already use the supported binary float form.
-    pub fn into_resumable(self) -> Result<FrontierResumableCommittee, DecoderError> {
-        Ok(FrontierResumableCommittee {
-            forward: self.forward.into_resumable()?,
-            backward: self.backward.into_resumable()?,
+    /// Infallible: every committee is built from a sparse DEM (binary kernel)
+    /// and its constructor rejects the integer metric.
+    ///
+    /// # Panics
+    /// Panics if a committee leg is not a binary float kernel, which the
+    /// committee constructor rules out.
+    #[must_use]
+    pub fn into_resumable(self) -> FrontierResumableCommittee {
+        let resumable = |leg: FrontierDecoder| {
+            leg.into_resumable().unwrap_or_else(|(error, _)| {
+                panic!("committee constructor guarantees binary float legs: {error}")
+            })
+        };
+        FrontierResumableCommittee {
+            forward: resumable(self.forward),
+            backward: resumable(self.backward),
             build_seconds: self.build_seconds,
             attempt: None,
-        })
+        }
     }
 
     /// Parse a Stim-format detector error model and construct a committee.
@@ -671,8 +680,8 @@ fn committee_rank(result: Option<&FrontierResult>, is_forward: bool) -> [f64; 6]
 mod tests {
     use super::{
         CommitteeStatus, DecoderError, FrontierCommittee, FrontierConfig, FrontierDecodeAttempt,
-        FrontierLogicalMass, FrontierResult, FrontierStatus, MetricMode, SparseDem, committee_rank,
-        resolve_committee_attempts,
+        FrontierDecoder, FrontierLogicalMass, FrontierResult, FrontierStatus, MetricMode,
+        SparseDem, committee_rank, resolve_committee_attempts,
     };
     use pecos_decoder_core::obs_mask::ObsMask;
     use std::collections::BTreeMap;
@@ -722,7 +731,7 @@ mod tests {
             )
             .unwrap();
             let mut batch = base.clone();
-            let mut bounded = base.into_resumable().unwrap();
+            let mut bounded = base.into_resumable();
             for budget in [1, 2, 7, 64] {
                 for shot in [&[0, 0][..], &[1, 0][..], &[0, 1][..], &[1, 1][..], &[0][..]] {
                     let forward = batch.forward.decode_attempt(shot);
@@ -747,6 +756,61 @@ mod tests {
                     );
                     let _ = bounded.finish();
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn resumable_committee_runs_both_legs_through_one_sided_engine_faults() {
+        // Legs expecting different detector counts make exactly one leg fail
+        // with an engine error on the same input, in either phase.
+        let config = FrontierConfig::default();
+        let two =
+            FrontierDecoder::from_dem_str("error(0.2) D0 L0\nerror(0.1) D0 D1", config.clone())
+                .unwrap();
+        let three = FrontierDecoder::from_dem_str(
+            "error(0.2) D0 L0\nerror(0.1) D0 D1\ndetector D2",
+            config,
+        )
+        .unwrap();
+        for (forward, backward) in [(two.clone(), three.clone()), (three, two)] {
+            let mut batch_forward = forward.clone();
+            let mut batch_backward = backward.clone();
+            let mut bounded = super::FrontierResumableCommittee {
+                forward: forward.into_resumable().unwrap(),
+                backward: backward.into_resumable().unwrap(),
+                build_seconds: 0.0,
+                attempt: None,
+            };
+            for shot in [&[1, 0][..], &[1, 0, 0][..]] {
+                let expected = resolve_committee_attempts(
+                    batch_forward.decode_attempt(shot),
+                    batch_backward.decode_attempt(shot),
+                );
+                bounded.begin(shot).unwrap();
+                while bounded.progress() != Some(super::FrontierBoundedProgress::Ready) {
+                    bounded.step(1).unwrap();
+                }
+                let state = bounded.attempt.as_ref().unwrap();
+                let legs = [state.forward.as_ref(), state.backward.as_ref()];
+                assert_eq!(
+                    legs.iter()
+                        .filter(|leg| matches!(leg, Some(FrontierDecodeAttempt::Error(_))))
+                        .count(),
+                    1,
+                    "exactly one leg faults"
+                );
+                assert!(
+                    legs.iter()
+                        .any(|leg| matches!(leg, Some(FrontierDecodeAttempt::Success(_)))),
+                    "the other leg still runs to completion"
+                );
+                let actual = bounded.finish();
+                assert!(matches!(
+                    actual,
+                    Err(DecoderError::InvalidDimensions { .. })
+                ));
+                assert_eq!(format!("{expected:?}"), format!("{actual:?}"));
             }
         }
     }

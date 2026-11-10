@@ -2784,15 +2784,23 @@ impl TrellisDecoder {
 
     /// Consume this decoder into an exact resumable batch wrapper.
     ///
-    /// # Errors
-    /// Returns `InvalidConfiguration` for a non-binary or non-float kernel.
     /// BP is prepared once by `begin`, exactly as in a normal batch attempt.
-    pub fn into_resumable(self) -> Result<TrellisResumableDecoder, DecoderError> {
-        if self.model.config.metric_mode != MetricMode::LogSumExpFloat
-            || !matches!(self.model.kernel, Kernel::Binary(_))
-        {
-            return Err(DecoderError::InvalidConfiguration(
-                "resumable batch attempts support the binary float kernel".into(),
+    ///
+    /// # Errors
+    /// Returns `InvalidConfiguration` for a non-binary or non-float kernel,
+    /// together with this unchanged decoder so the caller can keep using it.
+    pub fn into_resumable(self) -> Result<TrellisResumableDecoder, (DecoderError, Box<Self>)> {
+        let metric_mode = self.model.config.metric_mode;
+        let binary = matches!(self.model.kernel, Kernel::Binary(_));
+        if metric_mode != MetricMode::LogSumExpFloat || !binary {
+            let kernel = if binary { "binary" } else { "N-ary" };
+            return Err((
+                DecoderError::InvalidConfiguration(format!(
+                    "resumable batch attempts require a binary LogSumExpFloat kernel, got a \
+                     {kernel} {metric_mode:?} kernel; build from a sparse DEM with \
+                     MetricMode::LogSumExpFloat"
+                )),
+                Box::new(self),
             ));
         }
         Ok(TrellisResumableDecoder {

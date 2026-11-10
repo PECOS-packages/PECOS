@@ -146,7 +146,7 @@ fn all_fixture_committees_preserve_bits_direction_fallback_and_bp() {
                 };
                 let base = FrontierCommittee::from_sparse_dem(&dem, config).unwrap();
                 let mut batch = base.clone();
-                let mut bounded = base.into_resumable().unwrap();
+                let mut bounded = base.into_resumable();
                 for budget in [1, 2, 3, 7, 64, usize::MAX] {
                     for &mask in &fixture.syndromes {
                         let shot: Vec<_> = (0..fixture.num_detectors)
@@ -190,7 +190,7 @@ fn protocol_guards_cancel_reuse_and_dimension_faults_preserve_resolution() {
         FrontierConfig::default(),
     )
     .unwrap();
-    let mut bounded = base.clone().into_resumable().unwrap();
+    let mut bounded = base.clone().into_resumable();
     let invalid = |error| assert!(matches!(error, DecoderError::InvalidConfiguration(_)));
     invalid(bounded.step(1).unwrap_err());
     invalid(bounded.finish().unwrap_err());
@@ -217,11 +217,53 @@ fn protocol_guards_cancel_reuse_and_dimension_faults_preserve_resolution() {
 }
 
 #[test]
+fn cancel_during_backward_phase_leaves_both_legs_reusable() {
+    for bp_score_iterations in [0, 2] {
+        let base = FrontierCommittee::from_dem_str(
+            "error(0.2) D0 L0\nerror(0.1) D0 D1\nerror(0.3) D1\nerror(0.05) D1 D2 L1\nerror(0.1) D2",
+            FrontierConfig {
+                bp_score_iterations,
+                ..FrontierConfig::default()
+            },
+        )
+        .unwrap();
+        let mut batch = base.clone();
+        let mut bounded = base.into_resumable();
+        bounded.begin(&[1, 1, 0]).unwrap();
+        // Drain forward, transition, then stop part-way through backward.
+        while !matches!(
+            bounded.progress(),
+            Some(FrontierBoundedProgress::Backward(_))
+        ) {
+            bounded.step(1).unwrap();
+        }
+        bounded.step(1).unwrap();
+        let Some(FrontierBoundedProgress::Backward(partial)) = bounded.progress() else {
+            panic!("a five-column backward leg is still pending after one column");
+        };
+        assert!(partial.completed_columns > 0 && !partial.ready_to_finish);
+        bounded.cancel();
+        assert_eq!(bounded.progress(), None);
+        for shot in [&[0, 1, 1][..], &[1, 1, 0][..]] {
+            for budget in [1, 2, usize::MAX] {
+                match (batch.decode(shot), drain(&mut bounded, shot, budget, false)) {
+                    (Ok(expected), Ok(actual)) => same_result(expected, actual, false),
+                    (Err(expected), Err(actual)) => {
+                        assert_eq!(format!("{expected:?}"), format!("{actual:?}"));
+                    }
+                    _ => panic!("cancelled backward leg changed a later window"),
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn empty_and_forced_models_still_run_both_leg_phases() {
     for text in ["detector D0", "error(1) D0 L0\ndetector D1"] {
         let base = FrontierCommittee::from_dem_str(text, FrontierConfig::default()).unwrap();
         let mut batch = base.clone();
-        let mut bounded = base.into_resumable().unwrap();
+        let mut bounded = base.into_resumable();
         for shot in [&[0][..], &[1][..], &[1, 0][..]] {
             match (batch.decode(shot), drain(&mut bounded, shot, 1, false)) {
                 (Ok(expected), Ok(actual)) => same_result(expected, actual, false),

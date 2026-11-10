@@ -1140,6 +1140,8 @@ struct FrontierScratch<M> {
     narrow_sort_scratch: Vec<u64>,
     use_narrow_merge_records: bool,
     use_compact_merge_records: bool,
+    #[cfg(any(test, feature = "runtime-checks"))]
+    use_generalized_merge_records: bool,
     merge_record_arrival_bits: u32,
     merge_word_masks: Vec<u64>,
     merge_word_indices: Vec<usize>,
@@ -1296,6 +1298,10 @@ impl<M: Copy> FrontierScratch<M> {
         self.packed_merge_keys = false;
         self.use_compact_merge_records = false;
         self.use_narrow_merge_records = false;
+        #[cfg(any(test, feature = "runtime-checks"))]
+        {
+            self.use_generalized_merge_records = false;
+        }
         self.merge_word_indices.clear();
         if self.stride > 4 {
             self.merge_word_masks.clear();
@@ -1321,6 +1327,7 @@ impl<M: Copy> FrontierScratch<M> {
         // arrivals. A K=512 expansion can emit 1024 branches and needs ten bits.
         let arrival_bits = if count <= 512 { 9 } else { 10 };
         self.merge_record_arrival_bits = arrival_bits;
+        #[cfg(any(test, feature = "runtime-checks"))]
         let arrival_mask = (1_u64 << arrival_bits) - 1;
         let narrow_key_bits = 64 - arrival_bits;
         'try_trimmed: {
@@ -1486,6 +1493,24 @@ impl<M: Copy> FrontierScratch<M> {
                 }
                 return;
             }
+        }
+
+        // Multibit joint classes do not fit the older logical<=1 layout. Pack
+        // complete component spans only when their original lexicographic order
+        // and every arrival index fit in u128; otherwise keep the same fallback.
+        if self.try_pack_generalized_records(count, arrival_bits) {
+            self.use_compact_merge_records = true;
+            #[cfg(any(test, feature = "runtime-checks"))]
+            {
+                self.use_generalized_merge_records = true;
+                self.indices.clear();
+                self.indices.extend(
+                    self.compact_merge_records
+                        .iter()
+                        .map(|&v| (v & u128::from(arrival_mask)) as usize),
+                );
+            }
+            return;
         }
 
         // Preserve lexicographic key order and equal-key arrival order, while
@@ -1664,6 +1689,67 @@ impl<M: Copy> FrontierScratch<M> {
         self.indices.clear();
         self.indices
             .extend(self.merge_keys.iter().map(|&(_, index)| index));
+    }
+
+    fn try_pack_generalized_records(&mut self, count: usize, arrival_bits: u32) -> bool {
+        let width = self.merge_word_indices.len();
+        if !(64..=1024).contains(&count) || !(2..=4).contains(&width) {
+            return false;
+        }
+        let budget = 128 - arrival_bits;
+        let span = |mask: u64| {
+            if mask == 0 {
+                0
+            } else {
+                64 - mask.leading_zeros() - mask.trailing_zeros()
+            }
+        };
+        let mut masks = [0_u64; 4];
+        if self.stride > 4 {
+            // The wide-key path already scanned every branch to find zero words.
+            for (slot, mask) in masks.iter_mut().enumerate().take(width) {
+                *mask = self.merge_word_masks[self.merge_word_indices[slot]];
+            }
+        } else {
+            // Samples may prove failure, never success. Finish the full OR scan
+            // before accepting a plan; an unseen bit must never be truncated.
+            for index in [0, (count - 1) / 3, 2 * (count - 1) / 3, count - 1] {
+                let source = self.branches.key(index, self.stride);
+                for (slot, mask) in masks.iter_mut().enumerate().take(width) {
+                    *mask |= source[self.merge_word_indices[slot]];
+                }
+            }
+            if masks.iter().copied().map(span).sum::<u32>() > budget {
+                return false;
+            }
+            for source in self.branches.words.chunks_exact(self.stride) {
+                for (slot, mask) in masks.iter_mut().enumerate().take(width) {
+                    *mask |= source[self.merge_word_indices[slot]];
+                }
+            }
+        }
+        let widths = masks.map(span);
+        if widths.iter().sum::<u32>() > budget {
+            return false;
+        }
+        let shifts = masks.map(|mask| if mask == 0 { 0 } else { mask.trailing_zeros() });
+        self.compact_merge_records.clear();
+        for (index, source) in self.branches.words.chunks_exact(self.stride).enumerate() {
+            let mut key = 0_u128;
+            for slot in 0..width {
+                // Each component is at most 64 bits, and the checked total leaves
+                // the arrival budget free. Zero and full-width spans are safe.
+                key = (key << widths[slot])
+                    | u128::from(source[self.merge_word_indices[slot]] >> shifts[slot]);
+            }
+            self.compact_merge_records
+                .push((key << arrival_bits) | index as u128);
+        }
+        sort_parities(
+            &mut self.compact_merge_records,
+            &mut self.compact_sort_scratch,
+        );
+        true
     }
 
     /// Transpose the inclusive detector-word span read by the scoring rows.
@@ -4835,11 +4921,156 @@ mod tests {
                         );
                         assert_eq!(
                             scratch.use_compact_merge_records,
-                            count <= 1024 && shape <= 1
+                            (count <= 1024 && shape <= 1) || scratch.use_generalized_merge_records
+                        );
+                        if count <= 1024 && shape <= 1 {
+                            assert!(
+                                !scratch.use_generalized_merge_records,
+                                "existing packing keeps precedence"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn generalized_records_preserve_multibit_classes_at_u128_boundaries() {
+        let mut scratch = super::FrontierScratch::<f64>::default();
+        let cases = [
+            (2, [32, 32, 0, 0]),
+            (2, [64, 32, 0, 0]),
+            (3, [43, 43, 32, 0]), //118 bits: fits ten arrival bits exactly.
+            (3, [44, 43, 32, 0]), //119 bits: only the nine-bit path fits.
+            (3, [45, 43, 32, 0]),
+            (3, [64, 22, 32, 0]),
+            (3, [64, 23, 32, 0]),
+            (4, [22, 32, 32, 32]),
+            (4, [23, 32, 32, 32]),
+            (4, [24, 32, 32, 32]),
+            (4, [40, 0, 40, 32]),
+        ];
+        for count in [0, 1, 63, 64, 511, 512, 513, 1023, 1024, 1025, 64] {
+            for (width, spans) in cases {
+                for wide in [false, true] {
+                    for top_aligned in [false, true] {
+                        let stride = if wide { 8 } else { width };
+                        let detector_words = stride - 1;
+                        scratch.reset(
+                            &vec![0; detector_words],
+                            &[0],
+                            &vec![u64::MAX; detector_words],
+                            0.0,
+                        );
+                        let positions = match width {
+                            2 => [detector_words - 1, stride - 1, 0, 0],
+                            3 => [detector_words - 1, 0, stride - 1, 0],
+                            _ => [detector_words - 1, detector_words - 2, 0, stride - 1],
+                        };
+                        for index in 0..count {
+                            let mut words = vec![0; stride];
+                            for slot in 0..width {
+                                let bits = spans[slot];
+                                let mask = if bits == 64 {
+                                    u64::MAX
+                                } else {
+                                    (1_u64 << bits) - 1
+                                };
+                                let shift = if top_aligned && bits != 0 {
+                                    64 - bits
+                                } else {
+                                    0
+                                };
+                                words[positions[slot]] =
+                                    (mask & !(((index / (slot + 1)) % 9) as u64)) << shift;
+                            }
+                            scratch.branches.words.extend_from_slice(&words);
+                            scratch.branches.masses.push(match index % 4 {
+                                0 => -0.0,
+                                1 => -80.0,
+                                2 => -0.2,
+                                _ => -1e-10,
+                            });
+                        }
+                        let mut oracle = scratch.clone();
+                        oracle.merge_reference(super::logaddexp);
+                        scratch.merge(super::logaddexp);
+                        assert_eq!(scratch.indices, oracle.indices);
+                        assert_eq!(scratch.parent.words, oracle.parent.words);
+                        assert!(
+                            scratch.parent.masses.iter().map(|v| v.to_bits()).eq(oracle
+                                .parent
+                                .masses
+                                .iter()
+                                .map(|v| v.to_bits()))
+                        );
+                        let arrival_bits = if count <= 512 { 9 } else { 10 };
+                        assert_eq!(
+                            scratch.use_generalized_merge_records,
+                            (64..=1024).contains(&count)
+                                && spans.iter().sum::<u32>() <= 128 - arrival_bits
                         );
                     }
                 }
             }
+        }
+    }
+
+    #[test]
+    fn generalized_records_reject_unsampled_overflow_and_unsupported_width() {
+        let mut scratch = super::FrontierScratch::<f64>::default();
+        for count in [512, 513, 1024] {
+            let high_width = if count <= 512 { 44 } else { 43 };
+            for special in [0, 1, count - 1] {
+                scratch.reset(&[0, 0], &[0], &[u64::MAX; 2], 0.0);
+                for index in 0..count {
+                    let logical =
+                        u64::from(u32::MAX) | if index == special { 1_u64 << 32 } else { 0 };
+                    scratch.branches.words.extend_from_slice(&[
+                        (1_u64 << 43) - 1,
+                        (1_u64 << high_width) - 1,
+                        logical,
+                    ]);
+                    scratch.branches.masses.push(-(index as f64) * 0.125);
+                }
+                let mut oracle = scratch.clone();
+                oracle.merge_reference(super::logaddexp);
+                scratch.merge(super::logaddexp);
+                assert!(!scratch.use_generalized_merge_records);
+                assert_eq!(scratch.indices, oracle.indices);
+                assert_eq!(scratch.parent.words, oracle.parent.words);
+                assert!(
+                    scratch.parent.masses.iter().map(|v| v.to_bits()).eq(oracle
+                        .parent
+                        .masses
+                        .iter()
+                        .map(|v| v.to_bits()))
+                );
+            }
+            // Five nonzero components remain on the generic complete-key path,
+            // even when their small values would fit in a numeric record.
+            scratch.reset(&[0; 4], &[0], &[u64::MAX; 4], 0.0);
+            for index in 0..count {
+                scratch
+                    .branches
+                    .words
+                    .extend_from_slice(&[1, 1, 1, 1, 1 + (index % 17) as u64]);
+                scratch.branches.masses.push(-(index as f64) * 0.25);
+            }
+            let mut oracle = scratch.clone();
+            oracle.merge_reference(super::logaddexp);
+            scratch.merge(super::logaddexp);
+            assert!(!scratch.use_generalized_merge_records);
+            assert_eq!(scratch.indices, oracle.indices);
+            assert_eq!(scratch.parent.words, oracle.parent.words);
+            assert!(
+                scratch.parent.masses.iter().map(|v| v.to_bits()).eq(oracle
+                    .parent
+                    .masses
+                    .iter()
+                    .map(|v| v.to_bits()))
+            );
         }
     }
 
@@ -6354,7 +6585,10 @@ fn compact_records_preserve_full_keys_arrival_and_mass_bits_at_boundaries() {
                     || pattern == 6
                     || (stride > 2 && (pattern == 4 || pattern == 5))
                 {
-                    assert!(!frontier.use_compact_merge_records);
+                    assert!(
+                        !frontier.use_compact_merge_records
+                            || frontier.use_generalized_merge_records
+                    );
                 }
                 if frontier.use_compact_merge_records {
                     packed_cases += 1;

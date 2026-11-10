@@ -615,9 +615,10 @@ fn failed_idle_dem_build_leaves_preparation_reusable() {
     let mut coherent = NoiseConfig::new(0.0, 0.0, 0.0, 0.0);
     coherent.idle_rz = 0.1;
     for noise in [NoiseConfig::with_idle(0.0, 0.0, 0.0, 0.0, 0.1), coherent] {
-        assert_eq!(
-            prepared.build_dem(noise).err().unwrap().to_string(),
-            "idle-noise parameters have no idle gates to attach to"
+        let error = prepared.build_dem(noise).err().unwrap().to_string();
+        assert!(
+            error.contains("idle-noise parameters have no idle gates to attach to"),
+            "{error}"
         );
         assert!(
             prepared

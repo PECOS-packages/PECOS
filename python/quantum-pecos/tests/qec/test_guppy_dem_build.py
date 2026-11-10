@@ -420,8 +420,14 @@ def test_forged_certificate_on_byte_carrier_does_not_bypass_the_guard(claimed_de
         )
 
 
-@pytest.mark.parametrize("corruption", ["duplicate_terminal", "nonempty_terminal"])
-def test_audited_trace_stream_rejects_malformed_terminals(corruption: str) -> None:
+@pytest.mark.parametrize(
+    ("corruption", "message"),
+    [
+        ("duplicate_terminal", "runtime trace must end with exactly one trace_complete chunk"),
+        ("nonempty_terminal", "terminal trace chunk must contain no operations or named outputs"),
+    ],
+)
+def test_audited_trace_stream_rejects_malformed_terminals(corruption: str, message: str) -> None:
     chunks = _framed_trace_chunks()
     if corruption == "duplicate_terminal":
         chunks.insert(
@@ -438,11 +444,10 @@ def test_audited_trace_stream_rejects_malformed_terminals(corruption: str) -> No
     else:
         chunks[-1] = {
             **chunks[-1],
-            "num_operations": 1,
-            "operations": [{"Quantum": {"H": 0}}],
+            "named_results": {"m": {"type": "bool", "values": [True]}},
         }
 
-    with pytest.raises(ValueError, match=r"exactly one trace_complete|terminal trace chunk|no lowered_quantum_ops"):
+    with pytest.raises(ValueError, match=f"^{message}$"):
         _replay_qis_trace_chunks_into_tick_circuit(chunks)
 
 

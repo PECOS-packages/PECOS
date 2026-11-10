@@ -167,6 +167,31 @@ fn every_chunk_requires_attestation_and_framing() {
 }
 
 #[test]
+fn terminal_chunk_rejects_each_payload_without_raw_operations() {
+    for (field, value) in [
+        (
+            "lowered_quantum_ops",
+            json!([{"gate_type": "H", "qubits": [0]}]),
+        ),
+        ("named_results", json!({"m": NamedResult::Bool(vec![true])})),
+        (
+            "named_result_traces",
+            json!([{"name": "m", "values": [true], "result_ids": [7]}]),
+        ),
+    ] {
+        let mut trace = fixture();
+        trace[1][field] = value;
+        let chunks = decode(&trace);
+        assert!(chunks[1].operations.is_empty());
+        assert_eq!(
+            validate_shot(&chunks).unwrap_err().to_string(),
+            "terminal trace chunk must contain no operations or named outputs",
+            "{field}",
+        );
+    }
+}
+
+#[test]
 fn strict_gate_and_measurement_validation() {
     for gate in [
         json!({"gate_type": "H", "qubits": [3], "angles": [0.5]}),

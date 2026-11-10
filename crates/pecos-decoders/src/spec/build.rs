@@ -172,8 +172,8 @@ fn build_single(
         DecoderSpec::BpLsd(config) => build_bp_lsd(dem, config),
         DecoderSpec::BeliefFind => build_belief_find(dem),
         DecoderSpec::UnionFind => build_union_find(dem),
-        DecoderSpec::RelayBp(config) => build_relay_bp(dem, config),
-        DecoderSpec::MinSumBp(config) => build_min_sum_bp(dem, config),
+        DecoderSpec::RelayBp(config) => Ok(build_relay_bp(dem, config)?),
+        DecoderSpec::MinSumBp(config) => Ok(build_min_sum_bp(dem, config)?),
         DecoderSpec::PecosUf(config) => build_pecos_uf(dem, config.preset),
         DecoderSpec::BeliefMatching(config) => build_belief_matching(dem, config),
         DecoderSpec::Windowed(config) => build_windowed(dem, config),
@@ -902,20 +902,26 @@ fn build_union_find(_dem: &str) -> Result<Box<dyn ObservableDecoder>, DecoderErr
 }
 
 #[cfg(feature = "relay-bp")]
-fn relay_priors(matrix: &pecos_decoder_core::DemCheckMatrix, error_rate: Option<f64>) -> Vec<f64> {
-    error_rate.map_or_else(
-        || matrix.error_priors.clone(),
-        |rate| vec![rate; matrix.num_mechanisms],
-    )
+fn relay_dem_matrix(
+    dem: &str,
+    error_rate: Option<f64>,
+) -> Result<pecos_decoder_core::DemCheckMatrix, DecoderError> {
+    let mut matrix = pecos_decoder_core::DemCheckMatrix::from_dem_str(dem)?;
+    if let Some(rate) = error_rate {
+        matrix.error_priors.fill(rate);
+    }
+    Ok(matrix.merge_duplicate_symptoms())
 }
 
 #[cfg(feature = "relay-bp")]
 fn build_relay_bp(
     dem: &str,
     config: &RelayBpConfig,
-) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
-    let matrix = pecos_decoder_core::DemCheckMatrix::from_dem_str(dem)?;
-    let priors = relay_priors(&matrix, config.error_rate);
+) -> Result<
+    Box<pecos_decoder_core::CheckMatrixObservableDecoder<crate::RelayBpDecoder>>,
+    DecoderError,
+> {
+    let matrix = relay_dem_matrix(dem, config.error_rate)?;
     let stopping = match config.stopping_criterion {
         RelayStoppingCriterion::PreIter => crate::StoppingCriterion::PreIter,
         RelayStoppingCriterion::All => crate::StoppingCriterion::All,
@@ -927,7 +933,7 @@ fn build_relay_bp(
         }
     };
     let decoder = crate::RelayBpBuilder::new(&matrix.check_matrix.view())
-        .error_priors(&priors)
+        .error_priors(&matrix.error_priors)
         .max_iter(config.max_iter)
         .alpha(config.alpha)
         .alpha_iteration_scaling_factor(config.alpha_iteration_scaling_factor)
@@ -957,11 +963,13 @@ fn build_relay_bp(
 fn build_min_sum_bp(
     dem: &str,
     config: &MinSumBpConfig,
-) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
-    let matrix = pecos_decoder_core::DemCheckMatrix::from_dem_str(dem)?;
-    let priors = relay_priors(&matrix, config.error_rate);
+) -> Result<
+    Box<pecos_decoder_core::CheckMatrixObservableDecoder<crate::MinSumBpDecoder>>,
+    DecoderError,
+> {
+    let matrix = relay_dem_matrix(dem, config.error_rate)?;
     let decoder = crate::MinSumBpBuilder::new(&matrix.check_matrix.view())
-        .error_priors(&priors)
+        .error_priors(&matrix.error_priors)
         .max_iter(config.max_iter)
         .alpha(config.alpha)
         .build()
@@ -1428,6 +1436,116 @@ fn build_ensemble(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Structural regression guards: inspect the actual decoder built by each spec path.
+    #[cfg(feature = "relay-bp")]
+    #[test]
+    fn relay_spec_merged_column_count() {
+        let dem = "error(0.1) D0 L0\nerror(0.2) D0 L0\nerror(0.3) D1 L1";
+        let decoder = build_relay_bp(dem, &RelayBpConfig::default()).unwrap();
+        assert_eq!(decoder.decoder.bit_count(), 2);
+        assert_eq!(decoder.dem.num_mechanisms, 2);
+        assert_eq!(decoder.dem.observable_matrix.ncols(), 2);
+    }
+
+    #[cfg(feature = "relay-bp")]
+    #[test]
+    fn min_sum_spec_merged_column_count() {
+        let dem = "error(0.1) D0 L0\nerror(0.2) D0 L0\nerror(0.3) D1 L1";
+        let decoder = build_min_sum_bp(dem, &MinSumBpConfig::default()).unwrap();
+        assert_eq!(decoder.decoder.bit_count(), 2);
+        assert_eq!(decoder.dem.num_mechanisms, 2);
+        assert_eq!(decoder.dem.observable_matrix.ncols(), 2);
+    }
+
+    // Red/green: overrides apply per original line and both wrappers use merged observables.
+    #[cfg(feature = "relay-bp")]
+    #[test]
+    fn relay_family_merges_before_building_decoder_and_observable_map() {
+        let dem = "error(0.1) D0 D1 L0\nerror(0.2) D0 D1 L0\nerror(0.3) D2 L1";
+        let matrix = relay_dem_matrix(dem, Some(0.25)).unwrap();
+        assert_eq!(matrix.error_priors, [0.375, 0.25]);
+        assert_eq!(matrix.num_mechanisms, 2);
+        for spec in [
+            DecoderSpec::RelayBp(RelayBpConfig {
+                error_rate: Some(0.25),
+                ..Default::default()
+            }),
+            DecoderSpec::MinSumBp(MinSumBpConfig {
+                error_rate: Some(0.25),
+                ..Default::default()
+            }),
+        ] {
+            let mut decoder = spec.build(&DecodeModel::SingleDem(dem.into())).unwrap();
+            for (syndrome, expected) in [([1, 1, 0], 1), ([0, 0, 1], 2), ([1, 1, 1], 3)] {
+                assert_eq!(
+                    decoder.decode_obs(&syndrome).unwrap().to_u64(),
+                    Some(expected)
+                );
+            }
+        }
+    }
+
+    // Red/green: merged duplicate mechanisms converge with the correct observable.
+    #[cfg(feature = "relay-bp")]
+    #[test]
+    fn duplicate_dem_min_sum_converges() {
+        let dem = "error(0.1) D0 D1 L0\nerror(0.1) D0 D1 L0";
+        let matrix = pecos_decoder_core::DemCheckMatrix::from_dem_str(dem).unwrap();
+        let syndrome = matrix.check_matrix.column(0).to_owned();
+        let merged = matrix.merge_duplicate_symptoms();
+        let mut merged_decoder = crate::MinSumBpBuilder::new(&merged.check_matrix.view())
+            .error_priors(&merged.error_priors)
+            .build()
+            .unwrap();
+        let result = merged_decoder.decode(&syndrome.view()).unwrap();
+        assert!(result.converged);
+        assert_eq!(result.decoding.to_vec(), [1]);
+
+        let mut decoder = DecoderSpec::MinSumBp(MinSumBpConfig::default())
+            .build(&DecodeModel::SingleDem(dem.to_string()))
+            .unwrap();
+        assert_eq!(decoder.decode_obs(&[1, 1]).unwrap().to_u64(), Some(1));
+    }
+
+    // Compatibility: the spec path agrees with the original raw-matrix path.
+    #[cfg(feature = "relay-bp")]
+    #[test]
+    fn unique_dem_relay_family_compatibility() {
+        let dem = "error(0.1) D0 L0\nerror(0.2) D0 D1 L1\nerror(0.3) D1 L0 L1";
+        for relay in [false, true] {
+            let matrix = pecos_decoder_core::DemCheckMatrix::from_dem_str(dem).unwrap();
+            let mut original: Box<dyn ObservableDecoder> = if relay {
+                let inner = crate::RelayBpBuilder::new(&matrix.check_matrix.view())
+                    .error_priors(&matrix.error_priors)
+                    .build()
+                    .unwrap();
+                Box::new(pecos_decoder_core::CheckMatrixObservableDecoder::new(
+                    inner, matrix,
+                ))
+            } else {
+                let inner = crate::MinSumBpBuilder::new(&matrix.check_matrix.view())
+                    .error_priors(&matrix.error_priors)
+                    .build()
+                    .unwrap();
+                Box::new(pecos_decoder_core::CheckMatrixObservableDecoder::new(
+                    inner, matrix,
+                ))
+            };
+            let spec = if relay {
+                DecoderSpec::RelayBp(RelayBpConfig::default())
+            } else {
+                DecoderSpec::MinSumBp(MinSumBpConfig::default())
+            };
+            let mut decoder = spec.build(&DecodeModel::SingleDem(dem.into())).unwrap();
+            for syndrome in [[0, 0], [1, 0], [0, 1], [1, 1], [1, 0]] {
+                assert_eq!(
+                    decoder.decode_obs(&syndrome).unwrap(),
+                    original.decode_obs(&syndrome).unwrap()
+                );
+            }
+        }
+    }
 
     #[cfg(feature = "uf")]
     const HYPEREDGE_DEM: &str = "error(0.1) D0 D1 D2 L0\nerror(0.05) D0\n";

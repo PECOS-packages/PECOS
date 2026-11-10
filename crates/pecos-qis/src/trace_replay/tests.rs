@@ -473,3 +473,14 @@ fn hosted_replay_options_validate_compacted_metadata() {
             .contains("appears on 2 host gates")
     );
 }
+
+#[test]
+fn stored_crz_requires_runtime_lowering() {
+    let mut trace = fixture();
+    trace[0]["lowered_quantum_ops"][0] =
+        json!({"gate_type": "CRZ", "qubits": [3, 4], "angles": [0.5]});
+    assert_eq!(
+        replay(&decode(&trace), None, None).unwrap_err().to_string(),
+        "stored CRZ requires runtime lowering before trace replay"
+    );
+}

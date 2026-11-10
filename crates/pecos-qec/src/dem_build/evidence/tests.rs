@@ -426,7 +426,10 @@ fn required_holes_and_json_certification_fail_closed() {
         .prepare()
         .err()
         .unwrap();
-    assert_eq!(error.to_string(), JSON_CERTIFICATION_ERROR);
+    assert_eq!(
+        error.to_string(),
+        format!("{JSON_CERTIFICATION_ERROR} unsupported")
+    );
 }
 
 #[test]

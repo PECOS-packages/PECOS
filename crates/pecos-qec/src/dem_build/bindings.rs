@@ -18,7 +18,7 @@ pub enum DemBindingError {
     #[error("{0}")]
     Certification(String),
     #[error(
-        "Cannot bind result_ref: the program's lowered form could not be certified; use records, rec[-k], or meas_ids instead."
+        "Cannot bind result_ref: the program's lowered form could not be certified; use records, rec[-k], or meas_ids instead. {source}"
     )]
     RequiredCertification {
         #[source]

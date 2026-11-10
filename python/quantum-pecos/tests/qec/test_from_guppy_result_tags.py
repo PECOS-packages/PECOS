@@ -120,7 +120,7 @@ def test_result_tags_with_runtime_loop_program_fails_loud() -> None:
         ValueError,
         match=(
             r"^Cannot bind result_tags: the program's lowered form could not be certified; "
-            r"use records, rec\[-k\], or meas_ids instead\.$"
+            r"use records, rec\[-k\], or meas_ids instead\. "
         ),
     ) as raised:
         DetectorErrorModel.from_guppy(
@@ -129,7 +129,7 @@ def test_result_tags_with_runtime_loop_program_fails_loud() -> None:
             detectors_json='[{"id":0,"result_tags":["any_tag"]}]',
             **_NOISE,
         )
-    assert raised.value.__cause__ is None
+    assert "is on a CFG cycle" in str(raised.value)
 
 
 # ---------------------------------------------------------------------------

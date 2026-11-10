@@ -532,6 +532,11 @@ pub fn replay(
     for trace in shot.iter().flat_map(|chunk| &chunk.lowered_quantum_ops) {
         let kind: GateType = match trace.gate_type.as_str() {
             "MeasureLeaked" => GateType::MZ,
+            "CRZ" => {
+                return Err(replay_error(
+                    "stored CRZ requires runtime lowering before trace replay",
+                ));
+            }
             name @ ("H"
             | "X"
             | "Y"
@@ -554,7 +559,6 @@ pub fn replay(
             | "CY"
             | "CZ"
             | "CH"
-            | "CRZ"
             | "SZZ"
             | "SZZdg"
             | "RZZ"

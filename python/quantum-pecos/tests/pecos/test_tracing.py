@@ -497,7 +497,7 @@ def test_stored_crz_requires_runtime_lowering() -> None:
         "qubits": [0, 1],
         "angles": [0.5],
     }
-    with pytest.raises(ValueError, match="CRZ"):
+    with pytest.raises(ValueError, match=r"^stored CRZ requires runtime lowering before trace replay$"):
         pecos.qis_operation_trace_to_tick_circuit(trace)
 
 

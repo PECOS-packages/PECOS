@@ -852,9 +852,9 @@ impl DemBuildBuilder {
                 })?
                 .as_ref()
                 .map_err(|error| match error {
-                    bindings::DemBindingError::Certification(_) => {
-                        DemBuildError::Configuration(evidence::JSON_CERTIFICATION_ERROR.into())
-                    }
+                    bindings::DemBindingError::Certification(_) => DemBuildError::Configuration(
+                        format!("{} {error}", evidence::JSON_CERTIFICATION_ERROR),
+                    ),
                     _ => DemBuildError::Configuration(error.to_string()),
                 })?;
             let (detectors, observables) =

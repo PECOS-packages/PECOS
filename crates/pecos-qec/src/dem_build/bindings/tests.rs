@@ -183,7 +183,7 @@ fn qis_certification_failure_policy_and_unrelated_errors() {
             let error = result.unwrap_err();
             assert_eq!(
                 error.to_string(),
-                "Cannot bind result_ref: the program's lowered form could not be certified; use records, rec[-k], or meas_ids instead."
+                "Cannot bind result_ref: the program's lowered form could not be certified; use records, rec[-k], or meas_ids instead. test unsupported CFG"
             );
             assert!(
                 matches!(error,DemBindingError::RequiredCertification { source } if *source == DemBindingError::Certification("test unsupported CFG".into()))

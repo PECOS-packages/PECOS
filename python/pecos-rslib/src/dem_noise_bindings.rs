@@ -47,7 +47,6 @@ macro_rules! dem_noise_methods {
                 p_idle_sin_squared_model: Option<BTreeMap<String, f64>>,
                 p_idle_coherent: Option<f64>,
                 p_idle_coherent_model: Option<BTreeMap<String, f64>>,
-
             ) -> pyo3::PyResult<$result> {
                 let $noise = pecos_qec::NoiseConfig::try_from(pecos_qec::NoiseOptions {
                     p1,

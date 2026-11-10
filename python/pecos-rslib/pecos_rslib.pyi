@@ -4225,6 +4225,17 @@ class decoders:
             """
             ...
 
+        def explicit_gammas(self, rows: list[list[float]] | None) -> decoders.RelayBpBuilder:
+            """Set per-bit memory rows: row 0 serves relay leg 1, and rows cycle.
+
+            None restores sampled gammas. Invalid rows raise ValueError on build.
+            """
+            ...
+
+        def gamma_dist_interval(self, low: float, high: float) -> decoders.RelayBpBuilder:
+            """Set sampled gamma bounds; invalid bounds raise ValueError on build."""
+            ...
+
         def pre_iter(self, val: int) -> decoders.RelayBpBuilder:
             """Set number of pre-relay BP iterations (default: 80)."""
             ...
@@ -4291,6 +4302,16 @@ class decoders:
 
             Returns:
                 BpResult with decoding, convergence status, and iteration count.
+            """
+            ...
+
+        def decode_batch(self, detection_events: bytes, num_shots: int) -> bytes:
+            """Decode sequentially with the GIL released.
+
+            Input is num_shots * check_count row-major 0/1 bytes, e.g.
+            numpy_array.astype(numpy.uint8).tobytes(). Output contains
+            num_shots * bit_count row-major correction bytes.
+            Invalid length or non-binary entries raise ValueError.
             """
             ...
 
@@ -4379,6 +4400,16 @@ class decoders:
 
             Returns:
                 BpResult with decoding, convergence status, and iteration count.
+            """
+            ...
+
+        def decode_batch(self, detection_events: bytes, num_shots: int) -> bytes:
+            """Decode sequentially with the GIL released.
+
+            Input is num_shots * check_count row-major 0/1 bytes, e.g.
+            numpy_array.astype(numpy.uint8).tobytes(). Output contains
+            num_shots * bit_count row-major correction bytes.
+            Invalid length or non-binary entries raise ValueError.
             """
             ...
 

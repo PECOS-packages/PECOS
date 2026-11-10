@@ -6,6 +6,8 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- Added Python Relay-BP explicit gamma rows and sampling interval setters, plus
+  GIL-releasing flat-byte batch decoding for native Relay-BP and min-sum BP.
 - Relay-BP and min-sum decoders built from a DEM merge mechanisms with identical
   detector and observable sets using independent-XOR probabilities. This improves
   decoding of repeated symptoms, such as stim's flattened multi-round DEMs.

@@ -2647,6 +2647,35 @@ fn relay_error_to_py(error: pecos_decoders::RelayBpError) -> PyErr {
     }
 }
 
+/// Shared flat-buffer adapter; syndrome validation remains owned by the decoder.
+fn decode_relay_batch(
+    detection_events: &[u8],
+    num_shots: usize,
+    check_count: usize,
+    bit_count: usize,
+    mut decode: impl FnMut(
+        &[u8],
+    ) -> Result<
+        pecos_decoders::RelayBpDecodingResult,
+        pecos_decoders::RelayBpError,
+    >,
+) -> PyResult<Vec<u8>> {
+    if num_shots.checked_mul(check_count) != Some(detection_events.len()) {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "detection_events length {} must equal num_shots ({num_shots}) * check_count ({check_count})",
+            detection_events.len()
+        )));
+    }
+    let mut corrections = Vec::with_capacity(num_shots.saturating_mul(bit_count));
+    for shot in 0..num_shots {
+        let start = shot * check_count;
+        let result =
+            decode(&detection_events[start..start + check_count]).map_err(relay_error_to_py)?;
+        corrections.extend(result.decoding);
+    }
+    Ok(corrections)
+}
+
 fn validate_relay_error_rate(error_rate: Option<f64>) -> PyResult<()> {
     if let Some(value) = error_rate
         && (!value.is_finite() || !(0.0..=1.0).contains(&value))
@@ -2709,6 +2738,8 @@ pub struct PyRelayBpBuilder {
     error_priors: Vec<f64>,
     alpha: Option<f64>,
     gamma0: Option<f64>,
+    explicit_gammas: Option<Vec<Vec<f64>>>,
+    gamma_dist_interval: Option<(f64, f64)>,
     pre_iter: usize,
     num_sets: usize,
     set_max_iter: usize,
@@ -2733,6 +2764,8 @@ impl PyRelayBpBuilder {
             // Leg-zero memory default; relay legs retain sampled memory even
             // when gamma0 is None.
             gamma0: Some(RELAY_BP_DEFAULT_GAMMA0),
+            explicit_gammas: None,
+            gamma_dist_interval: None,
             pre_iter: 80,
             num_sets: 300,
             set_max_iter: 60,
@@ -2757,6 +2790,23 @@ impl PyRelayBpBuilder {
     ///     Self for method chaining.
     fn gamma0(mut slf: PyRefMut<'_, Self>, val: Option<f64>) -> PyRefMut<'_, Self> {
         slf.gamma0 = val;
+        slf
+    }
+
+    /// Set per-bit relay memory rows. Row 0 serves relay leg 1; rows cycle.
+    /// None restores sampled gammas. Validated on build; returns self for chaining.
+    fn explicit_gammas(
+        mut slf: PyRefMut<'_, Self>,
+        rows: Option<Vec<Vec<f64>>>,
+    ) -> PyRefMut<'_, Self> {
+        slf.explicit_gammas = rows;
+        slf
+    }
+
+    /// Set the sampled gamma interval (default: -0.24 to 0.66).
+    /// Validated on build; returns self for chaining.
+    fn gamma_dist_interval(mut slf: PyRefMut<'_, Self>, low: f64, high: f64) -> PyRefMut<'_, Self> {
+        slf.gamma_dist_interval = Some((low, high));
         slf
     }
 
@@ -2820,7 +2870,7 @@ impl PyRelayBpBuilder {
         let stopping_criterion = parse_stopping_criterion(&self.stopping)?;
         let arr = dense_check_matrix_to_array2(&self.check_matrix)?;
 
-        RustRelayBpBuilder::new(&arr.view())
+        let mut builder = RustRelayBpBuilder::new(&arr.view())
             .error_priors(&self.error_priors)
             .alpha(self.alpha)
             .gamma0(self.gamma0)
@@ -2828,7 +2878,14 @@ impl PyRelayBpBuilder {
             .num_sets(self.num_sets)
             .set_max_iter(self.set_max_iter)
             .seed(self.seed)
-            .stopping_criterion(stopping_criterion)
+            .stopping_criterion(stopping_criterion);
+        if let Some(rows) = &self.explicit_gammas {
+            builder = builder.explicit_gammas(rows.clone());
+        }
+        if let Some(interval) = self.gamma_dist_interval {
+            builder = builder.gamma_dist_interval(interval);
+        }
+        builder
             .build()
             .map(|inner| PyRelayBpDecoder { inner })
             .map_err(relay_error_to_py)
@@ -2906,6 +2963,35 @@ impl PyRelayBpDecoder {
                 iterations: result.iterations,
             })
             .map_err(relay_error_to_py)
+    }
+
+    /// Decode a batch sequentially with the GIL released and no per-shot Python overhead.
+    ///
+    /// * `detection_events` - Row-major bytes, one 0/1 byte per detector,
+    ///   exactly `num_shots * check_count` bytes (not bit packed).
+    /// * `num_shots` - Number of shots in the batch.
+    ///
+    /// Returns row-major correction bytes, exactly `num_shots * bit_count` bytes.
+    /// Raises `ValueError` for an incorrect length or non-binary syndrome.
+    /// For NumPy input use `detection_events.astype(numpy.uint8).tobytes()`.
+    fn decode_batch<'py>(
+        &mut self,
+        py: Python<'py>,
+        detection_events: &[u8],
+        num_shots: usize,
+    ) -> PyResult<Bound<'py, pyo3::types::PyBytes>> {
+        let check_count = self.inner.check_count();
+        let bit_count = self.inner.bit_count();
+        let corrections = py.detach(|| {
+            decode_relay_batch(
+                detection_events,
+                num_shots,
+                check_count,
+                bit_count,
+                |syndrome| self.inner.decode(&ndarray::ArrayView1::from(syndrome)),
+            )
+        })?;
+        Ok(pyo3::types::PyBytes::new(py, &corrections))
     }
 
     /// Number of checks (rows in check matrix).
@@ -3089,6 +3175,35 @@ impl PyMinSumBpDecoder {
                 iterations: result.iterations,
             })
             .map_err(relay_error_to_py)
+    }
+
+    /// Decode a batch sequentially with the GIL released and no per-shot Python overhead.
+    ///
+    /// * `detection_events` - Row-major bytes, one 0/1 byte per detector,
+    ///   exactly `num_shots * check_count` bytes (not bit packed).
+    /// * `num_shots` - Number of shots in the batch.
+    ///
+    /// Returns row-major correction bytes, exactly `num_shots * bit_count` bytes.
+    /// Raises `ValueError` for an incorrect length or non-binary syndrome.
+    /// For NumPy input use `detection_events.astype(numpy.uint8).tobytes()`.
+    fn decode_batch<'py>(
+        &mut self,
+        py: Python<'py>,
+        detection_events: &[u8],
+        num_shots: usize,
+    ) -> PyResult<Bound<'py, pyo3::types::PyBytes>> {
+        let check_count = self.inner.check_count();
+        let bit_count = self.inner.bit_count();
+        let corrections = py.detach(|| {
+            decode_relay_batch(
+                detection_events,
+                num_shots,
+                check_count,
+                bit_count,
+                |syndrome| self.inner.decode(&ndarray::ArrayView1::from(syndrome)),
+            )
+        })?;
+        Ok(pyo3::types::PyBytes::new(py, &corrections))
     }
 
     /// Number of checks (rows in check matrix).
@@ -4039,6 +4154,23 @@ mod dem_tuning_tests {
         };
 
         assert_eq!(inner.method(), RustUfMethod::Peeling);
+    }
+
+    #[test]
+    fn relay_builder_gamma_options_reach_native_validation() {
+        pyo3::Python::initialize();
+        let mut builder = PyRelayBpBuilder::new(vec![vec![1, 1]], vec![0.1, 0.1]);
+        builder.explicit_gammas = Some(vec![vec![0.3]]);
+        let error = builder.build().err().unwrap();
+        assert!(error.to_string().contains("explicit_gammas row 0"));
+        assert!(error.to_string().contains("column count 1"));
+        builder.explicit_gammas = Some(vec![vec![0.3, 0.3]]);
+        builder.gamma_dist_interval = Some((1.0, -1.0));
+        let error = builder.build().err().unwrap();
+        assert!(error.to_string().contains("gamma_dist_interval"));
+        assert!(error.to_string().contains("(1, -1)"));
+        builder.gamma_dist_interval = Some((0.3, 0.3));
+        assert!(builder.build().is_ok());
     }
 
     #[test]

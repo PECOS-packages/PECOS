@@ -348,6 +348,14 @@ with `num_sets=0` for a single leg (then `pre_iter` must be positive). The
 `alpha_iteration_scaling_factor` must always be finite and greater than zero.
 Stopping targets must be positive, so `stopping("n_conv_0")` is rejected.
 
+Python `RelayBpBuilder.explicit_gammas(rows)` sets one memory strength per bit:
+row 0 serves relay leg 1, and rows cycle; `None` restores sampling from
+`gamma_dist_interval(low, high)`. Both builder-created Python decoders provide
+`decode_batch(detection_events, num_shots)`, decoding sequentially with the GIL
+released. Pass `num_shots * check_count` row-major 0/1 bytes (for example,
+`numpy_array.astype(numpy.uint8).tobytes()`); the result is
+`num_shots * bit_count` row-major correction bytes.
+
 `MinSumBpBuilder` uses a single native memory-BP leg, keeps a positive `max_iter`,
 and has no memory when `gamma0=None`. Both families require binary matrices and
 syndromes and one finite probability in `[0, 1]` per matrix column.

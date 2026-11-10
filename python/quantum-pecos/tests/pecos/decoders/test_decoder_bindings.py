@@ -594,3 +594,96 @@ def test_relay_internal_decode_failure_remains_runtime_error() -> None:
     decoder = MinSumBpBuilder([[1, 1]], [0.1, 0.1]).gamma0(1e308).build()
     with pytest.raises(RuntimeError, match="non-finite posterior"):
         decoder.decode([1])
+
+
+@pytest.fixture
+def native_bp_batch_data() -> tuple[list[list[int]], list[list[int]]]:
+    """Sparse code with short cycles exercises relay legs on 50 weight-two shots."""
+    import numpy as np
+
+    rng = np.random.default_rng(712)
+    matrix = np.zeros((30, 60), dtype=np.uint8)
+    for column in range(60):
+        matrix[rng.choice(30, 3, replace=False), column] = 1
+    errors = np.zeros((50, 60), dtype=np.uint8)
+    for shot in errors:
+        shot[rng.choice(60, 2, replace=False)] = 1
+    return matrix.tolist(), ((errors @ matrix.T) % 2).tolist()
+
+
+def test_relay_explicit_gammas(native_bp_batch_data: tuple[list[list[int]], list[list[int]]]) -> None:
+    from pecos_rslib.decoders import RelayBpBuilder, RelayBpDecoder
+
+    matrix, shots = native_bp_batch_data
+    rows = [[-0.8] * 60, [0.9] * 60]
+
+    def builder() -> RelayBpBuilder:
+        return RelayBpBuilder(matrix, [0.05] * 60).seed(42).pre_iter(0).num_sets(5).set_max_iter(3).stopping("all")
+
+    def results(decoder: RelayBpDecoder) -> list[tuple[list[int], bool, int]]:
+        decoded = [decoder.decode(shot) for shot in shots]
+        return [(result.decoding, result.converged, result.iterations) for result in decoded]
+
+    explicit = results(builder().explicit_gammas(rows).build())
+    assert explicit == results(builder().explicit_gammas(rows).build())
+    assert explicit == results(builder().explicit_gammas((rows * 3)[:5]).build())
+    assert explicit != results(builder().build())
+    assert results(builder().explicit_gammas(rows).explicit_gammas(None).build()) == results(builder().build())
+    assert results(builder().gamma_dist_interval(0.3, 0.3).build()) == results(
+        builder().explicit_gammas([[0.3] * 60]).build(),
+    )
+
+
+@pytest.mark.parametrize("interval", [(1.0, -1.0), (float("nan"), 1.0), (0.0, float("inf")), (-1e308, 1e308)])
+def test_relay_gamma_interval_validation(interval: tuple[float, float]) -> None:
+    from pecos_rslib.decoders import RelayBpBuilder
+
+    with pytest.raises(ValueError, match=r"gamma_dist_interval.*got \("):
+        RelayBpBuilder([[1, 1]], [0.1, 0.1]).gamma_dist_interval(*interval).build()
+
+
+@pytest.mark.parametrize(
+    ("rows", "message"),
+    [
+        ([], r"explicit_gammas.*row count 0"),
+        ([[0.1]], r"explicit_gammas.*column count 1"),
+        ([[0.1, float("inf")]], r"explicit_gammas\[0\]\[1\].*inf"),
+    ],
+)
+def test_relay_explicit_gamma_validation(rows: list[list[float]], message: str) -> None:
+    from pecos_rslib.decoders import RelayBpBuilder
+
+    with pytest.raises(ValueError, match=message):
+        RelayBpBuilder([[1, 1]], [0.1, 0.1]).explicit_gammas(rows).build()
+
+
+@pytest.mark.parametrize("family", ["RelayBpBuilder", "MinSumBpBuilder"])
+def test_native_bp_decode_batch(
+    family: str,
+    native_bp_batch_data: tuple[list[list[int]], list[list[int]]],
+) -> None:
+    import numpy as np
+    import pecos_rslib.decoders as decoders
+
+    matrix, shots = native_bp_batch_data
+    builder = getattr(decoders, family)(matrix, [0.05] * 60)
+    if family == "RelayBpBuilder":
+        builder.seed(42).pre_iter(2).num_sets(5).set_max_iter(10)
+    decoder = builder.build()
+    expected = bytes(bit for shot in shots for bit in decoder.decode(shot).decoding)
+    flat = np.asarray(shots).astype(np.uint8).tobytes()
+    actual = decoder.decode_batch(flat, num_shots=50)
+    assert isinstance(actual, bytes)
+    assert len(actual) == 50 * decoder.bit_count
+    assert actual == expected
+    split = 17 * decoder.check_count
+    assert decoder.decode_batch(flat[:split], 17) + decoder.decode_batch(flat[split:], 33) == expected
+    assert decoder.decode_batch(b"", 0) == b""
+    for invalid in [flat[:-1], flat + b"\x00"]:
+        with pytest.raises(ValueError, match=rf"length {len(invalid)}.*num_shots \(50\).*check_count \(30\)"):
+            decoder.decode_batch(invalid, 50)
+    with pytest.raises(ValueError, match=r"syndrome.*2"):
+        decoder.decode_batch(flat[:-1] + b"\x02", 50)
+    with pytest.raises(ValueError, match=r"num_shots.*check_count"):
+        decoder.decode_batch(b"", sys.maxsize)
+    assert decoder.decode_batch(flat, 50) == expected

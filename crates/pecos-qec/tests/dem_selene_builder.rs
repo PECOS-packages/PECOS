@@ -854,17 +854,42 @@ fn frontend_compilation_retains_generator_bytes_and_inference_values() {
 }
 
 #[test]
-fn explicit_integer_result_slots_preserve_sparse_ids() {
-    let ir = include_str!("fixtures/dem_programs/explicit_only.ll")
-        .replace("%lazy_measure = tail call i64 @___lazy_measure(i64 %qalloc.i)",
-            "%lazy_measure = add i64 0, 7\n  call i32 @__quantum__qis__m__body(i64 %qalloc.i, i64 %lazy_measure)")
-        + "\ndeclare i32 @__quantum__qis__m__body(i64, i64)\n";
+fn explicit_qir_slot_preserves_raw_name_and_occurrence_identity() {
+    use pecos_engines::{sim_builder, state_vector};
+    use pecos_qis::{helios_interface_builder, qis_engine};
+
+    // Follow the QIR case in selene_request_tests.rs: static program qubits,
+    // explicit result slots, and __quantum__rt__result_get_one reads.
+    let ir = include_str!("fixtures/dem_programs/sparse_qir_slot.ll");
     let prepared = DetectorErrorModel::builder()
-        .with_program(program(&ir).with_frontend_static_schedule("test_frontend"))
+        .with_program(program(ir).with_frontend_static_schedule("test_frontend"))
         .with_qubits(1)
-        .with_detectors(vec![vec![7]])
+        .with_detectors(vec![vec![0]])
         .prepare()
         .unwrap();
-    assert_eq!(prepared.measurement_ids(), [7]);
+    assert_eq!(prepared.measurement_ids(), [0]);
+    assert_eq!(
+        prepared.circuit().get_meta("qis_source_measurement_ids"),
+        Some(&Attribute::String("[0]".into()))
+    );
     assert!(prepared.named_result_measurements().is_empty());
+
+    // Slot 7 survives in the engine's raw result name. It is not the DEM
+    // occurrence ID and does not create a named-result binding.
+    let shots = sim_builder()
+        .classical(
+            qis_engine()
+                .runtime(runtime())
+                .interface(helios_interface_builder())
+                .program_ir(ir.to_string()),
+        )
+        .quantum(state_vector())
+        .qubits(1)
+        .workers(1)
+        .seed(42)
+        .run(1)
+        .unwrap();
+    assert_eq!(shots.shots.len(), 1);
+    assert_eq!(shots.shots[0].data.len(), 1);
+    assert_eq!(shots.shots[0].data["measurement_7"].as_u32(), Some(0));
 }

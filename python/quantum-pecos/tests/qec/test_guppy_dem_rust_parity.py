@@ -1,17 +1,16 @@
 # Copyright 2026 The PECOS Developers
 # Licensed under the Apache License, Version 2.0
 
-"""Facade regressions for reidentified QIS, computed references, and schema v2."""
+"""Facade regressions for QIR slots, occurrence identities, references, and schema v2."""
 
 from __future__ import annotations
 
 import hashlib
 import json
-import re
 
 import numpy as np
 import pytest
-from pecos import NoiseParameters
+from pecos import NoiseParameters, Qis, pecos_rslib, selene_engine, sim
 from pecos.qec import Detector, GuppyDemBuilder, Observable, rec, result_ref
 from pecos.qec import dem as dem_module
 from pecos.qec.dem import _preflight_guppy_static_schedule
@@ -22,16 +21,16 @@ from qec.test_guppy_dem_builder import _tagged_two_qubit_program
 from qec.test_guppy_dem_rust_bindings import _reference_one
 
 NOISE = {"p1": 0.001, "p2": 0.01, "p_meas": 0.02, "p_prep": 0.001}
-ROWS = ["sparse-measurement-ids", "permuted-measurement-ids", "reference-one"]
+ROWS = ["sparse-result-slots", "permuted-result-slots", "reference-one"]
 
 
 def _case(name):
     program, qubits = _tagged_two_qubit_program, 2
     options = {"detectors": [Detector(rec[-2])], "observables": [Observable(rec[-1])]}
-    if name == "sparse-measurement-ids":
+    if name == "sparse-result-slots":
         options = {
-            "detectors_json": '[{"id":0,"meas_ids":[7]}]',
-            "observables_json": '[{"id":0,"meas_ids":[3]}]',
+            "detectors_json": '[{"id":0,"meas_ids":[0]}]',
+            "observables_json": '[{"id":0,"meas_ids":[1]}]',
             "num_measurements": 2,
         }
     elif name == "reference-one":
@@ -48,24 +47,25 @@ def _python_build(program, qubits, options, noise=NOISE):
     return builder.with_noise(NoiseParameters(**noise)).build()
 
 
-def _reidentify_qis(analysis, ids):
-    # Use QIS's explicit integer result-slot intrinsic to exercise the existing
-    # fixtures with sparse/permuted identities while preserving their quantum gates.
-    pattern = r"(?m)^(\s*)(%[\w.]+) = (?:tail )?call i64 @___lazy_measure\(i64 ([^\)]+)\).*$"
-    matches = list(re.finditer(pattern, analysis.qis))
-    assert len(matches) == len(ids)
-    identities = iter(ids)
-
-    def replace(match):
-        indent, result, qubit = match.groups()
-        identity = next(identities)
-        return (
-            f"{indent}{result} = add i64 0, {identity}\n"
-            f"{indent}call i32 @__quantum__qis__m__body(i64 {qubit}, i64 {result})"
-        )
-
-    analysis.qis = re.sub(pattern, replace, analysis.qis) + "\ndeclare i32 @__quantum__qis__m__body(i64, i64)\n"
-    return analysis
+def _qir_slot_program(slots):
+    # Follow selene_request_tests.rs and test_tracing._identity_program:
+    # QIR program qubits and result slots use QIR gates and QIR result reads.
+    return f"""
+        declare void @__quantum__qis__reset__body(i64)
+        declare void @__quantum__qis__cx__body(i64, i64)
+        declare i32 @__quantum__qis__m__body(i64, i64)
+        declare i32 @__quantum__rt__result_get_one(i64)
+        define i64 @qmain(i64 %shot) {{
+            call void @__quantum__qis__reset__body(i64 0)
+            call void @__quantum__qis__reset__body(i64 1)
+            call void @__quantum__qis__cx__body(i64 0, i64 1)
+            %m0 = call i32 @__quantum__qis__m__body(i64 0, i64 {slots[0]})
+            %v0 = call i32 @__quantum__rt__result_get_one(i64 {slots[0]})
+            %m1 = call i32 @__quantum__qis__m__body(i64 1, i64 {slots[1]})
+            %v1 = call i32 @__quantum__rt__result_get_one(i64 {slots[1]})
+            ret i64 0
+        }}
+    """
 
 
 def _fingerprint_v2(build):
@@ -100,11 +100,11 @@ def _fingerprint_v2(build):
 def test_guppy_dem_facade_regressions(name, monkeypatch) -> None:
     program, qubits, options = _case(name)
     analysis = None
-    if name in {"sparse-measurement-ids", "permuted-measurement-ids"}:
+    if name in {"sparse-result-slots", "permuted-result-slots"}:
         layout, analysis, _ = _preflight_guppy_static_schedule(program, required_tags=[])
         assert layout is None
-        ids = [7, 3] if name == "sparse-measurement-ids" else [1, 0]
-        analysis = _reidentify_qis(analysis, ids)
+        slots = [7, 3] if name == "sparse-result-slots" else [1, 0]
+        analysis.qis = _qir_slot_program(slots)
         monkeypatch.setattr(
             dem_module,
             "_preflight_guppy_static_schedule",
@@ -114,14 +114,25 @@ def test_guppy_dem_facade_regressions(name, monkeypatch) -> None:
     assert built.schema_fingerprint == _fingerprint_v2(built)
     assert built.circuit.get_meta("dem_schema_fingerprint") == built.schema_fingerprint
     if analysis is not None:
-        assert [entry.meas_id for entry in built.measurement_ledger] == ids
+        assert [entry.meas_id for entry in built.measurement_ledger] == [0, 1]
         assert all(entry.result_refs == () for entry in built.measurement_ledger)
-        assert json.loads(built.detectors_json)[0]["meas_ids"] == [7 if name == "sparse-measurement-ids" else 0]
-        assert json.loads(built.observables_json)[0]["meas_ids"] == [3 if name == "sparse-measurement-ids" else 1]
-        assert built.evaluate_runtime_record([0, 1]) == (([0], 1) if name == "sparse-measurement-ids" else ([1], 0))
-        assert built.evaluate_measurements(dict(zip(ids, [1, 0], strict=True))) == (
-            ([1], 0) if name == "sparse-measurement-ids" else ([0], 1)
+        assert json.loads(built.detectors_json)[0]["meas_ids"] == [0]
+        assert json.loads(built.observables_json)[0]["meas_ids"] == [1]
+        assert built.evaluate_runtime_record([0, 1]) == ([0], 1)
+        assert built.evaluate_measurements({0: 1, 1: 0}) == ([1], 0)
+        # The runtime retains caller-selected slots in raw result names;
+        # preparation and evaluation use dense measurement occurrence IDs.
+        raw = (
+            sim(Qis(analysis.qis))
+            .classical(selene_engine("selene_simple_runtime"))
+            .quantum(pecos_rslib.state_vector())
+            .qubits(qubits)
+            .workers(1)
+            .seed(7)
+            .run(1)
+            .to_dict()
         )
+        assert raw == {f"measurement_{slot}": [0] for slot in slots}
     else:
         assert built.measurement_ledger[0].result_refs == (result_ref("one"),)
         assert json.loads(built.detectors_json)[0]["reference"] == 1

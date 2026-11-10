@@ -13,7 +13,7 @@ from guppylang.std.lang import owned
 from guppylang.std.quantum import cx, h, measure, qubit, x
 from pecos.guppy_gen import get_num_qubits, make_surface_code
 from pecos.qec import Detector, DetectorErrorModel, build_dem_from_guppy, rec, result_ref
-from pecos.qec._qis_result_tags import _CertificationError
+from pecos_rslib.qis import ResultTagCertificationError as _CertificationError
 
 
 # A scrambled straight-line program: three measurements in source order
@@ -22,7 +22,7 @@ from pecos.qec._qis_result_tags import _CertificationError
 # tag_c -> [2] (ordinals of the measurements the tags actually record, not
 # the order of the result() calls).
 #
-# The nontrivial pre-history entangles qb and qc after an H on qb. With
+# The CX propagates preparation faults from qb to qc while leaving both readouts deterministic. With
 # p1/p2 > 0 this produces distinct mechanisms for detectors anchored to qa,
 # qb, and qc, so the DEMs for
 # detectors anchored to records [-3], [-2], [-1] differ in their (number of)
@@ -36,7 +36,6 @@ def _scrambled_three_measurements() -> None:
     qa = qubit()
     qb = qubit()
     qc = qubit()
-    h(qb)
     cx(qb, qc)
     a = measure(qa).read()
     b = measure(qb).read()
@@ -121,7 +120,7 @@ def test_result_tags_with_runtime_loop_program_fails_loud() -> None:
         ValueError,
         match=(
             r"^Cannot bind result_tags: the program's lowered form could not be certified; "
-            r"use records, rec\[-k\], or meas_ids instead\.$"
+            r"use records, rec\[-k\], or meas_ids instead\. "
         ),
     ) as raised:
         DetectorErrorModel.from_guppy(
@@ -130,8 +129,7 @@ def test_result_tags_with_runtime_loop_program_fails_loud() -> None:
             detectors_json='[{"id":0,"result_tags":["any_tag"]}]',
             **_NOISE,
         )
-    assert isinstance(raised.value.__cause__, _CertificationError)
-    assert str(raised.value.__cause__).endswith("is on a CFG cycle")
+    assert "is on a CFG cycle" in str(raised.value)
 
 
 # ---------------------------------------------------------------------------
@@ -214,7 +212,6 @@ def _inlined_three_measurements() -> None:
     q0 = qubit()
     q1 = qubit()
     q2 = qubit()
-    h(q1)
     cx(q1, q2)
     x(q2)
     x(q2)

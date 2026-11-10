@@ -1,0 +1,36 @@
+HUGRiHJv(@(hugr 0)
+
+(mod)
+
+(define-func
+  private
+  _1
+  (core.fn
+    [(core.fn [(core.adt [[] []])] [(core.adt [[] []])]) (core.adt [[] []])]
+    [(core.adt [[] []])])
+  (meta (core.title "main"))
+  (dfg [%_1 %_2] [%_3]
+    (signature
+      (core.fn
+        [(core.fn [(core.adt [[] []])] [(core.adt [[] []])]) (core.adt [[] []])]
+        [(core.adt [[] []])]))
+    (dfg [%_1 %_2] [%_3]
+      (signature
+        (core.fn
+          [(core.fn [(core.adt [[] []])] [(core.adt [[] []])])
+           (core.adt [[] []])]
+          [(core.adt [[] []])]))
+      (meta core.entrypoint)
+      (dfg [%_4 %_5] [%_6]
+        (signature
+          (core.fn
+            [(core.fn [(core.adt [[] []])] [(core.adt [[] []])])
+             (core.adt [[] []])]
+            [(core.adt [[] []])]))
+        ((core.call_indirect [(core.adt [[] []])] [(core.adt [[] []])])
+          [%_4 %_5] [%_6]
+          (signature
+            (core.fn
+              [(core.fn [(core.adt [[] []])] [(core.adt [[] []])])
+               (core.adt [[] []])]
+              [(core.adt [[] []])])))))))

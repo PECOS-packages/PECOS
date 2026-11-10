@@ -1,5 +1,6 @@
 """HUGR loading and control-flow preflight, using the Guppy fixtures."""
 
+import json
 from importlib.resources import as_file, files
 from pathlib import Path
 
@@ -16,6 +17,16 @@ from pecos.qec._hugr_preflight import (
 )
 
 FIXTURES = Path(__file__).parent / "fixtures" / "result_tags"
+CONTROL_FLOW_FIXTURES = Path(__file__).resolve().parents[4] / "crates/pecos-qec/tests/fixtures/hugr_control_flow"
+
+
+@pytest.mark.parametrize(
+    ("filename", "expected"),
+    json.loads((CONTROL_FLOW_FIXTURES / "verdicts.json").read_text()).items(),
+)
+def test_control_flow_matches_shared_corpus(filename: str, expected: bool) -> None:
+    data = (CONTROL_FLOW_FIXTURES / filename).read_bytes()
+    assert has_nontrivial_control_flow(load_hugr_from_bytes(data)) is expected
 
 
 def _load(name: str) -> Hugr:

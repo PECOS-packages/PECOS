@@ -14,25 +14,21 @@ import pytest
 from guppylang import guppy
 from guppylang.std.builtins import array, result
 from guppylang.std.quantum import cx, h, measure, qubit, x
-from pecos._qis_trace_replay import (
-    _replay_qis_trace_chunks_into_tick_circuit,
-    _validate_audited_trace_stream,
-)
 from pecos.guppy_gen import get_num_qubits, make_surface_code
 from pecos.qec import (
     Detector,
     DetectorErrorModel,
     Observable,
     _hugr_preflight,
-    _qis_result_tags,
     build_dem_from_guppy,
     rec,
     result_ref,
     surface_memory_dem_spec,
 )
-from pecos.qec._qis_result_tags import _CertificationError
-from pecos.qec.dem import _generator_certified_result_traces
-from pecos.qec.dem_spec import GuppyDemBuild, RecordRef, ResultRef, _resolve_dem_specs
+from pecos.qec.dem_spec import RecordRef, ResultRef
+from pecos.tracing import _replay_qis_trace_chunks_into_tick_circuit
+from pecos_rslib import qis as _qis_analysis
+from pecos_rslib.qis import ResultTagCertificationError as _CertificationError
 from pecos_rslib.quantum import TickCircuit
 
 
@@ -42,6 +38,16 @@ def _scrambled_tagged_measurements() -> None:
     qb = qubit()
     h(qb)
     cx(qb, qa)
+    a = measure(qa).read()
+    b = measure(qb).read()
+    result("b", b)
+    result("a", a)
+
+
+@guppy
+def _asymmetric_tagged_measurements() -> None:
+    qa, qb = qubit(), qubit()
+    x(qb)
     a = measure(qa).read()
     b = measure(qb).read()
     result("b", b)
@@ -95,9 +101,9 @@ def _unexpected_program_analysis(*_args: object) -> None:
 
 @pytest.mark.parametrize("wrapped", [False, True])
 def test_certified_build_does_not_load_hugr(monkeypatch: pytest.MonkeyPatch, *, wrapped: bool) -> None:
-    """Regression: packet A must not parse or analyze generator-certified builds."""
+    """Generator-certified builds bypass Python HUGR parsing and tag analysis."""
     monkeypatch.setattr(_hugr_preflight, "load_hugr_from_bytes", _unexpected_program_analysis)
-    monkeypatch.setattr(_qis_result_tags, "extract_result_tag_measurements", _unexpected_program_analysis)
+    monkeypatch.setattr(_qis_analysis, "extract_result_tag_measurements", _unexpected_program_analysis)
     program = make_surface_code(3, 1, "Z")
     detectors, observables = surface_memory_dem_spec(3, 1, "Z")
     build = build_dem_from_guppy(
@@ -112,35 +118,39 @@ def test_certified_build_does_not_load_hugr(monkeypatch: pytest.MonkeyPatch, *, 
 
 
 @pytest.mark.parametrize("references", ["typed", "json"])
-def test_tagged_build_loads_hugr_and_analyzes_qis_once(monkeypatch: pytest.MonkeyPatch, references: str) -> None:
-    """Regression: packet A shares lazy analysis across preflight and tag consumers."""
+def test_tagged_build_loads_hugr_once_without_python_tag_analysis(
+    monkeypatch: pytest.MonkeyPatch,
+    references: str,
+) -> None:
+    """HUGR loads once and Rust owns tag analysis."""
     loader = Mock(wraps=_hugr_preflight.load_hugr_from_bytes)
-    extractor = Mock(wraps=_qis_result_tags.extract_result_tag_measurements)
+    extractor = Mock(wraps=_qis_analysis.extract_result_tag_measurements)
     monkeypatch.setattr(_hugr_preflight, "load_hugr_from_bytes", loader)
-    monkeypatch.setattr(_qis_result_tags, "extract_result_tag_measurements", extractor)
+    monkeypatch.setattr(_qis_analysis, "extract_result_tag_measurements", extractor)
     if references == "typed":
         dem = build_dem_from_guppy(
             _scrambled_tagged_measurements,
             num_qubits=2,
-            detectors=[Detector(result_ref("a"))],
+            detectors=[Detector(result_ref("a"), result_ref("b"))],
             p_meas=0.1,
         ).dem
     else:
         dem = DetectorErrorModel.from_guppy(
             _scrambled_tagged_measurements,
             num_qubits=2,
-            detectors_json='[{"id":0,"result_tags":["a"]}]',
+            detectors_json='[{"id":0,"result_tags":["a","b"]}]',
             p_meas=0.1,
         )
     assert dem.num_detectors == 1
-    assert loader.call_count == extractor.call_count == 1
+    assert loader.call_count == 1
+    extractor.assert_not_called()
 
 
 def test_build_without_candidate_tags_skips_extraction(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Regression: packet A must preserve the no-candidate-tags early return."""
+    """Builds without named results require no Python tag extraction."""
     loader = Mock(wraps=_hugr_preflight.load_hugr_from_bytes)
     monkeypatch.setattr(_hugr_preflight, "load_hugr_from_bytes", loader)
-    monkeypatch.setattr(_qis_result_tags, "extract_result_tag_measurements", _unexpected_program_analysis)
+    monkeypatch.setattr(_qis_analysis, "extract_result_tag_measurements", _unexpected_program_analysis)
     build = build_dem_from_guppy(
         _measurement_without_named_results,
         num_qubits=1,
@@ -151,50 +161,17 @@ def test_build_without_candidate_tags_skips_extraction(monkeypatch: pytest.Monke
     assert loader.call_count == 1
 
 
-def _reordered_trace() -> tuple[TickCircuit, list[dict[str, object]]]:
-    circuit = TickCircuit()
-    circuit.tick().mz_with_ids([2, 0, 1], [2, 0, 1])
-    traces = [
-        {"name": "a", "values": [False], "result_ids": [0]},
-        {"name": "b", "values": [False], "result_ids": [1]},
-        {"name": "c", "values": [False], "result_ids": [2]},
-    ]
-    return circuit, traces
-
-
-def test_rec_and_result_refs_resolve_identically_after_runtime_reorder() -> None:
-    circuit, traces = _reordered_trace()
-    via_records = _resolve_dem_specs(
-        [Detector(rec[-3], rec[-1])],
-        [Observable(rec[-2])],
-        circuit=circuit,
-        result_traces=traces,
-    )
-    via_results = _resolve_dem_specs(
-        [Detector(result_ref("a"), result_ref("c"))],
-        [Observable(result_ref("b"))],
-        circuit=circuit,
-        result_traces=traces,
-    )
-
-    assert via_records.detectors_json == via_results.detectors_json
-    assert via_records.observables_json == via_results.observables_json
-    assert via_records.schema_fingerprint == via_results.schema_fingerprint
-    assert json.loads(via_records.detectors_json) == [{"id": 0, "meas_ids": [0, 2]}]
-    assert [entry.meas_id for entry in via_records.ledger] == [2, 0, 1]
-
-
 def test_real_guppy_rec_and_result_ref_builds_are_byte_identical() -> None:
     noise = {"p1": 0.01, "p2": 0.02, "p_meas": 0.1, "p_prep": 0.0}
     via_records = build_dem_from_guppy(
-        _scrambled_tagged_measurements,
+        _asymmetric_tagged_measurements,
         num_qubits=2,
         detectors=[Detector(rec[-2])],
         observables=[Observable(rec[-1])],
         **noise,
     )
     via_results = build_dem_from_guppy(
-        _scrambled_tagged_measurements,
+        _asymmetric_tagged_measurements,
         num_qubits=2,
         detectors=[Detector(result_ref("a"))],
         observables=[Observable(result_ref("b"))],
@@ -206,18 +183,21 @@ def test_real_guppy_rec_and_result_ref_builds_are_byte_identical() -> None:
     assert via_records.schema_fingerprint == via_results.schema_fingerprint
     assert via_records.dem.to_string() == via_results.dem.to_string()
 
+    assert via_records.evaluate_results({"a": [0], "b": [1]}) == ([0], 0)
+    assert via_records.result_parities({"a": [0], "b": [1]}) == ([0], 1)
+
 
 def test_bare_tag_strings_are_shorthand_for_result_ref() -> None:
     noise = {"p1": 0.01, "p2": 0.02, "p_meas": 0.1, "p_prep": 0.0}
     via_result_ref = build_dem_from_guppy(
-        _scrambled_tagged_measurements,
+        _asymmetric_tagged_measurements,
         num_qubits=2,
         detectors=[Detector(result_ref("a"))],
         observables=[Observable(result_ref("b"))],
         **noise,
     )
     via_strings = build_dem_from_guppy(
-        _scrambled_tagged_measurements,
+        _asymmetric_tagged_measurements,
         num_qubits=2,
         detectors=[Detector("a")],
         observables=[Observable("b")],
@@ -228,6 +208,9 @@ def test_bare_tag_strings_are_shorthand_for_result_ref() -> None:
     assert via_strings.observables_json == via_result_ref.observables_json
     assert via_strings.schema_fingerprint == via_result_ref.schema_fingerprint
     assert via_strings.dem.to_string() == via_result_ref.dem.to_string()
+
+    assert via_strings.evaluate_results({"a": [0], "b": [1]}) == ([0], 0)
+    assert via_strings.result_parities({"a": [0], "b": [1]}) == ([0], 1)
 
 
 def test_tag_strings_mix_with_rec_and_result_ref_refs() -> None:
@@ -245,45 +228,9 @@ def test_tag_string_shorthand_rejects_empty_and_wrong_types() -> None:
         Observable()
 
 
-def test_trace_once_build_evaluates_runtime_and_rejects_uncertified_named_results(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls = 0
-
-    def fake_trace(*_args, **_kwargs):
-        nonlocal calls
-        calls += 1
-        return _reordered_trace()
-
-    monkeypatch.setattr(
-        "pecos.tracing._trace_program_to_tick_circuit_with_result_traces",
-        fake_trace,
-    )
-    build = build_dem_from_guppy(
-        _scrambled_tagged_measurements,
-        num_qubits=3,
-        detectors=[
-            Detector(rec[-3], rec[-1]),
-            Detector(rec[-3], rec[-1]),
-        ],
-        observables=[Observable(rec[-2])],
-        p1=0.0,
-        p2=0.0,
-        p_meas=0.1,
-        p_prep=0.0,
-    )
-
-    assert calls == 1
-    assert build.audit["runtime_measurement_order"] == [2, 0, 1]
-    assert build.audit["runtime_order_mismatch_count"] == 3
-    assert build.evaluate_runtime_record([1, 0, 1]) == ([1, 1], 1)
-    with pytest.raises(ValueError, match="missing referenced MeasId"):
-        build.evaluate_results({"a": [0], "b": [1], "c": [1]})
-
-
 def test_rec_build_evaluates_compiler_certified_scalar_results() -> None:
     build = build_dem_from_guppy(
-        _scrambled_tagged_measurements,
+        _asymmetric_tagged_measurements,
         num_qubits=2,
         detectors=[Detector(rec[-2])],
         observables=[Observable(rec[-1])],
@@ -294,7 +241,11 @@ def test_rec_build_evaluates_compiler_certified_scalar_results() -> None:
     )
 
     assert build.audit["named_result_binding"] == "compiler_direct_scalar_complete"
-    assert build.evaluate_results({"a": [0], "b": [1]}) == ([0], 1)
+    assert build.evaluate_results({"a": [0], "b": [1]}) == ([0], 0)
+
+    assert build.evaluate_results({"a": [1], "b": [1]}) == ([1], 0)
+    assert build.evaluate_results({"a": [0], "b": [0]}) == ([0], 1)
+    assert build.result_parities({"a": [0], "b": [1]}) == ([0], 1)
 
 
 def test_typed_rec_build_rejects_dynamic_control_without_named_results() -> None:
@@ -370,8 +321,8 @@ def test_all_certifiable_input_forms_build_identical_dems() -> None:
         build_dem_from_guppy(
             program,
             num_qubits=2,
-            detectors=[Detector(rec[-2])],
-            observables=[Observable(rec[-1])],
+            detectors=[Detector(rec[-2], rec[-1])],
+            observables=[Observable(rec[-2], rec[-1])],
             **noise,
         ).dem.to_string()
         for program in (
@@ -469,8 +420,14 @@ def test_forged_certificate_on_byte_carrier_does_not_bypass_the_guard(claimed_de
         )
 
 
-@pytest.mark.parametrize("corruption", ["duplicate_terminal", "nonempty_terminal"])
-def test_audited_trace_stream_rejects_malformed_terminals(corruption: str) -> None:
+@pytest.mark.parametrize(
+    ("corruption", "message"),
+    [
+        ("duplicate_terminal", "runtime trace must end with exactly one trace_complete chunk"),
+        ("nonempty_terminal", "terminal trace chunk must contain no operations or named outputs"),
+    ],
+)
+def test_audited_trace_stream_rejects_malformed_terminals(corruption: str, message: str) -> None:
     chunks = _framed_trace_chunks()
     if corruption == "duplicate_terminal":
         chunks.insert(
@@ -487,37 +444,26 @@ def test_audited_trace_stream_rejects_malformed_terminals(corruption: str) -> No
     else:
         chunks[-1] = {
             **chunks[-1],
-            "num_operations": 1,
-            "operations": [{"Quantum": {"H": 0}}],
+            "named_results": {"m": {"type": "bool", "values": [True]}},
         }
 
-    with pytest.raises(ValueError, match=r"exactly one terminal|terminal chunk must be empty"):
-        _validate_audited_trace_stream(chunks)
+    with pytest.raises(ValueError, match=f"^{message}$"):
+        _replay_qis_trace_chunks_into_tick_circuit(chunks)
 
 
 def test_spec_rejects_non_json_metadata_and_dead_parity() -> None:
-    circuit, traces = _reordered_trace()
-
-    with pytest.raises(ValueError, match="JSON-serializable"):
-        _resolve_dem_specs(
-            [Detector(rec[-1], metadata={"bad": {1, 2}})],
-            [],
-            circuit=circuit,
-            result_traces=traces,
-        )
-    with pytest.raises(ValueError, match="JSON-serializable"):
-        _resolve_dem_specs(
-            [Detector(rec[-1], metadata={"bad": float("nan")})],
-            [],
-            circuit=circuit,
-            result_traces=traces,
-        )
+    for metadata in ({"bad": {1, 2}}, {"bad": float("nan")}):
+        with pytest.raises(ValueError, match="JSON-serializable"):
+            build_dem_from_guppy(
+                _measurement_without_named_results,
+                num_qubits=1,
+                detectors=[Detector(rec[-1], metadata=metadata)],
+            )
     with pytest.raises(ValueError, match="even multiplicity"):
-        _resolve_dem_specs(
-            [Detector(rec[-1], rec[-1])],
-            [],
-            circuit=circuit,
-            result_traces=traces,
+        build_dem_from_guppy(
+            _measurement_without_named_results,
+            num_qubits=1,
+            detectors=[Detector(rec[-1], rec[-1])],
         )
 
 
@@ -568,24 +514,10 @@ def test_rec_build_rejects_transformed_scalar_result_as_measurement_provenance()
 
 
 def test_shot_evaluators_reject_non_bit_values() -> None:
-    circuit, traces = _reordered_trace()
-    schema = _resolve_dem_specs(
-        [Detector(result_ref("a"))],
-        [],
-        circuit=circuit,
-        result_traces=traces,
-    )
-    build = GuppyDemBuild(
-        dem=None,
-        circuit=circuit,
-        detectors_json=schema.detectors_json,
-        observables_json=schema.observables_json,
-        measurement_ledger=schema.ledger,
-        schema_fingerprint=schema.schema_fingerprint,
-        named_result_binding="compiler_direct_scalar_complete",
-        _detector_meas_ids=schema.detector_meas_ids,
-        _observable_meas_ids=schema.observable_meas_ids,
-        _result_ids_by_tag=schema.result_ids_by_tag,
+    build = build_dem_from_guppy(
+        _scrambled_tagged_measurements,
+        num_qubits=2,
+        detectors=[Detector("a", "b")],
     )
 
     with pytest.raises(ValueError, match="must be bool, 0, or 1"):
@@ -616,19 +548,6 @@ def test_rec_build_rejects_aggregate_array_as_measurement_provenance() -> None:
         build.evaluate_results({"pair": [0, 1]})
 
 
-def test_result_ref_rejects_ambiguous_or_missing_runtime_provenance() -> None:
-    circuit, _ = _reordered_trace()
-    ambiguous = [{"name": "computed", "values": [True], "result_ids": []}]
-
-    with pytest.raises(ValueError, match="not a direct scalar measurement"):
-        _resolve_dem_specs(
-            [Detector(result_ref("computed"))],
-            [],
-            circuit=circuit,
-            result_traces=ambiguous,
-        )
-
-
 def test_result_ref_preserves_unsupported_occurrence_holes() -> None:
     with pytest.raises(ValueError, match=r"occurrence 0.*not a direct scalar measurement"):
         build_dem_from_guppy(
@@ -653,107 +572,12 @@ def test_result_ref_preserves_unsupported_occurrence_holes() -> None:
     assert build.evaluate_results({"same": [True, False]}) == ([0], 0)
 
 
-def test_result_ref_rejects_array_element_provenance() -> None:
-    circuit, _ = _reordered_trace()
-    array_trace = [{"name": "pair", "values": [False, False], "result_ids": [0, 1]}]
-
-    with pytest.raises(ValueError, match="array-valued result_ref provenance"):
-        _resolve_dem_specs(
-            [Detector(result_ref("pair", element=0))],
-            [],
-            circuit=circuit,
-            result_traces=array_trace,
-        )
-
-
-def test_scalar_result_provenance_takes_precedence_over_aggregate_arrays() -> None:
-    circuit, _ = _reordered_trace()
-    traces = [
-        {"name": "a", "values": [False], "result_ids": [0]},
-        {"name": "b", "values": [False], "result_ids": [1]},
-        {"name": "aggregate", "values": [False, False], "result_ids": [1, 0]},
-        {"name": "final", "values": [False], "result_ids": [2]},
-    ]
-    schema = _resolve_dem_specs(
-        [Detector(rec[-3], rec[-1])],
-        [],
-        circuit=circuit,
-        result_traces=traces,
-    )
-
-    assert dict(schema.result_ids_by_tag) == {"a": (0,), "b": (1,), "final": (2,)}
-
-
-def test_rec_rejects_non_dense_runtime_measurement_identities() -> None:
-    circuit = TickCircuit()
-    circuit.tick().mz_with_ids([0, 1], [4, 9])
-
-    with pytest.raises(ValueError, match=r"rec\[\.\.\.\].*dense"):
-        _resolve_dem_specs(
-            [Detector(rec[-1])],
-            [],
-            circuit=circuit,
-            result_traces=[],
-        )
-
-
-def test_result_ref_supports_non_dense_runtime_measurement_identities() -> None:
-    circuit = TickCircuit()
-    circuit.tick().mz_with_ids([0, 1], [4, 9])
-    traces = [
-        {"name": "first", "occurrence": 0, "values": [False], "result_ids": [4]},
-        {"name": "second", "occurrence": 0, "values": [False], "result_ids": [9]},
-    ]
-
-    schema = _resolve_dem_specs(
-        [Detector(result_ref("second"))],
-        [],
-        circuit=circuit,
-        result_traces=traces,
-    )
-
-    assert json.loads(schema.detectors_json) == [{"id": 0, "meas_ids": [9]}]
-
-
-def test_audited_build_disables_raw_measurement_id_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
-    seen: dict[str, object] = {}
-
-    def fake_trace(*_args, **kwargs):
-        seen.update(kwargs)
-        return _reordered_trace()
-
-    monkeypatch.setattr(
-        "pecos.tracing._trace_program_to_tick_circuit_with_result_traces",
-        fake_trace,
-    )
-    build_dem_from_guppy(
-        _scrambled_tagged_measurements,
-        num_qubits=3,
-        detectors=[Detector(rec[-1])],
-        p1=0.0,
-        p2=0.0,
-        p_meas=0.0,
-        p_prep=0.0,
-    )
-
-    assert seen["allow_raw_measurement_id_fallback"] is False
-
-
 def test_audited_replay_rejects_entirely_raw_runtime_trace() -> None:
-    chunks = [
-        {
-            "operations": [
-                {"AllocateQubit": {"id": 0}},
-                {"Quantum": {"Measure": [0, 0]}},
-            ],
-        },
-    ]
+    chunks = _framed_trace_chunks()
+    chunks[0]["lowered_quantum_ops"] = []
 
-    with pytest.raises(ValueError, match="does not contain lowered_quantum_ops"):
-        _replay_qis_trace_chunks_into_tick_circuit(
-            chunks,
-            allow_raw_measurement_id_fallback=False,
-        )
+    with pytest.raises(ValueError, match="no lowered_quantum_ops"):
+        _replay_qis_trace_chunks_into_tick_circuit(chunks)
 
 
 def _framed_trace_chunks() -> list[dict[str, object]]:
@@ -761,6 +585,8 @@ def _framed_trace_chunks() -> list[dict[str, object]]:
         "format": "pecos_qis_operation_trace_v1",
         "engine_trace_id": 7,
         "shot_index": 1,
+        "lowered_quantum_ops_complete": True,
+        "lowered_quantum_ops": [],
     }
     return [
         {
@@ -768,6 +594,7 @@ def _framed_trace_chunks() -> list[dict[str, object]]:
             "chunk_index": 0,
             "stage": "pending_final",
             "num_operations": 1,
+            "lowered_quantum_ops": [{"gate_type": "MZ", "qubits": [0], "measurement_result_ids": [0]}],
             "operations": [{"Quantum": {"Measure": [0, 0]}}],
         },
         {
@@ -781,7 +608,7 @@ def _framed_trace_chunks() -> list[dict[str, object]]:
 
 
 def test_audited_trace_stream_accepts_contiguous_terminal_framing() -> None:
-    _validate_audited_trace_stream(_framed_trace_chunks())
+    _replay_qis_trace_chunks_into_tick_circuit(_framed_trace_chunks())
 
 
 @pytest.mark.parametrize("corruption", ["gap", "cross_shot", "truncated"])
@@ -794,8 +621,8 @@ def test_audited_trace_stream_rejects_incomplete_or_mixed_framing(corruption: st
     else:
         chunks.pop()
 
-    with pytest.raises(ValueError, match=r"contiguous|mixes engine or shot|terminal"):
-        _validate_audited_trace_stream(chunks)
+    with pytest.raises(ValueError, match=r"inconsistent framing|trace_complete"):
+        _replay_qis_trace_chunks_into_tick_circuit(chunks)
 
 
 def test_generated_surface_named_results_evaluate_without_private_adapter() -> None:
@@ -831,73 +658,6 @@ def test_generated_surface_named_results_evaluate_without_private_adapter() -> N
     assert evaluated == [([0] * build.dem.num_detectors, 0)] * 3
 
 
-def test_generator_layout_rejects_source_runtime_identity_mismatch() -> None:
-    circuit = TickCircuit()
-    circuit.tick().mz_with_ids([0, 1], [4, 9])
-    circuit.set_meta("guppy_source_measurement_ids", "[0,1]")
-    traces = [
-        {"name": "first", "values": [False], "result_ids": [4]},
-        {"name": "second", "values": [False], "result_ids": [9]},
-    ]
-
-    with pytest.raises(ValueError, match="source and runtime measurement identities"):
-        _generator_certified_result_traces(
-            (("first", 0), ("second", 0)),
-            circuit,
-            traces,
-            required_tags=["first"],
-        )
-
-
-def test_generator_layout_rejects_permuted_array_runtime_result_ids() -> None:
-    circuit = TickCircuit()
-    circuit.tick().mz_with_ids([0, 1], [4, 9])
-    circuit.set_meta("guppy_source_measurement_ids", "[4,9]")
-
-    with pytest.raises(ValueError, match="generator-certified layout requires 4"):
-        _generator_certified_result_traces(
-            (("physical", 0), ("physical", 1)),
-            circuit,
-            [{"name": "physical", "values": [False, True], "result_ids": [9, 4]}],
-            required_tags=["physical"],
-        )
-
-
-def test_generator_layout_allows_guppy_v1_array_without_scalar_ids() -> None:
-    circuit = TickCircuit()
-    circuit.tick().mz_with_ids([0, 1], [4, 9])
-    circuit.set_meta("guppy_source_measurement_ids", "[4,9]")
-
-    traces = _generator_certified_result_traces(
-        (("physical", 0), ("physical", 1)),
-        circuit,
-        [{"name": "physical", "values": [False, True], "result_ids": []}],
-        required_tags=["physical"],
-    )
-
-    assert [trace["result_ids"] for trace in traces] == [[4], [9]]
-
-
-def test_generator_layout_checks_synthetic_array_slots_against_base_array_ids() -> None:
-    """Guppy v1 array provenance remains ordered even with synthetic tags."""
-    circuit = TickCircuit()
-    circuit.tick().mz_with_ids([0, 1], [4, 9])
-    circuit.set_meta("guppy_source_measurement_ids", "[4,9]")
-    traces = [
-        {"name": "physical:meas:0", "values": [False], "result_ids": []},
-        {"name": "physical:meas:1", "values": [True], "result_ids": []},
-        {"name": "physical", "values": [False, True], "result_ids": [9, 4]},
-    ]
-
-    with pytest.raises(ValueError, match="generator-certified layout requires 4"):
-        _generator_certified_result_traces(
-            (("physical:meas:0", 0), ("physical:meas:1", 0)),
-            circuit,
-            traces,
-            required_tags=["physical:meas:0", "physical:meas:1"],
-        )
-
-
 def test_generated_surface_layout_certificate_rejects_permutation() -> None:
     program = make_surface_code(3, 1, "Z")
     digest, layout = program.__pecos_named_measurement_layout_v2__
@@ -927,24 +687,10 @@ def test_result_columns_are_a_trusted_carrier_bound_only_by_row_index() -> None:
     boundary is deliberate -- if binding is ever added, update the docstring
     and replace this test with a detection assertion.
     """
-    circuit, traces = _reordered_trace()
-    schema = _resolve_dem_specs(
-        [Detector(result_ref("a"), result_ref("b"))],
-        [],
-        circuit=circuit,
-        result_traces=traces,
-    )
-    build = GuppyDemBuild(
-        dem=None,
-        circuit=circuit,
-        detectors_json=schema.detectors_json,
-        observables_json=schema.observables_json,
-        measurement_ledger=schema.ledger,
-        schema_fingerprint=schema.schema_fingerprint,
-        named_result_binding="compiler_direct_scalar_complete",
-        _detector_meas_ids=schema.detector_meas_ids,
-        _observable_meas_ids=schema.observable_meas_ids,
-        _result_ids_by_tag=schema.result_ids_by_tag,
+    build = build_dem_from_guppy(
+        _scrambled_tagged_measurements,
+        num_qubits=2,
+        detectors=[Detector("a", "b")],
     )
     columns = {"a": [0, 1], "b": [0, 0], "c": [0, 0]}
     permuted = {**columns, "a": [1, 0]}
@@ -957,168 +703,29 @@ def test_result_columns_are_a_trusted_carrier_bound_only_by_row_index() -> None:
     assert baseline != swapped
 
 
-def test_schema_fingerprint_binds_runtime_order_and_named_results() -> None:
-    circuit, traces = _reordered_trace()
-    baseline = _resolve_dem_specs(
-        [Detector(rec[-1])],
-        [],
-        circuit=circuit,
-        result_traces=traces,
-    )
-
-    reordered = TickCircuit()
-    reordered.tick().mz_with_ids([0, 1, 2], [0, 1, 2])
-    reordered_schema = _resolve_dem_specs(
-        [Detector(rec[-1])],
-        [],
-        circuit=reordered,
-        result_traces=traces,
-    )
-    renamed_traces = [*traces[:-1], {"name": "renamed", "values": [False], "result_ids": [2]}]
-    renamed_schema = _resolve_dem_specs(
-        [Detector(rec[-1])],
-        [],
-        circuit=circuit,
-        result_traces=renamed_traces,
-    )
-
-    assert baseline.schema_fingerprint != reordered_schema.schema_fingerprint
-    assert baseline.schema_fingerprint != renamed_schema.schema_fingerprint
-
-
 @pytest.mark.parametrize("certified", [False, True])
 def test_build_compiles_once_and_traces_analyzed_text(monkeypatch: pytest.MonkeyPatch, *, certified: bool) -> None:
-    from pecos import tracing
+    from pecos.qec import dem as dem_module
     from pecos_rslib import hugr_lowering
 
     compiler = Mock(wraps=hugr_lowering.compile_hugr_to_qis)
-    wrapper = Mock(wraps=pecos.Qis)
-    tracer = Mock(wraps=tracing.trace_program_to_tick_circuit)
-    extractor = Mock(wraps=_qis_result_tags.extract_result_tag_measurements)
+    wrapper = Mock(wraps=dem_module.Qis)
+    from pecos_rslib.qec import _prepare_guppy_dem
+
+    prepare = Mock(wraps=_prepare_guppy_dem)
     monkeypatch.setattr(hugr_lowering, "compile_hugr_to_qis", compiler)
-    monkeypatch.setattr(pecos.programs, "Qis", wrapper)
-    monkeypatch.setattr(tracing, "trace_program_to_tick_circuit", tracer)
-    monkeypatch.setattr(_qis_result_tags, "extract_result_tag_measurements", extractor)
+    monkeypatch.setattr(dem_module, "Qis", wrapper)
+    monkeypatch.setattr(dem_module, "_prepare_guppy_dem", prepare)
+    program = make_surface_code(3, 1, "Z") if certified else _scrambled_tagged_measurements
+    detectors = surface_memory_dem_spec(3, 1, "Z")[0] if certified else [Detector("a", "b")]
     build_dem_from_guppy(
-        make_surface_code(3, 1, "Z") if certified else _scrambled_tagged_measurements,
+        program,
         num_qubits=get_num_qubits(3) if certified else 2,
-        detectors=[Detector(rec[-1])],
+        detectors=detectors,
         p_meas=0.1,
     )
-    assert compiler.call_count == tracer.call_count == wrapper.call_count == 1
-    traced_program = tracer.call_args.args[0]
-    assert isinstance(traced_program, pecos.Qis)
-    if certified:
-        extractor.assert_not_called()
-    else:
-        extractor.assert_called_once_with(wrapper.call_args.args[0])
-        assert extractor.call_args.args[0] is wrapper.call_args.args[0]
-
-
-@pytest.mark.parametrize("references", ["typed", "json", "records"])
-def test_qis_certification_failure_policy(monkeypatch: pytest.MonkeyPatch, references: str) -> None:
-    extractor = Mock(side_effect=_CertificationError("test unsupported CFG"))
-    monkeypatch.setattr(_qis_result_tags, "extract_result_tag_measurements", extractor)
-
-    def build() -> None:
-        if references == "json":
-            DetectorErrorModel.from_guppy(
-                _scrambled_tagged_measurements,
-                num_qubits=2,
-                detectors_json='[{"id":0,"result_tags":["a"]}]',
-            )
-        else:
-            build_dem_from_guppy(
-                _scrambled_tagged_measurements,
-                num_qubits=2,
-                detectors=[Detector(rec[-1] if references == "records" else result_ref("a"))],
-            )
-
-    if references == "records":
-        build()
-    else:
-        reference = "result_tags" if references == "json" else "result_ref"
-        with pytest.raises(ValueError, match=_certification_message(reference)) as raised:
-            build()
-        assert isinstance(raised.value.__cause__, _CertificationError)
-        assert str(raised.value.__cause__).endswith("test unsupported CFG")
-    extractor.assert_called_once()
-
-
-def test_unrelated_analysis_value_error_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(_qis_result_tags, "extract_result_tag_measurements", Mock(side_effect=ValueError("unrelated")))
-    with pytest.raises(ValueError, match=r"^unrelated$"):
-        build_dem_from_guppy(_scrambled_tagged_measurements, num_qubits=2, detectors=[Detector(rec[-1])])
-
-
-@pytest.mark.parametrize("ir", ["define void @qmain(", "define void @qmain() {\n%f =\nret void\n}"])
-def test_parser_failure_without_required_tags_skips_certification(monkeypatch: pytest.MonkeyPatch, ir: str) -> None:
-    extract = _qis_result_tags.extract_result_tag_measurements
-    monkeypatch.setattr(_qis_result_tags, "extract_result_tag_measurements", lambda _qis: extract(ir))
-    built = build_dem_from_guppy(_scrambled_tagged_measurements, num_qubits=2, detectors=[Detector(rec[-1])])
-    assert built.named_result_binding == "none"
-
-
-@pytest.mark.parametrize("required", [False, True])
-def test_certified_measurement_count_mismatch(monkeypatch: pytest.MonkeyPatch, *, required: bool) -> None:
-    monkeypatch.setattr(
-        _qis_result_tags,
-        "extract_result_tag_measurements",
-        Mock(return_value=({"a": [0], "b": [1]}, 3)),
-    )
-
-    def build() -> None:
-        build_dem_from_guppy(
-            _scrambled_tagged_measurements,
-            num_qubits=2,
-            detectors=[Detector(result_ref("a") if required else rec[-1])],
-        )
-
-    if required:
-        with pytest.raises(
-            ValueError,
-            match=_certification_message("result_ref"),
-        ) as raised:
-            build()
-        assert isinstance(raised.value.__cause__, _CertificationError)
-        assert str(raised.value.__cause__).endswith(
-            "the certified lowered program has 3 measurement(s) but the traced program emitted 2 measurement(s)",
-        )
-    else:
-        build()
-
-
-def _certification_message(reference: str) -> str:
-    return (
-        "^"
-        + re.escape(
-            f"Cannot bind {reference}: the program's lowered form could not be certified; "
-            "use records, rec[-k], or meas_ids instead.",
-        )
-        + "$"
-    )
-
-
-def test_json_measurement_count_guard_stays_in_rust(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        _qis_result_tags,
-        "extract_result_tag_measurements",
-        Mock(return_value=({"a": [0], "b": [1]}, 3)),
-    )
-    with pytest.raises(
-        ValueError,
-        match=(
-            r"^DEM builder parse error: Cannot bind result_tags: "
-            r"the certified lowered program has 3 measurement\(s\) but "
-            r"the traced program emitted 2 measurement\(s\)\.$"
-        ),
-    ) as raised:
-        DetectorErrorModel.from_guppy(
-            _scrambled_tagged_measurements,
-            num_qubits=2,
-            detectors_json='[{"id":0,"result_tags":["a"]}]',
-        )
-    assert raised.value.__cause__ is None
+    assert compiler.call_count == prepare.call_count == wrapper.call_count == 1
+    assert prepare.call_args.args[0].source() == wrapper.call_args.args[0]
 
 
 @guppy
@@ -1162,7 +769,7 @@ def test_integer_prints_keep_nonmeasurement_diagnostic(references: str) -> None:
     if references == "typed":
         with pytest.raises(
             ValueError,
-            match=r"^result_ref 'n' occurrence 0 is not a direct scalar measurement result$",
+            match=r'^result_ref "n" occurrence 0 is not a direct scalar measurement result$',
         ):
             build_dem_from_guppy(
                 _measurements_with_partially_traced_integer_tag,

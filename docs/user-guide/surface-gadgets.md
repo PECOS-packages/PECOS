@@ -180,8 +180,10 @@ Memory modules require nonempty X and Z stabilizer families because Guppy
 cannot infer the type of the empty syndrome arrays emitted otherwise.
 Its layout comes from the gadget steps, including batch order when ancillas are
 reused. `build_dem_from_guppy`, `GuppyDemBuilder.build`, and
-`DetectorErrorModel.from_guppy` need this certificate for programs whose compiled
-form contains loops or conditionals. The abstract-circuit route and the builder
+`DetectorErrorModel.from_guppy` require static schedule evidence for explicit
+definitions and named mixed definitions. This certificate supplies it for
+generator programs whose compiled form contains loops or conditionals. Pure
+inference and positional-only mixed builds instead use empirical schedule checks. The abstract-circuit route and the builder
 route (`LogicalCircuitBuilder.to_tick_circuit()` then
 `DetectorErrorModel.from_circuit`) do not need a certificate.
 

@@ -187,6 +187,26 @@ Validation rejects, among other problems:
 - Missing, duplicated, or inconsistent measurement-result identities
 - Runtime-lowered measurements without result-ID provenance
 
+Replay is implemented in `pecos-qis` and exposed by base `pecos-rslib`;
+replaying stored data does not require LLVM. Every chunk, including the terminal
+and bookkeeping chunks, must carry `lowered_quantum_ops_complete: true`.
+A completed bookkeeping-only trace remains valid and produces an empty circuit.
+A chunk containing raw quantum operations must also contain lowered gates.
+Raw-operation compatibility replay and its fallback option have been removed.
+
+Fixed gates reject extra angles, parameters, or measurement IDs. Rotation
+angles must have exactly the required arity and be finite. The runtime must
+lower boundary spellings such as `CRZ` before replay. Idle seconds are rounded
+to unsigned 64-bit nanoseconds using ties-to-even; positive sub-nanosecond
+durations clamp to one nanosecond. Stored traces derive their physical qubit
+bound from the lowered gates; native DEM capture supplies a strict bound.
+
+Metadata preserves JSON types, including nested objects, heterogeneous lists,
+nulls, and integers from `-2**63` through `2**64 - 1`. Integer tokens outside this
+range, including nested metadata, are rejected with chunk, gate and key context.
+Non-JSON-serializable Python objects and non-finite Python numbers are rejected. Invalid wire fields report their chunk and field.
+Complete named results may occur in at most one chunk.
+
 The circuit metadata records the source measurement IDs under
 `qis_source_measurement_ids`. Measurement gates retain the corresponding
 runtime-lowered `MeasId`s, even if runtime scheduling changes their execution

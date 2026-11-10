@@ -15,6 +15,22 @@ use pyo3::types::PyDict;
 /// Detector supports followed by observable supports, using stable measurement IDs.
 type InferredSupports = (Vec<Vec<usize>>, Vec<Vec<usize>>);
 
+/// Shared program-bound generator certificate encoding.
+#[pyfunction]
+#[pyo3(signature = (hugr, layout, *, expected=None))]
+pub(crate) fn generator_certificate_digest(
+    hugr: &[u8],
+    layout: Vec<(String, usize)>,
+    expected: Option<&str>,
+) -> PyResult<String> {
+    let digest = pecos_qec::dem_build::generator_certificate_digest(hugr, &layout);
+    if let Some(expected) = expected {
+        pecos_qec::dem_build::check_generator_certificate_digest(&digest, expected)
+            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+    }
+    Ok(digest)
+}
+
 /// Fluent configuration for empirical detector/observable annotation inference.
 /// Setters return a new settings value; defaults use automatic probe sizing and
 /// require measurement provenance. Seed/runtime belong to the DEM builder.
@@ -26,7 +42,7 @@ type InferredSupports = (Vec<Vec<usize>>, Vec<Vec<usize>>);
 )]
 #[derive(Clone, Debug, Default)]
 pub struct PyDemInferenceSettings {
-    inner: DemInferenceSettings,
+    pub(crate) inner: DemInferenceSettings,
 }
 
 #[pymethods]
@@ -139,7 +155,7 @@ impl PyDemInferenceSettings {
 )]
 #[derive(Clone, Default)]
 pub struct PySeleneRuntimeSpec {
-    runtime: Option<pecos_qis::SeleneRuntime>,
+    pub(crate) runtime: Option<pecos_qis::SeleneRuntime>,
 }
 
 #[pymethods]
@@ -196,7 +212,7 @@ impl PySeleneRuntimeSpec {
 }
 
 #[pyfunction(name = "_capture_dem_evidence")]
-#[pyo3(signature = (program, num_qubits, seed, runtime, settings, detector_outputs = None, observable_outputs = None))]
+#[pyo3(signature = (program, num_qubits, seed, runtime, settings, detector_outputs = None, observable_outputs = None, require_hosted_operation_order = false, max_hosted_tick_separation = None))]
 fn capture_dem_evidence<'py>(
     py: Python<'py>,
     program: &PyQis,
@@ -206,12 +222,26 @@ fn capture_dem_evidence<'py>(
     settings: &PyDemInferenceSettings,
     detector_outputs: Option<Vec<(String, usize)>>,
     observable_outputs: Option<Vec<(String, usize)>>,
+    require_hosted_operation_order: bool,
+    max_hosted_tick_separation: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<Bound<'py, PyDict>> {
     let runtime = runtime
         .runtime
         .clone()
         .ok_or_else(|| PyValueError::new_err("Selene runtime spec is not configured"))?;
-    let program = SeleneDemProgram::new(program.inner.clone()).with_runtime(runtime);
+    let maximum = max_hosted_tick_separation
+        .map(|value| {
+            crate::pauli_bindings::extract_unsigned_index(
+                value,
+                "infer_guppy_dem_annotations: max_tick_separation",
+            )
+        })
+        .transpose()?;
+    let program = SeleneDemProgram::new(program.inner.clone())
+        .with_runtime(runtime)
+        .with_schedule_validation_shots(0)
+        .with_require_hosted_operation_order(require_hosted_operation_order)
+        .with_max_hosted_tick_separation(maximum);
     let convert = |outputs: Vec<(String, usize)>| {
         outputs
             .into_iter()
@@ -223,13 +253,16 @@ fn capture_dem_evidence<'py>(
     let settings = settings.inner.clone();
     let evidence = py
         .detach(|| {
-            program.capture_and_analyze(&DemProgramRequest {
-                num_qubits,
-                seed,
-                inference: Some(&settings),
-                detector_outputs: detector_outputs.as_deref(),
-                observable_outputs: observable_outputs.as_deref(),
-            })
+            program
+                .with_hosted_validation_context("infer_guppy_dem_annotations")
+                .capture_and_analyze(&DemProgramRequest {
+                    requires_static_schedule: false,
+                    num_qubits,
+                    seed,
+                    inference: Some(&settings),
+                    detector_outputs: detector_outputs.as_deref(),
+                    observable_outputs: observable_outputs.as_deref(),
+                })
         })
         .map_err(|err| PyValueError::new_err(err.to_string()))?;
     let data = evidence

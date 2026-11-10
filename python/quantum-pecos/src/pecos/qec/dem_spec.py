@@ -6,15 +6,11 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
-from collections import Counter, defaultdict
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from numbers import Integral
 from typing import TYPE_CHECKING, Any, Self
-
-from pecos._traced_circuit import measurement_ids_in_execution_order
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -294,18 +290,6 @@ class MeasurementLedgerEntry:
         }
 
 
-@dataclass(frozen=True, slots=True)
-class _ResolvedSchema:
-    detectors_json: str
-    observables_json: str
-    detector_meas_ids: tuple[tuple[int, ...], ...]
-    detector_ids: tuple[int, ...]
-    observable_meas_ids: tuple[tuple[int, tuple[int, ...]], ...]
-    ledger: tuple[MeasurementLedgerEntry, ...]
-    result_ids_by_tag: tuple[tuple[str, tuple[int | None, ...]], ...]
-    schema_fingerprint: str
-
-
 def _measurement_bit(value: Any, *, context: str) -> int:
     """Validate and normalize one externally supplied measurement bit."""
     if isinstance(value, Integral) and value in (0, 1):
@@ -313,428 +297,207 @@ def _measurement_bit(value: Any, *, context: str) -> int:
     raise ValueError(f"{context} must be bool, 0, or 1; got {value!r}")
 
 
+def _result_values(raw: Any, *, tag: str, ids: tuple[int | None, ...]) -> list[int]:
+    """Convert one named result while preserving unbound occurrence holes."""
+    if isinstance(raw, Sequence) and not isinstance(raw, (str, bytes)):
+        values = list(raw)
+    else:
+        try:
+            values = list(raw)
+        except TypeError:
+            values = [raw]
+    return [
+        0 if index < len(ids) and ids[index] is None else _measurement_bit(value, context=f"result {tag!r}")
+        for index, value in enumerate(values)
+    ]
+
+
+def _definition_record(spec: Any, expected_type: type, role: str) -> tuple[Any, ...]:
+    """Convert typed Python objects to the Rust definition value record."""
+    if not isinstance(spec, expected_type):
+        msg = f"with_{role}() requires {expected_type.__name__} definitions"
+        raise TypeError(msg)
+    if spec.id is not None and (isinstance(spec.id, bool) or not isinstance(spec.id, int) or spec.id < 0):
+        msg = f"{role} ids must be non-negative integers"
+        raise ValueError(msg)
+    try:
+        metadata = json.dumps(dict(spec.metadata or {}), allow_nan=False)
+    except (TypeError, ValueError) as exc:
+        msg = (
+            "detector/observable metadata must be JSON-serializable "
+            f"(it is embedded in the DEM schema and its fingerprint): {exc}"
+        )
+        raise ValueError(msg) from exc
+    selector = spec.inferred_output
+    references = (
+        None
+        if selector is not None
+        else [
+            -ref.offset if isinstance(ref, RecordRef) else (ref.tag, ref.occurrence, ref.element) for ref in spec.refs
+        ]
+    )
+    return (
+        spec.id,
+        None,
+        references,
+        None if selector is None else (selector.tag, selector.element),
+        list(spec.coords) if isinstance(spec, Detector) and spec.coords is not None else None,
+        metadata,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class GuppyDemBuild:
-    """A DEM and the single runtime trace from which it was constructed."""
+    """A DEM and its reusable Rust preparation, with detached circuit snapshots."""
 
-    dem: Any
-    circuit: Any
-    detectors_json: str
-    observables_json: str
-    measurement_ledger: tuple[MeasurementLedgerEntry, ...]
-    schema_fingerprint: str
-    named_result_binding: str
-    _detector_meas_ids: tuple[tuple[int, ...], ...]
-    _observable_meas_ids: tuple[tuple[int, tuple[int, ...]], ...]
-    _result_ids_by_tag: tuple[tuple[str, tuple[int | None, ...]], ...]
-    inference: InferredGuppyDemAnnotations | None = None
-    definition_origins: tuple[Mapping[str, Any], ...] = ()
+    _build: Any
+    _inference: InferredGuppyDemAnnotations | None = None
+    _prepared: Any = field(init=False, repr=False)
+    _dem: Any = field(init=False, repr=False)
+    _detector_meas_ids: tuple[tuple[int, ...], ...] = field(init=False, repr=False)
+    _observable_meas_ids: tuple[tuple[int, tuple[int, ...]], ...] = field(init=False, repr=False)
+    _result_ids_by_tag: tuple[tuple[str, tuple[int | None, ...]], ...] = field(init=False, repr=False)
+    _referenced_ids: frozenset[int] = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        """Cache Rust objects and the value views needed for Python bit checks."""
+        prepared = self._build.prepared
+        ids = prepared.measurement_ids
+        detectors = tuple(tuple(ids[position] for position in entry["measurements"]) for entry in prepared.detectors)
+        observables = tuple(
+            (entry["id"], tuple(ids[position] for position in entry["measurements"])) for entry in prepared.observables
+        )
+        referenced = frozenset(identity for support in detectors for identity in support) | frozenset(
+            identity for _, support in observables for identity in support
+        )
+        for name, value in (
+            ("_prepared", prepared),
+            ("_dem", self._build.dem),
+            ("_detector_meas_ids", detectors),
+            ("_observable_meas_ids", observables),
+            ("_result_ids_by_tag", tuple(prepared.named_result_measurements.items())),
+            ("_referenced_ids", referenced),
+        ):
+            object.__setattr__(self, name, value)
+
+    @property
+    def dem(self) -> Any:
+        """Return the Rust detector error model."""
+        return self._dem
+
+    @property
+    def circuit(self) -> Any:
+        """Return a detached snapshot of the prepared circuit."""
+        return self._prepared.circuit
+
+    @property
+    def detectors_json(self) -> str:
+        """Return detector metadata with computed references."""
+        return self._prepared.detectors_json
+
+    @property
+    def observables_json(self) -> str:
+        """Return observable metadata with computed references."""
+        return self._prepared.observables_json
+
+    @property
+    def measurement_ledger(self) -> tuple[MeasurementLedgerEntry, ...]:
+        """Return measurement identities and their certified result references."""
+        return tuple(
+            MeasurementLedgerEntry(
+                meas_id=entry["meas_id"],
+                runtime_record_index=entry["runtime_record_index"],
+                canonical_record_index=entry["canonical_record_index"],
+                result_refs=tuple(ResultRef(**ref) for ref in entry["result_refs"]),
+            )
+            for entry in self._prepared.measurement_ledger
+        )
+
+    @property
+    def schema_fingerprint(self) -> str:
+        """Return the Rust-computed v2 fingerprint, incompatible with earlier versions."""
+        return self._prepared.schema_fingerprint
+
+    @property
+    def named_result_binding(self) -> str:
+        """Return the Rust classification of named measurement evidence."""
+        return self._prepared.audit["named_result_binding"]
+
+    @property
+    def inference(self) -> InferredGuppyDemAnnotations | None:
+        """Return empirical inference evidence when this build used inference."""
+        return self._inference
+
+    @property
+    def definition_origins(self) -> tuple[Mapping[str, Any], ...]:
+        """Return each definition's explicit or inferred origin."""
+        return tuple(self._prepared.definition_origins)
 
     @property
     def audit(self) -> dict[str, Any]:
-        """Return trace and measurement-identity audit metadata."""
-        runtime_order = [entry.meas_id for entry in self.measurement_ledger]
+        """Return trace, measurement identity, and noise residual audit metadata."""
+        audit = self._prepared.audit
+        audit["idle_noise_residuals"] = self._build.idle_noise_residuals
+        return audit
+
+    def _runtime_bits(self, values: Sequence[int | bool]) -> list[int]:
+        return [_measurement_bit(value, context=f"runtime measurement {index}") for index, value in enumerate(values)]
+
+    def _measurement_bits(self, values: Mapping[int, int | bool]) -> dict[int, int]:
         return {
-            "schema_fingerprint": self.schema_fingerprint,
-            "soundness_scope": "empirical_static_schedule" if self.inference is not None else "static_schedule_only",
-            "inference": None if self.inference is None else self.inference.audit,
-            "definition_origins": [dict(origin) for origin in self.definition_origins],
-            "named_result_binding": self.named_result_binding,
-            "measurement_count": len(runtime_order),
-            "runtime_measurement_order": runtime_order,
-            "runtime_order_is_canonical": runtime_order == list(range(len(runtime_order))),
-            "runtime_order_mismatch_count": sum(index != meas_id for index, meas_id in enumerate(runtime_order)),
-            "measurement_ledger": [entry.to_dict() for entry in self.measurement_ledger],
-            "idle_noise_residuals": self.dem.idle_noise_residuals,
+            identity: _measurement_bit(value, context=f"measurement MeasId {identity}")
+            for identity, value in values.items()
+            if identity in self._referenced_ids
+        }
+
+    def _result_bits(self, results: Mapping[str, Any]) -> dict[str, list[int]]:
+        return {
+            tag: _result_values(results[tag], tag=tag, ids=ids)
+            for tag, ids in self._result_ids_by_tag
+            if tag in results
+        }
+
+    def _result_columns(self, results: Mapping[str, Sequence[Any]]) -> dict[str, list[list[int]]]:
+        return {
+            tag: [_result_values(row, tag=tag, ids=ids) for row in results[tag]]
+            for tag, ids in self._result_ids_by_tag
+            if tag in results
         }
 
     def evaluate_runtime_record(self, values: Sequence[int | bool]) -> tuple[list[int], int]:
-        """Evaluate detectors/observables from values in runtime execution order."""
-        if len(values) != len(self.measurement_ledger):
-            msg = f"runtime measurement record has {len(values)} values; expected {len(self.measurement_ledger)}"
-            raise ValueError(msg)
-        by_id = {
-            entry.meas_id: _measurement_bit(value, context=f"runtime measurement {entry.runtime_record_index}")
-            for entry, value in zip(self.measurement_ledger, values, strict=True)
-        }
-        return self.evaluate_measurements(by_id)
+        """Evaluate detection events and observable flips from runtime record bits."""
+        return self._prepared.evaluate_runtime_record(self._runtime_bits(values))
+
+    def runtime_record_parities(self, values: Sequence[int | bool]) -> tuple[list[int], int]:
+        """Evaluate raw parities from runtime record bits."""
+        return self._prepared.runtime_record_parities(self._runtime_bits(values))
+
+    def evaluate_measurements(self, values_by_meas_id: Mapping[int, int | bool]) -> tuple[list[int], int]:
+        """Evaluate detection events and an arbitrary-precision observable flip mask."""
+        return self._prepared.evaluate_measurements(self._measurement_bits(values_by_meas_id))
+
+    def measurement_parities(self, values_by_meas_id: Mapping[int, int | bool]) -> tuple[list[int], int]:
+        """Evaluate raw parities and an arbitrary-precision observable mask."""
+        return self._prepared.measurement_parities(self._measurement_bits(values_by_meas_id))
 
     def evaluate_results(self, results: Mapping[str, Any]) -> tuple[list[int], int]:
-        """Evaluate detectors/observables from one shot's named Guppy results."""
-        by_id: dict[int, int] = {}
-        for tag, result_ids in self._result_ids_by_tag:
-            if tag not in results:
-                continue
-            raw_values = results[tag]
-            if isinstance(raw_values, Sequence) and not isinstance(raw_values, (str, bytes)):
-                values = list(raw_values)
-            else:
-                try:
-                    values = list(raw_values)
-                except TypeError:
-                    values = [raw_values]
-            if len(values) != len(result_ids):
-                msg = f"result {tag!r} has {len(values)} values; trace provenance expects {len(result_ids)}"
-                raise ValueError(msg)
-            for meas_id, value in zip(result_ids, values, strict=True):
-                if meas_id is None:
-                    continue
-                bit = _measurement_bit(value, context=f"result {tag!r}")
-                if meas_id in by_id and by_id[meas_id] != bit:
-                    raise ValueError(f"result outputs disagree about measurement MeasId {meas_id}")
-                by_id[meas_id] = bit
-        return self.evaluate_measurements(by_id)
+        """Evaluate detection events and observable flips from one shot's results."""
+        return self._prepared.evaluate_results(self._result_bits(results))
+
+    def result_parities(self, results: Mapping[str, Any]) -> tuple[list[int], int]:
+        """Evaluate raw parities from one shot's named results."""
+        return self._prepared.result_parities(self._result_bits(results))
 
     def evaluate_result_columns(self, results: Mapping[str, Sequence[Any]]) -> list[tuple[list[int], int]]:
-        """Evaluate PECOS ``ShotMap.to_dict()`` column-oriented results.
+        """Evaluate reference-relative events and flips from ``ShotMap.to_dict()``.
 
         The column mapping is a trusted carrier: shot ``i`` is whatever sits at
         row ``i`` of every column. Columns spliced from different runs, or one
         independently permuted column, are not detectable at this boundary --
         pass columns exactly as one simulation produced them.
         """
-        available = [tag for tag, _ in self._result_ids_by_tag if tag in results]
-        if not available:
-            raise ValueError("result columns do not contain any bound measurement tags")
-        shot_count = len(results[available[0]])
-        mismatched = {tag: len(results[tag]) for tag in available if len(results[tag]) != shot_count}
-        if mismatched:
-            raise ValueError(f"result columns have inconsistent shot counts: {mismatched}")
-        return [self.evaluate_results({tag: results[tag][shot] for tag in available}) for shot in range(shot_count)]
+        return self._prepared.evaluate_result_columns(self._result_columns(results))
 
-    def evaluate_measurements(self, values_by_meas_id: Mapping[int, int | bool]) -> tuple[list[int], int]:
-        """Evaluate the canonical detector vector and packed observable mask.
-
-        The mask sets bit ``observable_id`` per observable. It is an
-        arbitrary-precision Python int: with sparse or >=64 observable ids it
-        exceeds 64 bits, so route it only to consumers that accept wide masks
-        (narrow u64 decoders truncate silently).
-        """
-
-        def parity(meas_ids: tuple[int, ...]) -> int:
-            missing = [meas_id for meas_id in meas_ids if meas_id not in values_by_meas_id]
-            if missing:
-                raise ValueError(f"measurement values are missing referenced MeasId(s): {missing[:8]}")
-            return (
-                sum(
-                    _measurement_bit(values_by_meas_id[meas_id], context=f"measurement MeasId {meas_id}")
-                    for meas_id in meas_ids
-                )
-                & 1
-            )
-
-        events = [parity(meas_ids) for meas_ids in self._detector_meas_ids]
-        observable_mask = 0
-        for observable_id, meas_ids in self._observable_meas_ids:
-            observable_mask |= parity(meas_ids) << observable_id
-        return events, observable_mask
-
-
-def _measurement_ids_in_runtime_order(circuit: Any) -> list[int]:
-    ids = measurement_ids_in_execution_order(circuit)
-    duplicates = sorted(meas_id for meas_id, count in Counter(ids).items() if count > 1)
-    if duplicates:
-        raise ValueError(f"traced circuit contains duplicate MeasId(s): {duplicates[:8]}")
-    return ids
-
-
-def _index_result_traces(
-    traces: Sequence[Mapping[str, Any]],
-) -> tuple[dict[str, dict[int, tuple[int | None, ...]]], dict[int, list[ResultRef]]]:
-    calls: dict[str, dict[int, tuple[int | None, ...]]] = defaultdict(dict)
-    next_occurrence: dict[str, int] = defaultdict(int)
-    refs_by_id: dict[int, list[ResultRef]] = defaultdict(list)
-    for trace in traces:
-        tag = trace.get("name")
-        if not isinstance(tag, str):
-            continue
-        raw_occurrence = trace.get("occurrence")
-        if raw_occurrence is None:
-            occurrence = next_occurrence[tag]
-        elif isinstance(raw_occurrence, bool) or not isinstance(raw_occurrence, int) or raw_occurrence < 0:
-            raise ValueError(f"result trace {tag!r} has invalid occurrence {raw_occurrence!r}")
-        else:
-            occurrence = raw_occurrence
-        next_occurrence[tag] = max(next_occurrence[tag], occurrence + 1)
-        if occurrence in calls[tag]:
-            raise ValueError(f"result trace {tag!r} repeats occurrence {occurrence}")
-
-        values = trace.get("values")
-        raw_ids = trace.get("result_ids")
-        if not isinstance(values, list) or not isinstance(raw_ids, list) or len(values) != len(raw_ids) or not raw_ids:
-            arity = max(len(values), 1) if isinstance(values, list) else 1
-            calls[tag][occurrence] = (None,) * arity
-            continue
-        result_ids = tuple(int(result_id) for result_id in raw_ids)
-        calls[tag][occurrence] = result_ids
-        for element, meas_id in enumerate(result_ids):
-            refs_by_id[meas_id].append(
-                ResultRef(tag, occurrence=occurrence, element=element if len(result_ids) > 1 else None),
-            )
-    return calls, refs_by_id
-
-
-def _resolve_ref(
-    ref: MeasurementRef,
-    *,
-    num_measurements: int,
-    runtime_meas_ids: set[int],
-    result_calls: Mapping[str, Mapping[int, tuple[int | None, ...]]],
-) -> int:
-    if isinstance(ref, RecordRef):
-        if sorted(runtime_meas_ids) != list(range(num_measurements)):
-            raise ValueError(
-                "rec[...] requires runtime MeasIds to preserve the canonical dense Guppy "
-                "measurement identity range; use result_ref(...) for non-dense runtimes",
-            )
-        logical_index = num_measurements + ref.offset
-        if logical_index < 0:
-            raise ValueError(
-                f"measurement record offset {ref.offset} is out of range for {num_measurements} measurements",
-            )
-        return logical_index
-
-    calls = result_calls.get(ref.tag)
-    if calls is None or ref.occurrence not in calls:
-        raise ValueError(f"result_ref {ref.tag!r} occurrence {ref.occurrence} is absent from the runtime trace")
-    result_ids = calls[ref.occurrence]
-    if any(result_id is None for result_id in result_ids):
-        raise ValueError(
-            f"result_ref {ref.tag!r} occurrence {ref.occurrence} is not a direct scalar measurement result",
-        )
-    if len(result_ids) != 1:
-        raise ValueError(
-            "array-valued result_ref provenance is not yet certified; expose "
-            "scalar result() tags or use canonical rec[...] references",
-        )
-    if ref.element is None:
-        return int(result_ids[0])
-    if ref.element not in (None, 0):
-        raise ValueError(
-            f"scalar result_ref {ref.tag!r} only accepts element=None or element=0",
-        )
-    return int(result_ids[0])
-
-
-def _xor_normalize(meas_ids: Sequence[int], *, context: str) -> tuple[int, ...]:
-    parity = Counter(meas_ids)
-    normalized = tuple(meas_id for meas_id in dict.fromkeys(meas_ids) if parity[meas_id] & 1)
-    if not normalized:
-        # Every reference cancelled (even multiplicity throughout): the parity
-        # is identically zero, which is almost certainly a spec mistake, not a
-        # deliberately dead detector.
-        raise ValueError(
-            f"{context} references every measurement with even multiplicity; its parity is identically zero",
-        )
-    return normalized
-
-
-def _metadata_entry(metadata: Mapping[str, Any] | None) -> dict[str, Any]:
-    entry = dict(metadata or {})
-    reserved = {
-        "id",
-        "records",
-        "meas_ids",
-        "result_tags",
-        "coords",
-        "inferred_from_result_tag",
-        "result_element",
-    }.intersection(entry)
-    if reserved:
-        raise ValueError(f"detector/observable metadata uses reserved keys: {sorted(reserved)}")
-    try:
-        json.dumps(entry, allow_nan=False)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(
-            "detector/observable metadata must be JSON-serializable "
-            f"(it is embedded in the DEM schema and its fingerprint): {exc}",
-        ) from exc
-    return entry
-
-
-def _resolve_dem_specs(
-    detectors: Sequence[Detector],
-    observables: Sequence[Observable],
-    *,
-    circuit: Any,
-    result_traces: Sequence[Mapping[str, Any]],
-    inferred_supports: Mapping[InferredOutput, Sequence[int]] | None = None,
-) -> _ResolvedSchema:
-    runtime_order = _measurement_ids_in_runtime_order(circuit)
-    num_measurements = len(runtime_order)
-    runtime_ids = set(runtime_order)
-    result_calls, refs_by_id = _index_result_traces(result_traces)
-
-    def support(spec: Detector | Observable, context: str) -> tuple[int, ...]:
-        if spec.inferred_output is not None:
-            if inferred_supports is None or spec.inferred_output not in inferred_supports:
-                raise ValueError(f"{context} requires inferred output {spec.inferred_output!r}")
-            ids = inferred_supports[spec.inferred_output]
-            if not set(ids) <= runtime_ids:
-                raise ValueError(f"{context} contains unknown inferred measurement IDs")
-        else:
-            ids = [
-                _resolve_ref(
-                    ref,
-                    num_measurements=num_measurements,
-                    runtime_meas_ids=runtime_ids,
-                    result_calls=result_calls,
-                )
-                for ref in spec.refs
-            ]
-        return _xor_normalize(ids, context=context)
-
-    def entry_metadata(spec: Detector | Observable) -> dict[str, Any]:
-        entry = _metadata_entry(spec.metadata)
-        if spec.inferred_output is not None:
-            entry.update(inferred_from_result_tag=spec.inferred_output.tag, result_element=spec.inferred_output.element)
-        return entry
-
-    resolved_detectors: list[tuple[int, dict[str, Any], tuple[int, ...]]] = []
-    for position, detector in enumerate(detectors):
-        detector_id = position if detector.id is None else detector.id
-        if isinstance(detector_id, bool) or not isinstance(detector_id, int) or detector_id < 0:
-            raise ValueError(f"detector id must be a non-negative integer, got {detector_id!r}")
-        meas_ids = support(detector, f"detector {detector_id}")
-        entry = entry_metadata(detector)
-        entry.update({"id": detector_id, "meas_ids": list(meas_ids)})
-        if detector.coords is not None:
-            entry["coords"] = list(detector.coords)
-        resolved_detectors.append((detector_id, entry, meas_ids))
-
-    detector_ids = [item[0] for item in resolved_detectors]
-    if sorted(detector_ids) != list(range(len(detector_ids))) or len(set(detector_ids)) != len(detector_ids):
-        raise ValueError("detector ids must be unique and dense from 0 to len(detectors)-1")
-    resolved_detectors.sort(key=lambda item: item[0])
-
-    resolved_observables: list[tuple[int, dict[str, Any], tuple[int, ...]]] = []
-    for position, observable in enumerate(observables):
-        observable_id = position if observable.id is None else observable.id
-        if isinstance(observable_id, bool) or not isinstance(observable_id, int) or observable_id < 0:
-            raise ValueError(f"observable id must be a non-negative integer, got {observable_id!r}")
-        meas_ids = support(observable, f"observable {observable_id}")
-        # Resolving measurement identities says nothing about the noiseless
-        # quantum parity or its determinism. Preserve a caller-supplied reference
-        # (including surface_memory_dem_spec's), and leave unknown values absent.
-        entry = entry_metadata(observable)
-        entry.update({"id": observable_id, "meas_ids": list(meas_ids)})
-        resolved_observables.append((observable_id, entry, meas_ids))
-    observable_ids = [item[0] for item in resolved_observables]
-    if len(set(observable_ids)) != len(observable_ids):
-        raise ValueError("observable ids must be unique")
-    resolved_observables.sort(key=lambda item: item[0])
-
-    detector_entries = [item[1] for item in resolved_detectors]
-    observable_entries = [item[1] for item in resolved_observables]
-    # Callers supply only compiler-certified direct scalar traces. Aggregate
-    # array element order is not certified and must never become a shot binding.
-    result_ids_by_tag = tuple(
-        (
-            tag,
-            tuple(result_id for occurrence in range(len(calls)) for result_id in calls[occurrence]),
-        )
-        for tag, calls in sorted(result_calls.items())
-        if calls
-        and sorted(calls) == list(range(len(calls)))
-        and all(len(call) == 1 or all(result_id is None for result_id in call) for call in calls.values())
-        and all(result_id is None or isinstance(result_id, int) for call in calls.values() for result_id in call)
-    )
-    fingerprint_payload = {
-        "detectors": detector_entries,
-        "observables": observable_entries,
-        "runtime_measurement_order": runtime_order,
-        "named_result_measurements": result_ids_by_tag,
-    }
-    fingerprint = hashlib.sha256(
-        json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":")).encode(),
-    ).hexdigest()
-
-    dense_ids = sorted(runtime_ids) == list(range(num_measurements))
-    ledger = tuple(
-        MeasurementLedgerEntry(
-            meas_id=meas_id,
-            runtime_record_index=runtime_index,
-            canonical_record_index=meas_id if dense_ids else None,
-            result_refs=tuple(refs_by_id.get(meas_id, ())),
-        )
-        for runtime_index, meas_id in enumerate(runtime_order)
-    )
-    return _ResolvedSchema(
-        detectors_json=json.dumps(detector_entries, separators=(",", ":")),
-        observables_json=json.dumps(observable_entries, separators=(",", ":")),
-        detector_meas_ids=tuple(item[2] for item in resolved_detectors),
-        detector_ids=tuple(item[0] for item in resolved_detectors),
-        observable_meas_ids=tuple((item[0], item[2]) for item in resolved_observables),
-        ledger=ledger,
-        result_ids_by_tag=result_ids_by_tag,
-        schema_fingerprint=fingerprint,
-    )
-
-
-def _resolved_schema_from_validated_json(
-    detectors_json: str,
-    observables_json: str,
-    *,
-    circuit: Any,
-    result_traces: Sequence[Mapping[str, Any]],
-    raw_array_tag: str | None = None,
-) -> _ResolvedSchema:
-    """Build audit data from metadata already validated by the Rust DEM builder."""
-    runtime_order = _measurement_ids_in_runtime_order(circuit)
-    result_calls, refs_by_id = _index_result_traces(result_traces)
-    detector_entries = json.loads(detectors_json) if detectors_json.strip() else []
-    observable_entries = json.loads(observables_json) if observables_json.strip() else []
-
-    definitions = circuit.circuit_definitions()
-    resolved_detectors = [
-        (entry["id"], tuple(runtime_order[position] for position in entry["measurements"]))
-        for entry in definitions["detectors"]
-    ]
-    resolved_observables = [
-        (entry["id"], tuple(runtime_order[position] for position in entry["measurements"]))
-        for entry in definitions["observables"]
-    ]
-    result_ids_by_tag = tuple(
-        (
-            tag,
-            tuple(result_id for occurrence in range(len(calls)) for result_id in calls[occurrence]),
-        )
-        for tag, calls in sorted(result_calls.items())
-        if calls
-        and sorted(calls) == list(range(len(calls)))
-        and (
-            tag == raw_array_tag
-            or all(len(call) == 1 or all(result_id is None for result_id in call) for call in calls.values())
-        )
-        and all(result_id is None or isinstance(result_id, int) for call in calls.values() for result_id in call)
-    )
-    fingerprint_payload = {
-        "detectors": detector_entries,
-        "observables": observable_entries,
-        "runtime_measurement_order": runtime_order,
-        "named_result_measurements": result_ids_by_tag,
-    }
-    fingerprint = hashlib.sha256(
-        json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":")).encode(),
-    ).hexdigest()
-    runtime_ids = set(runtime_order)
-    dense_ids = sorted(runtime_ids) == list(range(len(runtime_order)))
-    ledger = tuple(
-        MeasurementLedgerEntry(
-            meas_id=meas_id,
-            runtime_record_index=runtime_index,
-            canonical_record_index=meas_id if dense_ids else None,
-            result_refs=tuple(refs_by_id.get(meas_id, ())),
-        )
-        for runtime_index, meas_id in enumerate(runtime_order)
-    )
-    return _ResolvedSchema(
-        detectors_json=detectors_json,
-        observables_json=observables_json,
-        detector_meas_ids=tuple(meas_ids for _, meas_ids in resolved_detectors),
-        detector_ids=tuple(identity for identity, _ in resolved_detectors),
-        observable_meas_ids=tuple(resolved_observables),
-        ledger=ledger,
-        result_ids_by_tag=result_ids_by_tag,
-        schema_fingerprint=fingerprint,
-    )
+    def result_column_parities(self, results: Mapping[str, Sequence[Any]]) -> list[tuple[list[int], int]]:
+        """Evaluate raw parities from trusted, row-aligned result columns."""
+        return self._prepared.result_column_parities(self._result_columns(results))

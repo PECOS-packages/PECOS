@@ -47,7 +47,6 @@ use crate::dag_circuit_bindings::{PyDagCircuit, PyTickCircuit};
 use crate::decoder_spec_bindings::PyDecoderSpec;
 use crate::pecos_array::{Array, ArrayData};
 use crate::stabilizer_code_spec_bindings::PyStabilizerCodeSpec;
-use pecos_core::gate_type::GateType;
 use pecos_decoder_core::clifford_frame::{
     TwoPatchClifford as RustTwoPatchClifford,
     transform_two_patch_pauli as rust_transform_two_patch_pauli,
@@ -65,9 +64,7 @@ use pecos_qec::fault_tolerance::dem_builder::{
     DemWindowSpec as RustDemWindowSpec, DetectorErrorModel as RustDetectorErrorModel,
     DirectSourceFamily as RustDirectSourceFamily, EquivalenceResult as RustEquivalenceResult,
     FaultContribution as RustFaultContribution, FaultSourceType as RustFaultSourceType,
-    IdleNoiseFamily, MeasurementCrosstalkDemMode, MeasurementCrosstalkTransitionModel, NoiseConfig,
-    OutputMode, PAULI_2Q_ORDER, ParsedDem as RustParsedDem, PauliWeights,
-    ReplacementBranchApproximation,
+    NoiseConfig, NoiseOptions, OutputMode, ParsedDem as RustParsedDem,
     TwoDetectorDirectRenderPolicy as RustTwoDetectorDirectRenderPolicy,
     compare_dems_exact as rust_compare_dems_exact,
     compare_dems_statistical as rust_compare_dems_statistical,
@@ -132,7 +129,6 @@ use pyo3::types::PyString;
 use crate::observable_flips_bindings::{PyObservableFlips, obsmask_to_py, py_to_obsmask};
 use pecos_decoders::batch::{DecoderFactory, SampleBatch};
 use std::collections::{BTreeMap, BTreeSet};
-use std::str::FromStr;
 use std::sync::Arc;
 
 mod batch_decode;
@@ -148,453 +144,59 @@ use projection::{DemInput, PyProjectionReport};
 use sample_corpus::{CorpusError, CorpusToSave, LoadedCorpus};
 
 type PyDemMechanismTuple = (f64, Vec<u32>, Vec<u32>);
+type PyIdleAxisRates = (
+    Option<f64>,
+    Option<f64>,
+    Option<f64>,
+    Option<f64>,
+    Option<f64>,
+    Option<f64>,
+);
 type PyDemFitResult = (Vec<PyDemMechanismTuple>, Vec<f64>);
 /// Per-shot detector rows paired with per-shot observable/DEM-output rows.
 type PyDetectorObservableRows = (Vec<Vec<bool>>, Vec<Vec<bool>>);
 
-fn idle_family_from_axis_rates(px: f64, py: f64, pz: f64) -> IdleNoiseFamily {
-    if px == 0.0 && py == 0.0 && pz == 0.0 {
-        return IdleNoiseFamily::default();
-    }
-    IdleNoiseFamily::new(
-        1.0,
-        BTreeMap::from([
-            ("X".to_string(), px),
-            ("Y".to_string(), py),
-            ("Z".to_string(), pz),
-        ]),
-    )
-}
-
-fn parse_p1_weights(weights: BTreeMap<String, f64>) -> PyResult<PauliWeights> {
-    use pecos_core::pauli::{X, Y, Z};
-
-    let mut entries = Vec::with_capacity(weights.len());
-    let mut sum = 0.0;
-    for (label, weight) in weights {
-        let label = label.trim().to_ascii_uppercase();
-        let pauli = match label.as_str() {
-            "X" => X(0),
-            "Y" => Y(0),
-            "Z" => Z(0),
-            _ => {
-                let msg = format!("p1_weights keys must be one of ['X', 'Y', 'Z'], got {label:?}");
-                return Err(pyo3::exceptions::PyValueError::new_err(msg));
-            }
-        };
-        if !weight.is_finite() || weight < 0.0 {
-            let msg =
-                format!("p1_weights[{label:?}] must be finite and non-negative, got {weight}");
-            return Err(pyo3::exceptions::PyValueError::new_err(msg));
-        }
-        sum += weight;
-        entries.push((pauli, weight));
-    }
-    if (sum - 1.0).abs() >= 1.0e-6 {
-        let msg = format!("p1_weights relative probabilities must sum to 1.0, got {sum}");
-        return Err(pyo3::exceptions::PyValueError::new_err(msg));
-    }
-    Ok(PauliWeights::new(entries))
-}
-
-fn parse_p2_weights(weights: BTreeMap<String, f64>) -> PyResult<PauliWeights> {
-    use pecos_core::pauli::{X, Y, Z};
-
-    let mut entries = Vec::with_capacity(weights.len());
-    let mut replacement_entries = Vec::new();
-    let mut normalized_labels = BTreeSet::new();
-    let mut sum = 0.0;
-    for (label, weight) in weights {
-        let input_label = label.trim().to_ascii_uppercase();
-        let (replacement, label) = if let Some(stripped) = input_label.strip_prefix(":REPLACE:") {
-            (true, stripped.to_string())
-        } else if let Some(stripped) = input_label.strip_prefix('~') {
-            (true, stripped.to_string())
-        } else if let Some(stripped) = input_label.strip_prefix('*') {
-            let replacement = format!("~{stripped}");
-            let msg = format!(
-                "p2_weights replacement label {input_label:?} uses the removed '*' syntax; use {replacement:?} (or \":replace:{stripped}\") instead"
-            );
-            return Err(pyo3::exceptions::PyValueError::new_err(msg));
-        } else {
-            (false, input_label.clone())
-        };
-        if !normalized_labels.insert((replacement, label.clone())) {
-            let canonical = if replacement {
-                format!("~{label}")
-            } else {
-                label.clone()
-            };
-            let msg = format!(
-                "p2_weights contains duplicate label {canonical:?} after normalization; use only one spelling for each branch"
-            );
-            return Err(pyo3::exceptions::PyValueError::new_err(msg));
-        }
-        let identity_pair = label == "II";
-        if !identity_pair && !PAULI_2Q_ORDER.contains(&label.as_str()) {
-            let msg = format!(
-                "p2_weights keys must be one of {PAULI_2Q_ORDER:?}, or use '~' / ':replace:' before a two-qubit Pauli label for a replacement branch; got {input_label:?}"
-            );
-            return Err(pyo3::exceptions::PyValueError::new_err(msg));
-        }
-        if !weight.is_finite() || weight < 0.0 {
-            let msg = format!(
-                "p2_weights[{input_label:?}] must be finite and non-negative, got {weight}"
-            );
-            return Err(pyo3::exceptions::PyValueError::new_err(msg));
-        }
-        let mut pauli = None;
-        for (qubit, ch) in label.chars().enumerate() {
-            let term = match ch {
-                'I' => None,
-                'X' => Some(X(qubit)),
-                'Y' => Some(Y(qubit)),
-                'Z' => Some(Z(qubit)),
-                _ => unreachable!("validated p2_weights label contains only I/X/Y/Z"),
-            };
-            pauli = match (pauli, term) {
-                (None, None) => None,
-                (Some(existing), None) => Some(existing),
-                (None, Some(term)) => Some(term),
-                (Some(existing), Some(term)) => Some(existing & term),
-            };
-        }
-        let pauli = if let Some(pauli) = pauli {
-            pauli
-        } else if replacement {
-            pecos_core::PauliString::identity()
-        } else {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "plain p2_weights cannot contain identity pair 'II'; use '~II' (or ':replace:II') for a replacement branch that only omits the gate",
-            ));
-        };
-        sum += weight;
-        if replacement {
-            replacement_entries.push((pauli, weight));
-        } else {
-            entries.push((pauli, weight));
-        }
-    }
-    if (sum - 1.0).abs() >= 1.0e-6 {
-        let msg = format!("p2_weights relative probabilities must sum to 1.0, got {sum}");
-        return Err(pyo3::exceptions::PyValueError::new_err(msg));
-    }
-    Ok(PauliWeights::with_replacement(entries, replacement_entries))
-}
-
-#[cfg(test)]
-mod p2_weight_parser_tests {
-    use super::*;
-
-    fn parse_error(weights: BTreeMap<String, f64>) -> String {
-        pyo3::Python::initialize();
-        parse_p2_weights(weights).unwrap_err().to_string()
-    }
-
-    #[test]
-    fn accepts_both_replacement_label_spellings_case_insensitively() {
-        use pecos_core::pauli::X;
-
-        for label in [" ~xx ", " :RePlAcE:xX "] {
-            let parsed = parse_p2_weights(BTreeMap::from([(label.to_string(), 1.0)])).unwrap();
-
-            assert_eq!(parsed.entries(), []);
-            assert_eq!(parsed.replacement_entries(), &[(X(0) & X(1), 1.0)]);
-        }
-    }
-
-    #[test]
-    fn accepts_omission_only_replacement_label() {
-        let parsed = parse_p2_weights(BTreeMap::from([("~II".to_string(), 1.0)])).unwrap();
-
-        assert_eq!(parsed.entries(), []);
-        assert_eq!(
-            parsed.replacement_entries(),
-            &[(pecos_core::PauliString::identity(), 1.0)]
-        );
-    }
-
-    #[test]
-    fn rejects_removed_star_replacement_syntax_with_migration_hint() {
-        let message = parse_error(BTreeMap::from([("*XX".to_string(), 1.0)]));
-
-        assert!(message.contains("~XX"));
-        assert!(message.contains(":replace:XX"));
-    }
-
-    #[test]
-    fn rejects_duplicate_replacement_aliases_after_normalization() {
-        let message = parse_error(BTreeMap::from([
-            ("~XX".to_string(), 0.5),
-            (":replace:XX".to_string(), 0.5),
-        ]));
-
-        assert!(message.contains("duplicate label"));
-    }
-
-    #[test]
-    fn rejects_plain_identity_with_replacement_spelling_hint() {
-        let message = parse_error(BTreeMap::from([("II".to_string(), 1.0)]));
-
-        assert!(message.contains("~II"));
-        assert!(message.contains(":replace:II"));
-    }
-}
-
-fn parse_replacement_approximation(
-    value: Option<String>,
-) -> PyResult<ReplacementBranchApproximation> {
-    let Some(value) = value else {
-        return Ok(ReplacementBranchApproximation::default());
-    };
-    match value
-        .trim()
-        .to_ascii_lowercase()
-        .replace(['-', ' '], "_")
-        .as_str()
-    {
-        "pauli_twirl_omitted_gate" | "pauli_twirl" | "twirl" => {
-            Ok(ReplacementBranchApproximation::PauliTwirlOmittedGate)
-        }
-        "branch_impact" | "replacement_branch_impact" | "impact" => {
-            Ok(ReplacementBranchApproximation::BranchImpact)
-        }
-        "exact_branch_replay" | "exact_replay" | "exact_branch" | "exact" => {
-            Ok(ReplacementBranchApproximation::ExactBranchReplay)
-        }
-        "ignore_gate_removal" | "ignore_removal" | "post_gate" | "postgate" => {
-            Ok(ReplacementBranchApproximation::IgnoreGateRemoval)
-        }
-        _ => Err(pyo3::exceptions::PyValueError::new_err(
-            "p2_replacement_approximation must be 'pauli_twirl_omitted_gate', 'branch_impact', 'exact_branch_replay', or 'ignore_gate_removal'",
-        )),
-    }
-}
-
-fn parse_p2_gate_rates(rates: BTreeMap<String, f64>) -> PyResult<BTreeMap<GateType, f64>> {
-    let mut parsed = BTreeMap::new();
-    for (label, rate) in rates {
-        if !rate.is_finite() || rate < 0.0 {
-            let msg =
-                format!("p2_gate_rates[{label:?}] must be finite and non-negative, got {rate}");
-            return Err(pyo3::exceptions::PyValueError::new_err(msg));
-        }
-        let gate_type = GateType::from_str(label.trim()).map_err(|err| {
-            let msg = format!("unsupported p2_gate_rates gate label {label:?}: {err}");
-            pyo3::exceptions::PyValueError::new_err(msg)
-        })?;
-        if !gate_type.is_two_qubit() {
-            let msg = format!("p2_gate_rates keys must name two-qubit gates, got {label:?}");
-            return Err(pyo3::exceptions::PyValueError::new_err(msg));
-        }
-        parsed.insert(gate_type, rate);
-    }
-    Ok(parsed)
-}
-
-fn parse_p1_gate_rates(rates: BTreeMap<String, f64>) -> PyResult<BTreeMap<GateType, f64>> {
-    let mut parsed = BTreeMap::new();
-    for (label, rate) in rates {
-        if !rate.is_finite() || rate < 0.0 {
-            let msg =
-                format!("p1_gate_rates[{label:?}] must be finite and non-negative, got {rate}");
-            return Err(pyo3::exceptions::PyValueError::new_err(msg));
-        }
-        let gate_type = GateType::from_str(label.trim()).map_err(|err| {
-            let msg = format!("unsupported p1_gate_rates gate label {label:?}: {err}");
-            pyo3::exceptions::PyValueError::new_err(msg)
-        })?;
-        if !gate_type.is_single_qubit() {
-            let msg = format!("p1_gate_rates keys must name single-qubit gates, got {label:?}");
-            return Err(pyo3::exceptions::PyValueError::new_err(msg));
-        }
-        parsed.insert(gate_type, rate);
-    }
-    Ok(parsed)
-}
-
-fn parse_measurement_crosstalk_dem_mode(
-    value: Option<String>,
-) -> PyResult<MeasurementCrosstalkDemMode> {
-    let Some(value) = value else {
-        return Ok(MeasurementCrosstalkDemMode::default());
-    };
-    match value
-        .trim()
-        .to_ascii_lowercase()
-        .replace(['-', ' '], "_")
-        .as_str()
-    {
-        "omitted" | "omit" | "none" | "off" => Ok(MeasurementCrosstalkDemMode::Omitted),
-        "exact_deterministic" | "exact" | "deterministic" => {
-            Ok(MeasurementCrosstalkDemMode::ExactDeterministic)
-        }
-        "exact_deterministic_leakage_as_depolarizing"
-        | "exact_leakage_as_depolarizing"
-        | "deterministic_leakage_as_depolarizing"
-        | "leakage_as_depolarizing" => {
-            Ok(MeasurementCrosstalkDemMode::ExactDeterministicLeakageAsDepolarizing)
-        }
-        "averaged_hidden_leakage_as_depolarizing"
-        | "average_hidden_leakage_as_depolarizing"
-        | "state_averaged_leakage_as_depolarizing"
-        | "averaged_leakage_as_depolarizing" => {
-            Ok(MeasurementCrosstalkDemMode::AveragedHiddenLeakageAsDepolarizing)
-        }
-        _ => Err(pyo3::exceptions::PyValueError::new_err(
-            "measurement_crosstalk_dem_mode must be 'omitted', 'exact_deterministic', 'exact_deterministic_leakage_as_depolarizing', or 'averaged_hidden_leakage_as_depolarizing'",
-        )),
-    }
-}
-
-fn parse_measurement_crosstalk_transition_model(
-    value: Option<BTreeMap<String, f64>>,
-) -> PyResult<MeasurementCrosstalkTransitionModel> {
-    let Some(value) = value else {
-        return Ok(MeasurementCrosstalkTransitionModel::default());
-    };
-    let mut model = MeasurementCrosstalkTransitionModel::default();
-    for (key, probability) in value {
-        if !probability.is_finite() || probability < 0.0 {
-            let msg = format!(
-                "measurement crosstalk transition probability for {key:?} must be finite and non-negative"
-            );
-            return Err(pyo3::exceptions::PyValueError::new_err(msg));
-        }
-        match key.trim().to_ascii_uppercase().replace(' ', "").as_str() {
-            "0->0" | "1->1" => {}
-            "0->1" => model.p_0_to_1 = probability,
-            "0->L" => model.p_0_to_leak = probability,
-            "1->0" => model.p_1_to_0 = probability,
-            "1->L" => model.p_1_to_leak = probability,
-            _ => {
-                let msg = format!(
-                    "unsupported measurement crosstalk transition key {key:?}; expected 0->0, 0->1, 0->L, 1->0, 1->1, or 1->L"
-                );
-                return Err(pyo3::exceptions::PyValueError::new_err(msg));
-            }
-        }
-    }
-    if !model.is_valid() {
-        return Err(pyo3::exceptions::PyValueError::new_err(
-            "measurement crosstalk transition rows must sum to <= 1",
-        ));
-    }
-    Ok(model)
-}
-
-fn apply_noise_options(
-    mut noise: NoiseConfig,
-    p_idle: Option<f64>,
-    t1: Option<f64>,
-    t2: Option<f64>,
-    idle_rz: Option<f64>,
+/// Translate high-level idle families into the six DEM axis primitives.
+#[pyfunction]
+#[pyo3(signature = (*, p_idle_linear=None, p_idle_linear_model=None, p_idle_sin_squared=None, p_idle_sin_squared_model=None, p_idle_coherent=None, p_idle_coherent_model=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None))]
+fn translate_structured_idle_noise(
+    p_idle_linear: Option<f64>,
+    p_idle_linear_model: Option<BTreeMap<String, f64>>,
+    p_idle_sin_squared: Option<f64>,
+    p_idle_sin_squared_model: Option<BTreeMap<String, f64>>,
+    p_idle_coherent: Option<f64>,
+    p_idle_coherent_model: Option<BTreeMap<String, f64>>,
     p_idle_linear_rate: Option<f64>,
     p_idle_quadratic_rate: Option<f64>,
     p_idle_x_linear_rate: Option<f64>,
     p_idle_y_linear_rate: Option<f64>,
     p_idle_z_linear_rate: Option<f64>,
-    p_idle_x_quadratic_rate: Option<f64>,
-    p_idle_y_quadratic_rate: Option<f64>,
-    p_idle_z_quadratic_rate: Option<f64>,
     p_idle_quadratic_sine_rate: Option<f64>,
     p_idle_x_quadratic_sine_rate: Option<f64>,
     p_idle_y_quadratic_sine_rate: Option<f64>,
     p_idle_z_quadratic_sine_rate: Option<f64>,
-    p1_weights: Option<BTreeMap<String, f64>>,
-    p2_weights: Option<BTreeMap<String, f64>>,
-    p2_replacement_approximation: Option<String>,
-    p_meas_crosstalk_local: Option<f64>,
-    p_meas_crosstalk_global: Option<f64>,
-    p_meas_crosstalk_model: Option<BTreeMap<String, f64>>,
-    measurement_crosstalk_dem_mode: Option<String>,
-    p2_gate_rates: Option<BTreeMap<String, f64>>,
-    p1_gate_rates: Option<BTreeMap<String, f64>>,
-) -> PyResult<NoiseConfig> {
-    // Reject the base-idle-channel combinations this function would otherwise
-    // resolve silently: `set_t1_t2` makes T1/T2 the base channel that shadows
-    // `p_idle`, and `set_idle_rz` zeroes `p_idle` and overwrites T1/T2 with a
-    // synthetic T2. Each combination discards a caller-supplied rate without
-    // any signal (issue #426).
-    if p_idle.is_some() && (t1.is_some() || t2.is_some()) {
-        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-            "p_idle cannot be combined with t1/t2; the T1/T2 channel replaces the \
-             depolarizing base idle channel, so p_idle would be ignored",
-        ));
+) -> PyResult<PyIdleAxisRates> {
+    let axes = NoiseOptions {
+        p_idle_linear,
+        p_idle_linear_model,
+        p_idle_sin_squared,
+        p_idle_sin_squared_model,
+        p_idle_coherent,
+        p_idle_coherent_model,
+        p_idle_linear_rate,
+        p_idle_quadratic_rate,
+        p_idle_x_linear_rate,
+        p_idle_y_linear_rate,
+        p_idle_z_linear_rate,
+        p_idle_quadratic_sine_rate,
+        p_idle_x_quadratic_sine_rate,
+        p_idle_y_quadratic_sine_rate,
+        p_idle_z_quadratic_sine_rate,
+        ..NoiseOptions::default()
     }
-    if idle_rz.is_some() {
-        if p_idle.is_some() {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "idle_rz cannot be combined with p_idle; the coherent RZ conversion \
-                 replaces the base idle channel, so p_idle would be ignored",
-            ));
-        }
-        if t1.is_some() || t2.is_some() {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "idle_rz cannot be combined with t1/t2; the coherent RZ conversion \
-                 overwrites the T1/T2 channel with an equivalent T2",
-            ));
-        }
-    }
-
-    noise.p_idle = p_idle.unwrap_or(0.0);
-    if let (Some(t1_val), Some(t2_val)) = (t1, t2) {
-        noise = noise.set_t1_t2(t1_val, t2_val);
-    }
-    if let Some(rz) = idle_rz {
-        noise = noise.set_idle_rz(rz);
-    }
-    noise.p_idle_linear = idle_family_from_axis_rates(
-        p_idle_x_linear_rate.unwrap_or(0.0),
-        p_idle_y_linear_rate.unwrap_or(0.0),
-        p_idle_z_linear_rate.or(p_idle_linear_rate).unwrap_or(0.0),
-    );
-    noise.p_idle_quadratic = idle_family_from_axis_rates(
-        p_idle_x_quadratic_rate.unwrap_or(0.0),
-        p_idle_y_quadratic_rate.unwrap_or(0.0),
-        p_idle_z_quadratic_rate
-            .or(p_idle_quadratic_rate)
-            .unwrap_or(0.0),
-    );
-    noise.p_idle_quadratic_sine = idle_family_from_axis_rates(
-        p_idle_x_quadratic_sine_rate.unwrap_or(0.0),
-        p_idle_y_quadratic_sine_rate.unwrap_or(0.0),
-        p_idle_z_quadratic_sine_rate
-            .or(p_idle_quadratic_sine_rate)
-            .unwrap_or(0.0),
-    );
-    if let Some(weights) = p1_weights {
-        noise = noise.set_p1_weights(parse_p1_weights(weights)?);
-    }
-    if let Some(weights) = p2_weights {
-        noise = noise.set_p2_weights(parse_p2_weights(weights)?);
-    }
-    if let Some(rates) = p2_gate_rates {
-        for (gate_type, rate) in parse_p2_gate_rates(rates)? {
-            noise = noise.set_p2_gate_rate(gate_type, rate);
-        }
-    }
-    if let Some(rates) = p1_gate_rates {
-        for (gate_type, rate) in parse_p1_gate_rates(rates)? {
-            noise = noise.set_p1_gate_rate(gate_type, rate);
-        }
-    }
-    noise = noise.set_p2_replacement_approximation(parse_replacement_approximation(
-        p2_replacement_approximation,
-    )?);
-    if let Some(rate) = p_meas_crosstalk_local {
-        noise = noise.set_measurement_crosstalk_local_rate(rate);
-    }
-    if let Some(rate) = p_meas_crosstalk_global {
-        noise = noise.set_measurement_crosstalk_global_rate(rate);
-    }
-    noise = noise.set_measurement_crosstalk_transition_model(
-        parse_measurement_crosstalk_transition_model(p_meas_crosstalk_model)?,
-    );
-    noise = noise.set_measurement_crosstalk_dem_mode(parse_measurement_crosstalk_dem_mode(
-        measurement_crosstalk_dem_mode,
-    )?);
-    Ok(noise)
+    .translate_idle_noise()
+    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    Ok((axes[0], axes[1], axes[2], axes[3], axes[4], axes[5]))
 }
 
 // Adapter for decoder factories that require `Send + Sync` trait objects.
@@ -2364,8 +1966,8 @@ fn contribution_record_to_pydict(
     Ok(dict.unbind())
 }
 
-#[pymethods]
-impl PyDetectorErrorModel {
+crate::dem_noise_bindings::dem_noise_methods! {
+    PyDetectorErrorModel,
     /// Build a DetectorErrorModel directly from a circuit and noise.
     ///
     /// Accepts both `TickCircuit` and `DagCircuit`. Reads detector/tracked-Pauli
@@ -2382,69 +1984,9 @@ impl PyDetectorErrorModel {
     /// Clifford action of a different scheduled gate are rejected, even if
     /// another scheduled gate matches the key.
     #[staticmethod]
-    #[pyo3(signature = (circuit, p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None, p2_gate_rates=None, p1_gate_rates=None))]
-    fn from_circuit(
-        circuit: &pyo3::Bound<'_, pyo3::PyAny>,
-        p1: f64,
-        p2: f64,
-        p_meas: f64,
-        p_prep: f64,
-        p_idle: Option<f64>,
-        t1: Option<f64>,
-        t2: Option<f64>,
-        idle_rz: Option<f64>,
-        p_idle_linear_rate: Option<f64>,
-        p_idle_quadratic_rate: Option<f64>,
-        p_idle_x_linear_rate: Option<f64>,
-        p_idle_y_linear_rate: Option<f64>,
-        p_idle_z_linear_rate: Option<f64>,
-        p_idle_x_quadratic_rate: Option<f64>,
-        p_idle_y_quadratic_rate: Option<f64>,
-        p_idle_z_quadratic_rate: Option<f64>,
-        p_idle_quadratic_sine_rate: Option<f64>,
-        p_idle_x_quadratic_sine_rate: Option<f64>,
-        p_idle_y_quadratic_sine_rate: Option<f64>,
-        p_idle_z_quadratic_sine_rate: Option<f64>,
-        p1_weights: Option<BTreeMap<String, f64>>,
-        p2_weights: Option<BTreeMap<String, f64>>,
-        p2_replacement_approximation: Option<String>,
-        p_meas_crosstalk_local: Option<f64>,
-        p_meas_crosstalk_global: Option<f64>,
-        p_meas_crosstalk_model: Option<BTreeMap<String, f64>>,
-        measurement_crosstalk_dem_mode: Option<String>,
-        p2_gate_rates: Option<BTreeMap<String, f64>>,
-        p1_gate_rates: Option<BTreeMap<String, f64>>,
-    ) -> PyResult<Self> {
+    from_circuit, [circuit: &pyo3::Bound<'_, pyo3::PyAny>], [circuit,],
+    noise, Self, {
         use pecos_qec::fault_tolerance::dem_builder::DemBuilder;
-
-        let noise = apply_noise_options(
-            NoiseConfig::new(p1, p2, p_meas, p_prep),
-            p_idle,
-            t1,
-            t2,
-            idle_rz,
-            p_idle_linear_rate,
-            p_idle_quadratic_rate,
-            p_idle_x_linear_rate,
-            p_idle_y_linear_rate,
-            p_idle_z_linear_rate,
-            p_idle_x_quadratic_rate,
-            p_idle_y_quadratic_rate,
-            p_idle_z_quadratic_rate,
-            p_idle_quadratic_sine_rate,
-            p_idle_x_quadratic_sine_rate,
-            p_idle_y_quadratic_sine_rate,
-            p_idle_z_quadratic_sine_rate,
-            p1_weights,
-            p2_weights,
-            p2_replacement_approximation,
-            p_meas_crosstalk_local,
-            p_meas_crosstalk_global,
-            p_meas_crosstalk_model,
-            measurement_crosstalk_dem_mode,
-            p2_gate_rates,
-            p1_gate_rates,
-        )?;
         if let Ok(dag) =
             circuit.extract::<pyo3::PyRef<'_, crate::dag_circuit_bindings::PyDagCircuit>>()
         {
@@ -2462,7 +2004,7 @@ impl PyDetectorErrorModel {
                 "from_circuit() expects a DagCircuit or TickCircuit",
             ))
         }
-    }
+    }, {
 
     /// Build a DetectorErrorModel from PECOS DEM metadata JSON.
     ///
@@ -2809,7 +2351,7 @@ impl PyDetectorErrorModel {
     /// their relative magnitude. An empty list means every categorical conversion
     /// was exact.
     #[getter]
-    fn idle_noise_residuals(&self, py: Python<'_>) -> PyResult<Vec<Py<pyo3::types::PyDict>>> {
+    pub(crate) fn idle_noise_residuals(&self, py: Python<'_>) -> PyResult<Vec<Py<pyo3::types::PyDict>>> {
         self.inner
             .idle_noise_residuals()
             .iter()
@@ -2960,6 +2502,7 @@ impl PyDetectorErrorModel {
     fn __str__(&self) -> String {
         self.to_string()
     }
+    }
 }
 
 // =============================================================================
@@ -3077,8 +2620,8 @@ impl PyDemBuilder {
     ///     `p_meas`: Measurement error rate.
     ///     `p_prep`: Initialization (prep) error rate.
     ///     `p_idle`: Optional idle noise rate per time unit.
-    ///     t1: Optional T1 relaxation time.
-    ///     t2: Optional T2 dephasing time.
+    ///     t1: Optional T1 relaxation time; requires t2.
+    ///     t2: Optional T2 dephasing time; requires t1.
     ///
     /// Returns:
     ///     Self for method chaining.
@@ -3121,8 +2664,11 @@ impl PyDemBuilder {
         p2_gate_rates: Option<BTreeMap<String, f64>>,
         p1_gate_rates: Option<BTreeMap<String, f64>>,
     ) -> PyResult<PyRefMut<'_, Self>> {
-        slf.noise = apply_noise_options(
-            NoiseConfig::new(p1, p2, p_meas, p_prep),
+        slf.noise = NoiseConfig::try_from(NoiseOptions {
+            p1,
+            p2,
+            p_meas,
+            p_prep,
             p_idle,
             t1,
             t2,
@@ -3148,7 +2694,9 @@ impl PyDemBuilder {
             measurement_crosstalk_dem_mode,
             p2_gate_rates,
             p1_gate_rates,
-        )?;
+            ..NoiseOptions::default()
+        })
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
         Ok(slf)
     }
 
@@ -4284,8 +3832,11 @@ impl PyDemSampler {
         p2_gate_rates: Option<BTreeMap<String, f64>>,
         p1_gate_rates: Option<BTreeMap<String, f64>>,
     ) -> PyResult<Self> {
-        let noise = apply_noise_options(
-            NoiseConfig::new(p1, p2, p_meas, p_prep),
+        let noise = NoiseConfig::try_from(NoiseOptions {
+            p1,
+            p2,
+            p_meas,
+            p_prep,
             p_idle,
             t1,
             t2,
@@ -4311,7 +3862,9 @@ impl PyDemSampler {
             measurement_crosstalk_dem_mode,
             p2_gate_rates,
             p1_gate_rates,
-        )?;
+            ..NoiseOptions::default()
+        })
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
 
         // Accept both DagCircuit and TickCircuit
         if let Ok(dag) =
@@ -4451,8 +4004,11 @@ impl PyDemSampler {
         p2_gate_rates: Option<BTreeMap<String, f64>>,
         p1_gate_rates: Option<BTreeMap<String, f64>>,
     ) -> PyResult<Self> {
-        let noise = apply_noise_options(
-            NoiseConfig::new(p1, p2, p_meas, p_prep),
+        let noise = NoiseConfig::try_from(NoiseOptions {
+            p1,
+            p2,
+            p_meas,
+            p_prep,
             p_idle,
             t1,
             t2,
@@ -4478,7 +4034,9 @@ impl PyDemSampler {
             measurement_crosstalk_dem_mode,
             p2_gate_rates,
             p1_gate_rates,
-        )?;
+            ..NoiseOptions::default()
+        })
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
         let inner = RustNewDemSamplerBuilder::new(&influence_map.inner)
             .with_noise_config(noise)
             .with_detectors(detectors, observables)
@@ -5022,8 +4580,11 @@ impl PyDemSamplerBuilder {
         p2_gate_rates: Option<BTreeMap<String, f64>>,
         p1_gate_rates: Option<BTreeMap<String, f64>>,
     ) -> PyResult<PyRefMut<'_, Self>> {
-        slf.noise = apply_noise_options(
-            NoiseConfig::new(p1, p2, p_meas, p_prep),
+        slf.noise = NoiseConfig::try_from(NoiseOptions {
+            p1,
+            p2,
+            p_meas,
+            p_prep,
             p_idle,
             t1,
             t2,
@@ -5049,7 +4610,9 @@ impl PyDemSamplerBuilder {
             measurement_crosstalk_dem_mode,
             p2_gate_rates,
             p1_gate_rates,
-        )?;
+            ..NoiseOptions::default()
+        })
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
         Ok(slf)
     }
 
@@ -8555,6 +8118,8 @@ fn transform_two_patch_pauli(pauli: u8, gate: &str) -> PyResult<u8> {
 pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let qec = PyModule::new(m.py(), "qec")?;
     crate::dem_inference_bindings::register(&qec)?;
+    crate::dem_build_bindings::register(&qec)?;
+    qec.add_function(wrap_pyfunction!(translate_structured_idle_noise, &qec)?)?;
     qec.add(
         "DEM_SLICE_ROUND_ATTRIBUTE",
         pecos_qec::fault_tolerance::dem_builder::DEM_SLICE_ROUND_ATTRIBUTE,

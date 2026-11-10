@@ -447,7 +447,11 @@ fn execute_named_gate(
             if x_basis {
                 sim.h(&[q]);
             }
-            sim.mz(&[q]);
+            if gate_type.consumes_measurement_record() {
+                sim.mz(&[q]);
+            } else {
+                sim.mz_unrecorded(&[q]);
+            }
             // Restore the X-basis eigenstate after the Z-basis projection.
             if x_basis {
                 sim.h(&[q]);

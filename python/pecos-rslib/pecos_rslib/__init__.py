@@ -55,6 +55,11 @@ _qis_library_dir = Path(__file__).resolve().parent / "_native"
 if _qis_library_dir.is_dir():
     _native._set_qis_library_dir(_qis_library_dir)
 
+_validate_hosted_operations = _native._validate_hosted_operations
+_replay_qis_trace = _native._replay_qis_trace
+_qis_named_result_traces = _native._qis_named_result_traces
+_qis_source_measurement_ids = _native._qis_source_measurement_ids
+
 __doc__ = _native.__doc__
 if hasattr(_native, "__all__"):
     __all__ = _native.__all__

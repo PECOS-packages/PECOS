@@ -212,7 +212,7 @@ def test_peak_allocation(distance):
     )
     live = set()
     peak = 0
-    # _qis_trace_replay.py replays lowered PZ allocations and MZ readouts.
+    # The shared Rust replay preserves lowered PZ allocations and MZ readouts.
     # These factories destructively measure every allocation; no reset occurs while live.
     for chunk in chunks:
         for gate in chunk["lowered_quantum_ops"]:

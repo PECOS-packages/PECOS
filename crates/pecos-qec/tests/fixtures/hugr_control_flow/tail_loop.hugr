@@ -1,0 +1,22 @@
+HUGRiHJv(@(hugr 0)
+
+(mod)
+
+(define-func private _1 (core.fn [] [])
+  (meta (core.title "main"))
+  (dfg
+    (signature (core.fn [] []))
+    (dfg
+      (signature (core.fn [] []))
+      (meta core.entrypoint)
+      (dfg
+        (signature (core.fn [] []))
+        (tail-loop
+          (signature (core.fn [] []))
+          (dfg [] [%_1]
+            (signature (core.fn [] [(core.adt [[] []])]))
+            ((core.load_const
+                (core.adt [[] []])
+                (core.const.adt [[] []] [] 1 (tuple)))
+              [] [%_1]
+              (signature (core.fn [] [(core.adt [[] []])])))))))))

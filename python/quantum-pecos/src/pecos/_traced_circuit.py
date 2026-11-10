@@ -41,29 +41,9 @@ def normalize_traced_tick_circuit(
     Optionally simplify Clifford chains, then assign stable measurement ids
     before converting the trace to a DAG.
     """
-    _call_required_tick_circuit_method(
-        tick_circuit,
-        "lower_clifford_rotations",
-        context,
-        preserve_gate_arity=True,
-    )
-    if simplify_single_qubit_clifford_chains:
-        _call_required_tick_circuit_method(
-            tick_circuit,
-            "simplify_single_qubit_clifford_chains",
-            context,
-        )
-    _call_required_tick_circuit_method(tick_circuit, "assign_missing_meas_ids", context)
-
-
-def _call_required_tick_circuit_method(
-    tick_circuit: object,
-    method_name: str,
-    context: str,
-    **kwargs: object,
-) -> None:
+    method_name = "normalize_traced_tick_circuit"
     method = getattr(tick_circuit, method_name, None)
     if not callable(method):
         msg = f"{context}: expected a TickCircuit with callable {method_name}()."
         raise TypeError(msg)
-    method(**kwargs)
+    method(simplify_single_qubit_clifford_chains=simplify_single_qubit_clifford_chains)

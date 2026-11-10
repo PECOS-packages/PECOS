@@ -43,7 +43,9 @@ mod coin_toss_bindings;
 mod dag_circuit_bindings;
 mod decoder_bindings;
 mod decoder_spec_bindings;
+mod dem_build_bindings;
 mod dem_inference_bindings;
+mod dem_noise_bindings;
 mod dtypes;
 mod engine_bindings;
 mod engine_builders;
@@ -66,6 +68,7 @@ mod phir_json_bridge;
 mod programs_module;
 mod py_foreign_decoder;
 mod py_foreign_simulator;
+mod qis_text_bindings;
 mod quantum_info_bindings;
 mod qudit_bindings;
 mod runtime_batch_adapter;
@@ -85,6 +88,7 @@ mod stabilizer_code_spec_bindings;
 mod stabilizer_group_bindings;
 mod state_vec_bindings;
 mod state_vec_engine_bindings;
+mod trace_replay_bindings;
 mod types_module;
 #[cfg(feature = "wasm")]
 mod wasm_foreign_object_bindings;
@@ -206,6 +210,11 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     setup_cuda_library_path();
 
     m.add_function(wrap_pyfunction!(_set_qis_library_dir, m)?)?;
+    qis_text_bindings::register(m)?;
+    m.add_function(wrap_pyfunction!(
+        dem_inference_bindings::generator_certificate_digest,
+        m
+    )?)?;
 
     m.add_class::<PyStabVec>()?;
     m.add_class::<PySparseStab>()?;
@@ -323,6 +332,7 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Register quantum circuit types (DagCircuit, Gate, GateType, QubitId)
     dag_circuit_bindings::register_quantum_circuit_types(m)?;
+    trace_replay_bindings::register(m)?;
 
     // Register quantum-information channel and measure types
     quantum_info_bindings::register_quantum_info_module(m)?;

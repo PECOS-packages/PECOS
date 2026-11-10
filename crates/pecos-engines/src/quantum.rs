@@ -1903,6 +1903,42 @@ mod tests {
     use std::f64::consts::FRAC_1_SQRT_2;
 
     #[test]
+    fn mx_preserves_the_measured_x_eigenstate_in_all_dispatchers() {
+        for prep in [GateType::PZ, GateType::PX] {
+            let mut builder = ByteMessage::quantum_operations_builder();
+            for gt in [
+                prep,
+                GateType::MX,
+                GateType::MX,
+                GateType::Z,
+                GateType::H,
+                GateType::MZ,
+            ] {
+                builder.add_gate_command(&Gate::simple(gt, vec![QubitId(0)]));
+            }
+            let message = builder.build();
+            for seed in 0..32 {
+                let clifford =
+                    process_clifford_message(&mut SparseStab::with_seed(1, seed), &message)
+                        .unwrap();
+                let general =
+                    process_general_message(&mut StabVec::with_seed(1, seed), &message).unwrap();
+                let statevec = DenseStateVecEngine::with_seed(1, seed)
+                    .process(message.clone())
+                    .unwrap();
+                for result in [clifford, general, statevec] {
+                    let outcomes = result.outcomes().unwrap();
+                    assert_eq!(outcomes[0], outcomes[1]);
+                    assert_ne!(outcomes[1], outcomes[2]);
+                    if prep == GateType::PX {
+                        assert_eq!(outcomes[0], 0);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn diagonal_gates_are_exact_in_both_engine_dispatchers() {
         for gt in [GateType::CS, GateType::CSdg, GateType::CCZ] {
             let n = gt.quantum_arity();

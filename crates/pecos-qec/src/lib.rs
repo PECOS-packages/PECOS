@@ -101,7 +101,9 @@ pub use bounded_enumeration_distance::{
 pub use coloration::{ColorationMemoryError, coloration_memory_circuit};
 pub use dem_build::{
     DemAnnotationOrigin, DemBuild, DemBuildBuilder, DemBuildError, DemBuildInput, DemDefinition,
-    DemDefinitionOrigin, DemDefinitionSource, DemOutputSelector, DemProgram, DemProgramRequest,
+    DemDefinitionOrigin, DemDefinitionSource, DemExecutionEvidence, DemOutputSelector, DemProgram,
+    DemProgramRequest, DemScheduleEvidence, GeneratorLayout, MeasurementRef, PreparedDem,
+    ResultRef,
 };
 pub use dem_inference::{
     DemInferenceData, DemInferenceError, DemInferenceReport, DemInferenceSettings,
@@ -131,7 +133,7 @@ pub use distance_problem::{
 };
 pub use fault_tolerance::dem_builder::{
     DecomposedFault, DemBuilder, DemBuilderError, DemOutput, DetectorDef, DetectorErrorModel,
-    FaultMechanism, IdleNoiseFamily, NoiseConfig, PecosDemMetadataError,
+    FaultMechanism, IdleNoiseFamily, NoiseConfig, NoiseOptions, PecosDemMetadataError,
     TerminalDecompositionError, combine_probabilities,
 };
 pub use fault_tolerance::{
@@ -169,3 +171,8 @@ mod dem_selene;
 pub use dem_selene::{SeleneDemEvidence, SeleneDemProgram};
 #[cfg(feature = "hugr")]
 mod dem_hugr;
+
+#[cfg(feature = "hugr")]
+pub use selene_hugr_qis_compiler::inkwell::OptimizationLevel;
+#[cfg(feature = "hugr")]
+pub use selene_hugr_qis_compiler::tket_qsystem::extension::qsystem::QSystemPlatform;

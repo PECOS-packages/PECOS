@@ -27,7 +27,9 @@ rand.workspace = true
 rand_core.workspace = true
 rayon.workspace = true
 batsat.workspace = true
-serde_json.workspace = true
+# The schema fingerprint requires correctly rounded JSON float parsing.
+serde_json = { workspace = true, features = ["float_roundtrip"] }
+sha2.workspace = true
 smallvec.workspace = true
 thiserror.workspace = true
 wide.workspace = true

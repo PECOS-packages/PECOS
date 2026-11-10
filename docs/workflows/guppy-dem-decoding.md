@@ -80,6 +80,16 @@ it is deterministic in the absence of noise:
 The observable is the logical Z value, which for this code is any single data
 qubit measurement.
 
+Rust preparation computes each detector's and observable's exact noiseless
+parity and stores it as `reference` in the returned metadata. Random parities
+and declared references that disagree with the computed value are rejected.
+The `evaluate_runtime_record`, `evaluate_measurements`, `evaluate_results`, and
+`evaluate_result_columns` methods return detection events and observable flips
+relative to those references. Use `runtime_record_parities`,
+`measurement_parities`, `result_parities`, or `result_column_parities` when you
+need raw parities instead. A noiseless reference of one therefore produces
+zero flips, even though its raw parity is one.
+
 A bare string names a tagged measurement. `rec[-k]` refers to one by position
 in the canonical Guppy measurement stream, as in Stim, and
 `result_ref("tag", occurrence=...)` is the explicit form when you need its
@@ -240,8 +250,9 @@ for text, filename in (
 
 </div>
 
-This page uses Python for Guppy authoring, program-to-DEM construction
-(stages 1–3), and program simulation (stage 4b). Rust can also build DEMs directly
+This page uses Python for Guppy authoring and the build facade (stages 1–3),
+and program simulation (stage 4b). DEM preparation, reference computation,
+validation, and noise construction run in Rust. Rust can also build DEMs directly
 from QIS or compiled HUGR with the optional `SeleneDemProgram` adapter, including
 explicit, inferred, and mixed definitions; see the
 [native Rust API](../user-guide/inferred-guppy-dem.md#rust-settings-and-circuitprobe-builds).
@@ -788,3 +799,50 @@ outputs are inferred; supplied explicit definitions and empty lists take
 precedence over `.with_inference(...)` defaults. If every definition is explicit,
 no inference probes or solver run. See [mixed definitions](../user-guide/inferred-guppy-dem.md#mix-explicit-and-inferred-definitions)
 for Python and Rust examples and the per-definition audit.
+
+## Reference-one observable regression
+
+Preparing `|1>` makes the noiseless Z observable one. The simulated shot below
+has no observable flip, while each raw evaluator retains that parity of one.
+
+```python
+import json
+
+from guppylang import guppy
+from guppylang.std.builtins import result
+from guppylang.std.quantum import measure, qubit, x
+
+from pecos import NoiseParameters, selene_engine, sim, stabilizer
+from pecos.qec import DetectorErrorModel, Observable
+
+
+@guppy
+def reference_one() -> None:
+    q = qubit()
+    x(q)
+    result("one", measure(q).read())
+
+
+one_build = (
+    DetectorErrorModel.builder()
+    .with_program(reference_one)
+    .with_qubits(1)
+    .with_detectors([])
+    .with_observables([Observable("one")])
+    .with_noise(NoiseParameters())
+    .build()
+)
+one_results = sim(reference_one).classical(selene_engine()).quantum(stabilizer()).qubits(1).seed(7).run(1)
+one_columns = one_results.to_shot_map().to_dict()
+one_shot = {tag: rows[0] for tag, rows in one_columns.items()}
+assert json.loads(one_build.observables_json)[0]["reference"] == 1
+assert one_build.evaluate_result_columns(one_columns) == [([], 0)]
+assert one_build.result_column_parities(one_columns) == [([], 1)]
+assert one_build.evaluate_results(one_shot) == ([], 0)
+assert one_build.result_parities(one_shot) == ([], 1)
+assert one_build.evaluate_runtime_record([1]) == ([], 0)
+assert one_build.runtime_record_parities([1]) == ([], 1)
+one_measurements = {one_build.measurement_ledger[0].meas_id: 1}
+assert one_build.evaluate_measurements(one_measurements) == ([], 0)
+assert one_build.measurement_parities(one_measurements) == ([], 1)
+```

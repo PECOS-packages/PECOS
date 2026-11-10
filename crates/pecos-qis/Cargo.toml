@@ -31,6 +31,7 @@ selene-soft-rz-runtime = ["dep:selene-soft-rz-runtime"]
 pecos-core.workspace = true
 pecos-engines.workspace = true
 pecos-programs.workspace = true
+pecos-quantum.workspace = true
 pecos-random.workspace = true
 
 # QIS FFI infrastructure
@@ -43,7 +44,7 @@ dyn-clone.workspace = true
 tempfile.workspace = true
 rand.workspace = true
 serde = { workspace = true, features = ["derive"] }
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
 regex.workspace = true
 sha2.workspace = true
 libloading.workspace = true

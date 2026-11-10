@@ -97,8 +97,12 @@ def test_records_determinism_and_completeness(pair):
     shots = stim.Circuit(tick_circuit_to_stim(circuit)).compile_sampler(seed=17).sample(2048)
     space = deterministic_parity_basis(shots)
     entries = [*definitions["detectors"], *definitions["observables"]]
-    for entry in entries:
-        assert (shots[:, entry["measurements"]].sum(axis=1) % 2 == entry.get("reference", 0)).all()
+    # Helix discovery requires zero detector parities. The raw definition
+    # reader exposes absent reference metadata as None, before DEM preparation.
+    for kind in ("detectors", "observables"):
+        for entry in definitions[kind]:
+            reference = 0 if kind == "detectors" else entry["reference"]
+            assert (shots[:, entry["measurements"]].sum(axis=1) % 2 == reference).all()
     emitted = [sum(1 << record for record in entry["measurements"]) for entry in entries]
 
     def pauli(mask):

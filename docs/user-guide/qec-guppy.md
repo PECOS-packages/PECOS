@@ -213,6 +213,16 @@ raw measurements in runtime execution order, use
 `build.evaluate_runtime_record(values)` instead. Both methods produce the
 detector order and packed observable mask expected by the DEM.
 
+Rust preparation computes each detector's and observable's exact noiseless
+parity and stores it as `reference` in the returned metadata. Random parities
+and declared references that disagree with the computed value are rejected.
+The `evaluate_runtime_record`, `evaluate_measurements`, `evaluate_results`, and
+`evaluate_result_columns` methods return detection events and observable flips
+relative to those references. Use `runtime_record_parities`,
+`measurement_parities`, `result_parities`, or `result_column_parities` when you
+need raw parities instead. A noiseless reference of one therefore produces
+zero flips, even though its raw parity is one.
+
 Built-in generators may supply a trusted, program-bound named-measurement layout
 certificate. `make_surface_code(...)` does this automatically, so its scalar
 sidebands work with `evaluate_results(...)` and
@@ -240,7 +250,7 @@ surface_build = build_dem_from_guppy(
 
 ### Current soundness boundary
 
-- DEM construction supports straight-line static schedules and trusted built-in
+- Explicit DEM construction supports straight-line static schedules and trusted built-in
   generator certificates. Generic branching and looping Guppy programs are
   rejected because one trace cannot certify all quantum-operation paths.
 - Scalar `result(tag, measure(q).read())` provenance is the certified generic tag
@@ -258,6 +268,10 @@ surface_build = build_dem_from_guppy(
   pre-lowering QIS stream.
 - `build.audit` exposes every canonical ID, runtime record position, result
   reference, and the schema fingerprint. Persist it with simulation data.
+  Fingerprint version 2 is computed in Rust; values differ from earlier releases
+  and are not compatible across versions. Schedule and binding evidence are
+  recorded separately. Pure inference and positional-only mixed builds use
+  empirical schedule checks; explicit and named mixed builds require static evidence.
 
 ## Color Code Memory Experiments
 

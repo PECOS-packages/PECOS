@@ -1,0 +1,24 @@
+HUGRiHJv(@(hugr 0)
+
+(mod)
+
+(define-func private _1 (core.fn [] [])
+  (meta (core.title "main"))
+  (dfg
+    (signature (core.fn [] []))
+    (dfg
+      (signature (core.fn [] []))
+      (meta core.entrypoint)
+      (dfg
+        (signature (core.fn [] []))
+        (tket.quantum.QAlloc@0.3.0 [] [%_1]
+          (signature (core.fn [] [prelude.qubit])))
+        (tket.quantum.MeasureFree@0.3.0 [%_1] [%_2]
+          (signature (core.fn [prelude.qubit] [tket.measurement.Measurement])))
+        (tket.measurement.Read@0.1.0 [%_2] [%_3]
+          (signature
+            (core.fn [tket.measurement.Measurement] [(core.adt [[] []])])))
+        (cond [%_3] []
+          (signature (core.fn [(core.adt [[] []])] []))
+          (dfg (signature (core.fn [] [])))
+          (dfg (signature (core.fn [] []))))))))

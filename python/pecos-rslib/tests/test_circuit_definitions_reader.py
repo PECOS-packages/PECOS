@@ -72,7 +72,9 @@ def test_resolved_definition_shape(scrambled, references, positions):
     scrambled.set_meta("observables", json.dumps([{"id": 3, **references, "label": "readout"}]))
     assert scrambled.circuit_definitions() == {
         "num_measurements": 2,
-        "detectors": [{"id": 8, "measurements": positions, "coords": None, "label": None, "fault_sector": None}],
+        "detectors": [
+            {"id": 8, "measurements": positions, "coords": None, "label": None, "fault_sector": None, "reference": None}
+        ],
         "observables": [
             {
                 "id": 3,
@@ -89,7 +91,16 @@ def test_annotation_only_and_agreeing_metadata(scrambled):
     scrambled.observable([(0, 0, 0)], label="logical")
     expected = {
         "num_measurements": 2,
-        "detectors": [{"id": 0, "measurements": [1], "coords": None, "label": "syndrome", "fault_sector": None}],
+        "detectors": [
+            {
+                "id": 0,
+                "measurements": [1],
+                "coords": None,
+                "label": "syndrome",
+                "fault_sector": None,
+                "reference": None,
+            }
+        ],
         "observables": [
             {
                 "id": 0,
@@ -163,3 +174,11 @@ def test_annotation_definition_ids(circuit_type, label):
     assert [(d["id"], d["measurements"]) for d in definitions["detectors"]] == [(0, [0]), (1, [0, 1])]
     assert [(o["id"], o["measurements"]) for o in definitions["observables"]] == [(0, [1]), (1, [0])]
     assert [a["label"] for a in circuit.annotations()] == [label] * 6
+
+
+@pytest.mark.parametrize("reference", [None, 0, 1])
+def test_detector_reference_is_carried(scrambled, reference):
+    scrambled.set_meta("detectors", json.dumps([{"id": 0, "meas_ids": [9], "reference": reference}]))
+    definition = scrambled.circuit_definitions()["detectors"][0]
+    assert definition["reference"] == reference
+    assert definition["measurements"] == [1]

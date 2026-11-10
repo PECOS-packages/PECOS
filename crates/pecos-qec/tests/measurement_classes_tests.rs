@@ -412,12 +412,15 @@ fn fluent_circuit_builder_returns_labelled_dem_and_definitions() {
         Attribute::String(r#"[{"id":0,"records":[0]}]"#.into()),
     );
     let build = pecos_qec::DetectorErrorModel::builder()
+        .with_noise(pecos_qec::NoiseConfig::new(0.001, 0.01, 0.001, 0.001))
         .with_circuit(circuit)
         .build()
         .unwrap();
-    assert_eq!(build.dem.detectors[0].fault_sector.as_deref(), Some("X"));
+    assert_eq!(build.dem().detectors[0].fault_sector.as_deref(), Some("X"));
     assert_eq!(
-        build.definitions.detectors[0].fault_sector.as_deref(),
+        build.prepared().definitions().detectors[0]
+            .fault_sector
+            .as_deref(),
         Some("X")
     );
 }

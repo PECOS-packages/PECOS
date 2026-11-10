@@ -26,7 +26,7 @@ use crate::dtypes::AngleParam;
 use crate::gate_registry_bindings::PyGateRegistry;
 use pecos_core::{Angle64, ChannelExpr, GateQubits, GateSignature, Pauli, TimeUnits};
 use pecos_qec::fault_tolerance::circuit_definitions::{
-    definitions_from_tick_circuit, tick_circuit_measurement_emission,
+    CircuitDefinitions, definitions_from_tick_circuit, tick_circuit_measurement_emission,
 };
 use pecos_qec::fault_tolerance::propagator::{
     GateNoiseKind, gate_noise_kind, is_supported_noop_or_metadata_gate,
@@ -40,6 +40,62 @@ use pyo3::types::{PyBool, PyDict, PyInt, PyList};
 use std::collections::BTreeSet;
 
 type PyMixedPauliTerm = (f64, Vec<(String, usize)>);
+
+/// Convert resolved definitions to the shared Python circuit-reader shape.
+pub(crate) fn circuit_definitions_to_py(
+    py: Python<'_>,
+    definitions: &CircuitDefinitions,
+) -> PyResult<Py<PyDict>> {
+    let result = PyDict::new(py);
+    result.set_item("num_measurements", definitions.num_measurements)?;
+    let classes = definitions
+        .measurement_classes
+        .as_ref()
+        .map(|classes| {
+            classes
+                .iter()
+                .map(|class| {
+                    class
+                        .as_ref()
+                        .map(|class| {
+                            let entry = PyDict::new(py);
+                            entry.set_item("block", &class.block)?;
+                            entry.set_item("family", &class.family)?;
+                            entry.set_item("round", class.round)?;
+                            Ok::<_, PyErr>(entry)
+                        })
+                        .transpose()
+                })
+                .collect::<PyResult<Vec<_>>>()
+        })
+        .transpose()?;
+    if let Some(classes) = classes {
+        result.set_item("measurement_classes", classes)?;
+    }
+    let detectors = PyList::empty(py);
+    for detector in &definitions.detectors {
+        let entry = PyDict::new(py);
+        entry.set_item("id", detector.id)?;
+        entry.set_item("measurements", &detector.measurements)?;
+        entry.set_item("coords", &detector.coords)?;
+        entry.set_item("reference", detector.reference)?;
+        entry.set_item("label", &detector.label)?;
+        entry.set_item("fault_sector", detector.fault_sector.as_deref())?;
+        detectors.append(entry)?;
+    }
+    result.set_item("detectors", detectors)?;
+    let observables = PyList::empty(py);
+    for observable in &definitions.observables {
+        let entry = PyDict::new(py);
+        entry.set_item("id", observable.id)?;
+        entry.set_item("measurements", &observable.measurements)?;
+        entry.set_item("label", &observable.label)?;
+        entry.set_item("reference", observable.reference)?;
+        observables.append(entry)?;
+    }
+    result.set_item("observables", observables)?;
+    Ok(result.unbind())
+}
 
 fn pauli_string_terms(pauli: &pecos_core::PauliString) -> Vec<(String, usize)> {
     pauli
@@ -2420,52 +2476,7 @@ impl PyTickCircuit {
     fn circuit_definitions(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
         let definitions = definitions_from_tick_circuit(&self.inner)
             .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
-        let result = PyDict::new(py);
-        result.set_item("num_measurements", definitions.num_measurements)?;
-        let classes = definitions
-            .measurement_classes
-            .map(|classes| {
-                classes
-                    .into_iter()
-                    .map(|class| {
-                        class
-                            .map(|class| {
-                                let entry = PyDict::new(py);
-                                entry.set_item("block", class.block)?;
-                                entry.set_item("family", class.family)?;
-                                entry.set_item("round", class.round)?;
-                                Ok::<_, PyErr>(entry)
-                            })
-                            .transpose()
-                    })
-                    .collect::<PyResult<Vec<_>>>()
-            })
-            .transpose()?;
-        if let Some(classes) = classes {
-            result.set_item("measurement_classes", classes)?;
-        }
-        let detectors = PyList::empty(py);
-        for detector in definitions.detectors {
-            let entry = PyDict::new(py);
-            entry.set_item("id", detector.id)?;
-            entry.set_item("measurements", detector.measurements)?;
-            entry.set_item("coords", detector.coords)?;
-            entry.set_item("label", detector.label)?;
-            entry.set_item("fault_sector", detector.fault_sector.as_deref())?;
-            detectors.append(entry)?;
-        }
-        result.set_item("detectors", detectors)?;
-        let observables = PyList::empty(py);
-        for observable in definitions.observables {
-            let entry = PyDict::new(py);
-            entry.set_item("id", observable.id)?;
-            entry.set_item("measurements", observable.measurements)?;
-            entry.set_item("label", observable.label)?;
-            entry.set_item("reference", observable.reference)?;
-            observables.append(entry)?;
-        }
-        result.set_item("observables", observables)?;
-        Ok(result.unbind())
+        circuit_definitions_to_py(py, &definitions)
     }
 
     /// Get the next tick index that will be allocated.
@@ -3084,6 +3095,15 @@ impl PyTickCircuit {
     fn simplify_single_qubit_clifford_chains(&mut self) {
         use pecos_quantum::pass::{CircuitPass, SimplifySingleQubitCliffordChains};
         SimplifySingleQubitCliffordChains.apply_tick(&mut self.inner);
+    }
+
+    /// Normalize runtime-traced rotations and measurement identities in place.
+    #[pyo3(signature = (simplify_single_qubit_clifford_chains=true))]
+    fn normalize_traced_tick_circuit(&mut self, simplify_single_qubit_clifford_chains: bool) {
+        pecos_quantum::pass::normalize_traced_tick_circuit(
+            &mut self.inner,
+            simplify_single_qubit_clifford_chains,
+        );
     }
 
     /// Assign MeasId to measurement gates that don't have them.

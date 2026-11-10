@@ -64,7 +64,7 @@ def test_certificate_is_program_bound(ancilla_budget: int | None, rehash: bool) 
     build_dem_from_guppy(
         program,
         num_qubits=get_num_qubits(3, ancilla_budget=ancilla_budget),
-        detectors=[Detector(result_ref("final:meas:0"))],
+        detectors=[Detector(*(result_ref(f"final:meas:{index}") for index in (0, 1, 2)))],
         **NOISE,
     )
     # A stale digest checks integrity; an honest re-hash checks runtime measurement identity.
@@ -74,7 +74,7 @@ def test_certificate_is_program_bound(ancilla_budget: int | None, rehash: bool) 
         layout_json = json.dumps(permuted, separators=(",", ":"))
         digest = hashlib.sha256(guppy_to_hugr(program) + b"\0" + layout_json.encode()).hexdigest()
         error = (
-            r"runtime result trace 'sx1:init:meas:1'\[0\] has measurement id 1, "
+            r'runtime result trace "sx1:init:meas:1"\[0\] has measurement id 1, '
             r"but the generator-certified layout requires 0"
         )
     object.__setattr__(program, CERTIFICATE, (digest, permuted))
@@ -82,7 +82,7 @@ def test_certificate_is_program_bound(ancilla_budget: int | None, rehash: bool) 
         build_dem_from_guppy(
             program,
             num_qubits=get_num_qubits(3, ancilla_budget=ancilla_budget),
-            detectors=[Detector(result_ref("final:meas:0"))],
+            detectors=[Detector(*(result_ref(f"final:meas:{index}") for index in (0, 1, 2)))],
             **NOISE,
         )
 
@@ -95,11 +95,9 @@ def test_uncertified_gadget_is_rejected(route: str) -> None:
     calls = {
         "from_guppy": lambda: DetectorErrorModel.from_guppy(program, num_qubits=get_num_qubits(3), detectors_json="[]"),
         "build_dem_from_guppy": lambda: build_dem_from_guppy(program, num_qubits=get_num_qubits(3), detectors=[]),
-        "builder": lambda: GuppyDemBuilder()
-        .with_program(program)
-        .with_qubits(get_num_qubits(3))
-        .with_detectors([])
-        .build(),
+        "builder": lambda: (
+            GuppyDemBuilder().with_program(program).with_qubits(get_num_qubits(3)).with_detectors([]).build()
+        ),
     }
     with pytest.raises(ValueError, match=r"requires a statically straight-line Guppy program.*trusted generator-owned"):
         calls[route]()
@@ -110,7 +108,7 @@ def test_named_columns_end_to_end(ancilla_budget: int | None) -> None:
     program = make_surface_memory(SurfacePatch.create(distance=3), 2, "Z", ancilla_budget=ancilla_budget)
     num_qubits = get_num_qubits(3, ancilla_budget=ancilla_budget)
     detectors, observables = surface_memory_dem_spec(3, 2, "Z", ancilla_budget=ancilla_budget)
-    detectors.append(Detector(result_ref("final:meas:0")))
+    detectors.append(Detector(*(result_ref(f"final:meas:{index}") for index in (0, 1, 2))))
     build = build_dem_from_guppy(
         program,
         num_qubits=num_qubits,
@@ -133,8 +131,10 @@ def test_named_columns_end_to_end(ancilla_budget: int | None) -> None:
     )
     evaluated = build.evaluate_result_columns(columns)
     assert build.audit["named_result_binding"] == "generator_layout_v2_program_bound"
-    assert evaluated == [([0] * (build.dem.num_detectors - 1) + [int(bit)], 0) for bit in columns["final:meas:0"]]
+    assert evaluated == [([0] * build.dem.num_detectors, 0)] * 3
     assert len(evaluated) == 3
+    columns["final:meas:0"] = [1 - int(bit) for bit in columns["final:meas:0"]]
+    assert [events[-1] for events, _ in build.evaluate_result_columns(columns)] == [1, 1, 1]
 
 
 @pytest.mark.parametrize("basis", ["z", "x"])

@@ -70,7 +70,8 @@ Explicit builds have `build.inference is None`.
 
 Idle rates use the durations in the resulting circuit. With the default simple
 runtime, explicitly insert idles when requesting idle noise; the unified builder
-rejects idle-noise settings when there are no idle gates. Use
+rejects active idle noise when there are no idle gates. Explicit zero rates
+need no idle gates; relaxation noise requires both `t1` and `t2`. Use
 `.with_idle_after_2q(duration)` for a uniform post-two-qubit convention, or
 `.with_runtime(runtime)` for runtime-provided scheduling. The former inserts
 noise locations on the two operands; it does not set physical gate times.
@@ -79,6 +80,16 @@ before copying rates from a shot-simulation configuration. In particular,
 `.with_idle_after_2q(1.0)` uses unit-duration idles, while runtime-emitted idles
 are replayed in nanoseconds; `NoiseParameters.for_runtime_idle_time_units()`
 converts per-second rates and T1/T2 to those nanosecond units.
+
+Rust preparation computes each detector's and observable's exact noiseless
+parity and stores it as `reference` in the returned metadata. Random parities
+and declared references that disagree with the computed value are rejected.
+The `evaluate_runtime_record`, `evaluate_measurements`, `evaluate_results`, and
+`evaluate_result_columns` methods return detection events and observable flips
+relative to those references. Use `runtime_record_parities`,
+`measurement_parities`, `result_parities`, or `result_column_parities` when you
+need raw parities instead. A noiseless reference of one therefore produces
+zero flips, even though its raw parity is one.
 
 The low-level `infer_guppy_dem_annotations` helper remains available when you
 want to inspect the inferred annotations without building a DEM; the examples
@@ -159,8 +170,16 @@ let build = DetectorErrorModel::builder()
     .with_noise(NoiseConfig::new(0.001, 0.005, 0.001, 0.001))
     .with_idle_after_2q(1.0)
     .build()?;
-let shots = build.evaluate_result_columns(&columns)?;
+let shots = build.prepared().evaluate_result_columns(&columns)?;
 ```
+
+For noise-free preparation, replace `.build()?` with `.prepare()?`. The resulting
+`PreparedDem` exposes the circuit, resolved definitions, references, bindings,
+fingerprint, audit, and evaluators through read-only methods. Call
+`prepared.build_dem(noise)?` repeatedly to build different noise models from the
+same schema; each build uses its own circuit copy. `prepare()` ignores any
+configured noise, while `build()` still requires `with_noise`. DEM residuals and
+`residual_summary(threshold)` belong to `DemBuild`.
 
 `probes` is a `DemInferenceData` containing `raw_measurement_ids`, `raw_rows`,
 `detector_rows`, and `observable_rows`. IDs follow raw-output column order and
@@ -182,10 +201,16 @@ runtime libraries and LLVM tools. All Rust paths run without Python.
 
 <!--skip: API template requires caller-supplied HUGR bytes and native runtime; covered by dem_selene_builder.rs.-->
 ```rust
-use pecos_qec::{DemInferenceSettings, DetectorErrorModel, SeleneDemProgram};
+use pecos_qec::{
+    DemInferenceSettings, DetectorErrorModel, NoiseConfig, OptimizationLevel,
+    QSystemPlatform, SeleneDemProgram,
+};
 
 let build = DetectorErrorModel::builder()
-    .with_program(SeleneDemProgram::from_hugr(hugr_bytes))
+    .with_noise(NoiseConfig::new(0.001, 0.005, 0.001, 0.001))
+    .with_program(SeleneDemProgram::from_hugr(
+        hugr_bytes, QSystemPlatform::Helios, OptimizationLevel::Default,
+    ))
     .with_qubits(7)
     .with_seed(42)
     .with_inference(DemInferenceSettings::default().with_validation_rows(32))
@@ -201,18 +226,31 @@ with stable measurement-ID supports, or JSON setters.
 
 The native adapter replays the runtime-lowered trace, preserving stable
 measurement IDs, metadata, and idle durations. It requires complete traces and
-compares the quantum operation schedule across all sampled shots. **This is an
+compares the quantum operation schedule across sampled inference shots. **This is an
 empirical check, not a compiler proof that every possible execution has the
 same schedule.** Rare measurement-dependent paths may escape sampling; supply
 programs known to have a fixed quantum schedule. The circuit records this as
 `dem_schedule_validation = "empirical_trace_comparison"` and records the number
 of additional checked shots in `dem_schedule_validation_shots`.
 
-Explicit program builds perform 32 additional schedule-check shots by default,
-configurable with `SeleneDemProgram::with_schedule_validation_shots(n)`; `n` must
-be positive. They require no raw-output tags and perform no binding or parity inference.
+Explicit program builds require static schedule evidence before execution and
+capture exactly one baseline shot. Native HUGR inputs obtain this evidence from
+the control-flow preflight or an explicit trust assertion through
+`with_trusted_generator_layout(layout, digest)`. With this setter the caller asserts
+that a trusted built-in generator stamped the certificate on the definition compiled
+to these exact HUGR bytes; the audit records `generator_layout_v2_program_bound`.
+The digest binds the layout to the bytes and does not prove who produced them.
+This assertion also supports generator programs with control flow. QIS-only explicit
+inputs are rejected unless a front end asserts its HUGR preflight with
+`with_frontend_static_schedule(source)`; the audit records that source. Mixed
+builds using typed named references or JSON `result_tags` also require static
+evidence. Pure inference and mixed positional definitions use empirical checks.
+
+Explicit builds require no raw-output tags and perform no parity inference.
 Inferred builds reuse their inference and provenance shots for schedule
-validation. Additional provenance shots run only when raw outputs lack direct
+validation; `with_schedule_validation_shots(n)` sets a minimum number of empirical
+comparisons (default 32) and has no effect on explicit static builds. Extra
+comparisons do not add fitting rows. Additional provenance shots run only when raw outputs lack direct
 runtime IDs and provenance checking is enabled. Inferred builds record
 `dem_raw_measurement_binding` as `runtime_result_ids`,
 `probe_correlated_result_ids`, or `assumed_canonical_result_order`. A failed
@@ -223,9 +261,10 @@ Rust supports mixed lists through typed sources:
 
 <!--skip: API template requires caller-supplied adapter; covered by dem_inference_builder.rs.-->
 ```rust
-use pecos_qec::DemDefinition;
+use pecos_qec::{DemDefinition, NoiseConfig};
 
 let build = DetectorErrorModel::builder()
+    .with_noise(NoiseConfig::new(0.001, 0.005, 0.001, 0.001))
     .with_program(adapter)
     .with_qubits(7)
     .with_detector_definitions(vec![
@@ -254,13 +293,30 @@ those columns in list order; `None` requests all outputs under that role's defau
 tags. The adapter returns only selected inferred columns, not explicit definition
 columns. With no inferred definitions, `request.inference` is `None`, even when
 the caller supplied settings. No parity or provenance probes should be generated in that case; runtime
-schedule validation is a separate responsibility.
+schedule validation is a separate responsibility. `request.requires_static_schedule`
+records the resolved policy. Custom adapters report static evidence without running
+in `DemProgram::static_schedule_evidence` and return the same source in
+`DemBuildInput::evidence`. That input also carries sampled comparison counts,
+binding evidence, result-call traces, source measurement order, and compiler result-tag
+analysis or a program-bound generator layout. Compiler and generator result-tag
+certification run only when the request requires static schedule evidence; empirical
+routes keep only raw-bound result traces. A successful inference solve does
+not supply missing schedule evidence.
+
+The audit records the resolved `schedule_policy` (`static_required` or `empirical`)
+and separates `static_schedule_source`, `schedule_validation`, and
+`schedule_validation_shots` from `named_result_binding`. Fixed circuits report
+`fixed_circuit`; caller-supplied probes report `caller_bound_measurement_ids` and
+never count as sampled schedule validation. Runtime traces are normalized with
+`pecos_quantum::pass::normalize_traced_tick_circuit`, preserving sparse or permuted
+measurement IDs.
+
 Circuit/probe builds follow the same selected-column contract. They use empty
 rows for an unrequested role; the builder ignores any supplied values for that
 role. Existing circuit annotations must be supplied as builder definitions when
 mixing with inference, so they cannot silently collide with inferred definitions.
 
-`build.definition_origins` records explicit, selected inferred, or default-tag
+`build.prepared().definition_origins()` records explicit, selected inferred, or default-tag
 inferred origins. The Selene adapter resolves default tags into exact
 `Inferred(selector)` origins, including each tag and element. Its definition JSON
 matches Python: default-expanded detectors carry `inferred_from_result_tag`, and
@@ -371,9 +427,11 @@ handles either lowering.
 
 The returned supports contain QIS `MeasId` values. PECOS writes equivalent
 `meas_ids` entries into `inferred.detectors_json` and
-`inferred.observables_json`, attaches them to `inferred.circuit`, and passes
-the annotated circuit to `DetectorErrorModel.from_circuit` when `build_dem`
-is called.
+`inferred.observables_json`, attaches them to `inferred.circuit`, as a detached snapshot. The result wraps a Rust `PreparedDem`;
+`build_dem(**noise)` rebuilds from that preparation and accepts the full
+`DetectorErrorModel.from_circuit` keyword set. Mutating the snapshot does not
+change later builds. In mixed builds, the JSON, circuit, and `build_dem` include
+the whole schema; inferred supports and labels describe only inferred definitions.
 
 For an existing program, the integration itself is only this call:
 
@@ -389,10 +447,11 @@ inferred = infer_guppy_dem_annotations(
 dem = inferred.build_dem(p1=0.001, p2=0.005, p_meas=0.005, p_prep=0.001)
 ```
 
-No separate trace-capture call is required. Python delegates coin-toss capture,
-trace validation, measurement binding, and circuit replay to the shared Rust
-Selene analysis. Python then validates hosted-operation order when requested,
-normalizes the circuit, and fits the parities with the Rust solver.
+No separate trace-capture call is required. Python is a thin facade over Rust
+preparation, which performs coin-toss capture, trace validation, measurement
+binding, replay, hosted-operation validation, helper-ABI normalization, parity
+fitting, and exact noiseless-reference validation. Rust also validates noise
+options and translates structured idle families.
 
 ## Example: rounds and aggregate arrays
 
@@ -616,14 +675,14 @@ The result is an `InferredGuppyDemAnnotations` with:
 
 | Attribute | Contents |
 | --- | --- |
-| `circuit` | Runtime-lowered `TickCircuit` with detector and observable metadata attached. |
+| `circuit` | Detached snapshot of the prepared `TickCircuit`, including computed references. |
 | `detectors_json`, `observables_json` | Serialized definitions using QIS `meas_ids`. |
 | `raw_measurement_ids` | One physical ID per raw output element, in emitted order. |
 | `detector_supports`, `observable_supports` | Inferred parity supports expressed as physical IDs. |
 | `observable_labels` | `(tag, element_index)` for each DEM observable. |
 | `raw_binding` | Identity mode from the table above. |
 | `probe_shots` | Number of parity-inference rows used. |
-| `build_dem(**noise)` | Build a PECOS `DetectorErrorModel` from the annotated circuit. |
+| `build_dem(**noise)` | Rebuild from the prepared schema using the full `from_circuit` keyword set. |
 
 `probe_shots` must provide at least one row per raw measurement, one affine
 constant column, and the requested validation rows. Left unset it is derived
@@ -658,13 +717,18 @@ cost where it previously failed fast asking for more shots.
 
 ## Soundness and leakage boundaries
 
-The prototype establishes two empirical facts:
+Inference establishes two empirical facts:
 
 1. Emitted detector and observable bits fit unique affine GF(2) parities of
    the raw physical measurements, including independent validation rows.
 2. The raw measurements bind to one runtime-lowered QIS circuit trace.
 
-It is an empirical certificate, not a compiler proof over every possible
+The noiseless references are then checked exactly with symbolic stabilizer
+propagation, including random signs from entangled resets, X-basis restoration
+after MX, and hidden random sources for recordless `MeasureLeaked` outcomes.
+This exact parity check does not prove the schedule is static.
+
+Inference is an empirical certificate, not a compiler proof over every possible
 classical-control path. The probability of accidental probe-signature
 collisions decreases exponentially with the number of probes.
 

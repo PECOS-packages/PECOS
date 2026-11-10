@@ -7,18 +7,42 @@
 //! The QEC layer owns annotation inference, circuit preparation, fault
 //! propagation and measurement evaluation, without depending on a runtime.
 
+mod audit;
+pub mod bindings;
+mod certificate;
+mod evaluation;
+mod evidence;
+mod fingerprint;
+mod references;
+pub mod specifications;
+
+pub use audit::{
+    DemBuildAudit, DemInferenceAudit, NoiseResidualSummary, summarize_noise_residuals,
+};
+#[cfg(feature = "selene")]
+pub(crate) use evidence::require_static_schedule;
+pub use evidence::{DemExecutionEvidence, DemScheduleEvidence, GeneratorLayout};
+pub use fingerprint::schema_fingerprint;
+pub use references::{NoiselessReferences, noiseless_references};
+pub use specifications::{MeasurementRef, ResultRef};
+
+pub use certificate::{check_generator_certificate_digest, generator_certificate_digest};
+
 use crate::dem_inference::{
     DemInferenceData, DemInferenceError, DemInferenceReport, DemInferenceSettings,
 };
 use crate::fault_tolerance::circuit_definitions::{
     CircuitDefinitions, DefinitionError, definitions_from_tick_circuit, tick_circuit_emission,
 };
+use crate::fault_tolerance::dem_builder::NoiseChannelResidual;
 use crate::{DemBuilder, DemBuilderError, DetectorErrorModel, NoiseConfig};
-use pecos_decoder_core::obs_mask::ObsMask;
 use pecos_quantum::{Attribute, TickCircuit, pass};
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 /// A selected element in a tag's flattened per-shot output.
+/// Python checks string tags and non-boolean, non-negative integer elements
+/// before converting its selectors to this value type.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DemOutputSelector {
     pub tag: String,
@@ -26,19 +50,25 @@ pub struct DemOutputSelector {
 }
 
 /// How a single detector or observable obtains its measurement parity.
+/// Python checks reference object shapes and non-boolean, non-negative integer
+/// measurement IDs before conversion; inferred selectors have their own checks.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DemDefinitionSource {
     Measurements(Vec<usize>),
+    /// XOR-normalized typed references; cancelled support is rejected.
+    References(Vec<MeasurementRef>),
     Inferred(DemOutputSelector),
 }
 
-/// A definition with an explicit ID, independent of its preparation method.
+/// A definition independent of its preparation method; an omitted ID uses list order.
+/// Python checks non-boolean, non-negative integer IDs, coordinate numeric
+/// conversion and metadata JSON-serializability before constructing this value.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DemDefinition {
-    pub id: usize,
+    pub id: Option<usize>,
     pub source: DemDefinitionSource,
-    /// Optional detector coordinates (x, y, t). Rejected for observables.
-    pub coords: Option<[f64; 3]>,
+    /// Optional detector coordinates. Rejected for observables.
+    pub coords: Option<Vec<f64>>,
     /// Additional JSON fields preserved in the circuit schema.
     pub metadata: serde_json::Map<String, serde_json::Value>,
 }
@@ -47,7 +77,7 @@ impl DemDefinition {
     #[must_use]
     pub fn explicit(id: usize, measurement_ids: Vec<usize>) -> Self {
         Self {
-            id,
+            id: Some(id),
             source: DemDefinitionSource::Measurements(measurement_ids),
             coords: None,
             metadata: serde_json::Map::new(),
@@ -56,7 +86,7 @@ impl DemDefinition {
     #[must_use]
     pub fn inferred(id: usize, tag: impl Into<String>, element: usize) -> Self {
         Self {
-            id,
+            id: Some(id),
             source: DemDefinitionSource::Inferred(DemOutputSelector {
                 tag: tag.into(),
                 element,
@@ -66,10 +96,25 @@ impl DemDefinition {
         }
     }
 
-    /// Set detector coordinates (x, y, t); all values must be finite.
+    /// Construct a parity from typed measurement references.
+    /// # Errors
+    /// Rejects an empty reference list.
+    pub fn references(
+        id: usize,
+        references: Vec<MeasurementRef>,
+    ) -> Result<Self, bindings::DemBindingError> {
+        Ok(Self {
+            id: Some(id),
+            source: DemDefinitionSource::references(references)?,
+            coords: None,
+            metadata: serde_json::Map::new(),
+        })
+    }
+
+    /// Set detector coordinates; all values must be finite.
     #[must_use]
-    pub fn with_coords(mut self, coords: [f64; 3]) -> Self {
-        self.coords = Some(coords);
+    pub fn with_coords(mut self, coords: impl Into<Vec<f64>>) -> Self {
+        self.coords = Some(coords.into());
         self
     }
 
@@ -111,8 +156,25 @@ pub struct DemDefinitionOrigin {
 
 /// Input prepared by a caller or runtime adapter. Probe IDs must be bound to
 /// this circuit's measurements; the builder checks complete identity coverage.
+#[derive(Default)]
 pub struct DemBuildInput {
     pub circuit: TickCircuit,
+    /// Adapter evidence; a successful inference solve adds no schedule evidence.
+    pub evidence: DemExecutionEvidence,
+    /// Runtime result calls, preserving their widths and encounter order.
+    /// Without compiler result-tag analysis or a generator layout, a custom adapter
+    /// owns certification of these bindings. Selene supplies compiler analysis
+    /// when static evidence is required and never trusts read timing.
+    pub result_traces: Vec<bindings::ResultTrace>,
+    /// Baseline result values in the same encounter order, when supplied by an adapter.
+    pub result_trace_values: Vec<Vec<bool>>,
+    /// Source measurement order before replay compaction, required for certification.
+    pub source_measurement_ids: Vec<usize>,
+    /// Compiler result-tag analysis of the exact executed QIS, including certification failures.
+    pub result_tag_analysis:
+        Option<Result<bindings::ResultTagMeasurements, bindings::DemBindingError>>,
+    /// Program-bound generator certificate, verified before use.
+    pub generator_layout: Option<GeneratorLayout>,
     pub probes: Option<DemInferenceData>,
     /// Resolved detector columns, when the adapter knows the per-tag widths.
     pub resolved_detector_outputs: Option<Vec<DemOutputSelector>>,
@@ -122,6 +184,8 @@ pub struct DemBuildInput {
 
 /// Execution options passed to a runtime adapter before building a DEM.
 pub struct DemProgramRequest<'a> {
+    /// Resolved policy, independent of whether inference settings were supplied.
+    pub requires_static_schedule: bool,
     pub num_qubits: usize,
     pub seed: u64,
     pub inference: Option<&'a DemInferenceSettings>,
@@ -136,6 +200,21 @@ pub struct DemProgramRequest<'a> {
 /// coin-toss probes. Implementations must validate the program's schedule and
 /// honor `require_raw_provenance`; a successful fit does not prove either.
 pub trait DemProgram {
+    /// Report static schedule evidence without executing the program.
+    /// Custom adapters must report the same source in `DemBuildInput::evidence`.
+    /// # Errors
+    /// Rejects invalid certificates or unsupported program structure.
+    fn static_schedule_evidence(&self) -> Result<Option<String>, DemBuildError> {
+        Ok(None)
+    }
+
+    /// Explain missing static evidence for this adapter's input route.
+    fn missing_static_schedule_error(&self) -> DemBuildError {
+        DemBuildError::Preparation(
+            "DEM program requires static schedule evidence; the adapter must report a nonempty static schedule source before execution".into(),
+        )
+    }
+
     /// Execute and prepare the requested program.
     ///
     /// # Errors
@@ -158,107 +237,214 @@ pub enum DemBuildError {
     Propagation(#[from] DemBuilderError),
 }
 
-/// A DEM and the resolved measurement schema used to construct it.
+/// A DEM built from a prepared measurement schema.
 pub struct DemBuild {
-    pub dem: DetectorErrorModel,
-    pub circuit: TickCircuit,
-    pub definitions: CircuitDefinitions,
-    /// Stable measurement IDs in runtime emission order.
-    pub measurement_ids: Vec<usize>,
-    pub inference: Option<DemInferenceReport>,
-    pub definition_origins: Vec<DemDefinitionOrigin>,
-    raw_tag: Option<String>,
+    prepared: PreparedDem,
+    dem: DetectorErrorModel,
 }
 
 impl DemBuild {
-    /// Evaluate a physical measurement record in circuit emission order.
-    /// These are measurement parities; no unknown noiseless references are invented.
-    ///
+    #[must_use]
+    pub fn prepared(&self) -> &PreparedDem {
+        &self.prepared
+    }
+
+    #[must_use]
+    pub fn dem(&self) -> &DetectorErrorModel {
+        &self.dem
+    }
+
+    #[must_use]
+    pub fn idle_noise_residuals(&self) -> &[NoiseChannelResidual] {
+        self.dem.idle_noise_residuals()
+    }
+
+    /// Summarize this DEM's residuals above the relative threshold.
     /// # Errors
-    /// Rejects invalid bits and wrong widths. Tracked Paulis are not readout definitions.
-    pub fn evaluate_runtime_record(
+    /// Rejects non-finite thresholds and thresholds outside [0, 1].
+    pub fn residual_summary(
         &self,
-        values: &[u8],
-    ) -> Result<(Vec<u8>, ObsMask), DemBuildError> {
-        if values.len() != self.measurement_ids.len() || values.iter().any(|&bit| bit > 1) {
-            return Err(DemBuildError::Configuration(
-                "measurement record must contain one bit per circuit measurement".into(),
-            ));
-        }
-        let parity = |positions: &[usize]| {
-            positions
+        relative_threshold: f64,
+    ) -> Result<Vec<NoiseResidualSummary>, DemBuildError> {
+        summarize_noise_residuals(self.idle_noise_residuals(), relative_threshold)
+    }
+}
+
+/// Noise-free circuit and schema, finalized together before DEM construction.
+#[derive(Clone)]
+pub struct PreparedDem {
+    inference: Option<DemInferenceReport>,
+    inference_settings: Option<DemInferenceSettings>,
+    detector_outputs: Option<Vec<DemOutputSelector>>,
+    observable_outputs: Option<Vec<DemOutputSelector>>,
+    result_traces: Vec<bindings::ResultTrace>,
+    source_result_traces: Vec<bindings::ResultTrace>,
+    result_trace_values: Vec<Vec<bool>>,
+    evidence: DemExecutionEvidence,
+    generator_layout: bool,
+    requires_static_schedule: bool,
+    /// Detectors first, then observables, with ascending IDs within each role.
+    definition_origins: Vec<DemDefinitionOrigin>,
+    schema: Arc<DemBuildSchema>,
+}
+
+/// Finalized together so references, evaluators, audit data and digest agree.
+struct DemBuildSchema {
+    circuit: TickCircuit,
+    definitions: CircuitDefinitions,
+    measurement_ids: Vec<usize>,
+    named_result_measurements: BTreeMap<String, Vec<Option<usize>>>,
+    schema_fingerprint: String,
+    measurement_ledger: Vec<bindings::MeasurementLedgerEntry>,
+}
+
+impl DemBuildSchema {
+    fn new(
+        mut circuit: TickCircuit,
+        mut definitions: CircuitDefinitions,
+        measurement_ids: Vec<usize>,
+        traces: &[bindings::ResultTrace],
+        raw_array_tag: Option<&str>,
+    ) -> Result<Self, DemBuildError> {
+        let references = noiseless_references(&circuit, &definitions)?;
+        let (detectors, observables) = references::write_references(
+            &mut circuit,
+            &mut definitions,
+            &references,
+            &measurement_ids,
+        )?;
+        let index = bindings::ResultTraceIndex::new(&measurement_ids, traces)
+            .map_err(|error| DemBuildError::Configuration(error.to_string()))?;
+        let named_result_measurements = index.named_bindings(raw_array_tag);
+        let schema_fingerprint = schema_fingerprint(
+            &detectors,
+            &observables,
+            &measurement_ids,
+            &named_result_measurements,
+        )?;
+        circuit.set_meta(
+            "dem_schema_fingerprint",
+            Attribute::String(schema_fingerprint.clone()),
+        );
+        Ok(Self {
+            circuit,
+            definitions,
+            measurement_ids,
+            named_result_measurements,
+            schema_fingerprint,
+            measurement_ledger: index.ledger(),
+        })
+    }
+}
+
+impl PreparedDem {
+    /// Build with noise using a separate copy of the prepared circuit.
+    /// # Errors
+    /// Rejects idle noise without idle gates and unsupported noise models.
+    pub fn build_dem(&self, noise: NoiseConfig) -> Result<DemBuild, DemBuildError> {
+        // The DEM builder only reads the circuit, so the prepared schema stays shared.
+        let dem = DemBuilder::try_from_tick_circuit_with_noise_config(&self.schema.circuit, noise)?;
+        Ok(DemBuild {
+            prepared: self.clone(),
+            dem,
+        })
+    }
+
+    #[must_use]
+    pub fn inference(&self) -> Option<&DemInferenceReport> {
+        self.inference.as_ref()
+    }
+
+    #[must_use]
+    pub fn inference_settings(&self) -> Option<&DemInferenceSettings> {
+        self.inference_settings.as_ref()
+    }
+
+    #[must_use]
+    pub fn detector_outputs(&self) -> Option<&[DemOutputSelector]> {
+        self.detector_outputs.as_deref()
+    }
+
+    #[must_use]
+    pub fn observable_outputs(&self) -> Option<&[DemOutputSelector]> {
+        self.observable_outputs.as_deref()
+    }
+
+    #[must_use]
+    pub fn result_traces(&self) -> &[bindings::ResultTrace] {
+        &self.result_traces
+    }
+
+    #[must_use]
+    pub fn result_trace_values(&self) -> &[Vec<bool>] {
+        &self.result_trace_values
+    }
+
+    #[must_use]
+    pub fn source_result_traces(&self) -> &[bindings::ResultTrace] {
+        &self.source_result_traces
+    }
+
+    #[must_use]
+    pub fn definition_origins(&self) -> &[DemDefinitionOrigin] {
+        &self.definition_origins
+    }
+
+    /// The final circuit, including computed definition references and schema digest.
+    #[must_use]
+    pub fn circuit(&self) -> &TickCircuit {
+        &self.schema.circuit
+    }
+
+    /// Resolved definitions, the source of truth for noiseless references.
+    #[must_use]
+    pub fn definitions(&self) -> &CircuitDefinitions {
+        &self.schema.definitions
+    }
+
+    /// Stable measurement IDs in runtime emission order.
+    #[must_use]
+    pub fn measurement_ids(&self) -> &[usize] {
+        &self.schema.measurement_ids
+    }
+
+    /// A snapshot of the exact references stored in the resolved definitions.
+    #[must_use]
+    pub fn references(&self) -> NoiselessReferences {
+        NoiselessReferences {
+            detectors: self
+                .schema
+                .definitions
+                .detectors
                 .iter()
-                .fold(0, |value, &index| value ^ values[index])
-        };
-        let mut detectors = vec![0; self.dem.num_detectors()];
-        for detector in &self.definitions.detectors {
-            let event = detectors.get_mut(detector.id as usize).ok_or_else(|| {
-                DemBuildError::Configuration("detector IDs must fit the DEM detector vector".into())
-            })?;
-            *event = parity(&detector.measurements);
+                .filter_map(|d| d.reference.map(|reference| (d.id as usize, reference)))
+                .collect(),
+            observables: self
+                .schema
+                .definitions
+                .observables
+                .iter()
+                .filter_map(|d| d.reference.map(|reference| (d.id as usize, reference)))
+                .collect(),
         }
-        let mut observables = ObsMask::new();
-        for observable in &self.definitions.observables {
-            if parity(&observable.measurements) != 0 {
-                observables.set(observable.id as usize);
-            }
-        }
-        Ok((detectors, observables))
     }
 
-    /// Evaluate a record keyed by stable measurement ID.
-    ///
-    /// # Errors
-    /// Rejects missing measurements or invalid bits.
-    pub fn evaluate_measurements(
-        &self,
-        values: &BTreeMap<usize, u8>,
-    ) -> Result<(Vec<u8>, ObsMask), DemBuildError> {
-        let row = self
-            .measurement_ids
-            .iter()
-            .map(|id| {
-                values.get(id).copied().ok_or_else(|| {
-                    DemBuildError::Configuration(format!("missing measurement ID {id}"))
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        self.evaluate_runtime_record(&row)
+    /// Flattened named result slots, with None for unsupported provenance.
+    #[must_use]
+    pub fn named_result_measurements(&self) -> &BTreeMap<String, Vec<Option<usize>>> {
+        &self.schema.named_result_measurements
     }
 
-    /// Evaluate inferred programs' raw result columns, including reordered arrays.
-    ///
-    /// # Errors
-    /// Requires inferred raw-output bindings and correctly sized bit rows.
-    pub fn evaluate_result_columns(
-        &self,
-        columns: &BTreeMap<String, Vec<Vec<u8>>>,
-    ) -> Result<Vec<(Vec<u8>, ObsMask)>, DemBuildError> {
-        let report = self.inference.as_ref().ok_or_else(|| DemBuildError::Configuration("result-column evaluation requires an inferred raw-output binding; use evaluate_measurements for explicit definitions".into()))?;
-        let tag = self
-            .raw_tag
-            .as_ref()
-            .ok_or_else(|| DemBuildError::Configuration("missing raw output tag".into()))?;
-        let rows = columns.get(tag).ok_or_else(|| {
-            DemBuildError::Configuration(format!("missing raw result tag {tag:?}"))
-        })?;
-        rows.iter()
-            .map(|row| {
-                if row.len() != report.raw_measurement_ids.len() {
-                    return Err(DemBuildError::Configuration(
-                        "raw result width does not match inferred binding".into(),
-                    ));
-                }
-                self.evaluate_measurements(
-                    &report
-                        .raw_measurement_ids
-                        .iter()
-                        .copied()
-                        .zip(row.iter().copied())
-                        .collect(),
-                )
-            })
-            .collect()
+    /// Version-2 canonical schema digest, also stored on the circuit.
+    #[must_use]
+    pub fn schema_fingerprint(&self) -> &str {
+        &self.schema.schema_fingerprint
+    }
+
+    /// Measurement identity and result provenance in runtime emission order.
+    #[must_use]
+    pub fn measurement_ledger(&self) -> &[bindings::MeasurementLedgerEntry] {
+        &self.schema.measurement_ledger
     }
 }
 
@@ -269,6 +455,7 @@ pub struct DemBuildBuilder {
     circuit: Option<TickCircuit>,
     program: Option<Box<dyn DemProgram>>,
     qubits: Option<usize>,
+    num_measurements: Option<usize>,
     seed: u64,
     probes: Option<DemInferenceData>,
     inference: Option<DemInferenceSettings>,
@@ -313,6 +500,13 @@ impl DemBuildBuilder {
         self.qubits = Some(qubits);
         self
     }
+    /// Declare the count used by JSON record references.
+    #[must_use]
+    pub fn with_num_measurements(mut self, count: usize) -> Self {
+        self.num_measurements = Some(count);
+        self
+    }
+
     #[must_use]
     pub fn with_seed(mut self, seed: u64) -> Self {
         self.seed = seed;
@@ -361,7 +555,7 @@ impl DemBuildBuilder {
     pub fn with_observables(self, supports: Vec<Vec<usize>>) -> Self {
         self.with_observables_json(supports_json(supports))
     }
-    /// Supply explicit and inferred detector definitions in one list.
+    /// Supply direct, reference-based and inferred detector definitions in one list.
     #[must_use]
     pub fn with_detector_definitions(mut self, definitions: Vec<DemDefinition>) -> Self {
         if self.detectors.is_some() || self.detector_definitions.is_some() {
@@ -371,7 +565,7 @@ impl DemBuildBuilder {
         self.detector_definitions = Some(definitions);
         self
     }
-    /// Supply explicit and inferred observable definitions in one list.
+    /// Supply direct, reference-based and inferred observable definitions in one list.
     #[must_use]
     pub fn with_observable_definitions(mut self, definitions: Vec<DemDefinition>) -> Self {
         if self.observables.is_some() || self.observable_definitions.is_some() {
@@ -381,6 +575,7 @@ impl DemBuildBuilder {
         self.observable_definitions = Some(definitions);
         self
     }
+    /// Supply the noise configuration required by `build`.
     #[must_use]
     pub fn with_noise(mut self, noise: NoiseConfig) -> Self {
         self.noise = Some(noise);
@@ -397,16 +592,40 @@ impl DemBuildBuilder {
         self
     }
 
-    /// Resolve annotations, apply circuit passes and build through the existing
-    /// native DEM pipeline. Already supplied circuits retain their gate schedule;
+    /// Prepare the measurement schema and build through the native DEM pipeline.
+    /// # Errors
+    /// Requires noise and rejects invalid preparation or unsupported noise models.
+    pub fn build(mut self) -> Result<DemBuild, DemBuildError> {
+        if let Some(error) = self.configuration_error.take() {
+            return Err(DemBuildError::Configuration(error));
+        }
+        let noise = self.noise.take().ok_or_else(|| {
+            DemBuildError::Configuration("supply a noise configuration with with_noise".into())
+        })?;
+        self.prepare()?.build_dem(noise)
+    }
+
+    /// Resolve annotations, apply circuit passes and finalize the noiseless schema.
+    /// Supplied noise is ignored. Already supplied circuits retain their gate schedule;
     /// runtime adapters are responsible for normalizing their lowered traces.
-    ///
     /// # Errors
     /// Rejects conflicting inputs, invalid settings/metadata, failed inference,
-    /// and unsupported circuits or noise models.
-    pub fn build(mut self) -> Result<DemBuild, DemBuildError> {
+    /// and unsupported circuits or nondeterministic noiseless parities.
+    pub fn prepare(mut self) -> Result<PreparedDem, DemBuildError> {
         if let Some(error) = self.configuration_error {
             return Err(DemBuildError::Configuration(error));
+        }
+        if self.num_measurements.is_some() {
+            if self.inference.is_some() {
+                return Err(DemBuildError::Configuration(
+                    "num_measurements cannot be combined with inference".into(),
+                ));
+            }
+            if self.detector_definitions.is_some() || self.observable_definitions.is_some() {
+                return Err(DemBuildError::Configuration(
+                    "num_measurements cannot be combined with typed definitions".into(),
+                ));
+            }
         }
         let detector_outputs = requested_outputs(
             self.detector_definitions.as_deref(),
@@ -423,6 +642,28 @@ impl DemBuildBuilder {
         let needs_inference = [&detector_outputs, &observable_outputs]
             .iter()
             .any(|outputs| outputs.as_ref().is_none_or(|items| !items.is_empty()));
+        let required_tags = self
+            .detector_definitions
+            .iter()
+            .chain(&self.observable_definitions)
+            .flatten()
+            .filter_map(|definition| match &definition.source {
+                DemDefinitionSource::References(refs) => Some(refs),
+                _ => None,
+            })
+            .flatten()
+            .filter_map(|reference| match reference {
+                MeasurementRef::Result(result) => Some(result.tag().to_string()),
+                MeasurementRef::Record(_) => None,
+            })
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let detector_json_needs_tags = json_uses_result_tags(self.detectors.as_deref())?;
+        let observable_json_needs_tags = json_uses_result_tags(self.observables.as_deref())?;
+        let json_needs_tags = detector_json_needs_tags || observable_json_needs_tags;
+        let requires_static_schedule =
+            !needs_inference || !required_tags.is_empty() || json_needs_tags;
         let settings = needs_inference.then(|| self.inference.clone().unwrap_or_default());
         if self.probes.is_some() && (!needs_inference || self.program.is_some()) {
             return Err(DemBuildError::Configuration(
@@ -432,32 +673,73 @@ impl DemBuildBuilder {
         if let Some(settings) = &settings {
             settings.validate()?;
         }
-        if self
-            .idle_after_2q
-            .is_some_and(|duration| !duration.is_finite() || duration <= 0.0)
+        if let Some(duration) = self.idle_after_2q
+            && (!duration.is_finite() || duration <= 0.0)
         {
-            return Err(DemBuildError::Configuration(
-                "idle_after_2q must be a finite positive duration".into(),
-            ));
+            return Err(DemBuildError::Configuration(format!(
+                "idle_after_2q_duration must be a finite, positive duration; got {duration}"
+            )));
         }
         let input = match (self.circuit, self.program.as_mut()) {
-            (Some(circuit), None) => DemBuildInput {
-                circuit,
-                probes: self.probes,
-                resolved_detector_outputs: None,
-                resolved_observable_outputs: None,
-            },
-            (None, Some(program)) => program.prepare(&DemProgramRequest {
-                num_qubits: self.qubits.filter(|&n| n > 0).ok_or_else(|| {
-                    DemBuildError::Configuration(
-                        "with_program requires a positive with_qubits".into(),
-                    )
-                })?,
-                seed: self.seed,
-                inference: settings.as_ref(),
-                detector_outputs: detector_outputs.as_deref(),
-                observable_outputs: observable_outputs.as_deref(),
-            })?,
+            (Some(circuit), None) => {
+                let result_traces = self
+                    .probes
+                    .as_ref()
+                    .zip(settings.as_ref())
+                    .map(|(data, settings)| bindings::ResultTrace {
+                        name: settings.raw_tag.clone(),
+                        occurrence: Some(0),
+                        width: data.raw_measurement_ids.len(),
+                        measurement_ids: Some(data.raw_measurement_ids.clone()),
+                    })
+                    .into_iter()
+                    .collect();
+                DemBuildInput {
+                    circuit,
+                    evidence: DemExecutionEvidence {
+                        schedule: DemScheduleEvidence {
+                            static_source: Some("fixed_circuit".into()),
+                            ..Default::default()
+                        },
+                        raw_binding: self
+                            .probes
+                            .as_ref()
+                            .map(|_| "caller_bound_measurement_ids".into()),
+                        ..Default::default()
+                    },
+                    probes: self.probes,
+                    result_traces,
+                    ..Default::default()
+                }
+            }
+            (None, Some(program)) => {
+                let request = DemProgramRequest {
+                    requires_static_schedule,
+                    num_qubits: self.qubits.filter(|&n| n > 0).ok_or_else(|| {
+                        DemBuildError::Configuration(
+                            "with_program requires a positive with_qubits".into(),
+                        )
+                    })?,
+                    seed: self.seed,
+                    inference: settings.as_ref(),
+                    detector_outputs: detector_outputs.as_deref(),
+                    observable_outputs: observable_outputs.as_deref(),
+                };
+                let static_source = program.static_schedule_evidence()?;
+                evidence::require_static_schedule(
+                    program.as_ref(),
+                    requires_static_schedule,
+                    static_source.as_deref(),
+                )?;
+                let input = program.prepare(&request)?;
+                if static_source.is_some() && input.evidence.schedule.static_source != static_source
+                {
+                    return Err(DemBuildError::Preparation(
+                        "adapter static schedule evidence changed during preparation".into(),
+                    ));
+                }
+                input
+            }
             _ => {
                 return Err(DemBuildError::Configuration(
                     "supply exactly one of with_program or with_circuit".into(),
@@ -465,6 +747,12 @@ impl DemBuildBuilder {
             }
         };
         let mut circuit = input.circuit;
+        if let Some(declared) = self.num_measurements {
+            let actual = tick_circuit_emission(&circuit).len();
+            if declared != actual {
+                return Err(DefinitionError::MeasurementCountMismatch { declared, actual }.into());
+            }
+        }
         let sets_definitions = needs_inference
             || self.detectors.is_some()
             || self.observables.is_some()
@@ -543,6 +831,50 @@ impl DemBuildBuilder {
             }
             None
         };
+        let generator_layout = requires_static_schedule && input.generator_layout.is_some();
+        let traces = evidence::certify_traces(
+            &input.result_traces,
+            &input.source_measurement_ids,
+            &measurement_ids,
+            requires_static_schedule.then_some(evidence::TraceCertification {
+                analysis: input.result_tag_analysis.as_ref(),
+                generator: input.generator_layout.as_ref(),
+            }),
+            &required_tags,
+            report.as_ref().zip(settings.as_ref()),
+        )?;
+        if json_needs_tags {
+            let (tags, count) = input
+                .result_tag_analysis
+                .as_ref()
+                .ok_or_else(|| {
+                    DemBuildError::Configuration(evidence::JSON_CERTIFICATION_ERROR.into())
+                })?
+                .as_ref()
+                .map_err(|error| match error {
+                    bindings::DemBindingError::Certification(_) => DemBuildError::Configuration(
+                        format!("{} {error}", evidence::JSON_CERTIFICATION_ERROR),
+                    ),
+                    _ => DemBuildError::Configuration(error.to_string()),
+                })?;
+            let (detectors, observables) =
+                crate::fault_tolerance::dem_builder::resolve_result_tags(
+                    self.detectors.as_deref().unwrap_or("[]"),
+                    self.observables.as_deref().unwrap_or("[]"),
+                    tags,
+                    *count,
+                    &input.source_measurement_ids,
+                    &measurement_ids,
+                )?;
+            if self.detectors.is_some() {
+                self.detectors = Some(detectors);
+            }
+            if self.observables.is_some() {
+                self.observables = Some(observables);
+            }
+        }
+        let index = bindings::ResultTraceIndex::new(&measurement_ids, &traces)
+            .map_err(|error| DemBuildError::Configuration(error.to_string()))?;
         let mut definition_origins = Vec::new();
         for (role, specs, json, outputs, supports, default_tags, resolved_outputs) in [
             (
@@ -583,6 +915,7 @@ impl DemBuildBuilder {
                 outputs.as_deref(),
                 supports,
                 DefaultOutputs {
+                    index: &index,
                     tags: &default_tags,
                     resolved: resolved_outputs,
                 },
@@ -605,10 +938,20 @@ impl DemBuildBuilder {
         if let Some(duration) = self.idle_after_2q {
             circuit.insert_idle_after_two_qubit_gates(duration);
         }
-        let noise = self
-            .noise
-            .unwrap_or_else(|| NoiseConfig::new(0.001, 0.01, 0.001, 0.001));
-        let definitions = definitions_from_tick_circuit(&circuit)?;
+        let definitions = definitions_from_tick_circuit(&circuit).map_err(|error| match error {
+            DefinitionError::Parse { .. } => DemBuildError::Configuration(error.to_string()),
+            _ => DemBuildError::Definitions(error),
+        })?;
+        circuit.set_meta(
+            "num_measurements",
+            Attribute::String(measurement_ids.len().to_string()),
+        );
+        if needs_inference {
+            circuit.set_meta(
+                "guppy_dem_annotation_method",
+                Attribute::String("coin_toss_affine_inference_v2".into()),
+            );
+        }
         let detector_ids: Vec<_> = definitions
             .detectors
             .iter()
@@ -620,6 +963,10 @@ impl DemBuildBuilder {
                 "detector IDs {detector_ids:?} must be unique and dense from zero; renumber the definitions"
             )));
         }
+        let mut recorded: BTreeSet<_> = definition_origins
+            .iter()
+            .map(|origin| (origin.role, origin.id))
+            .collect();
         for (role, ids) in [
             (
                 "detector",
@@ -639,10 +986,7 @@ impl DemBuildBuilder {
             ),
         ] {
             for id in ids {
-                if !definition_origins
-                    .iter()
-                    .any(|origin| origin.role == role && origin.id == id)
-                {
+                if recorded.insert((role, id)) {
                     definition_origins.push(DemDefinitionOrigin {
                         role,
                         id,
@@ -651,17 +995,45 @@ impl DemBuildBuilder {
                 }
             }
         }
-        let dem = DemBuilder::try_from_tick_circuit_with_noise_config(&circuit, noise)?;
-        Ok(DemBuild {
-            dem,
+        definition_origins.sort_by_key(|origin| (origin.role != "detector", origin.id));
+        let schema = DemBuildSchema::new(
             circuit,
             definitions,
             measurement_ids,
+            &traces,
+            settings.as_ref().map(|s| s.raw_tag.as_str()),
+        )?;
+        Ok(PreparedDem {
             inference: report,
+            inference_settings: settings,
+            detector_outputs: input.resolved_detector_outputs,
+            observable_outputs: input.resolved_observable_outputs,
+            result_traces: traces,
+            source_result_traces: input.result_traces,
+            result_trace_values: input.result_trace_values,
+            evidence: input.evidence,
+            generator_layout,
+            requires_static_schedule,
             definition_origins,
-            raw_tag: settings.map(|s| s.raw_tag),
+            schema: Arc::new(schema),
         })
     }
+}
+
+fn json_uses_result_tags(json: Option<&str>) -> Result<bool, DemBuildError> {
+    let Some(json) = json.filter(|json| !json.trim().is_empty()) else {
+        return Ok(false);
+    };
+    let value: serde_json::Value = serde_json::from_str(json).map_err(|error| {
+        DemBuildError::Configuration(format!("invalid detector/observable JSON: {error}"))
+    })?;
+    Ok(value.as_array().is_some_and(|entries| {
+        entries.iter().any(|entry| {
+            entry
+                .as_object()
+                .is_some_and(|entry| entry.contains_key("result_tags"))
+        })
+    }))
 }
 
 fn supports_json(supports: impl IntoIterator<Item = impl AsRef<[usize]>>) -> String {
@@ -689,21 +1061,29 @@ fn requested_outputs(
             Some(Vec::new())
         });
     };
-    let ids: BTreeSet<_> = definitions.iter().map(|d| d.id).collect();
+    let ids: BTreeSet<_> = definitions
+        .iter()
+        .enumerate()
+        .map(|(position, d)| d.id.unwrap_or(position))
+        .collect();
     // Fail before runtime preparation; the build rechecks every source.
     if ids.len() != definitions.len() || (detectors && ids.iter().copied().ne(0..ids.len())) {
         return Err(DemBuildError::Configuration(format!(
             "definition IDs must be unique, and detector IDs dense from zero; got {:?}",
-            definitions.iter().map(|d| d.id).collect::<Vec<_>>()
+            definitions
+                .iter()
+                .enumerate()
+                .map(|(position, d)| d.id.unwrap_or(position))
+                .collect::<Vec<_>>()
         )));
     }
     let mut outputs = Vec::new();
     for definition in definitions {
-        if let Some(coords) = definition.coords
+        if let Some(coords) = &definition.coords
             && (!detectors || coords.iter().any(|value| !value.is_finite()))
         {
             return Err(DemBuildError::Configuration(
-                "coordinates require a detector and three finite values".into(),
+                "coordinates require a detector and finite values".into(),
             ));
         }
         for key in [
@@ -720,6 +1100,10 @@ fn requested_outputs(
                     "definition metadata uses reserved key: {key}"
                 )));
             }
+        }
+        if let DemDefinitionSource::References(refs) = &definition.source {
+            DemDefinitionSource::references(refs.clone())
+                .map_err(|error| DemBuildError::Configuration(error.to_string()))?;
         }
         if let DemDefinitionSource::Inferred(output) = &definition.source {
             if output.tag.is_empty() {
@@ -753,6 +1137,7 @@ fn select_probe_columns(
 /// A role's default-tag expansion, with the adapter's resolved columns when it knows them.
 #[derive(Clone, Copy)]
 struct DefaultOutputs<'a> {
+    index: &'a bindings::ResultTraceIndex,
     tags: &'a [String],
     resolved: Option<&'a [DemOutputSelector]>,
 }
@@ -768,37 +1153,29 @@ fn resolve_definitions(
 ) -> Result<Option<String>, DemBuildError> {
     if let Some(definitions) = definitions {
         let mut inferred = supports.iter();
-        let mut entries = Vec::new();
-        for definition in definitions {
-            let (ids, output) = match &definition.source {
-                DemDefinitionSource::Measurements(ids) => (ids, None),
-                DemDefinitionSource::Inferred(output) => (
-                    inferred.next().ok_or_else(|| {
-                        DemBuildError::Configuration("missing inferred definition".into())
-                    })?,
-                    Some(output.clone()),
-                ),
-            };
-            let mut entry = definition.metadata.clone();
-            entry.insert("id".into(), serde_json::json!(definition.id));
-            entry.insert("meas_ids".into(), serde_json::json!(ids));
-            if let Some(coords) = definition.coords {
-                entry.insert("coords".into(), serde_json::json!(coords));
-            }
-            if let Some(output) = &output {
+        let resolved = specifications::resolve_role(
+            role,
+            definitions,
+            defaults.index,
+            |_| inferred.next().map(Vec::as_slice),
+            origins,
+        )
+        .map_err(|error| DemBuildError::Configuration(error.to_string()))?;
+        let entries = resolved
+            .into_iter()
+            .map(|definition| {
+                let mut entry = definition.metadata;
+                entry.insert("id".into(), serde_json::json!(definition.id));
                 entry.insert(
-                    "inferred_from_result_tag".into(),
-                    serde_json::json!(output.tag),
+                    "meas_ids".into(),
+                    serde_json::json!(definition.measurement_ids),
                 );
-                entry.insert("result_element".into(), serde_json::json!(output.element));
-            }
-            origins.push(DemDefinitionOrigin {
-                role,
-                id: definition.id,
-                source: output.map_or(DemAnnotationOrigin::Explicit, DemAnnotationOrigin::Inferred),
-            });
-            entries.push(serde_json::Value::Object(entry));
-        }
+                if let Some(coords) = definition.coords {
+                    entry.insert("coords".into(), serde_json::json!(coords));
+                }
+                serde_json::Value::Object(entry)
+            })
+            .collect();
         return Ok(Some(serde_json::Value::Array(entries).to_string()));
     }
     if outputs.is_none() {
@@ -843,19 +1220,10 @@ fn resolve_definitions(
         return Ok(Some(supports_json(supports)));
     }
     if let Some(json) = json {
-        let entries: Vec<serde_json::Value> =
-            serde_json::from_str(json).map_err(|e| DemBuildError::Configuration(e.to_string()))?;
-        for entry in entries {
-            if let Some(id) = entry.get("id").and_then(serde_json::Value::as_u64) {
-                origins.push(DemDefinitionOrigin {
-                    role,
-                    id: usize::try_from(id)
-                        .map_err(|e| DemBuildError::Configuration(e.to_string()))?,
-                    source: DemAnnotationOrigin::Explicit,
-                });
-            }
-        }
         return Ok(Some(json.to_string()));
     }
     Ok(None)
 }
+
+#[cfg(test)]
+mod tests;

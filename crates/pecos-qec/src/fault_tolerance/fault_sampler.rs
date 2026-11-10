@@ -2597,6 +2597,7 @@ mod tests {
         assert!(!result.is_deterministic);
         assert_eq!(result.outcome, pecos_core::BitSet::single(0));
         assert!(!result.flip);
+        assert_eq!(history.deterministic().len(), 0);
     }
 
     /// `MeasureFree` consumes a record, so it keeps a column of its own. Nothing

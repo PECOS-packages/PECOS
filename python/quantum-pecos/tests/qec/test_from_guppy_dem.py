@@ -5,6 +5,7 @@
 
 import inspect
 import json
+import math
 import warnings
 from typing import ClassVar
 
@@ -12,13 +13,6 @@ import pytest
 from guppylang import guppy
 from guppylang.std.builtins import barrier, owned, result
 from guppylang.std.quantum import cx, h, measure, qubit, x
-from pecos._qis_trace_replay import (
-    _reject_partially_lowered_trace,
-    _replay_lowered_qis_trace_into_tick_circuit,
-    _replay_qis_trace_chunks_into_tick_circuit,
-    _replay_qis_trace_into_tick_circuit,
-    named_result_traces_from_operation_trace,
-)
 from pecos._traced_circuit import (
     measurement_ids_in_execution_order,
     normalize_traced_tick_circuit,
@@ -40,6 +34,47 @@ from pecos.qec.surface.decode import (
     generate_circuit_level_dem_from_builder,
     trace_guppy_into_tick_circuit_with_result_traces,
 )
+from pecos.tracing import (
+    _replay_qis_trace_chunks_into_tick_circuit,
+    named_result_traces_from_operation_trace,
+)
+
+
+def _framed_trace(chunks):
+    """Frame abbreviated gate fixtures as a complete stored runtime trace."""
+    framed = [
+        {
+            "format": "pecos_qis_operation_trace_v1",
+            "engine_trace_id": 1,
+            "shot_index": 0,
+            "chunk_index": index,
+            "stage": "execute",
+            "num_operations": len(chunk.get("operations", [])),
+            "operations": [],
+            "lowered_quantum_ops": [],
+            "lowered_quantum_ops_complete": True,
+            **chunk,
+        }
+        for index, chunk in enumerate(chunks)
+    ]
+    framed.append(
+        {
+            "format": "pecos_qis_operation_trace_v1",
+            "engine_trace_id": 1,
+            "shot_index": 0,
+            "chunk_index": len(framed),
+            "stage": "trace_complete",
+            "num_operations": 0,
+            "operations": [],
+            "lowered_quantum_ops": [],
+            "lowered_quantum_ops_complete": True,
+        },
+    )
+    return framed
+
+
+def _replay_test_trace(chunks, **kwargs):
+    return _replay_qis_trace_chunks_into_tick_circuit(_framed_trace(chunks), **kwargs)
 
 
 @guppy
@@ -64,6 +99,8 @@ def _two_qubit_idle_target() -> None:
 def _structured_idle_noise_target() -> None:
     q0 = qubit()
     q1 = qubit()
+    h(q0)
+    h(q1)
     cx(q0, q1)
     h(q0)
     h(q1)
@@ -637,7 +674,7 @@ def test_structured_idle_sin_squared_composes_with_coefficient_quadratic_primiti
         ({"p_idle_linear": 0.01, "p_idle_linear_model": {"A": 1.0}}, "invalid.*key"),
         (
             {"p_idle_linear": 0.01, "p_idle_linear_model": {"X": 0.5, "Z": 0.3, "L": 0.2}},
-            "'L'.*DEM fault propagation is Pauli-only.*engines simulators",
+            '"L".*DEM fault propagation is Pauli-only.*engines simulators',
         ),
         ({"p_idle_linear": 0.01, "p_idle_linear_model": {"X": 0.4, "Z": 0.4}}, "sum to 1.0"),
         (
@@ -649,13 +686,13 @@ def test_structured_idle_sin_squared_composes_with_coefficient_quadratic_primiti
         ({"p_idle_sin_squared": 0.01, "p_idle_sin_squared_model": {"A": 1.0}}, "invalid.*key"),
         (
             {"p_idle_sin_squared": 0.01, "p_idle_sin_squared_model": {"X": 0.5, "Z": 0.3, "L": 0.2}},
-            "'L'.*DEM fault propagation is Pauli-only.*engines simulators",
+            '"L".*DEM fault propagation is Pauli-only.*engines simulators',
         ),
         ({"p_idle_sin_squared": 0.01, "p_idle_sin_squared_model": {"X": -0.1}}, "non-negative"),
         ({"p_idle_sin_squared_model": {"Z": 1.0}}, "requires p_idle_sin_squared"),
         ({"p_idle_coherent": 0.0, "p_idle_coherent_model": {"A": 1.0}}, "invalid.*key"),
-        ({"p_idle_coherent": 0.0, "p_idle_coherent_model": {"L": 1.0}}, "invalid.*key.*'L'"),
-        ({"p_idle_coherent": 0.0, "p_idle_coherent_model": {"U": 0.0}}, "invalid.*key.*'U'"),
+        ({"p_idle_coherent": 0.0, "p_idle_coherent_model": {"L": 1.0}}, 'invalid.*key.*"L"'),
+        ({"p_idle_coherent": 0.0, "p_idle_coherent_model": {"U": 0.0}}, 'invalid.*key.*"U"'),
         ({"p_idle_coherent": 0.0, "p_idle_coherent_model": {"RZ": -0.1}}, "non-negative"),
         ({"p_idle_coherent_model": {"RZ": 1.0}}, "requires p_idle_coherent"),
     ],
@@ -663,6 +700,43 @@ def test_structured_idle_sin_squared_composes_with_coefficient_quadratic_primiti
 def test_structured_idle_model_validation(entrypoint: str, kwargs: dict[str, object], message: str) -> None:
     with pytest.raises(ValueError, match=message):
         _structured_idle_dem(entrypoint, **kwargs)
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+@pytest.mark.parametrize(
+    ("kwargs", "error", "message"),
+    [
+        ({"p_idle_linear": True}, TypeError, "p_idle_linear must be a finite, non-negative float"),
+        ({"p_idle_linear": "invalid"}, ValueError, "p_idle_linear must be a finite, non-negative float"),
+        ({"p_idle_linear": 0.01, "p_idle_linear_model": [1.0]}, ValueError, "must be a mapping"),
+        ({"p_idle_linear": 0.01, "p_idle_linear_model": {1: 1.0}}, TypeError, "invalid.*key"),
+    ],
+)
+def test_structured_idle_python_conversion_errors(
+    entrypoint: str,
+    kwargs: dict[str, object],
+    error: type[Exception],
+    message: str,
+) -> None:
+    with pytest.raises(error, match=message):
+        _structured_idle_dem(entrypoint, **kwargs)
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+def test_structured_idle_python_conversion_retains_numeric_strings(entrypoint: str) -> None:
+    converted = _structured_idle_dem(
+        entrypoint,
+        idle_after_2q_duration=1.0,
+        p_idle_linear="0.02",
+        p_idle_linear_model={"Z": "1"},
+    )
+    numeric = _structured_idle_dem(
+        entrypoint,
+        idle_after_2q_duration=1.0,
+        p_idle_linear=0.02,
+        p_idle_linear_model={"Z": 1.0},
+    )
+    assert converted.to_string() == numeric.to_string()
 
 
 @pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
@@ -741,7 +815,7 @@ def test_from_guppy_inserted_idles_make_idle_noise_effective() -> None:
 
 
 # Every idle-noise parameter the guard must observe; omitting any one from the
-# guard wiring in dem.py must fail the corresponding parametrized case below.
+# Rust translation and guard wiring must fail the corresponding parametrized case below.
 _ALL_IDLE_NOISE_PARAMS = {
     "p_idle_linear": 0.01,
     "p_idle_sin_squared": 0.01,
@@ -764,8 +838,14 @@ _ALL_IDLE_NOISE_PARAMS = {
 
 @pytest.mark.parametrize("idle_param", sorted(_ALL_IDLE_NOISE_PARAMS))
 def test_from_guppy_rejects_idle_noise_without_idle_gates(idle_param: str) -> None:
-    with pytest.raises(ValueError, match=rf"idle-noise parameters have no idle gates .*requested: {idle_param}="):
-        _two_qubit_dem(**{idle_param: _ALL_IDLE_NOISE_PARAMS[idle_param]})
+    noise = {idle_param: _ALL_IDLE_NOISE_PARAMS[idle_param]}
+    if idle_param in {"t1", "t2"}:
+        noise = {"t1": 100.0, "t2": 100.0}
+    with pytest.raises(
+        ValueError,
+        match=rf"idle-noise parameters have no idle gates .*requested: .*{idle_param}=",
+    ):
+        _two_qubit_dem(**noise)
 
 
 @pytest.mark.parametrize("idle_param", sorted(set(_ALL_IDLE_NOISE_PARAMS) - {"t1", "t2"}))
@@ -777,14 +857,28 @@ def test_from_guppy_accepts_zero_idle_rate_without_idle_gates(idle_param: str) -
 @pytest.mark.parametrize("time_param", ["t1", "t2"])
 def test_from_guppy_zero_relaxation_time_still_requests_idle_noise(time_param: str) -> None:
     # T1/T2 are times, not rates: zero is not "off", so it still needs idle gates.
-    with pytest.raises(ValueError, match=rf"requested: {time_param}=0\.0"):
-        _two_qubit_dem(**{time_param: 0.0})
+    with pytest.raises(ValueError, match=rf"requested: .*{time_param}=0"):
+        _two_qubit_dem(**{**dict.fromkeys(["t1", "t2"], 100.0), time_param: 0.0})
+
+
+@pytest.mark.parametrize(("time_param", "partner"), [("t1", "t2"), ("t2", "t1")])
+def test_from_guppy_rejects_lone_relaxation_time_with_idle_gates(time_param: str, partner: str) -> None:
+    with pytest.raises(ValueError, match=rf"{time_param} requires {partner}"):
+        _two_qubit_dem(idle_after_2q_duration=1.0, **{time_param: 100.0})
 
 
 @pytest.mark.parametrize("bad_duration", [0.0, -1.0, float("nan"), float("inf")])
 def test_from_guppy_rejects_non_positive_idle_duration(bad_duration: float) -> None:
-    with pytest.raises(ValueError, match=r"finite, positive duration"):
+    with pytest.raises(
+        ValueError,
+        match=r"^idle_after_2q_duration must be a finite, positive duration; got ",
+    ) as raised:
         _two_qubit_dem(idle_after_2q_duration=bad_duration, p_idle_linear=0.01)
+    reported = float(str(raised.value).split("; got ")[1])
+    if math.isnan(bad_duration):
+        assert math.isnan(reported)
+    else:
+        assert reported == bad_duration
 
 
 def test_from_guppy_idle_guard_accepts_inserted_idles_and_idles_without_noise() -> None:
@@ -795,21 +889,6 @@ def test_from_guppy_idle_guard_accepts_inserted_idles_and_idles_without_noise() 
     assert without_noise is not None
 
 
-def test_from_guppy_idle_guard_accepts_runtime_emitted_idles(monkeypatch: pytest.MonkeyPatch) -> None:
-    from pecos_rslib.quantum import TickCircuit
-
-    circuit = TickCircuit()
-    circuit.tick().pz([0, 1])
-    circuit.tick().cx([(0, 1)])
-    circuit.tick().idle(1, [0, 1])
-    circuit.tick().mz_with_ids([0, 1], [0, 1])
-    monkeypatch.setattr("pecos.tracing.trace_program_to_tick_circuit", lambda *_args, **_kwargs: circuit)
-
-    dem = _two_qubit_dem(p_idle_linear=0.01)
-
-    assert dem.num_contributions > 0
-
-
 def test_from_guppy_strip_traced_idles_is_noop_when_trace_has_no_idles() -> None:
     baseline = _two_qubit_dem()
     stripped = _two_qubit_dem(strip_traced_idles=True)
@@ -817,80 +896,16 @@ def test_from_guppy_strip_traced_idles_is_noop_when_trace_has_no_idles() -> None
     assert stripped.to_string() == baseline.to_string()
 
 
-def test_from_guppy_idle_insertion_preserves_zero_rz_fault_site(monkeypatch: pytest.MonkeyPatch) -> None:
-    from pecos_rslib.quantum import TickCircuit
-
-    def _trace_with_zero_rz(*_args, **_kwargs):
-        circuit = TickCircuit()
-        circuit.tick().pz([0, 1])
-        circuit.tick().cx([(0, 1)])
-        circuit.tick().rz(0.0, [0])
-        circuit.tick().mz_with_ids([0, 1], [0, 1])
-        return circuit
-
-    monkeypatch.setattr("pecos.tracing.trace_program_to_tick_circuit", _trace_with_zero_rz)
-
-    build = build_dem_from_guppy(
-        _two_qubit_idle_target,
-        num_qubits=2,
-        detectors=[Detector(rec[-2])],
-        observables=[Observable(rec[-1])],
-        idle_after_2q_duration=1.0,
-        p1=0.01,
-        p2=0.0,
-        p_meas=0.0,
-        p_prep=0.0,
-        seed=0,
-    )
-
-    assert build.circuit.gate_counts_by_type().get("RZ") == 1
-    assert build.dem.num_contributions == _DEV_ZERO_RZ_STRIPPED_CONTRIBUTIONS + 1
-
-
-def test_from_guppy_strip_traced_idles_removes_runtime_emitted_idles(monkeypatch: pytest.MonkeyPatch) -> None:
-    from pecos_rslib.quantum import TickCircuit
-
-    circuit = TickCircuit()
-    circuit.tick().pz([0, 1])
-    circuit.tick().cx([(0, 1)])
-    circuit.tick().idle(1, [0, 1])
-    circuit.tick().mz_with_ids([0, 1], [0, 1])
-    monkeypatch.setattr("pecos.tracing.trace_program_to_tick_circuit", lambda *_args, **_kwargs: circuit)
-
-    # The same runtime-emitted-idle circuit passes the guard when idles are kept
-    # (test_from_guppy_idle_guard_accepts_runtime_emitted_idles); with
-    # strip_traced_idles the guard must find no idle gates left.
-    with pytest.raises(ValueError, match=r"idle-noise parameters have no idle gates"):
-        _two_qubit_dem(strip_traced_idles=True, p_idle_linear=0.01)
-
-
-def test_from_guppy_insertion_strips_runtime_idles_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    from pecos_rslib.quantum import TickCircuit
-
-    def _traced_circuit_with_runtime_idles(*_args, **_kwargs):
-        circuit = TickCircuit()
-        circuit.tick().pz([0, 1])
-        circuit.tick().cx([(0, 1)])
-        circuit.tick().idle(1, [0, 1])
-        circuit.tick().mz_with_ids([0, 1], [0, 1])
-        return circuit
-
-    monkeypatch.setattr("pecos.tracing.trace_program_to_tick_circuit", _traced_circuit_with_runtime_idles)
-
-    default_strip = _two_qubit_dem(idle_after_2q_duration=1.0, p_idle_linear=0.01)
-    explicit_strip = _two_qubit_dem(idle_after_2q_duration=1.0, p_idle_linear=0.01, strip_traced_idles=True)
-    keep_runtime_idles = _two_qubit_dem(idle_after_2q_duration=1.0, p_idle_linear=0.01, strip_traced_idles=False)
-
-    # Insertion implies stripping unless explicitly disabled; keeping the
-    # runtime idles doubles the idle content and must change the DEM.
-    assert default_strip.to_string() == explicit_strip.to_string()
-    assert default_strip.num_contributions == explicit_strip.num_contributions
-    assert keep_runtime_idles.to_string() != default_strip.to_string()
-
-
 def test_build_dem_from_guppy_rejects_idle_noise_without_idle_gates() -> None:
     for idle_param, value in _ALL_IDLE_NOISE_PARAMS.items():
-        with pytest.raises(ValueError, match=r"idle-noise parameters have no idle gates"):
+        with pytest.raises(
+            ValueError,
+            match=(
+                "requires t"
+                if idle_param in {"t1", "t2"}
+                else rf"idle-noise parameters have no idle gates .*requested: .*{idle_param}="
+            ),
+        ):
             build_dem_from_guppy(
                 _two_qubit_idle_target,
                 num_qubits=2,
@@ -902,7 +917,10 @@ def test_build_dem_from_guppy_rejects_idle_noise_without_idle_gates() -> None:
 
 
 def test_build_dem_from_guppy_rejects_non_positive_idle_duration() -> None:
-    with pytest.raises(ValueError, match=r"finite, positive duration"):
+    with pytest.raises(
+        ValueError,
+        match=r"^idle_after_2q_duration must be a finite, positive duration; got 0$",
+    ):
         build_dem_from_guppy(
             _two_qubit_idle_target,
             num_qubits=2,
@@ -1041,7 +1059,7 @@ def test_lowered_replay_uses_measure_result_ids_directly() -> None:
         },
     ]
 
-    tc = _replay_lowered_qis_trace_into_tick_circuit(chunks)
+    tc = _replay_test_trace(chunks)
 
     assert _flat_mz_ids(tc) == [42, 99]
 
@@ -1056,8 +1074,8 @@ def test_lowered_replay_fails_on_measurement_count_mismatch() -> None:
         },
     ]
 
-    with pytest.raises(ValueError, match="carries 1 measurement_result_ids for 2"):
-        _replay_lowered_qis_trace_into_tick_circuit(chunks)
+    with pytest.raises(ValueError, match="measurement carries IDs"):
+        _replay_test_trace(chunks)
 
 
 def test_lowered_replay_fails_on_missing_measurement_result_ids() -> None:
@@ -1068,8 +1086,8 @@ def test_lowered_replay_fails_on_missing_measurement_result_ids() -> None:
         },
     ]
 
-    with pytest.raises(ValueError, match="missing measurement_result_ids"):
-        _replay_lowered_qis_trace_into_tick_circuit(chunks)
+    with pytest.raises(ValueError, match="measurement carries IDs"):
+        _replay_test_trace(chunks)
 
 
 def test_lowered_replay_preserves_runtime_idles() -> None:
@@ -1083,7 +1101,7 @@ def test_lowered_replay_preserves_runtime_idles() -> None:
         },
     ]
 
-    tc = _replay_lowered_qis_trace_into_tick_circuit(chunks)
+    tc = _replay_test_trace(chunks)
 
     assert _flat_idle_gates(tc) == [([0], 20.0)]
 
@@ -1099,7 +1117,7 @@ def test_lowered_replay_converts_runtime_idle_seconds_to_nanosecond_time_units()
         },
     ]
 
-    tc = _replay_lowered_qis_trace_into_tick_circuit(chunks)
+    tc = _replay_test_trace(chunks)
 
     assert _flat_idle_gates(tc) == [([0], 13857.0)]
 
@@ -1160,7 +1178,7 @@ def test_lowered_replay_preserves_gate_metadata() -> None:
         },
     ]
 
-    tc = _replay_lowered_qis_trace_into_tick_circuit(chunks)
+    tc = _replay_test_trace(chunks)
 
     assert tc.get_gate_meta(0, 0, "source_label") == "szz_physical_prefix:H:X0:q0"
     assert tc.get_gate_meta(0, 0, "source_kind") == "szz_prefix"
@@ -1195,7 +1213,7 @@ def test_lowered_replay_preserves_measurement_crosstalk_payloads() -> None:
         },
     ]
 
-    tc = _replay_lowered_qis_trace_into_tick_circuit(chunks)
+    tc = _replay_test_trace(chunks)
 
     assert _flat_gate_qubits(tc, "MeasCrosstalkLocalPayload") == [[1, 2]]
     assert _flat_gate_qubits(tc, "MeasCrosstalkGlobalPayload") == [[3, 4]]
@@ -1204,7 +1222,7 @@ def test_lowered_replay_preserves_measurement_crosstalk_payloads() -> None:
 def test_lowered_replay_can_add_global_crosstalk_payloads_from_measurements() -> None:
     chunks = [
         {
-            "operations": [{"Quantum": {"Measure": [0, 7]}}],
+            "operations": [{"Quantum": {"Measure": [0, 7]}}, {"Quantum": {"Measure": [1, 8]}}],
             "lowered_quantum_ops": [
                 {
                     "gate_type": "MZ",
@@ -1217,8 +1235,8 @@ def test_lowered_replay_can_add_global_crosstalk_payloads_from_measurements() ->
         },
     ]
 
-    without_payloads = _replay_lowered_qis_trace_into_tick_circuit(chunks)
-    with_payloads = _replay_lowered_qis_trace_into_tick_circuit(
+    without_payloads = _replay_test_trace(chunks)
+    with_payloads = _replay_test_trace(
         chunks,
         measurement_crosstalk_topology="global_from_measurements",
     )
@@ -1228,27 +1246,13 @@ def test_lowered_replay_can_add_global_crosstalk_payloads_from_measurements() ->
         [11, 12],
     ]
     assert _flat_mz_ids(with_payloads) == [7, 8]
-
-
-def test_raw_replay_can_add_global_crosstalk_payloads_from_measurements() -> None:
-    operations = [
-        {"AllocateQubit": {"id": 0}},
-        {"AllocateResult": {"id": 9}},
-        {"Quantum": {"Measure": [0, 9]}},
-    ]
-
-    tc = _replay_qis_trace_into_tick_circuit(
-        operations,
-        measurement_crosstalk_topology="global_from_measurements",
-    )
-
-    assert _flat_gate_qubits(tc, "MeasCrosstalkGlobalPayload") == [[0]]
-    assert _flat_mz_ids(tc) == [9]
+    assert with_payloads.get_tick(0).gate_batches()[0].gate_type.name == "MeasCrosstalkGlobalPayload"
+    assert with_payloads.get_tick(1).gate_batches()[0].gate_type.name == "MZ"
 
 
 def test_replay_rejects_unknown_measurement_crosstalk_topology() -> None:
     with pytest.raises(ValueError, match="measurement_crosstalk_topology"):
-        _replay_lowered_qis_trace_into_tick_circuit(
+        _replay_test_trace(
             [],
             measurement_crosstalk_topology="local_from_vibes",
         )
@@ -1269,7 +1273,7 @@ def test_lowered_runtime_idles_can_drive_memory_noise_dem() -> None:
             ],
         },
     ]
-    tc = _replay_lowered_qis_trace_into_tick_circuit(chunks)
+    tc = _replay_test_trace(chunks)
     tc.set_meta("detectors", '[{"id": 0, "records": [-1]}]')
     tc.set_meta("observables", "[]")
     tc.set_meta("num_measurements", "1")
@@ -1299,7 +1303,7 @@ def test_lowered_runtime_idles_accept_axis_memory_noise_dem() -> None:
             ],
         },
     ]
-    tc = _replay_lowered_qis_trace_into_tick_circuit(chunks)
+    tc = _replay_test_trace(chunks)
     tc.set_meta("detectors", '[{"id": 0, "records": [-1]}]')
     tc.set_meta("observables", "[]")
     tc.set_meta("num_measurements", "1")
@@ -1331,7 +1335,7 @@ def test_from_circuit_accepts_biased_p2_weights() -> None:
             ],
         },
     ]
-    tc = _replay_lowered_qis_trace_into_tick_circuit(chunks)
+    tc = _replay_test_trace(chunks)
     tc.set_meta("detectors", '[{"id": 0, "records": [-1]}]')
     tc.set_meta("observables", "[]")
     tc.set_meta("num_measurements", "1")
@@ -1380,7 +1384,7 @@ def test_from_circuit_accepts_biased_p1_weights() -> None:
             ],
         },
     ]
-    tc = _replay_lowered_qis_trace_into_tick_circuit(chunks)
+    tc = _replay_test_trace(chunks)
     tc.set_meta("detectors", '[{"id": 0, "records": [-1]}]')
     tc.set_meta("observables", "[]")
     tc.set_meta("num_measurements", "1")
@@ -1409,11 +1413,11 @@ def test_reject_partially_lowered_trace_passes_on_uniformly_lowered() -> None:
             "lowered_quantum_ops_complete": True,
         },
         {  # allocation/output bookkeeping only; legitimately has no lowered ops
-            "operations": [{"AllocateResult": {"id": 7}}, {"RecordOutput": {"id": 7}}],
+            "operations": [{"AllocateResult": {"id": 7}}, {"RecordOutput": {"result_id": 7, "register_name": "m"}}],
             "lowered_quantum_ops": [],
         },
     ]
-    _reject_partially_lowered_trace(chunks)  # must not raise
+    _replay_test_trace(chunks)  # must not raise
 
 
 def test_reject_partially_lowered_trace_fails_on_mixed_format() -> None:
@@ -1433,8 +1437,8 @@ def test_reject_partially_lowered_trace_fails_on_mixed_format() -> None:
             "lowered_quantum_ops_complete": False,
         },
     ]
-    with pytest.raises(ValueError, match=r"does not attest|mixed/partially-lowered|incomplete gate stream"):
-        _reject_partially_lowered_trace(chunks)
+    with pytest.raises(ValueError, match="lowered_quantum_ops_complete=false"):
+        _replay_test_trace(chunks)
 
 
 @pytest.mark.parametrize("complete", [False, True])
@@ -1445,7 +1449,7 @@ def test_reject_partially_lowered_trace_fails_on_mixed_format() -> None:
         [{"AllocateQubit": {"id": 1}}, {"ReleaseQubit": {"id": 1}}],
     ],
 )
-def test_reject_partially_lowered_trace_accepts_unused_allocation(operations, complete) -> None:
+def test_reject_partially_lowered_trace_requires_attestation_on_unused_allocation(operations, complete) -> None:
     """Red/green: unused allocations emit no gates, including in a final chunk."""
     chunks = [
         {
@@ -1459,12 +1463,17 @@ def test_reject_partially_lowered_trace_accepts_unused_allocation(operations, co
             "lowered_quantum_ops_complete": complete,
         },
     ]
-    _reject_partially_lowered_trace(chunks)
+    if complete:
+        _replay_test_trace(chunks)
+    else:
+        with pytest.raises(ValueError, match="lowered_quantum_ops_complete=false"):
+            _replay_test_trace(chunks)
 
 
 def test_reject_partially_lowered_trace_fails_within_one_chunk() -> None:
     chunks = [
         {
+            "lowered_quantum_ops_complete": False,
             "operations": [
                 {"AllocateQubit": {"id": 0}},
                 {"Quantum": {"H": 0}},
@@ -1476,147 +1485,8 @@ def test_reject_partially_lowered_trace_fails_within_one_chunk() -> None:
         },
     ]
 
-    with pytest.raises(ValueError, match="does not attest a complete lowered gate stream"):
-        _reject_partially_lowered_trace(chunks)
-
-
-def test_from_guppy_rejects_entirely_raw_runtime_trace(monkeypatch: pytest.MonkeyPatch) -> None:
-    chunks = [
-        {
-            "operations": [
-                {"AllocateQubit": {"id": 0}},
-                {"Quantum": {"Measure": [0, 0]}},
-            ],
-        },
-    ]
-    monkeypatch.setattr("pecos.tracing.capture_qis_operation_trace", lambda *_args, **_kwargs: chunks)
-
-    with pytest.raises(ValueError, match="does not contain lowered_quantum_ops"):
-        DetectorErrorModel.from_guppy(
-            _single_measurement,
-            num_qubits=1,
-            detectors_json='[{"id":0,"records":[-1]}]',
-            p1=0.0,
-            p2=0.0,
-            p_meas=0.1,
-            p_prep=0.0,
-        )
-
-
-def test_non_lowered_replay_preserves_non_sequential_result_ids() -> None:
-    operations = [
-        {"AllocateQubit": {"id": 10}},
-        {"AllocateQubit": {"id": 20}},
-        {"Quantum": {"Measure": [10, 77]}},
-        {"Quantum": {"Measure": [20, 3]}},
-    ]
-
-    tc = _replay_qis_trace_into_tick_circuit(operations)
-
-    assert _flat_mz_ids(tc) == [77, 3]
-
-
-def test_non_lowered_replay_preserves_idle_ops() -> None:
-    operations = [
-        {"AllocateQubit": {"id": 10}},
-        {"Quantum": {"Idle": [20e-9, 10]}},
-        {"Quantum": {"H": 10}},
-    ]
-
-    tc = _replay_qis_trace_into_tick_circuit(operations)
-
-    assert _flat_idle_gates(tc) == [([0], 20.0)]
-
-
-def _raw_replay_qubit_gates(chunks, qubit=0):
-    circuit = _replay_qis_trace_chunks_into_tick_circuit(chunks, allow_raw_measurement_id_fallback=True)
-    dag = circuit.to_dag_circuit()
-    return [
-        gate.gate_type.name for node in dag.nodes() if (gate := dag.gate(node)) is not None and qubit in gate.qubits
-    ]
-
-
-@pytest.mark.parametrize("first_op", ["Reset", "H"])
-def test_raw_replay_defers_prep_to_first_use(first_op) -> None:
-    """Red/green: prep is deferred across chunks; a first Reset counts as that prep."""
-    allocated = [{"AllocateQubit": {"id": 7}}]
-    assert _raw_replay_qubit_gates(
-        [{"operations": allocated}, {"operations": [{"Quantum": {first_op: 7}}, {"Quantum": {"X": 7}}]}],
-    ) == (["PZ", "X"] if first_op == "Reset" else ["PZ", "H", "X"])
-    assert _raw_replay_qubit_gates([{"operations": allocated}]) == []
-
-
-def test_raw_replay_legacy_multi_qubit_first_use() -> None:
-    """Red/green: every fresh legacy operand receives one prep, then stays prepared."""
-    chunks = [{"operations": [{"Quantum": {"CX": [7, 3]}}, {"Quantum": {"H": 7}}]}]
-    assert _raw_replay_qubit_gates(chunks, 0) == ["PZ", "CX", "H"]
-    assert _raw_replay_qubit_gates(chunks, 1) == ["PZ", "CX"]
-
-
-def test_raw_replay_unused_and_reallocated_lifetimes() -> None:
-    """Red/green: unused lifetimes have no prep; reused slots get one at first use."""
-    chunks = [
-        {
-            "operations": [
-                {"AllocateQubit": {"id": 7}},
-                {"ReleaseQubit": {"id": 7}},
-                {"AllocateQubit": {"id": 7}},
-                {"Quantum": {"Reset": 7}},
-                {"Quantum": {"X": 7}},
-                {"ReleaseQubit": {"id": 7}},
-                {"AllocateQubit": {"id": 7}},
-                {"Quantum": {"H": 7}},
-                {"Quantum": {"Reset": 7}},
-            ],
-        },
-    ]
-    assert _raw_replay_qubit_gates(chunks) == ["PZ", "X", "PZ", "H", "PZ"]
-
-
-def test_raw_replay_unknown_release_preserves_legacy_prep() -> None:
-    """Red/green: releasing an unknown handle cannot suppress its first-use prep."""
-    chunks = [
-        {
-            "operations": [
-                {"AllocateQubit": {"id": 0}},
-                {"Quantum": {"X": 0}},
-                {"ReleaseQubit": {"id": 0}},
-                {"ReleaseQubit": {"id": 9}},
-                {"Quantum": {"Measure": [9, 0]}},
-            ],
-        },
-    ]
-    assert _raw_replay_qubit_gates(chunks) == ["PZ", "X", "PZ", "MZ"]
-
-
-@pytest.mark.parametrize(
-    "prefix",
-    [
-        [{"AllocateQubit": {"id": 7}}, {"Quantum": {"H": 7}}],
-        [{"Quantum": {"Measure": [7, 0]}}],
-    ],
-)
-def test_raw_replay_rejects_duplicate_live_allocation(prefix) -> None:
-    """Red/green: explicit and legacy live handles cannot be allocated again."""
-    with pytest.raises(ValueError, match="already allocated"):
-        _raw_replay_qubit_gates([{"operations": [*prefix, {"AllocateQubit": {"id": 7}}]}])
-
-
-def test_raw_replay_rejects_use_after_release() -> None:
-    """Compatibility: raw replay still rejects use of an explicitly released handle."""
-    with pytest.raises(ValueError, match="program qubit 7"):
-        _raw_replay_qubit_gates(
-            [
-                {
-                    "operations": [
-                        {"AllocateQubit": {"id": 7}},
-                        {"Quantum": {"X": 7}},
-                        {"ReleaseQubit": {"id": 7}},
-                        {"Quantum": {"Measure": [7, 0]}},
-                    ],
-                },
-            ],
-        )
+    with pytest.raises(ValueError, match="lowered_quantum_ops_complete=false"):
+        _replay_test_trace(chunks)
 
 
 def test_from_guppy_surface_code_is_byte_identical_to_reference() -> None:
@@ -2544,25 +2414,29 @@ def test_noise_channel_residual_warning_names_kinds_and_magnitudes() -> None:
     from pecos.qec.dem import _warn_on_noise_channel_residuals
 
     class _Exact:
-        idle_noise_residuals: ClassVar[list[dict[str, object]]] = []
+        def residual_summary(self, _threshold):
+            return []
 
     class _Approximated:
-        idle_noise_residuals: ClassVar[list[dict[str, object]]] = [
-            {
-                "location_index": 3,
-                "channel_kind": "idle",
-                "magnitude": 1.894e-05,
-                "channel_weight": 0.01,
-                "relative_magnitude": 1.894e-03,
-            },
-            {
-                "location_index": 7,
-                "channel_kind": "one-qubit gate",
-                "magnitude": 2.1e-05,
-                "channel_weight": 0.1,
-                "relative_magnitude": 2.1e-04,
-            },
-        ]
+        def residual_summary(self, threshold):
+            return [
+                group
+                for group in [
+                    {
+                        "channel_kind": "idle",
+                        "count": 1,
+                        "max_relative_magnitude": 1.894e-03,
+                        "max_tv_magnitude": 1.894e-05,
+                    },
+                    {
+                        "channel_kind": "one-qubit gate",
+                        "count": 1,
+                        "max_relative_magnitude": 2.1e-04,
+                        "max_tv_magnitude": 2.1e-05,
+                    },
+                ]
+                if group["max_relative_magnitude"] > threshold
+            ]
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
@@ -2869,7 +2743,12 @@ def test_deferred_runtime_trace_requires_complete_framing() -> None:
             ],
             "lowered_quantum_ops_complete": True,
         },
-        {"operations": [], "lowered_quantum_ops": [], "stage": "trace_complete"},
+        {
+            "operations": [],
+            "lowered_quantum_ops": [],
+            "lowered_quantum_ops_complete": True,
+            "stage": "trace_complete",
+        },
     ]
     for index, chunk in enumerate(chunks):
         chunk.update(
@@ -2879,9 +2758,9 @@ def test_deferred_runtime_trace_requires_complete_framing() -> None:
             chunk_index=index,
             num_operations=len(chunk["operations"]),
         )
-    _reject_partially_lowered_trace(chunks)
-    with pytest.raises(ValueError, match="terminal trace_complete"):
-        _reject_partially_lowered_trace(chunks[:-1])
+    _replay_qis_trace_chunks_into_tick_circuit(chunks)
+    with pytest.raises(ValueError, match="trace_complete"):
+        _replay_qis_trace_chunks_into_tick_circuit(chunks[:-1])
     chunks[0]["runtime_lowering_deferred"] = False
-    with pytest.raises(ValueError, match="mixed/partially-lowered"):
-        _reject_partially_lowered_trace(chunks)
+    with pytest.raises(ValueError, match="no lowered_quantum_ops"):
+        _replay_qis_trace_chunks_into_tick_circuit(chunks)

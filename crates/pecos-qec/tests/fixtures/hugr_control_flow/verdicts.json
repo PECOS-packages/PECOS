@@ -1,0 +1,12 @@
+{
+  "straight_line.hugr": false,
+  "guppy_branch.hugr": true,
+  "guppy_loop.hugr": true,
+  "conditional.hugr": true,
+  "tail_loop.hugr": true,
+  "uncalled_loop.hugr": true,
+  "func_decl.hugr": true,
+  "call_indirect.hugr": true,
+  "cfg_multi_row.hugr": true,
+  "cfg_one_row.hugr": false
+}

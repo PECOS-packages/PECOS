@@ -564,6 +564,39 @@ mod tests {
     use pecos_qec::fault_tolerance::circuit_definitions::definitions_from_tick_circuit;
 
     #[test]
+    fn stochastic_sampling_accepts_hidden_sources() {
+        for hidden in [Gate::pz(&[0]), Gate::measure_leaked(&[0])] {
+            let gates = [
+                Gate::h(&[0]),
+                Gate::cx(&[(0, 1)]),
+                hidden,
+                Gate::mz(&[1]),
+                Gate::mz(&[1]),
+            ];
+            let meta = CircuitMeasurementMeta {
+                num_measurements: 2,
+                detector_measurements: vec![vec![0, 1]],
+                observable_measurements: vec![],
+            };
+            let result = run_dem_simulation(
+                &gates,
+                &UniformNoise::depolarizing(0.0),
+                &meta,
+                &crate::dem_generator::CoherentApprox,
+                256,
+                1178,
+            )
+            .unwrap();
+            let mut seen = [false; 2];
+            for row in result.measurements {
+                assert_eq!(row[0], row[1]);
+                seen[usize::from(row[0])] = true;
+            }
+            assert_eq!(seen, [true, true]);
+        }
+    }
+
+    #[test]
     fn stochastic_sampling_keeps_measurement_emission_order_after_compaction() {
         let gates = [
             Gate::pz(&[0, 1, 2]),

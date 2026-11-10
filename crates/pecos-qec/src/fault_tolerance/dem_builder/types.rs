@@ -2891,6 +2891,10 @@ pub struct NoiseConfig {
     /// probability range are rejected during model construction.
     /// Default is 0.0 (no idle noise).
     pub p_idle: f64,
+    /// Original public idle parameters supplied through `NoiseOptions`, for diagnostics.
+    /// Empty for raw configurations and cleared by the idle setters; does not determine
+    /// whether idle noise is active.
+    pub idle_noise_parameters: BTreeMap<String, f64>,
     /// Optional T1 relaxation time (in the same time units as idle duration).
     ///
     /// When set (along with T2), idle noise uses the Pauli-twirled
@@ -3553,6 +3557,7 @@ impl Default for NoiseConfig {
             p_meas: 0.01,
             p_prep: 0.01,
             p_idle: 0.0,
+            idle_noise_parameters: BTreeMap::new(),
             t1: None,
             t2: None,
             p1_weights: None,
@@ -3590,6 +3595,7 @@ impl NoiseConfig {
             p_meas,
             p_prep,
             p_idle: 0.0,
+            idle_noise_parameters: BTreeMap::new(),
             t1: None,
             t2: None,
             p1_weights: None,
@@ -3617,6 +3623,7 @@ impl NoiseConfig {
             p_meas,
             p_prep,
             p_idle,
+            idle_noise_parameters: BTreeMap::new(),
             t1: None,
             t2: None,
             p1_weights: None,
@@ -3647,6 +3654,7 @@ impl NoiseConfig {
             p_meas: p,
             p_prep: p,
             p_idle: 0.0,
+            idle_noise_parameters: BTreeMap::new(),
             t1: None,
             t2: None,
             p1_weights: None,
@@ -3667,6 +3675,7 @@ impl NoiseConfig {
     #[must_use]
     pub fn set_idle(mut self, p_idle: f64) -> Self {
         self.p_idle = p_idle;
+        self.idle_noise_parameters.clear();
         self
     }
 
@@ -3674,6 +3683,7 @@ impl NoiseConfig {
     #[must_use]
     pub fn set_idle_linear(mut self, family: IdleNoiseFamily) -> Self {
         self.p_idle_linear = family;
+        self.idle_noise_parameters.clear();
         self
     }
 
@@ -3681,6 +3691,7 @@ impl NoiseConfig {
     #[must_use]
     pub fn set_idle_quadratic(mut self, family: IdleNoiseFamily) -> Self {
         self.p_idle_quadratic = family;
+        self.idle_noise_parameters.clear();
         self
     }
 
@@ -3688,6 +3699,7 @@ impl NoiseConfig {
     #[must_use]
     pub fn set_idle_quadratic_sine(mut self, family: IdleNoiseFamily) -> Self {
         self.p_idle_quadratic_sine = family;
+        self.idle_noise_parameters.clear();
         self
     }
 
@@ -3713,6 +3725,7 @@ impl NoiseConfig {
         );
         self.t1 = Some(t1);
         self.t2 = Some(t2);
+        self.idle_noise_parameters.clear();
         self
     }
 
@@ -3910,6 +3923,7 @@ impl NoiseConfig {
             self.t2 = Some(t2);
         }
         self.p_idle = 0.0;
+        self.idle_noise_parameters.clear();
         self
     }
 
@@ -4223,7 +4237,17 @@ impl NoiseConfig {
                     .filter_map(|(name, time)| time.map(|time| format!("{name} = {time}"))),
             )
             .collect();
-        (!parts.is_empty()).then(|| parts.join(", "))
+        (!parts.is_empty()).then(|| {
+            if self.idle_noise_parameters.is_empty() {
+                parts.join(", ")
+            } else {
+                self.idle_noise_parameters
+                    .iter()
+                    .map(|(name, value)| format!("{name}={value}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            }
+        })
     }
 }
 

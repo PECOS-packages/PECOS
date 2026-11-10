@@ -83,6 +83,7 @@ pub mod runtime;
 pub mod runtime_decoder;
 pub mod scheduled;
 mod scheduled_transport;
+pub mod text;
 
 pub use qis_interface::{
     BoxedInterface, DynamicSyncHandle, InterfaceError, ProgramFormat, QisInterface,
@@ -103,6 +104,7 @@ pub mod interface_impl;
 pub mod program;
 #[cfg(any(feature = "selene", test))]
 mod qir_detection;
+pub mod trace_replay;
 
 pub use ccengine::{LoweredQuantumGateTrace, OperationTraceChunk, OperationTraceStore, QisEngine};
 pub use engine_builder::{QisEngineBuilder, qis_engine};

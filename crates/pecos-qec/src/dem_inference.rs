@@ -108,22 +108,36 @@ impl DemInferenceSettings {
     /// Resolve the automatic probe count, including 32 rows of rank margin.
     ///
     /// # Errors
-    /// Returns an error for invalid settings or an overflowing row count.
+    /// Returns an error for invalid settings, too few explicit probes, or an overflowing row count.
     pub fn resolved_probe_shots(&self, raw_width: usize) -> Result<usize, DemInferenceError> {
         self.validate()?;
+        let minimum = minimum_probe_rows(raw_width, self.validation_rows)?;
+        if let Some(shots) = self.probe_shots
+            && shots < minimum
+        {
+            return Err(DemInferenceError::InvalidSettings(format!(
+                "explicit probe_shots {shots} for raw width {raw_width} requires at least {minimum} rows"
+            )));
+        }
         self.probe_shots.map_or_else(
             || {
-                raw_width
-                    .checked_add(1)
-                    .and_then(|n| n.checked_add(self.validation_rows))
-                    .and_then(|n| n.checked_add(32))
-                    .ok_or_else(|| {
-                        DemInferenceError::InvalidSettings("probe row count overflow".into())
-                    })
+                minimum.checked_add(32).ok_or_else(|| {
+                    DemInferenceError::InvalidSettings("probe row count overflow".into())
+                })
             },
             Ok,
         )
     }
+}
+
+fn minimum_probe_rows(
+    raw_width: usize,
+    validation_rows: usize,
+) -> Result<usize, DemInferenceError> {
+    raw_width
+        .checked_add(1)
+        .and_then(|n| n.checked_add(validation_rows))
+        .ok_or_else(|| DemInferenceError::InvalidSettings("probe row count overflow".into()))
 }
 
 /// A failed empirical fit or invalid measurement binding.
@@ -188,10 +202,8 @@ pub fn infer_affine_columns(
             "validation_rows must be at least 1".into(),
         ));
     }
+    let required = minimum_probe_rows(input_width, validation_rows)?;
     let variables = input_width + 1;
-    let required = variables
-        .checked_add(validation_rows)
-        .ok_or_else(|| DemInferenceError::InvalidSettings("probe row count overflow".into()))?;
     if inputs.len() < required {
         return Err(DemInferenceError::InsufficientRows {
             required,
@@ -399,6 +411,32 @@ mod tests {
             observable_rows: raw_rows.iter().map(|row| vec![row[2]]).collect(),
             raw_rows,
         }
+    }
+
+    #[test]
+    fn explicit_probe_count_checks_the_solver_boundary() {
+        let settings = DemInferenceSettings::default().with_validation_rows(2);
+        let minimum = 6;
+        let error = settings
+            .clone()
+            .with_probe_shots(minimum - 1)
+            .resolved_probe_shots(3)
+            .unwrap_err();
+        assert_eq!(
+            error,
+            DemInferenceError::InvalidSettings(
+                "explicit probe_shots 5 for raw width 3 requires at least 6 rows".into()
+            )
+        );
+        assert_eq!(
+            settings
+                .clone()
+                .with_probe_shots(minimum)
+                .resolved_probe_shots(3)
+                .unwrap(),
+            minimum
+        );
+        assert_eq!(settings.resolved_probe_shots(3).unwrap(), minimum + 32);
     }
 
     #[test]

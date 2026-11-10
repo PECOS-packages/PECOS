@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import pytest
-from pecos._qis_trace_replay import _validate_trace_hosted_operations_if_requested
 from pecos.quantum.hosted import validate_hosted_operations
+from pecos.tracing import _validate_trace_hosted_operations_if_requested
 
 
 class FakeGateType:
@@ -155,7 +155,7 @@ def test_validate_hosted_operations_can_require_unique_host_ids() -> None:
         ],
     )
 
-    with pytest.raises(ValueError, match="host_id 'host:a' appears on 2 host gates"):
+    with pytest.raises(ValueError, match='host_id "host:a" appears on 2 host gates'):
         validate_hosted_operations(circuit, require_unique_host_id=True)
 
 
@@ -249,7 +249,7 @@ def test_validate_hosted_operations_rejects_missing_local_host_id() -> None:
         [[FakeGate("H", [0], meta={"local_role": "basis_prefix"})]],
     )
 
-    with pytest.raises(ValueError, match="no non-empty 'host_id' metadata"):
+    with pytest.raises(ValueError, match='no non-empty "host_id" metadata'):
         validate_hosted_operations(circuit)
 
 
@@ -349,7 +349,7 @@ def test_trace_hosted_validation_rejects_repeated_host_ids_when_requested() -> N
         ],
     )
 
-    with pytest.raises(ValueError, match="host_id 'host:a' appears on 2 host gates"):
+    with pytest.raises(ValueError, match='host_id "host:a" appears on 2 host gates'):
         _validate_trace_hosted_operations_if_requested(
             circuit,
             require_hosted_operation_order=True,
@@ -379,3 +379,22 @@ def test_trace_hosted_validation_can_check_separation_without_order_guard() -> N
             max_hosted_tick_separation=0,
             context="test trace validation",
         )
+
+
+@pytest.mark.parametrize("maximum", [-1, 2**64, 1.5])
+def test_validate_hosted_operations_rejects_invalid_limits(maximum: float) -> None:
+    with pytest.raises(ValueError, match="boundary: max_tick_separation"):
+        validate_hosted_operations(FakeTickCircuit([]), max_tick_separation=maximum, context="boundary")
+
+
+def test_validate_hosted_operations_preserves_negative_limit_message() -> None:
+    with pytest.raises(ValueError, match=r"^boundary: max_tick_separation must be non-negative, got -1$"):
+        validate_hosted_operations(object(), max_tick_separation=-1, context="boundary")
+
+
+@pytest.mark.parametrize("qubit", [-1, 2**128, 1.5, "2"])
+def test_validate_hosted_operations_rejects_invalid_qubits(qubit: object) -> None:
+    gate = FakeGate("H", [], meta={"local_role": "basis_prefix"})
+    gate.qubits = [qubit]
+    with pytest.raises(ValueError, match=r"boundary: hosted gate H@t0/g0.*qubit"):
+        validate_hosted_operations(FakeTickCircuit([[gate]]), context="boundary")

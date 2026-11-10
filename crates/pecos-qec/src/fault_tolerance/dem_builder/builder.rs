@@ -53,6 +53,8 @@ use std::rc::Rc;
 /// Parsed detector from JSON metadata.
 #[derive(Debug, Clone)]
 pub struct ParsedDetector {
+    /// Noiseless value from metadata; fault effects do not apply it.
+    pub reference: Option<u8>,
     /// Declared identifier.
     pub id: u32,
     /// Optional three-dimensional coordinates.
@@ -184,9 +186,9 @@ struct ExactBranchReplayRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct MeasurementParityExpression {
-    dependencies: BitSet,
-    flip: bool,
+pub(crate) struct MeasurementParityExpression {
+    pub(crate) dependencies: BitSet,
+    pub(crate) flip: bool,
 }
 
 impl<'a> DemBuilder<'a> {
@@ -604,6 +606,7 @@ impl<'a> DemBuilder<'a> {
                     }
                 };
                 Ok(ParsedDetector {
+                    reference: detector.reference,
                     fault_sector: detector.fault_sector,
                     id: detector.id,
                     coords,
@@ -2667,6 +2670,7 @@ fn parse_single_detector(value: &serde_json::Value) -> Result<ParsedDetector, De
     let label = extract_definition_label(object, "detector")?;
 
     Ok(ParsedDetector {
+        reference: extract_reference(object, "detector", id)?,
         fault_sector: parse_fault_sector(object.get("fault_sector"), id)
             .map_err(DemBuilderError::ParseError)?,
         id,
@@ -2713,18 +2717,7 @@ fn parse_single_observable(value: &serde_json::Value) -> Result<ParsedObservable
     let (records, meas_ids) = extract_measurement_refs(object, "observable")?;
     let label = extract_definition_label(object, "observable")?;
 
-    let reference = match object.get("reference") {
-        None | Some(serde_json::Value::Null) => None,
-        Some(value) => match value.as_u64() {
-            Some(0) => Some(0),
-            Some(1) => Some(1),
-            _ => {
-                return Err(DemBuilderError::ParseError(format!(
-                    "observable {id} has invalid 'reference' {value}; expected integer 0 or 1 or null"
-                )));
-            }
-        },
-    };
+    let reference = extract_reference(object, "observable", id)?;
 
     Ok(ParsedObservable {
         id,
@@ -2732,6 +2725,25 @@ fn parse_single_observable(value: &serde_json::Value) -> Result<ParsedObservable
         meas_ids,
         label,
         reference,
+    })
+}
+
+fn extract_reference(
+    object: &serde_json::Map<String, serde_json::Value>,
+    role: &str,
+    id: u32,
+) -> Result<Option<u8>, DemBuilderError> {
+    Ok(match object.get("reference") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(value) => match value.as_u64() {
+            Some(0) => Some(0),
+            Some(1) => Some(1),
+            _ => {
+                return Err(DemBuilderError::ParseError(format!(
+                    "{role} {id} has invalid 'reference' {value}; expected integer 0 or 1 or null"
+                )));
+            }
+        },
     })
 }
 
@@ -3327,7 +3339,7 @@ fn measurement_parity_differs_from_histories(
         measurement_indices,
         "branch",
     )?;
-    if ideal.dependencies != branch.dependencies {
+    if !(&ideal.dependencies ^ &branch.dependencies).is_empty() {
         return Err(DemBuilderError::ConfigurationError(format!(
             "{context} changes measurement dependencies for parity {measurement_indices:?}; this branch is not representable as a single deterministic DEM event"
         )));
@@ -3335,7 +3347,7 @@ fn measurement_parity_differs_from_histories(
     Ok(ideal.flip ^ branch.flip)
 }
 
-fn measurement_parity_expression(
+pub(crate) fn measurement_parity_expression(
     history: &MeasurementHistory,
     influence_to_history: &[usize],
     measurement_indices: &[usize],
@@ -3736,6 +3748,88 @@ impl std::error::Error for DemBuilderError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn symbolic_replays_preserve_measurement_back_action() {
+        use crate::fault_tolerance::{
+            fault_sampler::symbolic_measurement_history, influence_builder::InfluenceBuilder,
+        };
+        use pecos_core::Gate;
+        let gates = [
+            Gate::mx(&[0]),
+            Gate::mz(&[0]),
+            Gate::h(&[1]),
+            Gate::measure_leaked(&[1]),
+            Gate::mz(&[1]),
+            Gate::mz(&[1]),
+        ];
+        let mut tick = pecos_quantum::TickCircuit::new();
+        let mut dag = pecos_quantum::DagCircuit::new();
+        let mut sim = SymbolicSparseStab::new(2);
+        for (node, gate) in gates.into_iter().enumerate() {
+            tick.tick().try_add_gate(gate.clone()).unwrap();
+            dag.add_gate_auto_wire(gate.clone());
+            DemBuilder::apply_symbolic_gate_for_crosstalk_hidden_mz(&mut sim, node, &gate).unwrap();
+        }
+        let tick_history = symbolic_measurement_history(&tick).unwrap();
+        let dag_info = InfluenceBuilder::new(&dag)
+            .unwrap()
+            .run_symbolic_simulation()
+            .unwrap();
+        for history in [&tick_history, &dag_info.history, sim.measurement_history()] {
+            assert_eq!(history.len(), 4);
+            assert_eq!((&history[0].outcome ^ &history[1].outcome).len(), 2);
+            assert!(!history[2].is_deterministic);
+            assert_eq!(history[2].outcome.iter().collect::<Vec<_>>(), vec![2]);
+            assert!((&history[2].outcome ^ &history[3].outcome).is_empty());
+        }
+    }
+
+    #[test]
+    fn parity_expressions_cancel_hidden_sources() {
+        use crate::fault_tolerance::fault_sampler::symbolic_measurement_history;
+        let mut circuit = pecos_quantum::TickCircuit::new();
+        circuit.tick().h(&[0]);
+        circuit.tick().cx(&[(0, 1)]);
+        circuit
+            .tick()
+            .try_add_gate(pecos_core::Gate::measure_leaked(&[0]))
+            .unwrap();
+        circuit.tick().mz(&[0, 1, 2]);
+        let history = symbolic_measurement_history(&circuit).unwrap();
+        let mapping = [0, 1, 2];
+        let random = measurement_parity_expression(&history, &mapping, &[0], "test").unwrap();
+        assert!(!random.dependencies.is_empty());
+        assert!(
+            !measurement_parity_differs_from_histories(
+                &history,
+                &history,
+                &mapping,
+                &[0],
+                "same random record"
+            )
+            .unwrap()
+        );
+        for records in [&[0, 1][..], &[2][..]] {
+            let parity =
+                measurement_parity_expression(&history, &mapping, records, "test").unwrap();
+            assert!(parity.dependencies.is_empty());
+            assert!(!parity.flip);
+        }
+        let mut fixed = pecos_quantum::TickCircuit::new();
+        fixed.tick().mz(&[0, 1, 2]);
+        let fixed_history = symbolic_measurement_history(&fixed).unwrap();
+        assert!(
+            !measurement_parity_differs_from_histories(
+                &history,
+                &fixed_history,
+                &mapping,
+                &[0, 1],
+                "cancelled hidden source"
+            )
+            .unwrap()
+        );
+    }
 
     #[test]
     fn dedicated_idle_noise_requires_idle_locations() {
@@ -5999,3 +6093,7 @@ mod tests {
         assert_eq!(parsed[0].label, None);
     }
 }
+
+#[cfg(test)]
+#[path = "symbolic_history_oracle_tests.rs"]
+mod symbolic_history_oracle_tests;

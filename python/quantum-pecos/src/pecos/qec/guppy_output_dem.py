@@ -12,66 +12,136 @@ covers every physical measurement with a unique result-ID binding.
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from pecos_rslib.qec import DemInferenceSettings, _capture_dem_evidence, _SeleneRuntimeSpec
+from pecos_rslib.qec import DemInferenceSettings, _prepare_guppy_dem, _SeleneRuntimeSpec
 
 from pecos._engine_builders import _configure_selene_runtime
-from pecos._qis_trace_replay import _validate_trace_hosted_operations_if_requested
-from pecos._traced_circuit import normalize_traced_tick_circuit
-from pecos.programs import Guppy
-from pecos.qec.dem_spec import InferredOutput
+from pecos.programs import Guppy, Hugr
+from pecos.qec import dem_spec
+from pecos.quantum.hosted import _hosted_tick_separation_limit
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
 
-    from pecos_rslib.qec import DetectorErrorModel
+    from pecos_rslib import Qis
+    from pecos_rslib.qec import DetectorErrorModel, _PreparedDem
+    from pecos_rslib.quantum import TickCircuit
 
 
 @dataclass(frozen=True, slots=True)
 class InferredGuppyDemAnnotations:
-    """An annotated QIS trace and its inferred detector/observable schema."""
+    """Inference evidence backed by a shared Rust preparation.
 
-    circuit: Any
-    detectors_json: str
-    observables_json: str
-    raw_measurement_ids: tuple[int, ...]
-    detector_supports: tuple[tuple[int, ...], ...]
-    observable_supports: tuple[tuple[int, ...], ...]
-    observable_labels: tuple[tuple[str, int], ...]
-    probe_shots: int
-    raw_binding: str
-    validation_rows: int = 32
-    provenance_shots: int = 32
-    raw_tag: str = "raw measurements"
-    schedule_validation: str = "unspecified"
-    schedule_validation_shots: int = 0
-    result_traces: tuple[Mapping[str, Any], ...] = ()
-    source_result_traces: tuple[Mapping[str, Any], ...] = ()
-    detector_labels: tuple[tuple[str, int], ...] = ()
+    In mixed builds, ``circuit``, ``detectors_json``, ``observables_json``, and
+    ``build_dem()`` cover the whole prepared schema, including explicit
+    definitions. Supports and labels describe the inferred definitions only.
+    Circuit access returns a detached snapshot.
+    """
+
+    _prepared: _PreparedDem
+
+    @property
+    def circuit(self) -> TickCircuit:
+        """Return a detached snapshot of the prepared circuit."""
+        return self._prepared.circuit
+
+    @property
+    def detectors_json(self) -> str:
+        """Return detector metadata with computed references."""
+        return self._prepared.detectors_json
+
+    @property
+    def observables_json(self) -> str:
+        """Return observable metadata with computed references."""
+        return self._prepared.observables_json
+
+    @property
+    def raw_measurement_ids(self) -> tuple[int, ...]:
+        """Return the prepared inference raw measurement ids."""
+        data = self._prepared.inference["raw_measurement_ids"]
+        return tuple(data)
+
+    @property
+    def detector_supports(self) -> tuple[tuple[int, ...], ...]:
+        """Return the prepared inference detector supports."""
+        data = self._prepared.inference["detector_supports"]
+        return tuple(tuple(support) for support in data)
+
+    @property
+    def observable_supports(self) -> tuple[tuple[int, ...], ...]:
+        """Return the prepared inference observable supports."""
+        data = self._prepared.inference["observable_supports"]
+        return tuple(tuple(support) for support in data)
+
+    @property
+    def observable_labels(self) -> tuple[tuple[str, int], ...]:
+        """Return the prepared inference observable labels."""
+        data = self._prepared.inference["observable_labels"]
+        return tuple(data or ())
+
+    @property
+    def detector_labels(self) -> tuple[tuple[str, int], ...]:
+        """Return the prepared inference detector labels."""
+        data = self._prepared.inference["detector_labels"]
+        return tuple(data or ())
+
+    @property
+    def probe_shots(self) -> int:
+        """Return the prepared inference probe shots."""
+        return self._prepared.inference["probe_shots"]
+
+    @property
+    def validation_rows(self) -> int:
+        """Return the prepared inference validation rows."""
+        return self._prepared.inference["validation_rows"]
+
+    @property
+    def provenance_shots(self) -> int:
+        """Return the prepared inference provenance shots."""
+        return self._prepared.inference["provenance_shots"]
+
+    @property
+    def schedule_validation_shots(self) -> int:
+        """Return the prepared inference schedule validation shots."""
+        return self._prepared.inference["schedule_validation_shots"]
+
+    @property
+    def raw_binding(self) -> str:
+        """Return the prepared inference raw binding."""
+        return self._prepared.inference["raw_binding"]
+
+    @property
+    def raw_tag(self) -> str:
+        """Return the prepared inference raw tag."""
+        return self._prepared.inference["raw_tag"]
+
+    @property
+    def schedule_validation(self) -> str:
+        """Return the prepared inference schedule validation."""
+        return self._prepared.inference["schedule_validation"]
+
+    @property
+    def result_traces(self) -> tuple[Mapping[str, Any], ...]:
+        """Return the prepared inference result traces."""
+        data = self._prepared.inference["result_traces"]
+        return tuple(data)
+
+    @property
+    def source_result_traces(self) -> tuple[Mapping[str, Any], ...]:
+        """Return the prepared inference source result traces."""
+        data = self._prepared.inference["source_result_traces"]
+        return tuple(data)
 
     @property
     def audit(self) -> dict[str, Any]:
         """Describe the empirical evidence without claiming a compiler proof."""
-        return {
-            "method": "coin_toss_affine_inference_v2",
-            "raw_binding": self.raw_binding,
-            "probe_shots": self.probe_shots,
-            "provenance_shots": self.provenance_shots,
-            "validation_rows": self.validation_rows,
-            "validation_kind": "additional_consistency_equations",
-            "schedule_validation": self.schedule_validation,
-            "schedule_validation_shots": self.schedule_validation_shots,
-            "raw_measurement_ids": list(self.raw_measurement_ids),
-        }
+        return self._prepared.audit["inference"]
 
     def build_dem(self, **noise: object) -> DetectorErrorModel:
-        """Build a PECOS DEM from the annotated trace, without Stim."""
-        from pecos.qec.dem import DetectorErrorModel  # noqa: PLC0415
-
-        return DetectorErrorModel.from_circuit(self.circuit, **noise)
+        """Build a DEM with the full ``from_circuit`` noise keyword set."""
+        return self._prepared.build_dem(**noise).dem
 
 
 def infer_guppy_dem_annotations(
@@ -100,7 +170,13 @@ def infer_guppy_dem_annotations(
     makes the physical results independent GF(2) variables; Gaussian
     elimination recovers each emitted parity and extra rows validate it.
 
-    This prototype is suitable only when measurement values do not alter the
+    The returned object wraps a Rust preparation. Its ``circuit`` is a detached
+    snapshot; ``build_dem(**noise)`` rebuilds from the preparation with the full
+    ``DetectorErrorModel.from_circuit`` keyword set. Rust computes exact
+    noiseless references and rejects random parities or disagreeing declared
+    references. Returned metadata includes each computed ``reference``.
+
+    This workflow is suitable only when measurement values do not alter the
     quantum operation schedule.  PECOS captures one QIS path for the returned
     circuit; the affine checks certify classical parity processing, not static
     quantum control flow.  ``require_raw_provenance`` defaults to true.  Its
@@ -133,7 +209,7 @@ def infer_guppy_dem_annotations(
             continue
         pairs = [(tag, element) for tag, element in selectors]
         for tag, element in pairs:
-            InferredOutput(tag, element)
+            dem_spec.InferredOutput(tag, element)
         selections.append(pairs)
     detector_outputs, observable_outputs = selections
     if (
@@ -145,107 +221,37 @@ def infer_guppy_dem_annotations(
         msg = "no outputs selected for inference"
         raise ValueError(msg)
 
-    if hasattr(program, "compile") and not hasattr(program, "_to_program"):
-        program = Guppy(program)
-    to_program = getattr(program, "_to_program", None)
-    if to_program is not None:
-        program = to_program()
     runtime_spec = _configure_selene_runtime(_SeleneRuntimeSpec(), runtime)
-    evidence = _capture_dem_evidence(
-        program,
+    max_hosted_tick_separation = _hosted_tick_separation_limit(
+        max_hosted_tick_separation,
+        context="infer_guppy_dem_annotations",
+    )
+    definitions = {
+        role: None if outputs is None else [(None, None, None, (tag, element), None, "{}") for tag, element in outputs]
+        for role, outputs in (("detectors", detector_outputs), ("observables", observable_outputs))
+    }
+    prepared = _prepare_guppy_dem(
+        _guppy_dem_program(program),
         num_qubits,
         seed,
         runtime_spec,
-        settings,
-        detector_outputs,
-        observable_outputs,
-    )
-    circuit = evidence["circuit"]
-    _validate_trace_hosted_operations_if_requested(
-        circuit,
+        settings=settings,
         require_hosted_operation_order=require_hosted_operation_order,
         max_hosted_tick_separation=max_hosted_tick_separation,
-        context="infer_guppy_dem_annotations",
+        hosted_context="infer_guppy_dem_annotations",
+        **definitions,
     )
-    # Preserve the runtime's physical gates: each carries an independent noise site.
-    normalize_traced_tick_circuit(
-        circuit,
-        context="infer_guppy_dem_annotations",
-        simplify_single_qubit_clifford_chains=False,
-    )
-    raw_ids = list(evidence["raw_measurement_ids"])
-    detector_labels = tuple((tag, element) for tag, element in evidence["detector_outputs"])
-    observable_labels = tuple((tag, element) for tag, element in evidence["observable_outputs"])
-    probe_shots = evidence["probe_shots"]
-    correlation_shots = evidence["correlation_shots"]
-    total_shots = evidence["schedule_shots"]
-    raw_binding = evidence["binding"]
-    source_result_traces = tuple(dict(item) for item in evidence["named_result_traces"])
-    detector_supports, observable_supports = settings.infer(
-        raw_ids,
-        evidence["raw_rows"],
-        evidence["detector_rows"],
-        evidence["observable_rows"],
-    )
-    detector_supports = tuple(tuple(support) for support in detector_supports)
-    observable_supports = tuple(tuple(support) for support in observable_supports)
+    return InferredGuppyDemAnnotations(prepared)
 
-    detectors = [
-        {
-            "id": index,
-            "meas_ids": list(support),
-            "inferred_from_result_tag": tag,
-            **({"result_element": element} if detector_outputs is not None else {}),
-        }
-        for index, (support, (tag, element)) in enumerate(zip(detector_supports, detector_labels, strict=True))
-    ]
-    # Coin-toss probes identify classical XOR support, not the noiseless quantum
-    # value or its determinism. Even an affine offset of zero cannot establish a
-    # reference. Leave it absent; the constant-one refusal above still protects
-    # the separate contract of representing the program's actual output parity.
-    observables = [
-        {
-            "id": index,
-            "meas_ids": list(support),
-            "inferred_from_result_tag": tag,
-            "result_element": element,
-        }
-        for index, (support, (tag, element)) in enumerate(zip(observable_supports, observable_labels, strict=True))
-    ]
-    detectors_json = json.dumps(detectors, separators=(",", ":"))
-    observables_json = json.dumps(observables, separators=(",", ":"))
-    circuit.set_meta("detectors", detectors_json)
-    circuit.set_meta("observables", observables_json)
-    circuit.set_meta("num_measurements", str(len(raw_ids)))
-    circuit.set_meta("guppy_dem_annotation_method", "coin_toss_affine_inference_v2")
 
-    bound_traces = []
-    offset = 0
-    for item in source_result_traces:
-        if item.get("name") == raw_tag:
-            width = len(item["values"])
-            bound_traces.append({**item, "result_ids": raw_ids[offset : offset + width]})
-            offset += width
-
-    return InferredGuppyDemAnnotations(
-        circuit=circuit,
-        detectors_json=detectors_json,
-        observables_json=observables_json,
-        raw_measurement_ids=tuple(raw_ids),
-        detector_supports=detector_supports,
-        observable_supports=observable_supports,
-        observable_labels=observable_labels,
-        probe_shots=probe_shots,
-        raw_binding=raw_binding,
-        validation_rows=validation_rows,
-        provenance_shots=correlation_shots,
-        raw_tag=raw_tag,
-        result_traces=tuple(bound_traces),
-        source_result_traces=source_result_traces,
-        detector_labels=detector_labels,
-        schedule_validation=circuit.get_meta("dem_schedule_validation"),
-        schedule_validation_shots=total_shots,
-    )
+def _guppy_dem_program(program: object) -> Qis:
+    """Compile boundary program carriers through the shared HUGR/QIS path."""
+    if isinstance(program, (bytes, bytearray)):
+        program = Hugr(bytes(program))
+    elif hasattr(program, "compile") and not hasattr(program, "_to_program"):
+        program = Guppy(program)
+    to_program = getattr(program, "_to_program", None)
+    return to_program() if to_program is not None else program
 
 
 __all__ = ["DemInferenceSettings", "InferredGuppyDemAnnotations", "infer_guppy_dem_annotations"]

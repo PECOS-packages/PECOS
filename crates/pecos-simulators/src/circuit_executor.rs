@@ -352,6 +352,37 @@ mod tests {
     use pecos_quantum::TickCircuit;
 
     #[test]
+    fn mx_preserves_the_measured_x_eigenstate() {
+        for prep in [GateType::PZ, GateType::PX] {
+            for seed in 0..32 {
+                let mut circuit = TickCircuit::new();
+                for gt in [
+                    prep,
+                    GateType::MX,
+                    GateType::MX,
+                    GateType::Z,
+                    GateType::H,
+                    GateType::MZ,
+                ] {
+                    circuit
+                        .tick()
+                        .try_add_gate(Gate::simple(gt, vec![QubitId(0)]))
+                        .unwrap();
+                }
+                let mut sim = SparseStab::with_seed(1, seed);
+                let outcomes = CircuitExecutor::new(&circuit).run(&mut sim).unwrap();
+                assert!(outcomes[1].is_deterministic);
+                assert!(outcomes[2].is_deterministic);
+                assert_eq!(outcomes[0].outcome, outcomes[1].outcome);
+                assert_ne!(outcomes[1].outcome, outcomes[2].outcome);
+                if prep == GateType::PX {
+                    assert!(!outcomes[0].outcome);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn test_circuit_executor_basic() {
         let mut circuit = TickCircuit::new();
         circuit.tick().pz(&[0, 1]);

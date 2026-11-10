@@ -321,6 +321,7 @@ fn merged_fields() {
     assert_eq!(
         result.detectors[0],
         ResolvedDetector {
+            reference: None,
             fault_sector: None,
             id: 0,
             coords: Some(vec![1.0, 2.0, 3.0]),
@@ -633,4 +634,28 @@ fn merged_batches_emit_in_storage_order() {
     assert_eq!(tick_circuit_emission(&circuit), expected);
     let dag = DagCircuit::try_from(&circuit).unwrap();
     assert_eq!(dag_circuit_emission(&dag), expected);
+}
+
+#[test]
+fn detector_reference_matches_observable_rules_and_is_only_carried() {
+    for reference in ["null", "0", "1"] {
+        let entries = format!(r#"[{{"id":0,"meas_ids":[9],"reference":{reference}}}]"#);
+        let result = resolve_definitions(Some(&entries), Some(&entries), &[], &emission()).unwrap();
+        assert_eq!(
+            result.detectors[0].reference,
+            result.observables[0].reference
+        );
+        assert_eq!(result.detectors[0].reference, reference.parse::<u8>().ok());
+        assert_eq!(result.detectors[0].measurements, [1]);
+    }
+    for reference in ["true", "false", "-1", "2", "1.0", "\"1\"", "[]", "{}"] {
+        let entries = format!(r#"[{{"id":0,"meas_ids":[9],"reference":{reference}}}]"#);
+        let error = resolve_definitions(Some(&entries), None, &[], &emission()).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("detector 0 has invalid 'reference'"),
+            "{error}"
+        );
+    }
 }

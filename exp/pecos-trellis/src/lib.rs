@@ -1976,6 +1976,53 @@ pub struct TrellisDecoder {
     scratch: TrellisScratch,
 }
 
+/// Progress of an exact batch attempt split across bounded column ranges.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TrellisBoundedProgress {
+    /// Columns in completely successful ranges. A failed range may have done
+    /// additional work, recorded exactly in the terminal attempt's telemetry.
+    pub completed_columns: usize,
+    /// Total columns in this model's binary kernel.
+    pub total_columns: usize,
+    /// The attempt can be consumed by [`TrellisResumableDecoder::finish`].
+    pub ready_to_finish: bool,
+}
+
+/// An owning, exact resumable binary-float batch decoder.
+///
+/// This changes only the boundaries of calls into the existing column walk.
+/// The full syndrome, scoring inputs, pruning parameters and arithmetic order
+/// stay fixed for the attempt. It does not retain a beam between input windows.
+/// Owning the decoder prevents another API from changing its prepared scratch
+/// while an attempt is pending. Existing [`TrellisDecoder`] APIs are unchanged.
+///
+/// A column budget bounds actual DP columns, not milliseconds. Model creation,
+/// [`Self::begin`] (including any BP refresh), and [`Self::finish`] have separate
+/// costs and must be timed separately when a host imposes invocation limits.
+pub struct TrellisResumableDecoder {
+    decoder: TrellisDecoder,
+    attempt: Option<BoundedBinaryAttempt>,
+}
+
+struct BoundedBinaryAttempt {
+    next_column: usize,
+    total_columns: usize,
+    mode: DecodeMode,
+    bp_ran: bool,
+    bp_seconds: f64,
+    terminal: Option<TrellisDecodeAttempt>,
+}
+
+impl BoundedBinaryAttempt {
+    fn progress(&self) -> TrellisBoundedProgress {
+        TrellisBoundedProgress {
+            completed_columns: self.next_column,
+            total_columns: self.total_columns,
+            ready_to_finish: self.terminal.is_some() || self.next_column == self.total_columns,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct TrellisScratch {
     observed: Vec<u64>,
@@ -2659,17 +2706,8 @@ impl TrellisDecoder {
     }
 
     fn attempt_with_mode(&mut self, params: PruneParams, mode: DecodeMode) -> TrellisDecodeAttempt {
-        if let Err(error) = params.validate(self.model.config.metric_mode) {
+        if let Err(error) = self.validate_attempt_params(params) {
             return TrellisDecodeAttempt::Error(error);
-        }
-        if self.model.config.bp_score_iterations > 0
-            && self.model.bp_graph.is_none()
-            && !(params.k == usize::MAX && params.delta.is_infinite())
-        {
-            return TrellisDecodeAttempt::Error(DecoderError::InvalidConfiguration(
-                "non-exact pruning parameters require a BP graph when bp_score_iterations > 0"
-                    .into(),
-            ));
         }
         let (bp_ran, _) = self
             .scratch
@@ -2680,6 +2718,20 @@ impl TrellisDecoder {
             result.bp_runs = u32::from(bp_ran);
         }
         attempt
+    }
+
+    fn validate_attempt_params(&self, params: PruneParams) -> Result<(), DecoderError> {
+        params.validate(self.model.config.metric_mode)?;
+        if self.model.config.bp_score_iterations > 0
+            && self.model.bp_graph.is_none()
+            && !(params.k == usize::MAX && params.delta.is_infinite())
+        {
+            return Err(DecoderError::InvalidConfiguration(
+                "non-exact pruning parameters require a BP graph when bp_score_iterations > 0"
+                    .into(),
+            ));
+        }
+        Ok(())
     }
 
     /// Configured pruning parameters used by `decode_attempt`.
@@ -2712,6 +2764,25 @@ impl TrellisDecoder {
         }
     }
 
+    /// Consume this decoder into an exact resumable batch wrapper.
+    ///
+    /// # Errors
+    /// Returns `InvalidConfiguration` for a non-binary or non-float kernel.
+    /// BP is prepared once by `begin`, exactly as in a normal batch attempt.
+    pub fn into_resumable(self) -> Result<TrellisResumableDecoder, DecoderError> {
+        if self.model.config.metric_mode != MetricMode::LogSumExpFloat
+            || !matches!(self.model.kernel, Kernel::Binary(_))
+        {
+            return Err(DecoderError::InvalidConfiguration(
+                "resumable batch attempts support the binary float kernel".into(),
+            ));
+        }
+        Ok(TrellisResumableDecoder {
+            decoder: self,
+            attempt: None,
+        })
+    }
+
     /// Decode dense shots in input order using independent worker scratch.
     ///
     /// Workers are capped at one per shot, with one worker for an empty batch.
@@ -2724,6 +2795,201 @@ impl TrellisDecoder {
         workers: usize,
     ) -> Result<Vec<TrellisDecodeAttempt>, DecoderError> {
         batch::decode_batch(shots, workers, || self.fresh_worker(), Self::decode_attempt)
+    }
+}
+
+impl TrellisResumableDecoder {
+    /// Prepare a full-syndrome batch attempt with all diagnostics enabled.
+    ///
+    /// Preparation failures are retained as structured terminal attempts and
+    /// reported by `finish`; they are never inferred from an error string.
+    /// No DP columns or terminal class aggregation are performed here.
+    ///
+    /// # Errors
+    /// Returns `InvalidConfiguration` if another attempt is still pending.
+    pub fn begin(&mut self, syndrome: &[u8]) -> Result<TrellisBoundedProgress, DecoderError> {
+        self.begin_with_mode(syndrome, DecodeMode::Full)
+    }
+
+    /// Begin the same exact attempt without the discarded-mass diagnostic.
+    ///
+    /// All retained results and counters are unchanged; only successful
+    /// `dropped_log_mass` is NaN. This explicit choice applies to one attempt.
+    ///
+    /// # Errors
+    /// Returns the same protocol error as [`Self::begin`].
+    pub fn begin_without_dropped_mass(
+        &mut self,
+        syndrome: &[u8],
+    ) -> Result<TrellisBoundedProgress, DecoderError> {
+        self.begin_with_mode(syndrome, DecodeMode::PredictionOnly)
+    }
+
+    fn begin_with_mode(
+        &mut self,
+        syndrome: &[u8],
+        mode: DecodeMode,
+    ) -> Result<TrellisBoundedProgress, DecoderError> {
+        if self.attempt.is_some() {
+            return Err(DecoderError::InvalidConfiguration(
+                "finish or cancel the pending resumable attempt before beginning another".into(),
+            ));
+        }
+        let Kernel::Binary(columns) = &self.decoder.model.kernel else {
+            unreachable!("resumable constructor validates the binary kernel");
+        };
+        let total_columns = columns.len();
+        let mut state = BoundedBinaryAttempt {
+            next_column: 0,
+            total_columns,
+            mode,
+            bp_ran: false,
+            bp_seconds: 0.0,
+            terminal: None,
+        };
+        state.terminal = match self.decoder.prepare(syndrome) {
+            Ok(TrellisPrepared::Ready { bp_ran, bp_seconds }) => {
+                state.bp_ran = bp_ran;
+                state.bp_seconds = bp_seconds;
+                match self
+                    .decoder
+                    .validate_attempt_params(self.decoder.prune_params())
+                {
+                    Ok(()) => {
+                        self.decoder
+                            .scratch
+                            .float_progress
+                            .reset(&self.decoder.model);
+                        None
+                    }
+                    Err(error) => Some(TrellisDecodeAttempt::Error(error)),
+                }
+            }
+            Ok(TrellisPrepared::Residual { .. }) => Some(TrellisDecodeAttempt::NoPath {
+                error: unexplainable_error(),
+                transitions: 0,
+                dropped_states: 0,
+                bp_seconds: 0.0,
+            }),
+            Err(error) => Some(TrellisDecodeAttempt::Error(error)),
+        };
+        let progress = state.progress();
+        self.attempt = Some(state);
+        Ok(progress)
+    }
+
+    /// Process at most `max_columns` consecutive columns of the pending attempt.
+    ///
+    /// The same full-syndrome range walk, suffix values, merge/prune order and
+    /// telemetry accumulation are used by the unbounded batch decoder. A ready
+    /// attempt is unchanged by another positive-budget step. Engine failures
+    /// make the attempt ready and remain structured until `finish` consumes it.
+    ///
+    /// # Errors
+    /// Returns `InvalidConfiguration` for zero budget or a missing begin.
+    pub fn step(&mut self, max_columns: usize) -> Result<TrellisBoundedProgress, DecoderError> {
+        if max_columns == 0 {
+            return Err(DecoderError::InvalidConfiguration(
+                "resumable attempts require a positive column budget".into(),
+            ));
+        }
+        let state = self.attempt.as_mut().ok_or_else(|| {
+            DecoderError::InvalidConfiguration("begin a resumable attempt before stepping".into())
+        })?;
+        if state.progress().ready_to_finish {
+            return Ok(state.progress());
+        }
+        let end = state
+            .next_column
+            .saturating_add(max_columns)
+            .min(state.total_columns);
+        let model = &self.decoder.model;
+        let scratch = &mut self.decoder.scratch;
+        let suffix_values = scratch
+            .bp_score
+            .as_ref()
+            .map_or(&model.suffix_values, |bp| &bp.suffix_values);
+        let failure = model.process_binary_range_with_mode(
+            &mut scratch.float_progress,
+            &scratch.observed,
+            suffix_values,
+            state.next_column..end,
+            PruneParams {
+                k: model.config.k,
+                delta: model.config.delta,
+            },
+            BinaryRangeOptions {
+                mode: state.mode,
+                known_count: None,
+            },
+        );
+        if let Err(failure) = failure {
+            state.terminal = Some(match failure {
+                BinaryFailure::NoPath => TrellisDecodeAttempt::NoPath {
+                    error: failure.error(),
+                    transitions: scratch.float_progress.transitions,
+                    dropped_states: scratch.float_progress.dropped_states,
+                    bp_seconds: state.bp_seconds,
+                },
+                BinaryFailure::UnusableScores => TrellisDecodeAttempt::Error(failure.error()),
+            });
+        } else {
+            state.next_column = end;
+        }
+        Ok(state.progress())
+    }
+
+    /// Inspect the pending attempt without processing columns or aggregating classes.
+    #[must_use]
+    pub fn progress(&self) -> Option<TrellisBoundedProgress> {
+        self.attempt.as_ref().map(BoundedBinaryAttempt::progress)
+    }
+
+    /// Consume a ready attempt, using the unchanged terminal constructor.
+    ///
+    /// This performs no column work. Terminal sorting and class/evidence
+    /// aggregation have their own invocation cost, outside the column budget.
+    /// Preparation and DP failures return their original structured variant.
+    ///
+    /// # Errors
+    /// Returns `InvalidConfiguration` for a missing or undrained attempt.
+    /// A failed protocol check leaves the pending attempt unchanged.
+    pub fn finish(&mut self) -> Result<TrellisDecodeAttempt, DecoderError> {
+        if !self
+            .attempt
+            .as_ref()
+            .is_some_and(|state| state.progress().ready_to_finish)
+        {
+            return Err(DecoderError::InvalidConfiguration(
+                "drain a pending resumable attempt before finishing".into(),
+            ));
+        }
+        let state = self.attempt.take().expect("checked pending attempt");
+        if let Some(terminal) = state.terminal {
+            return Ok(terminal);
+        }
+        let mut result = TrellisModel::finish_binary(
+            &self.decoder.scratch.float_progress,
+            state.total_columns,
+            state.bp_seconds,
+        );
+        result.bp_runs = u32::from(state.bp_ran);
+        if state.mode == DecodeMode::PredictionOnly {
+            result.dropped_log_mass = f64::NAN;
+        }
+        Ok(TrellisDecodeAttempt::Success(result))
+    }
+
+    /// Cancel a pending attempt. The next begin prepares and resets a fresh shot.
+    pub fn cancel(&mut self) {
+        self.attempt = None;
+        self.decoder.scratch.prepared = None;
+    }
+
+    /// Lifetime BP refresh count, including cancelled attempts.
+    #[must_use]
+    pub fn bp_refreshes(&self) -> u64 {
+        self.decoder.bp_refreshes()
     }
 }
 
@@ -4774,6 +5040,45 @@ fn and_not_assign(left: &mut [u64], right: &[u64]) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn resumable_unusable_scores_remain_an_engine_fault_and_can_be_cancelled() {
+        let decoder = super::TrellisDecoder::from_dem_str(
+            "error(0.2) D0 L0\nerror(0.1) D0",
+            super::TrellisConfig {
+                k: 1,
+                ..super::TrellisConfig::default()
+            },
+        )
+        .unwrap();
+        let mut bounded = decoder.into_resumable().unwrap();
+        bounded.begin(&[0]).unwrap();
+        // Inject an engine fault after valid preparation. It must never be
+        // reclassified as a genuine no-path that a committee could absorb.
+        bounded
+            .decoder
+            .scratch
+            .float_progress
+            .frontier
+            .parent
+            .masses[0] = f64::NAN;
+        let progress = bounded.step(1).unwrap();
+        assert!(progress.ready_to_finish);
+        assert_eq!(bounded.step(1).unwrap(), progress);
+        assert!(matches!(
+            bounded.finish().unwrap(),
+            super::TrellisDecodeAttempt::Error(super::DecoderError::InternalError(_))
+        ));
+        bounded.begin(&[0]).unwrap();
+        bounded.step(1).unwrap();
+        bounded.cancel();
+        bounded.begin(&[1]).unwrap();
+        bounded.step(usize::MAX).unwrap();
+        assert!(matches!(
+            bounded.finish().unwrap(),
+            super::TrellisDecodeAttempt::Success(_)
+        ));
+    }
+
     use super::{
         INT_METRIC_MAX, INT_METRIC_NEG_INF, MetricMode, SparseDem, TrellisConfig, TrellisDecoder,
         bp_score_probability, fixed_mul_round, fixed_mul_round_fast, i64_to_f64, logaddexp,

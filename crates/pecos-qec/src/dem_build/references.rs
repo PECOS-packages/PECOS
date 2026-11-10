@@ -86,11 +86,16 @@ pub(super) fn write_references(
             .map(|d| d.id)
             .collect())
     })?;
-    for (definition, &reference) in definitions
-        .detectors
-        .iter_mut()
-        .zip(references.detectors.values())
-    {
+    for definition in &mut definitions.detectors {
+        let reference = *references
+            .detectors
+            .get(&(definition.id as usize))
+            .ok_or_else(|| {
+                DemBuildError::Configuration(format!(
+                    "missing noiseless reference for detector {}",
+                    definition.id
+                ))
+            })?;
         definition.reference = Some(reference);
         let entry = definition_entry(
             &mut detectors,
@@ -113,11 +118,16 @@ pub(super) fn write_references(
             .map(|d| d.id)
             .collect())
     })?;
-    for (definition, &reference) in definitions
-        .observables
-        .iter_mut()
-        .zip(references.observables.values())
-    {
+    for definition in &mut definitions.observables {
+        let reference = *references
+            .observables
+            .get(&(definition.id as usize))
+            .ok_or_else(|| {
+                DemBuildError::Configuration(format!(
+                    "missing noiseless reference for observable {}",
+                    definition.id
+                ))
+            })?;
         definition.reference = Some(reference);
         definition_entry(
             &mut observables,
@@ -171,3 +181,6 @@ fn definition_entry<'a>(
     }
     entry
 }
+
+#[cfg(test)]
+mod tests;

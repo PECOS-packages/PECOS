@@ -40,8 +40,8 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   `reference` key, with `None` when absent.
   `pecos.qis_operation_trace_to_tick_circuit` requires
   `lowered_quantum_ops_complete: true` on every chunk, including terminal and
-  bookkeeping chunks. Stored traces containing `CRZ` are rejected; live traces
-  are unaffected because the runtime lowers CRZ. Malformed stored-trace fields
+  bookkeeping chunks. A `CRZ` in stored `lowered_quantum_ops` is rejected;
+  live traces are unaffected because the runtime lowers CRZ. Malformed trace fields
   raise `ValueError` where they previously raised `TypeError`. Non-quantum trace
   operations must deserialize as typed operations; legacy shapes are rejected.
 

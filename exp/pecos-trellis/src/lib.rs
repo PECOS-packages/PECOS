@@ -841,7 +841,8 @@ fn sort_parities<T: Ord + Copy>(records: &mut [T], scratch: &mut Vec<T>) {
 fn compact_parity_sort_matches_full_integer_order() {
     let mut scratch = Vec::new();
     let mut state = 0x0072_6f75_6e64_3439_u128;
-    for count in 0_usize..=512 {
+    for count in (0_usize..=512).chain([513, 514, 767, 1023, 1024, 1025]) {
+        let arrival_bits = if count <= 512 { 9 } else { 10 };
         for pattern in 0..6 {
             let mut values: Vec<u128> = (0..count)
                 .map(|i| {
@@ -850,9 +851,9 @@ fn compact_parity_sort_matches_full_integer_order() {
                         .wrapping_add(1);
                     match pattern {
                         0 => state,
-                        1 => (i as u128) << 9 | i as u128,
-                        2 => ((count - i) as u128) << 9 | i as u128,
-                        3 => (state % 4) << 9 | i as u128,
+                        1 => (i as u128) << arrival_bits | i as u128,
+                        2 => ((count - i) as u128) << arrival_bits | i as u128,
+                        3 => (state % 4) << arrival_bits | i as u128,
                         4 => u128::MAX,
                         _ => {
                             if i % 2 == 0 {
@@ -876,16 +877,17 @@ fn compact_parity_sort_matches_full_integer_order() {
 fn narrow_parity_sort_matches_full_integer_order() {
     let mut scratch = Vec::new();
     let mut state = 0x0072_6f75_6e64_3536_u64;
-    for count in 0_usize..=512 {
+    for count in (0_usize..=512).chain([513, 514, 767, 1023, 1024, 1025]) {
+        let arrival_bits = if count <= 512 { 9 } else { 10 };
         for pattern in 0..6 {
             let mut values: Vec<u64> = (0..count)
                 .map(|i| {
                     state = state.wrapping_mul(0x4385_df64_9fcc_f645).wrapping_add(1);
                     match pattern {
                         0 => state,
-                        1 => (i as u64) << 9 | i as u64,
-                        2 => ((count - i) as u64) << 9 | i as u64,
-                        3 => (state % 4) << 9 | i as u64,
+                        1 => (i as u64) << arrival_bits | i as u64,
+                        2 => ((count - i) as u64) << arrival_bits | i as u64,
+                        3 => (state % 4) << arrival_bits | i as u64,
                         4 => u64::MAX,
                         _ => {
                             if i % 2 == 0 {
@@ -1138,6 +1140,7 @@ struct FrontierScratch<M> {
     narrow_sort_scratch: Vec<u64>,
     use_narrow_merge_records: bool,
     use_compact_merge_records: bool,
+    merge_record_arrival_bits: u32,
     merge_word_masks: Vec<u64>,
     merge_word_indices: Vec<usize>,
     scores: Vec<M>,
@@ -1171,14 +1174,16 @@ impl<M: Copy> FrontierScratch<M> {
     fn merge(&mut self, fold: impl Fn(M, M) -> M) {
         self.sort_merge_indices();
         self.parent.clear(self.stride);
-        // Packed records hold a complete key above a nine-bit arrival index.
+        // Packed records hold a complete key above the original arrival index.
+        let arrival_bits = self.merge_record_arrival_bits;
+        let arrival_mask = (1_u64 << arrival_bits) - 1;
         if self.use_narrow_merge_records {
             merge_sorted_records(
                 &mut self.parent,
                 &self.branches,
                 self.narrow_merge_records
                     .iter()
-                    .map(|&record| (record >> 9, (record & 511) as usize)),
+                    .map(|&record| (record >> arrival_bits, (record & arrival_mask) as usize)),
                 self.stride,
                 fold,
             );
@@ -1188,9 +1193,12 @@ impl<M: Copy> FrontierScratch<M> {
             merge_sorted_records(
                 &mut self.parent,
                 &self.branches,
-                self.compact_merge_records
-                    .iter()
-                    .map(|&record| (record >> 9, (record & 511) as usize)),
+                self.compact_merge_records.iter().map(|&record| {
+                    (
+                        record >> arrival_bits,
+                        (record & u128::from(arrival_mask)) as usize,
+                    )
+                }),
                 self.stride,
                 fold,
             );
@@ -1309,8 +1317,14 @@ impl<M: Copy> FrontierScratch<M> {
         // a separate usize. The guarded mapping is injective and monotonic.
         let count = self.branches.masses.len();
         let width = self.merge_word_indices.len();
+        // Preserve the existing nine-bit records and key budgets through 512
+        // arrivals. A K=512 expansion can emit 1024 branches and needs ten bits.
+        let arrival_bits = if count <= 512 { 9 } else { 10 };
+        self.merge_record_arrival_bits = arrival_bits;
+        let arrival_mask = (1_u64 << arrival_bits) - 1;
+        let narrow_key_bits = 64 - arrival_bits;
         'try_trimmed: {
-            if (64..=512).contains(&count) && (width == 2 || width == 3) {
+            if (64..=1024).contains(&count) && (width == 2 || width == 3) {
                 // Remove only bits proven zero in every branch. Each word's
                 // significant span remains in its original lexicographic position.
                 let mut masks = [0_u64; 3];
@@ -1319,7 +1333,7 @@ impl<M: Copy> FrontierScratch<M> {
                         *mask = self.merge_word_masks[self.merge_word_indices[slot]];
                     }
                 } else {
-                    // An OR-mask span can only widen. Any sampled span above 55
+                    // An OR-mask span can only widen. An excessive sampled span
                     // proves complete-key packing impossible; no keys are dropped.
                     for index in [0, (count - 1) / 3, 2 * (count - 1) / 3, count - 1] {
                         let key = self.branches.key(index, self.stride);
@@ -1337,7 +1351,7 @@ impl<M: Copy> FrontierScratch<M> {
                             }
                         })
                         .sum();
-                    if sampled_bits > 55 {
+                    if sampled_bits > narrow_key_bits {
                         break 'try_trimmed;
                     }
                     for key in self.branches.words.chunks_exact(self.stride) {
@@ -1354,9 +1368,9 @@ impl<M: Copy> FrontierScratch<M> {
                         widths[slot] = 64 - masks[slot].leading_zeros() - shifts[slot];
                     }
                 }
-                // Reserve exactly nine bits for the original arrival index. The
-                // resulting complete record can use ordinary integer sorting.
-                if widths.iter().sum::<u32>() <= 55 {
+                // Reserve enough arrival bits without changing the key mapping
+                // or equal-key fold order for the existing <=512 branch path.
+                if widths.iter().sum::<u32>() <= narrow_key_bits {
                     self.narrow_merge_records.clear();
                     let first = self.merge_word_indices[0];
                     let second = self.merge_word_indices[1];
@@ -1370,7 +1384,8 @@ impl<M: Copy> FrontierScratch<M> {
                         {
                             let key = ((source[first] >> shifts[0]) << widths[1])
                                 | (source[second] >> shifts[1]);
-                            self.narrow_merge_records.push((key << 9) | index as u64);
+                            self.narrow_merge_records
+                                .push((key << arrival_bits) | index as u64);
                         }
                     } else {
                         let third = self.merge_word_indices[2];
@@ -1385,7 +1400,8 @@ impl<M: Copy> FrontierScratch<M> {
                                 | (source[second] >> shifts[1]))
                                 << widths[2])
                                 | (source[third] >> shifts[2]);
-                            self.narrow_merge_records.push((key << 9) | index as u64);
+                            self.narrow_merge_records
+                                .push((key << arrival_bits) | index as u64);
                         }
                     }
                     sort_parities(
@@ -1400,14 +1416,14 @@ impl<M: Copy> FrontierScratch<M> {
                         self.indices.extend(
                             self.narrow_merge_records
                                 .iter()
-                                .map(|&v| (v & 511) as usize),
+                                .map(|&v| (v & arrival_mask) as usize),
                         );
                     }
                     return;
                 }
             }
         }
-        if (64..=512).contains(&count) && (width == 2 || width == 3) {
+        if (64..=1024).contains(&count) && (width == 2 || width == 3) {
             self.compact_merge_records.clear();
             let mut eligible = true;
             if width == 2 {
@@ -1424,8 +1440,11 @@ impl<M: Copy> FrontierScratch<M> {
                         eligible = false;
                         break;
                     }
-                    self.compact_merge_records
-                        .push((u128::from(high) << 10) | (u128::from(low) << 9) | index as u128);
+                    self.compact_merge_records.push(
+                        (u128::from(high) << (arrival_bits + 1))
+                            | (u128::from(low) << arrival_bits)
+                            | index as u128,
+                    );
                 }
             } else {
                 for (index, source) in self
@@ -1438,14 +1457,14 @@ impl<M: Copy> FrontierScratch<M> {
                     let high = source[self.merge_word_indices[0]];
                     let middle = source[self.merge_word_indices[1]];
                     let low = source[self.merge_word_indices[2]];
-                    if high >> 54 != 0 || low > 1 {
+                    if high >> (63 - arrival_bits) != 0 || low > 1 {
                         eligible = false;
                         break;
                     }
                     self.compact_merge_records.push(
-                        (u128::from(high) << 74)
-                            | (u128::from(middle) << 10)
-                            | (u128::from(low) << 9)
+                        (u128::from(high) << (arrival_bits + 65))
+                            | (u128::from(middle) << (arrival_bits + 1))
+                            | (u128::from(low) << arrival_bits)
                             | index as u128,
                     );
                 }
@@ -1462,7 +1481,7 @@ impl<M: Copy> FrontierScratch<M> {
                     self.indices.extend(
                         self.compact_merge_records
                             .iter()
-                            .map(|&v| (v & 511) as usize),
+                            .map(|&v| (v & u128::from(arrival_mask)) as usize),
                     );
                 }
                 return;
@@ -2458,6 +2477,17 @@ impl TrellisDecoder {
     #[must_use]
     pub fn decode_attempt(&mut self, syndrome: &[u8]) -> TrellisDecodeAttempt {
         self.decode_attempt_with_mode(syndrome, DecodeMode::Full)
+    }
+
+    /// Decode without the discarded-mass diagnostic, retaining all other results.
+    ///
+    /// Retained class masses, evidence, confidence inputs and decoding decisions
+    /// use the same arithmetic and ordering as [`Self::decode_attempt`]. On a
+    /// successful result, `dropped_log_mass` is unavailable and set to NaN.
+    /// Preparation, error provenance and all existing default APIs are unchanged.
+    #[must_use]
+    pub fn decode_attempt_without_dropped_mass(&mut self, syndrome: &[u8]) -> TrellisDecodeAttempt {
+        self.decode_attempt_with_mode(syndrome, DecodeMode::PredictionOnly)
     }
 
     fn decode_attempt_with_mode(
@@ -4666,6 +4696,154 @@ mod tests {
     use std::collections::BTreeMap;
 
     #[test]
+    fn direct_without_dropped_mass_preserves_retained_results_and_errors() {
+        use super::TrellisDecodeAttempt::{Error, NoPath, Success};
+        let dem = SparseDem {
+            mechanisms: vec![
+                (0.2, vec![0, 1], vec![0]),
+                (0.1, vec![0], vec![1]),
+                (0.05, vec![1], vec![0]),
+            ],
+            detector_coords: BTreeMap::new(),
+            num_detectors: 3,
+            num_observables: 2,
+        };
+        let mut full = TrellisDecoder::from_sparse_dem(
+            &dem,
+            TrellisConfig {
+                k: 1,
+                delta: 1.0,
+                ..TrellisConfig::default()
+            },
+        )
+        .unwrap();
+        let mut diagnostic = full.fresh_worker();
+        let mut syndromes: Vec<Vec<u8>> = (0..8)
+            .map(|value| (0..3).map(|bit| (value >> bit) & 1).collect())
+            .collect();
+        syndromes.extend([vec![], vec![0], vec![0, 0, 0, 0], vec![1, 0, 0]]);
+        for syndrome in syndromes {
+            match (
+                full.decode_attempt(&syndrome),
+                diagnostic.decode_attempt_without_dropped_mass(&syndrome),
+            ) {
+                (Success(expected), Success(mut actual)) => {
+                    assert!(actual.dropped_log_mass.is_nan());
+                    actual.dropped_log_mass = expected.dropped_log_mass;
+                    assert_eq!(actual, expected);
+                }
+                (
+                    NoPath {
+                        error: a,
+                        transitions: at,
+                        dropped_states: ad,
+                        bp_seconds: ab,
+                    },
+                    NoPath {
+                        error: b,
+                        transitions: bt,
+                        dropped_states: bd,
+                        bp_seconds: bb,
+                    },
+                ) => {
+                    assert_eq!(a.to_string(), b.to_string());
+                    assert_eq!((at, ad, ab.to_bits()), (bt, bd, bb.to_bits()));
+                }
+                (Error(a), Error(b)) => assert_eq!(a.to_string(), b.to_string()),
+                _ => panic!("full and diagnostic modes disagree on failure provenance"),
+            }
+        }
+    }
+
+    #[test]
+    fn expanded_records_preserve_scalar_order_mass_and_fallbacks() {
+        let mut scratch = super::FrontierScratch::<f64>::default();
+        // Reuse across the old/new arrival-bit boundary, both packed formats,
+        // unsupported key shapes, a count fallback and a return to the old path.
+        for count in [512, 513, 1023, 1024, 1025, 64] {
+            let arrival_bits = if count <= 512 { 9 } else { 10 };
+            for width in [2, 3] {
+                for wide in [false, true] {
+                    for shape in 0..4 {
+                        let stride = if wide { 7 } else { width };
+                        let detector_words = stride - 1;
+                        scratch.reset(
+                            &vec![0; detector_words],
+                            &[0],
+                            &vec![u64::MAX; detector_words],
+                            0.0,
+                        );
+                        let positions = if width == 2 {
+                            [detector_words - 1, stride - 1, 0]
+                        } else {
+                            [detector_words - 1, 0, stride - 1]
+                        };
+                        for index in 0..count {
+                            let logical = if width == 2 { 1 } else { 2 };
+                            let mut key = [0_u64; 3];
+                            if shape == 0 {
+                                key[0] = 1 + (index % 7) as u64;
+                                key[1] = 1 + ((index / 7) % 5) as u64;
+                                if width == 3 {
+                                    key[2] = 1 + ((index / 35) % 3) as u64;
+                                }
+                            } else {
+                                key[0] = if width == 2 {
+                                    u64::MAX - (index % 7) as u64
+                                } else if shape == 2 {
+                                    1_u64 << (63 - arrival_bits)
+                                } else {
+                                    (1_u64 << (63 - arrival_bits)) - 1
+                                };
+                                if width == 3 {
+                                    key[1] = u64::MAX - ((index / 7) % 5) as u64;
+                                }
+                                key[logical] = if shape == 3 || (shape == 2 && width == 2) {
+                                    2
+                                } else {
+                                    ((index / 35) % 2) as u64
+                                };
+                            }
+                            let mut words = vec![0_u64; stride];
+                            for slot in 0..width {
+                                words[positions[slot]] = key[slot];
+                            }
+                            scratch.branches.words.extend_from_slice(&words);
+                            scratch.branches.masses.push(match index % 4 {
+                                0 => -1e-16,
+                                1 => -80.0,
+                                2 => -0.2,
+                                _ => -5.0,
+                            });
+                        }
+                        let mut oracle = scratch.clone();
+                        oracle.merge_reference(super::logaddexp);
+                        scratch.merge(super::logaddexp);
+                        assert_eq!(scratch.indices, oracle.indices);
+                        assert_eq!(scratch.parent.words, oracle.parent.words);
+                        assert!(
+                            scratch.parent.masses.iter().map(|x| x.to_bits()).eq(oracle
+                                .parent
+                                .masses
+                                .iter()
+                                .map(|x| x.to_bits()))
+                        );
+                        assert_eq!(scratch.merge_record_arrival_bits, arrival_bits);
+                        assert_eq!(
+                            scratch.use_narrow_merge_records,
+                            count <= 1024 && shape == 0
+                        );
+                        assert_eq!(
+                            scratch.use_compact_merge_records,
+                            count <= 1024 && shape <= 1
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn short_state_comparisons_match_generic_word_order() {
         use rand::{RngExt, SeedableRng};
         let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(918_341);
@@ -4836,7 +5014,7 @@ mod tests {
         for width in [2, 3] {
             for wide in [false, true] {
                 let stride = if wide { 7 } else { width };
-                for count in [0, 1, 63, 64, 65, 127, 511, 512, 513, 64] {
+                for count in [0, 1, 63, 64, 65, 127, 511, 512, 513, 1023, 1024, 1025, 64] {
                     for spans in [
                         [0, 0, 0],
                         [1, 1, 1],
@@ -4932,9 +5110,10 @@ mod tests {
                                     .map(|x| x.to_bits())
                                     .collect::<Vec<_>>()
                             );
-                            let expected = (64..=512).contains(&count)
+                            let key_bits = if count <= 512 { 55 } else { 54 };
+                            let expected = (64..=1024).contains(&count)
                                 && (2..=3).contains(&scratch.merge_word_indices.len())
-                                && spans[..width].iter().sum::<u32>() <= 55;
+                                && spans[..width].iter().sum::<u32>() <= key_bits;
                             assert_eq!(scratch.use_narrow_merge_records, expected);
                         }
                     }
@@ -4947,9 +5126,9 @@ mod tests {
     fn sampled_and_unsampled_overflow_preserve_exact_merge_order() {
         let mut scratch = super::FrontierScratch::<f64>::default();
         for width in [2, 3] {
-            for count in [64, 128, 512] {
+            for count in [64, 128, 512, 513, 1023, 1024, 1025] {
                 for special in [0, 1, count / 3, count - 1] {
-                    for high_bit in [53, 54] {
+                    for high_bit in [52, 53, 54] {
                         let detector_words = width - 1;
                         scratch.reset(
                             &vec![0; detector_words],
@@ -5014,7 +5193,11 @@ mod tests {
                                 .map(|x| x.to_bits())
                                 .collect::<Vec<_>>()
                         );
-                        assert_eq!(scratch.use_narrow_merge_records, high_bit == 53);
+                        let key_bits = if count <= 512 { 55 } else { 54 };
+                        assert_eq!(
+                            scratch.use_narrow_merge_records,
+                            count <= 1024 && high_bit + 2 <= key_bits
+                        );
                     }
                 }
             }
@@ -6084,7 +6267,7 @@ fn compact_records_preserve_full_keys_arrival_and_mass_bits_at_boundaries() {
         // Reuse scratch across packed and fallback shapes, including a shorter
         // next column, to catch stale mode flags or partially built records.
         for count in [
-            0, 1, 63, 64, 65, 127, 128, 129, 255, 256, 511, 512, 513, 64, 128, 1,
+            0, 1, 63, 64, 65, 127, 128, 129, 255, 256, 511, 512, 513, 1023, 1024, 1025, 64, 128, 1,
         ] {
             for pattern in 0..7 {
                 frontier.branches.words.clear();
@@ -6166,7 +6349,7 @@ fn compact_records_preserve_full_keys_arrival_and_mass_bits_at_boundaries() {
                         .eq(expected_masses.iter().map(|v| v.to_bits())),
                     "original left fold bits"
                 );
-                if !(64..=512).contains(&count)
+                if !(64..=1024).contains(&count)
                     || pattern == 3
                     || pattern == 6
                     || (stride > 2 && (pattern == 4 || pattern == 5))

@@ -249,6 +249,35 @@ impl FrontierCommittee {
         resolve_committee_attempts(forward_attempt, backward_attempt)
     }
 
+    /// Decode with full retained class masses and confidence, without the
+    /// discarded-prefix-mass diagnostic.
+    ///
+    /// This explicit opt-in uses the same configured pruning parameters,
+    /// retained states, floating-point reduction order, and committee arbitration
+    /// as [`Self::decode`]. It preserves the predicted class, complete retained
+    /// logical-mass vector, retained log evidence, class gap, directions, statuses,
+    /// transition counts, and dropped-state counts. The selected result's
+    /// [`FrontierResult::dropped_log_mass`] is unavailable and is set to `NaN`.
+    ///
+    /// Skipping that diagnostic avoids sorting discarded states and summing their
+    /// masses at every pruning step. Discarded mass is not used to score, prune,
+    /// merge, normalize the retained class masses, or select a committee leg.
+    /// Call [`Self::decode`] when the discarded-mass diagnostic is required;
+    /// its behavior and default remain unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors, including genuine no-path and non-no-path engine
+    /// failures, as [`Self::decode`]. This does not enable retries or recovery.
+    pub fn decode_without_dropped_mass(
+        &mut self,
+        syndrome: &[u8],
+    ) -> Result<FrontierCommitteeResult, DecoderError> {
+        let forward_attempt = self.forward.decode_attempt_without_dropped_mass(syndrome);
+        let backward_attempt = self.backward.decode_attempt_without_dropped_mass(syndrome);
+        resolve_committee_attempts(forward_attempt, backward_attempt)
+    }
+
     /// Decode like [`Self::decode`], running the backward leg on a second thread.
     ///
     /// The legs share no state, so the result is identical to [`Self::decode`];

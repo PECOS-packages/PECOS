@@ -820,7 +820,7 @@ def test_from_guppy_zero_relaxation_time_still_requests_idle_noise(time_param: s
         _two_qubit_dem(**{**dict.fromkeys(["t1", "t2"], 100.0), time_param: 0.0})
 
 
-@pytest.mark.parametrize("time_param, partner", [("t1", "t2"), ("t2", "t1")])
+@pytest.mark.parametrize(("time_param", "partner"), [("t1", "t2"), ("t2", "t1")])
 def test_from_guppy_rejects_lone_relaxation_time_with_idle_gates(time_param: str, partner: str) -> None:
     with pytest.raises(ValueError, match=rf"{time_param} requires {partner}"):
         _two_qubit_dem(idle_after_2q_duration=1.0, **{time_param: 100.0})
@@ -851,7 +851,9 @@ def test_build_dem_from_guppy_rejects_idle_noise_without_idle_gates() -> None:
     for idle_param, value in _ALL_IDLE_NOISE_PARAMS.items():
         with pytest.raises(
             ValueError,
-            match="requires t" if idle_param in {"t1", "t2"} else "idle-noise parameters have no idle gates .*requested:",
+            match=(
+                "requires t" if idle_param in {"t1", "t2"} else "idle-noise parameters have no idle gates .*requested:"
+            ),
         ):
             build_dem_from_guppy(
                 _two_qubit_idle_target,
@@ -2687,7 +2689,12 @@ def test_deferred_runtime_trace_requires_complete_framing() -> None:
             ],
             "lowered_quantum_ops_complete": True,
         },
-        {"operations": [], "lowered_quantum_ops": [], "stage": "trace_complete"},
+        {
+            "operations": [],
+            "lowered_quantum_ops": [],
+            "lowered_quantum_ops_complete": True,
+            "stage": "trace_complete",
+        },
     ]
     for index, chunk in enumerate(chunks):
         chunk.update(
@@ -2697,9 +2704,9 @@ def test_deferred_runtime_trace_requires_complete_framing() -> None:
             chunk_index=index,
             num_operations=len(chunk["operations"]),
         )
-    _reject_partially_lowered_trace(chunks)
-    with pytest.raises(ValueError, match="terminal trace_complete"):
-        _reject_partially_lowered_trace(chunks[:-1])
+    _replay_qis_trace_chunks_into_tick_circuit(chunks)
+    with pytest.raises(ValueError, match="trace_complete"):
+        _replay_qis_trace_chunks_into_tick_circuit(chunks[:-1])
     chunks[0]["runtime_lowering_deferred"] = False
-    with pytest.raises(ValueError, match="mixed/partially-lowered"):
-        _reject_partially_lowered_trace(chunks)
+    with pytest.raises(ValueError, match="no lowered_quantum_ops"):
+        _replay_qis_trace_chunks_into_tick_circuit(chunks)

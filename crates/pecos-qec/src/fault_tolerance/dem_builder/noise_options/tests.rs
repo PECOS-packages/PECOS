@@ -840,4 +840,14 @@ fn idle_diagnostics_preserve_public_parameters() {
     let raw =
         NoiseConfig::default().set_idle_linear(IdleNoiseFamily::new(0.01, map(&[("X", 1.0)])));
     assert_eq!(raw.idle_noise_request().unwrap(), "p_idle_linear = 0.01");
+    let reconfigured = NoiseConfig::try_from(NoiseOptions {
+        p_idle_x_linear_rate: Some(0.01),
+        ..NoiseOptions::default()
+    })
+    .unwrap()
+    .set_idle(0.02);
+    assert_eq!(
+        reconfigured.idle_noise_request().unwrap(),
+        "p_idle = 0.02, p_idle_linear = 1"
+    );
 }

@@ -2892,7 +2892,8 @@ pub struct NoiseConfig {
     /// Default is 0.0 (no idle noise).
     pub p_idle: f64,
     /// Original public idle parameters supplied through `NoiseOptions`, for diagnostics.
-    /// Empty for raw configurations; does not determine whether idle noise is active.
+    /// Empty for raw configurations and cleared by the idle setters; does not determine
+    /// whether idle noise is active.
     pub idle_noise_parameters: BTreeMap<String, f64>,
     /// Optional T1 relaxation time (in the same time units as idle duration).
     ///
@@ -3674,6 +3675,7 @@ impl NoiseConfig {
     #[must_use]
     pub fn set_idle(mut self, p_idle: f64) -> Self {
         self.p_idle = p_idle;
+        self.idle_noise_parameters.clear();
         self
     }
 
@@ -3681,6 +3683,7 @@ impl NoiseConfig {
     #[must_use]
     pub fn set_idle_linear(mut self, family: IdleNoiseFamily) -> Self {
         self.p_idle_linear = family;
+        self.idle_noise_parameters.clear();
         self
     }
 
@@ -3688,6 +3691,7 @@ impl NoiseConfig {
     #[must_use]
     pub fn set_idle_quadratic(mut self, family: IdleNoiseFamily) -> Self {
         self.p_idle_quadratic = family;
+        self.idle_noise_parameters.clear();
         self
     }
 
@@ -3695,6 +3699,7 @@ impl NoiseConfig {
     #[must_use]
     pub fn set_idle_quadratic_sine(mut self, family: IdleNoiseFamily) -> Self {
         self.p_idle_quadratic_sine = family;
+        self.idle_noise_parameters.clear();
         self
     }
 
@@ -3720,6 +3725,7 @@ impl NoiseConfig {
         );
         self.t1 = Some(t1);
         self.t2 = Some(t2);
+        self.idle_noise_parameters.clear();
         self
     }
 
@@ -3917,6 +3923,7 @@ impl NoiseConfig {
             self.t2 = Some(t2);
         }
         self.p_idle = 0.0;
+        self.idle_noise_parameters.clear();
         self
     }
 

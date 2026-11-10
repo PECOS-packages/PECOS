@@ -31,6 +31,7 @@ use std::sync::{Condvar, Mutex};
 
 mod decoder_reads;
 pub mod ffi;
+mod provenance;
 mod random;
 mod selene;
 mod shot;
@@ -117,8 +118,8 @@ pub struct ExecutionContext {
     pub named_results: Mutex<BTreeMap<String, NamedResult>>,
     /// Runtime provenance for bool outputs and scalar integer 0/1 calls.
     pub named_result_traces: Mutex<Vec<NamedResultTrace>>,
-    /// Result IDs read since the last named output consumed them.
-    pub pending_result_reads: Mutex<Vec<usize>>,
+    /// Byte shadows and call frames, owned by this shot.
+    shadows: Mutex<provenance::Shadows>,
     /// First termination or output error; reset before the next program starts.
     pub program_error: Mutex<Option<ProgramError>>,
     /// Program-seeded classical RNG; absent until seeded in the current shot.
@@ -128,7 +129,7 @@ pub struct ExecutionContext {
     /// Selene program time cursor; independent of runtime scheduling.
     time_cursor: AtomicU64,
     /// Live libc allocations owned by this program execution, keyed by address.
-    pub program_allocations: Mutex<BTreeSet<usize>>,
+    pub program_allocations: Mutex<BTreeMap<usize, usize>>,
     /// Number of allocations actually freed for this context.
     pub program_allocation_frees: AtomicUsize,
 }
@@ -214,6 +215,17 @@ pub extern "C" fn pecos_cleanup_program_allocations() {
     }
 }
 
+/// Source location supplied by the output ABI, independent of element count.
+#[derive(Clone, Copy)]
+enum OutputLocation {
+    Scalar,
+    Array {
+        address: usize,
+    },
+    /// Host storage API has values but no program-memory address.
+    UnavailableArray,
+}
+
 impl ExecutionContext {
     /// Create a new execution context with default state
     #[must_use]
@@ -235,12 +247,12 @@ impl ExecutionContext {
             runtime_response: Mutex::new(None),
             named_results: Mutex::new(BTreeMap::new()),
             named_result_traces: Mutex::new(Vec::new()),
-            pending_result_reads: Mutex::new(Vec::new()),
+            shadows: Mutex::new(provenance::Shadows::default()),
             program_error: Mutex::new(None),
             program_rng: Mutex::new(None),
             program_shot: AtomicU64::new(0),
             time_cursor: AtomicU64::new(0),
-            program_allocations: Mutex::new(BTreeSet::new()),
+            program_allocations: Mutex::new(BTreeMap::new()),
             program_allocation_frees: AtomicUsize::new(0),
         }
     }
@@ -293,8 +305,8 @@ impl ExecutionContext {
         if let Ok(mut traces) = self.named_result_traces.lock() {
             traces.clear();
         }
-        if let Ok(mut reads) = self.pending_result_reads.lock() {
-            reads.clear();
+        if let Ok(mut shadows) = self.shadows.lock() {
+            *shadows = provenance::Shadows::default();
         }
     }
 
@@ -314,7 +326,10 @@ impl ExecutionContext {
             };
             std::mem::take(&mut *allocations)
         };
-        for address in allocations {
+        for (address, size) in allocations {
+            if let Ok(mut shadows) = self.shadows.lock() {
+                shadows.clear_memory(address, size);
+            }
             unsafe { self.free_program_allocation(std::ptr::with_exposed_provenance_mut(address)) };
         }
     }
@@ -327,45 +342,21 @@ impl ExecutionContext {
         LIVE_PROGRAM_ALLOCATIONS.fetch_sub(1, Ordering::SeqCst);
     }
 
-    /// Record that program execution read a runtime measurement result.
-    pub fn record_result_read(&self, result_id: usize) {
-        if let Ok(mut reads) = self.pending_result_reads.lock() {
-            reads.push(result_id);
-        } else {
-            log::error!("ExecutionContext::record_result_read failed to acquire lock");
-        }
-    }
-
-    fn take_result_reads(&self, count: usize) -> Vec<usize> {
-        if count == 0 {
-            return Vec::new();
-        }
-        let Ok(mut reads) = self.pending_result_reads.lock() else {
-            log::error!("ExecutionContext::take_result_reads failed to acquire lock");
-            return Vec::new();
-        };
-        if reads.len() != count {
-            log::warn!(
-                "Named result output expected exactly {count} result read(s), but {} were recorded; refusing ambiguous provenance",
-                reads.len()
-            );
-            reads.clear();
-            return Vec::new();
-        }
-        reads.drain(..).collect()
-    }
-
-    fn store_named_result_trace(&self, name: &str, values: &[bool], result_ids: Vec<usize>) {
-        if let Ok(mut traces) = self.named_result_traces.lock() {
-            traces.push(NamedResultTrace {
-                name: name.to_string(),
-                values: values.to_vec(),
-                result_ids,
-            });
-        } else {
-            log::error!(
-                "ExecutionContext::store_named_result_trace failed to acquire lock for '{name}'"
-            );
+    /// Overwrite the last-read stash, including sourceless native reads.
+    pub fn stash_result_source(&self, source: Option<usize>) {
+        match self.shadows.lock() {
+            Ok(mut shadows) => {
+                shadows.seed = Some(
+                    source
+                        .filter(|&id| id < pecos_qis_ffi_types::RUNTIME_REQUEST_RESULT_ID)
+                        .map_or(pecos_qis_ffi_types::ValueProvenance::Unknown, |id| {
+                            pecos_qis_ffi_types::ValueProvenance::Measurement { id }
+                        }),
+                );
+            }
+            Err(_) => self.record_program_error(ProgramError::NamedResult(
+                "poisoned provenance stash".into(),
+            )),
         }
     }
 
@@ -383,9 +374,50 @@ impl ExecutionContext {
         }
     }
 
-    /// Append one call's values, consuming reads only for nonempty bool calls.
+    /// Append one call's values and capture explicit bool provenance when available.
     /// `is_scalar` describes the entry point, not the number of elements.
     pub fn store_named_result(&self, name: &str, values: NamedResult, is_scalar: bool) {
+        let location = if is_scalar {
+            OutputLocation::Scalar
+        } else {
+            OutputLocation::UnavailableArray
+        };
+        self.store_named_result_with_address(name, values, location);
+    }
+
+    // Each bool output consumes its binding before storage, validation or sticky-error
+    // return. Recover only the pending slot from a poisoned lock, never its shadows.
+    fn take_output_binding(&self) -> Result<Option<pecos_qis_ffi_types::ValueProvenance>, String> {
+        match self.shadows.lock() {
+            Ok(mut shadows) => Ok(shadows.binding.take()),
+            Err(error) => {
+                error.into_inner().binding.take();
+                Err("poisoned output shadow".into())
+            }
+        }
+    }
+
+    fn store_named_result_with_address(
+        &self,
+        name: &str,
+        values: NamedResult,
+        location: OutputLocation,
+    ) {
+        let is_bool_call = matches!(&values, NamedResult::Bool(_));
+        let binding = if is_bool_call {
+            match self.take_output_binding() {
+                Ok(binding) => binding,
+                Err(reason) => {
+                    self.record_program_error(ProgramError::NamedResult(format!(
+                        "{name}: {reason}"
+                    )));
+                    return;
+                }
+            }
+        } else {
+            None
+        };
+        let is_scalar = matches!(location, OutputLocation::Scalar);
         let Ok(error) = self.program_error.lock() else {
             return;
         };
@@ -398,9 +430,8 @@ impl ExecutionContext {
         // Integer arrays never trace, including one-element arrays; the old
         // integer detector convention had only scalar calls. Static certification
         // recognizes only real bool outputs.
-        // Only real bool calls drain reads; an empty bool array has no reads to
-        // drain and keeps an empty trace. Storage follows declared call types.
-        let is_bool_call = matches!(&values, NamedResult::Bool(_));
+        // Only real bool calls bind provenance. Empty bool arrays retain an
+        // empty trace. Storage follows declared call types.
         let bool_values = match &values {
             NamedResult::Bool(values) => Some(values.clone()),
             _ if values.is_empty() => None,
@@ -431,12 +462,65 @@ impl ExecutionContext {
             return;
         }
         if let Some(values) = bool_values {
-            let result_ids = if is_bool_call {
-                self.take_result_reads(values.len())
+            let captured = if is_bool_call {
+                self.shadows
+                    .lock()
+                    .map_err(|_| "poisoned output shadow".to_string())
+                    .and_then(|shadows| {
+                        let array = match location {
+                            OutputLocation::Scalar => None,
+                            OutputLocation::Array { address } => Some(address),
+                            OutputLocation::UnavailableArray if shadows.instrumented => {
+                                return Err(
+                                    "instrumented bool array output has no program-memory address"
+                                        .into(),
+                                );
+                            }
+                            OutputLocation::UnavailableArray => return Ok((None, None)),
+                        };
+                        shadows
+                            .output(binding, array, values.len())
+                            .map(|provenance| {
+                                let control =
+                                    provenance.as_ref().map(|_| shadows.control_dependent);
+                                (provenance, control)
+                            })
+                    })
             } else {
-                Vec::new()
+                Ok((None, None))
             };
-            self.store_named_result_trace(name, &values, result_ids);
+            let (provenance, control_dependent) = match captured {
+                Ok(value) => value,
+                Err(reason) => {
+                    self.record_program_error(ProgramError::NamedResult(format!(
+                        "{name}: {reason}"
+                    )));
+                    return;
+                }
+            };
+            let result_ids = provenance
+                .as_ref()
+                .and_then(|p| {
+                    p.iter()
+                        .map(|v| match v {
+                            pecos_qis_ffi_types::ValueProvenance::Measurement { id } => Some(*id),
+                            _ => None,
+                        })
+                        .collect::<Option<Vec<_>>>()
+                })
+                .unwrap_or_default();
+            match self.named_result_traces.lock() {
+                Ok(mut traces) => traces.push(NamedResultTrace {
+                    name: name.to_string(),
+                    values,
+                    result_ids,
+                    provenance,
+                    control_dependent,
+                }),
+                Err(error) => self.record_program_error(ProgramError::NamedResult(format!(
+                    "Failed to trace named result '{name}': {error}"
+                ))),
+            }
         }
     }
 
@@ -447,7 +531,13 @@ impl ExecutionContext {
 
     /// Store a named result array (multiple bool values).
     pub fn store_named_array(&self, name: &str, values: &[bool]) {
-        self.store_named_result(name, NamedResult::Bool(values.to_vec()), false);
+        self.store_named_result_with_address(
+            name,
+            NamedResult::Bool(values.to_vec()),
+            OutputLocation::Array {
+                address: values.as_ptr() as usize,
+            },
+        );
     }
 
     /// Get all named results (returns a clone)
@@ -1722,6 +1812,8 @@ mod tests {
                     name: "answer".into(),
                     values: vec![true],
                     result_ids: vec![0],
+                    provenance: None,
+                    control_dependent: None,
                 });
             assert_eq!(
                 pecos_get_named_results_json_with_context(ctx, &raw mut json),

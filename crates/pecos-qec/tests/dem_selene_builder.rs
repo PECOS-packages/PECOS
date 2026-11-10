@@ -463,7 +463,7 @@ fn classical_delay_trace_uses_existing_idle_noise_in_nanoseconds() {
         .build()
         .unwrap();
     let idles: Vec<_> = build
-        .circuit
+        .circuit()
         .iter_gate_batches()
         .filter(|gate| gate.as_gate().gate_type == GateType::Idle)
         .map(|gate| gate.as_gate().params[0])
@@ -495,7 +495,7 @@ fn half_turn_keeps_two_qubit_noise_and_idle_sites() {
             .build()
             .unwrap();
         let gates: Vec<_> = build
-            .circuit
+            .circuit()
             .ticks()
             .iter()
             .flat_map(pecos_quantum::Tick::gate_batches)

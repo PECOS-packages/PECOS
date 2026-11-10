@@ -883,14 +883,25 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   expose a `ProjectionReport` via `.projection` when preparation shares a projection.
 
 - Rendered surface-code SZ teleportation uses `correction="physical"` by default
-  to execute the conditional logical Z (the Guppy/Helios idiom), or
-  `correction="record"` to only record `sz_correction` for frame tracking.
+  to execute the conditional logical Z (the Guppy/Helios idiom),
+  `correction="frame"` to track the deferred Z in a Guppy logical frame,
+  or `correction="record"` to only record `sz_correction` for frame tracking.
   These string modes replace the boolean switch; other values raise `ValueError`.
-  Both modes output the frame bit.
+  All three modes output the frame bit. The factory's Z readout commutes with
+  the deferred Z, so noiseless `final_data` is identical shot for shot in all
+  three modes. Frame mode changes readouts only in a basis the pending Pauli
+  flips, as in the signed X-readout witness and mask-extraction fixture.
   The builder's observable mask remains the DEM in all cases; exported
   `crossed_teleportations` will support a future executed-run transcription.
-  Mask extraction on rows from a program that executed the correction counts it
-  twice.
+  For those signed readouts, physical and frame modes have already resolved
+  the correction, so applying the mask counts it twice; record mode leaves it
+  for the mask. The factory's commuting Z readout does not distinguish them.
+
+- Surface-code protocol, standalone T, and hook modules render a `PauliFrame`
+  struct and H, S, CX, SZ-teleportation, and orientation-aware readout helpers
+  that borrow it. `apply_t_teleportation_framed` adjusts the raw T/TDG decision by the
+  data's X frame and propagates the frame through physical feed-forward.
+  The resource must have zero frame; decoded frame decisions remain deferred.
 
 - `t_teleportation_decision_model(patch, rounds_before)` models the first T/TDG
   teleportation correction decision. `detection_events` transcribes a program's

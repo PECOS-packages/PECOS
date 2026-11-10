@@ -1025,15 +1025,20 @@ def make_sz_teleportation(
     """Y-ancilla SZ teleportation followed by data-only memory and Z readout.
 
     ``correction="physical"`` (default) executes the conditional logical Z;
-    ``"record"`` applies nothing. Both modes output ``sz_correction``.
-    Other values raise ValueError; accepted values are "physical" and "record"."""
-    if correction not in ("physical", "record"):
-        raise ValueError("correction must be physical or record")
+    ``"frame"`` tracks it in a logical frame; ``"record"`` applies nothing.
+    This factory's Z readout commutes with the deferred Z, so final_data
+    is identical in all three modes shot for shot in noiseless execution.
+    Frame correction changes readouts only in a basis flipped by the pending Pauli.
+    All modes output ``sz_correction``.
+    Other values raise ValueError; accepted values are "physical", "frame", and "record"."""
+    if correction not in ("physical", "frame", "record"):
+        raise ValueError("correction must be physical, frame, or record")
     if rounds_before < 1:
         raise ValueError("SZ teleportation requires rounds_before >= 1 to record the resource sign before CX")
     def sz_teleportation() -> None:
         """SZ teleportation experiment."""
         data = prep_z_basis()
+        frame = PauliFrame(False, False)
         anc = prep_y_basis()
         syn = syndrome_extraction_data(data)
         output("synx_data", syn.synx)
@@ -1058,15 +1063,20 @@ def make_sz_teleportation(
             output("synz_anc", syn.synz)
         final = measure_z_basis(anc)
         output("final_anc", final)
+        decision = sz_teleportation_decision(first, final)
         if comptime(correction == "physical"):
-            correct_sz_teleportation(data, sz_teleportation_decision(first, final))
+            correct_sz_teleportation(data, decision)
         else:
-            output("sz_correction", sz_teleportation_decision(first, final))
+            output("sz_correction", decision)
+        if comptime(correction == "frame"):
+            frame_sz_teleportation(frame, decision)
         for _ in range(comptime(trailing_data_rounds)):
             syn = syndrome_extraction_data(data)
             output("synx_data", syn.synx)
             output("synz_data", syn.synz)
         final = measure_z_basis(data)
+        if comptime(correction == "frame"):
+            frame_correct_z_readout(frame, final)
         output("final_data", final)
     return guppy(variant_scoped(
         sz_teleportation, rounds_before, rounds_after, trailing_data_rounds, correction,
@@ -1157,6 +1167,74 @@ def make_logical_y_readout_experiment(num_rounds: int):
     return guppy(variant_scoped(logical_y_readout, num_rounds))
 
 from guppylang.std.quantum import t, tdg, z
+
+@guppy.struct
+class PauliFrame:
+    """Pending logical Pauli X^x Z^z on one patch, sign-free."""
+    x: bool
+    z: bool
+
+
+@guppy
+def frame_h(frame: PauliFrame) -> None:
+    x = frame.x
+    frame.x = frame.z
+    frame.z = x
+
+
+@guppy
+def frame_s(frame: PauliFrame) -> None:
+    frame.z = frame.z != frame.x
+
+
+@guppy
+def frame_cx(ctrl: PauliFrame, tgt: PauliFrame) -> None:
+    tgt.x = tgt.x != ctrl.x
+    ctrl.z = ctrl.z != tgt.z
+
+
+@guppy
+def frame_sz_teleportation(frame: PauliFrame, decision: bool) -> None:
+    """Net S on the frame, then the deferred Z byproduct."""
+    frame_s(frame)
+    frame.z = frame.z != decision
+
+
+@guppy
+def frame_correct_z_readout(frame: PauliFrame, bits: array[bool, 9]) -> None:
+    """Correct Z readout in the canonical orientation."""
+    if frame.x:
+        bits[0] = not bits[0]
+        bits[3] = not bits[3]
+        bits[6] = not bits[6]
+
+
+@guppy
+def frame_correct_x_readout(frame: PauliFrame, bits: array[bool, 9]) -> None:
+    """Correct X readout in the canonical orientation."""
+    if frame.z:
+        bits[0] = not bits[0]
+        bits[1] = not bits[1]
+        bits[2] = not bits[2]
+
+
+@guppy
+def frame_correct_z_readout_swapped(frame: PauliFrame, bits: array[bool, 9]) -> None:
+    """Correct Z readout in the swapped orientation."""
+    if frame.x:
+        bits[0] = not bits[0]
+        bits[1] = not bits[1]
+        bits[2] = not bits[2]
+
+
+@guppy
+def frame_correct_x_readout_swapped(frame: PauliFrame, bits: array[bool, 9]) -> None:
+    """Correct X readout in the swapped orientation."""
+    if frame.z:
+        bits[0] = not bits[0]
+        bits[3] = not bits[3]
+        bits[6] = not bits[6]
+
 
 @guppy
 def prep_injection_z_seed() -> SurfaceCode_3x3:
@@ -1372,6 +1450,15 @@ def apply_t_teleportation(data: SurfaceCode_3x3, resource: SurfaceCode_3x3 @ own
     """Noiseless convenience: use raw parity as the correction decision."""
     outcome = consume_t_resource(data, resource)
     correct_t_teleportation(data, outcome, dagger)
+
+
+@guppy
+def apply_t_teleportation_framed(data: SurfaceCode_3x3, resource: SurfaceCode_3x3 @ owned,
+                                 frame: PauliFrame, dagger: bool) -> None:
+    """Noiseless raw-parity T/TDG with a data frame and a zero-frame canonical resource."""
+    decision = consume_t_resource(data, resource) != frame.x
+    correct_t_teleportation(data, decision, dagger)
+    frame.z = frame.z != (frame.x & decision)
 
 
 def make_t_teleportation(rounds_before: int = 0, rounds_after: int = 0, *,

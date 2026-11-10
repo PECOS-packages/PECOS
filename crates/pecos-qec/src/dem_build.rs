@@ -295,17 +295,6 @@ impl PreparedDem {
     /// # Errors
     /// Rejects idle noise without idle gates and unsupported noise models.
     pub fn build_dem(&self, noise: NoiseConfig) -> Result<DemBuild, DemBuildError> {
-        if (noise.uses_dedicated_idle_noise() || noise.idle_rz != 0.0)
-            && !self
-                .schema
-                .circuit
-                .iter_gate_batches()
-                .any(|batch| batch.gate_type == pecos_core::gate_type::GateType::Idle)
-        {
-            return Err(DemBuildError::Configuration(
-                "idle-noise parameters have no idle gates to attach to".into(),
-            ));
-        }
         // The DEM builder only reads the circuit, so the prepared schema stays shared.
         let dem = DemBuilder::try_from_tick_circuit_with_noise_config(&self.schema.circuit, noise)?;
         Ok(DemBuild {

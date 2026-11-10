@@ -176,16 +176,20 @@ fn public_runtimes_support_explicit_and_inferred_lazy_measurement_dems() {
             .build()
             .unwrap();
             if inferred {
-                let report = build.inference.as_ref().unwrap();
+                let report = build.prepared().inference().unwrap();
                 assert_eq!(report.raw_measurement_ids, [2, 0, 1]);
                 assert_eq!(report.detector_supports, [vec![2, 0]]);
                 assert_eq!(report.observable_supports, [vec![1]]);
-                let (detectors, observables) = build.evaluate_runtime_record(&[1, 1, 0]).unwrap();
+                let (detectors, observables) = build
+                    .prepared()
+                    .evaluate_runtime_record(&[1, 1, 0])
+                    .unwrap();
                 assert_eq!(detectors, [1]);
                 assert!(observables.get(0));
             } else {
-                assert!(build.inference.is_none());
-                let (detectors, observables) = build.evaluate_runtime_record(&[1]).unwrap();
+                assert!(build.prepared().inference().is_none());
+                let (detectors, observables) =
+                    build.prepared().evaluate_runtime_record(&[1]).unwrap();
                 assert_eq!(detectors, [1]);
                 assert!(observables.is_zero());
             }
@@ -489,13 +493,14 @@ fn classical_delay_trace_uses_existing_idle_noise_in_nanoseconds() {
         .build()
         .unwrap();
     let idles: Vec<_> = build
+        .prepared()
         .circuit()
         .iter_gate_batches()
         .filter(|gate| gate.as_gate().gate_type == GateType::Idle)
         .map(|gate| gate.as_gate().params[0])
         .collect();
     assert_eq!(idles, [101.0]);
-    let (mechanisms, _) = build.dem.to_mechanisms();
+    let (mechanisms, _) = build.dem().to_mechanisms();
     assert_eq!(mechanisms.len(), 1);
     let (probability, detectors, observables) = &mechanisms[0];
     assert!((probability - 101.0 * rate_per_nanosecond).abs() < 1e-12);
@@ -521,6 +526,7 @@ fn half_turn_keeps_two_qubit_noise_and_idle_sites() {
             .build()
             .unwrap();
         let gates: Vec<_> = build
+            .prepared()
             .circuit()
             .ticks()
             .iter()
@@ -541,7 +547,7 @@ fn half_turn_keeps_two_qubit_noise_and_idle_sites() {
                 .sum::<usize>(),
             2
         );
-        assert!(build.dem.to_string().contains("error("));
+        assert!(build.dem().to_string().contains("error("));
     }
 }
 

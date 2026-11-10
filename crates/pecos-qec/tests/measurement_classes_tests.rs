@@ -416,9 +416,11 @@ fn fluent_circuit_builder_returns_labelled_dem_and_definitions() {
         .with_circuit(circuit)
         .build()
         .unwrap();
-    assert_eq!(build.dem.detectors[0].fault_sector.as_deref(), Some("X"));
+    assert_eq!(build.dem().detectors[0].fault_sector.as_deref(), Some("X"));
     assert_eq!(
-        build.definitions().detectors[0].fault_sector.as_deref(),
+        build.prepared().definitions().detectors[0]
+            .fault_sector
+            .as_deref(),
         Some("X")
     );
 }

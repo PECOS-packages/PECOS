@@ -13,6 +13,8 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   results change. Relay-BP is deterministic per `(seed, syndrome)`, independent
   of decode order, batch splitting and worker count, enabling parallel batches.
   `gamma0=None` makes only leg zero memoryless; relay legs retain memory.
+  When no leg converges, the correction is the first executed leg's hard
+  decision (leg 0, or leg 1 when `pre_iter=0`), matching the original relay-bp crate.
 - **Breaking:** The `relay_bp` spec factory, Python `RelayBpBuilder`, and
   `RelayBpDecoder.from_dem` no longer accept `max_iter` (it never affected Relay
   decoding). Rust `RelayBpBuilder::max_iter()` and `RelayBpDecoder::max_iter()`

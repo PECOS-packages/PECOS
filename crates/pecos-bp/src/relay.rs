@@ -131,7 +131,8 @@ pub struct LegOutcome {
 pub struct RelayOutcome {
     /// Whether at least one executed leg converged.
     pub converged: bool,
-    /// Minimum-cost converged correction, or the final hard decision.
+    /// Minimum-cost converged correction, or the first executed leg's hard
+    /// decision if none converged (leg zero, or leg one when `pre_iterations == 0`).
     pub correction: Vec<u8>,
     /// Signed prior-LLR cost, present only when `correction` converged.
     pub weight: Option<f64>,
@@ -158,6 +159,7 @@ pub struct RelayBp {
     c_to_v: Vec<f64>,
     v_to_c: Vec<f64>,
     hard_decision: Vec<u8>,
+    // First executed leg's decision until a minimum-cost converged result replaces it.
     best_correction: Vec<u8>,
 }
 
@@ -237,6 +239,9 @@ impl RelayBp {
                 self.config.leg_iterations
             };
             let (converged, iterations) = self.run_leg(syndrome, iteration_limit);
+            if total_iterations == 0 && iterations > 0 {
+                self.best_correction.copy_from_slice(&self.hard_decision);
+            }
             total_iterations += iterations;
             if let Some(variable) = self
                 .posterior
@@ -277,13 +282,13 @@ impl RelayBp {
         }
 
         let converged = best_weight.is_some();
-        // The last executed leg ran at least one iteration (validation requires
-        // leg_iterations >= 1 when num_legs > 0, and pre_iterations >= 1
-        // otherwise), so hard_decision always comes from this decode.
+        // Validation guarantees at least one nonempty leg, so best_correction
+        // belongs to this decode: the first executed decision if none converged,
+        // or the minimum-cost converged correction otherwise.
         let (correction, weight) = if let Some(weight) = best_weight {
             (self.best_correction.clone(), Some(weight))
         } else {
-            (self.hard_decision.clone(), None)
+            (self.best_correction.clone(), None)
         };
 
         Ok(RelayOutcome {
@@ -705,26 +710,48 @@ mod tests {
     }
 
     #[test]
-    fn failed_relay_returns_the_last_legs_hard_decision_without_a_weight() {
+    fn failed_relay_returns_the_first_legs_hard_decision_without_a_weight() {
+        assert_failed_relay_returns_first_executed_decision(1, 1);
+    }
+
+    #[test]
+    fn failed_relay_with_empty_leg_zero_returns_leg_ones_hard_decision() {
+        assert_failed_relay_returns_first_executed_decision(0, 2);
+    }
+
+    fn assert_failed_relay_returns_first_executed_decision(pre_iterations: usize, num_legs: usize) {
         let dcm = DemCheckMatrix::from_dem_str("error(0.1) D0 D1\nerror(0.4) D1\n").unwrap();
         let config = RelayConfig {
             schedule: Schedule::Flooding,
             alpha: Alpha::Constant(1.0),
             gamma0: 0.0,
-            pre_iterations: 1,
-            num_legs: 1,
+            pre_iterations,
+            num_legs,
             leg_iterations: 1,
             gamma_range: (-2.0, 1.0),
             stop_rule: StopRule::Converged(usize::MAX),
             explicit_gammas: Some(vec![vec![-2.0, 1.0]]),
         };
+        let mut first_config = config.clone();
+        first_config.num_legs = usize::from(pre_iterations == 0);
+        let first = RelayBp::new(BpGraph::from_dcm(&dcm), first_config)
+            .unwrap()
+            .decode(&[1, 0], 0)
+            .unwrap();
+        assert!(!first.converged);
+        assert_eq!(first.correction, vec![1, 0]);
         let mut decoder = RelayBp::new(BpGraph::from_dcm(&dcm), config).unwrap();
+        // A preceding shot must not supply the saved decision.
+        assert_eq!(decoder.decode(&[0, 0], 0).unwrap().correction, vec![0, 0]);
 
         let outcome = decoder.decode(&[1, 0], 0).unwrap();
 
-        assert_eq!(outcome.legs.len(), 2);
+        assert_eq!(outcome.legs.len(), num_legs + 1);
+        assert_eq!(outcome.legs[0].iterations, pre_iterations);
+        assert_eq!(outcome.total_iterations, 2);
+        assert!(!outcome.converged);
         assert!(outcome.legs.iter().all(|leg| !leg.converged));
-        assert_eq!(outcome.correction, vec![0, 0]);
+        assert_eq!(outcome.correction, vec![1, 0]);
         assert_eq!(
             outcome
                 .posterior

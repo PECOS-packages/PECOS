@@ -24,8 +24,7 @@
 //!
 //! Known non-bitwise differences: floating-point summation order; hard
 //! decisions at exactly zero (external `<= 0`, native `< 0`); saturation
-//! (external `f64::MAX`, native 30); all-legs-failed fallback (external leg
-//! zero, native last leg); and check-message sign at -0.0 (external uses
+//! (external `f64::MAX`, native 30); and check-message sign at -0.0 (external uses
 //! `is_sign_negative`, native counts -0.0 as positive).
 //!
 //! c7's external failed-shot correction is stale from a previous decode when

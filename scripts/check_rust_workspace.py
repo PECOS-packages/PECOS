@@ -56,8 +56,6 @@ STANDALONE_MANIFESTS = {
     "exp/zlup/fuzz",
     "python/quantum-pecos/tests/docs/rust_crate",
     "scripts/native_bench/bench_pecos",
-    # Third-party ZIP security backport retains upstream's independent version.
-    "vendor/ndarray-npy",
 }
 
 

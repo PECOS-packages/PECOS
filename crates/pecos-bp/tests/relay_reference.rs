@@ -60,7 +60,8 @@
 //!   (or empty) leg zero, every relayed leg runs, even if one converges.
 //! - `StopRule::Converged(n)` stops after `n` converged legs, or when
 //!   all legs ran. The reported correction is the minimum-weight converged
-//!   correction (first one on ties), or the last hard decision if none.
+//!   correction (first one on ties), or the first executed leg's hard decision
+//!   if none (leg zero, or leg one when `pre_iterations == 0`).
 
 use pecos_bp::relay::{Alpha, RelayBp, RelayConfig, Schedule, StopRule};
 use pecos_bp::{BpGraph, LLR_SATURATION};
@@ -277,6 +278,7 @@ fn reference_relay(
     let leg0 = vec![cfg.gamma0; n];
     r.start_leg(&leg0);
     let (conv, its) = r.run_leg(syndrome, cfg.pre_iterations, cfg.alpha, cfg.schedule);
+    let mut first_decision = (its > 0).then(|| r.hard_decision());
     legs_converged.push(conv);
     legs_iterations.push(its);
     legs_corrections.push(conv.then(|| r.hard_decision()));
@@ -295,6 +297,9 @@ fn reference_relay(
     {
         r.start_leg(&gammas[leg % gammas.len()]);
         let (conv, its) = r.run_leg(syndrome, cfg.leg_iterations, cfg.alpha, cfg.schedule);
+        if first_decision.is_none() && its > 0 {
+            first_decision = Some(r.hard_decision());
+        }
         legs_converged.push(conv);
         legs_iterations.push(its);
         legs_corrections.push(conv.then(|| r.hard_decision()));
@@ -312,7 +317,7 @@ fn reference_relay(
     let (converged, correction, weight) = if let Some((w, e)) = best {
         (true, e, Some(w))
     } else {
-        let e = r.hard_decision();
+        let e = first_decision.expect("validated configuration executes at least one iteration");
         (false, e, None)
     };
     ReferenceOutcome {

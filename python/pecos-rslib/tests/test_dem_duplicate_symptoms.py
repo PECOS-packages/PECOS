@@ -48,9 +48,11 @@ def test_duplicate_dem_observables_preserve_original_mechanism_count(family, con
 def test_unique_dem_matches_original_raw_matrix_path(family, error_rate):
     """Compatibility: compare observable predictions and convergence to the pre-merge path."""
     dem = "error(0.1) D0 L0\nerror(0.2) D0 D1 L1\nerror(0.3) D1 L0 L1"
-    builder = MinSumBpBuilder if family == "min_sum_bp" else RelayBpBuilder
     priors = [0.1, 0.2, 0.3] if error_rate is None else [error_rate] * 3
-    original = builder([[1, 1, 0], [0, 1, 1]], priors).max_iter(100).build()
+    if family == "min_sum_bp":
+        original = MinSumBpBuilder([[1, 1, 0], [0, 1, 1]], priors).max_iter(100).build()
+    else:
+        original = RelayBpBuilder([[1, 1, 0], [0, 1, 1]], priors).build()
     decoder = DemAwareDecoder.from_dem(dem, family, error_rate=error_rate)
     assert decoder.num_mechanisms == 3
     for syndrome in [[0, 0], [1, 0], [0, 1], [1, 1], [1, 0]]:

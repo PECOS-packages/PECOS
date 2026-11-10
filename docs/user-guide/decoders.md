@@ -91,6 +91,7 @@ The Rust API provides access to a broader set of decoders:
 - PyMatching MWPM (feature: `pymatching`)
 - Tesseract (feature: `tesseract`)
 - Chromobius color code decoder (feature: `chromobius`)
+- Native Relay-BP and min-sum BP (feature: `relay-bp`)
 
 ## Installation and Setup
 
@@ -327,6 +328,37 @@ match decoder.decode(&syndrome.view()) {
     }
 }
 ```
+
+## Native Relay-BP
+
+`relay_bp`, `RelayBpBuilder`, and `RelayBpDecoder` use PECOS's native Relay-BP
+kernel (`pecos-bp`), implementing Müller et al., [arXiv:2506.01779](https://arxiv.org/abs/2506.01779).
+For a fixed configuration, decoding is a deterministic function of `(seed, syndrome)`.
+Decode order, batch splitting and worker count cannot change a result; serial and
+parallel batch decoding are supported.
+
+Use `pre_iter` for leg zero and `set_max_iter` for each of the `num_sets` relay
+legs. Relay has no `max_iter` option, including `RelayBpDecoder.from_dem`;
+the generic `DemAwareDecoder.from_dem` rejects explicit `max_iter` for Relay.
+`gamma0=None` disables memory in leg zero only; relay legs keep their sampled
+memory. The Rust and Python `RelayBpBuilder` can construct a `RelayBpDecoder`
+with `num_sets=0` for a single leg (then `pre_iter` must be positive). The
+`relay_bp` spec factory requires positive `num_sets`.
+`alpha=None` means unit scaling, while `alpha=0.0` selects dynamic scaling;
+`alpha_iteration_scaling_factor` must always be finite and greater than zero.
+Stopping targets must be positive, so `stopping("n_conv_0")` is rejected.
+
+Python `RelayBpBuilder.explicit_gammas(rows)` sets one memory strength per bit:
+row 0 serves relay leg 1, and rows cycle; `None` restores sampling from
+`gamma_dist_interval(low, high)`. Both builder-created Python decoders provide
+`decode_batch(detection_events, num_shots)`, decoding sequentially with the GIL
+released. Pass `num_shots * check_count` row-major 0/1 bytes (for example,
+`numpy_array.astype(numpy.uint8).tobytes()`); the result is
+`num_shots * bit_count` row-major correction bytes.
+
+`MinSumBpBuilder` uses a single native memory-BP leg, keeps a positive `max_iter`,
+and has no memory when `gamma0=None`. Both families require binary matrices and
+syndromes and one finite probability in `[0, 1]` per matrix column.
 
 ## Performance Considerations
 

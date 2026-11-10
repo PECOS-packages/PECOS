@@ -93,7 +93,7 @@ impl DecoderSpec {
     pub fn execution_traits(&self) -> ExecutionTraits {
         match self {
             Self::RelayBp(_) => ExecutionTraits {
-                history_dependent: true,
+                history_dependent: false,
                 wall_clock_dependent: false,
             },
             Self::BpOsd(config) => ExecutionTraits {

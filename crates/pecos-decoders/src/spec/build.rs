@@ -934,7 +934,6 @@ fn build_relay_bp(
     };
     let decoder = crate::RelayBpBuilder::new(&matrix.check_matrix.view())
         .error_priors(&matrix.error_priors)
-        .max_iter(config.max_iter)
         .alpha(config.alpha)
         .alpha_iteration_scaling_factor(config.alpha_iteration_scaling_factor)
         .gamma0(config.gamma0)
@@ -945,7 +944,7 @@ fn build_relay_bp(
         .stopping_criterion(stopping)
         .seed(config.seed)
         .build()
-        .map_err(internal)?;
+        .map_err(DecoderError::from)?;
     Ok(Box::new(
         pecos_decoder_core::CheckMatrixObservableDecoder::new(decoder, matrix),
     ))
@@ -973,7 +972,7 @@ fn build_min_sum_bp(
         .max_iter(config.max_iter)
         .alpha(config.alpha)
         .build()
-        .map_err(internal)?;
+        .map_err(DecoderError::from)?;
     Ok(Box::new(
         pecos_decoder_core::CheckMatrixObservableDecoder::new(decoder, matrix),
     ))
@@ -2116,6 +2115,43 @@ mod tests {
                 .build(&DecodeModel::SingleDem(DEM.to_string()))
                 .unwrap();
             assert!(decoder.decode_obs(&[0, 0]).is_ok(), "failed {family}");
+        }
+    }
+
+    #[cfg(feature = "relay-bp")]
+    #[test]
+    fn relay_family_preserves_input_error_categories() {
+        let model = DecodeModel::SingleDem(DEM.to_string());
+        for spec in [
+            DecoderSpec::RelayBp(RelayBpConfig {
+                pre_iter: 0,
+                num_sets: 0,
+                ..Default::default()
+            }),
+            DecoderSpec::MinSumBp(MinSumBpConfig {
+                max_iter: 0,
+                ..Default::default()
+            }),
+        ] {
+            assert!(matches!(
+                spec.build(&model),
+                Err(DecoderError::InvalidConfiguration(_))
+            ));
+        }
+        for spec in [
+            DecoderSpec::RelayBp(RelayBpConfig {
+                error_rate: Some(-0.1),
+                ..Default::default()
+            }),
+            DecoderSpec::MinSumBp(MinSumBpConfig {
+                error_rate: Some(1.1),
+                ..Default::default()
+            }),
+        ] {
+            assert!(matches!(
+                spec.build(&model),
+                Err(DecoderError::MatrixError(_))
+            ));
         }
     }
 

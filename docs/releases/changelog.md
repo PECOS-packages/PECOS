@@ -6,9 +6,49 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- Added Python Relay-BP explicit gamma rows and sampling interval setters, plus
+  GIL-releasing flat-byte batch decoding for native Relay-BP and min-sum BP.
 - Relay-BP and min-sum decoders built from a DEM merge mechanisms with identical
   detector and observable sets using independent-XOR probabilities. This improves
   decoding of repeated symptoms, such as stim's flattened multi-round DEMs.
+- **Breaking:** Relay-BP and min-sum decoders now use PECOS's native kernel;
+  results change. Relay-BP is deterministic per `(seed, syndrome)`, independent
+  of decode order, batch splitting and worker count, enabling parallel batches.
+  `gamma0=None` makes only leg zero memoryless; relay legs retain memory.
+  When no leg converges, the correction is the first executed leg's hard
+  decision (leg 0, or leg 1 when `pre_iter=0`). For `pre_iter >= 1` this matches the
+  original relay-bp crate, which returned a stale correction when `pre_iter=0`.
+- **Breaking:** The `relay_bp` spec factory, Python `RelayBpBuilder`, and
+  `RelayBpDecoder.from_dem` no longer accept `max_iter` (it never affected Relay
+  decoding). Rust `RelayBpBuilder::max_iter()` and `RelayBpDecoder::max_iter()`
+  are removed, as is the public `max_iter` field of
+  `pecos_decoders::RelayBpConfig`. Generic `DemAwareDecoder.from_dem` raises
+  `ValueError` for Relay or union-find with explicit `max_iter`; use `pre_iter`
+  and `set_max_iter` for Relay. Min-sum keeps `max_iter`.
+- **Breaking:** Python `RelayBpDecoder.from_dem` and `MinSumBpDecoder.from_dem`
+  require keyword arguments for every option after `dem`, preventing positional
+  arguments from silently changing meaning when options are removed.
+- **Breaking:** Python Relay/min-sum matrix, prior, configuration and syndrome
+  errors now raise `ValueError` instead of `RuntimeError`; internal decode failures
+  remain `RuntimeError`. Their DEM constructors reject non-finite `error_rate`
+  values or values outside `[0, 1]`, naming the parameter.
+- Fixed Relay/min-sum `CheckMatrixDecoder::from_sparse_matrix_with_config`:
+  mismatched coordinate counts or out-of-range indices return `MatrixError`
+  instead of silently truncating coordinates or panicking.
+- **Breaking:** Relay/min-sum require finite `alpha_iteration_scaling_factor > 0`.
+  `NConv { stop_after: 0 }`, `stopping("n_conv_0")`, Relay `pre_iter=0` with
+  `num_sets=0`, min-sum `max_iter=0`, and non-binary syndromes are rejected.
+  Builders now apply `BpGraph` validation: matrices must be binary and priors
+  must be finite probabilities in `[0, 1]`, one per column. Graph errors map to
+  `InvalidMatrix`; explicit-gamma and other configuration errors map to
+  `Configuration` (explicit-gamma errors previously used `InvalidMatrix`).
+- **Breaking:** Rust `StoppingCriterion` is PECOS-owned.
+  `RelayBpDecoder::new` takes `(check_matrix, error_priors, &RelayConfig)`;
+  `RelayConfig` gains `alpha`, `alpha_iteration_scaling_factor`, and `gamma0`.
+- Fixed Relay's stale correction with `pre_iter=0`: when no relay leg converged,
+  the external decoder could return the previous decode's correction.
+- Removed the external `relay-bp` crate, vendored `ndarray-npy` fork, associated
+  compatibility dependencies and six related advisory ignores.
 
 - **Breaking:** `pecos-bp` replaces `RelayConfig`'s convergence count and scalar
   alpha with `StopRule` and `Alpha` enums, adding `PreIter` stopping and dynamic

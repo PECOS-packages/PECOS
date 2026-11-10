@@ -1,6 +1,6 @@
 //! Relay BP decoder module
 //!
-//! This module provides Rust bindings for the Relay BP belief propagation
+//! This module provides PECOS native Relay BP belief propagation
 //! decoder for quantum LDPC error correction codes.
 //!
 //! Two decoders are exposed:
@@ -9,7 +9,6 @@
 
 pub mod builder;
 pub mod config;
-pub(crate) mod convert;
 pub mod core_traits;
 pub mod decoder;
 pub mod errors;

@@ -532,9 +532,9 @@ impl NoisyCcz {
 
     /// Run shots with fresh noise, measurement, and relay-BP streams.
     ///
-    /// Three seeds are drawn in that order from `seed`. Decoder state is rebuilt
-    /// per call and advances across the run, so equal (shots, seed) reproduce all
-    /// counts and records. Zero meta syndromes bypass decoding, but not the image
+    /// Three seeds are drawn in that order from `seed`. Relay-BP is deterministic
+    /// per (relay seed, syndrome), independent of decode history; equal (shots, seed)
+    /// reproduce all counts and records. Zero meta syndromes bypass decoding, but not the image
     /// check. Repair failure stops the shot before any CCZ or readout operations.
     ///
     /// # Errors
@@ -594,7 +594,6 @@ impl NoisyCcz {
         // from `gamma_dist_interval`.
         let mut decoder = RelayBpDecoder::builder(&self.meta.view())
             .error_priors(&self.priors)
-            .max_iter(200)
             .alpha(None)
             .alpha_iteration_scaling_factor(1.0)
             .gamma0(Some(0.65))

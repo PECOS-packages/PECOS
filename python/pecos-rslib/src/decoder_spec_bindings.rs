@@ -112,6 +112,16 @@ fn non_negative(parameter: &str, value: f64) -> PyResult<f64> {
     }
 }
 
+fn positive(parameter: &str, value: f64) -> PyResult<f64> {
+    if value.is_finite() && value > 0.0 {
+        Ok(value)
+    } else {
+        Err(PyValueError::new_err(format!(
+            "{parameter} must be finite and > 0, got {value}"
+        )))
+    }
+}
+
 fn optional_non_negative(parameter: &str, value: Option<f64>) -> PyResult<Option<f64>> {
     value
         .map(|value| non_negative(parameter, value))
@@ -459,12 +469,11 @@ fn fusion_blossom(correlated: bool, solver: &str, irreducible: &str) -> PyResult
 
 #[pyfunction]
 #[pyo3(
-    signature = (*, error_rate=None, max_iter=200, alpha=None, alpha_iteration_scaling_factor=1.0, gamma0=0.65, pre_iter=80, num_sets=300, set_max_iter=60, gamma_dist_interval=(-0.24, 0.66), stopping_criterion=PyRelayStoppingCriterion::default(), seed=0),
-    text_signature = "(*, error_rate=None, max_iter=200, alpha=None, alpha_iteration_scaling_factor=1.0, gamma0=0.65, pre_iter=80, num_sets=300, set_max_iter=60, gamma_dist_interval=(-0.24, 0.66), stopping_criterion='first_convergence', seed=0)"
+    signature = (*, error_rate=None, alpha=None, alpha_iteration_scaling_factor=1.0, gamma0=0.65, pre_iter=80, num_sets=300, set_max_iter=60, gamma_dist_interval=(-0.24, 0.66), stopping_criterion=PyRelayStoppingCriterion::default(), seed=0),
+    text_signature = "(*, error_rate=None, alpha=None, alpha_iteration_scaling_factor=1.0, gamma0=0.65, pre_iter=80, num_sets=300, set_max_iter=60, gamma_dist_interval=(-0.24, 0.66), stopping_criterion='first_convergence', seed=0)"
 )]
 fn relay_bp(
     error_rate: Option<f64>,
-    max_iter: i64,
     alpha: Option<f64>,
     alpha_iteration_scaling_factor: f64,
     gamma0: Option<f64>,
@@ -486,9 +495,8 @@ fn relay_bp(
     Ok(PyDecoderSpec::new(pecos_decoders::DecoderSpec::RelayBp(
         RelayBpConfig {
             error_rate: optional_probability("error_rate", error_rate)?,
-            max_iter: usize_value("max_iter", max_iter, false)?,
             alpha: optional_non_negative("alpha", alpha)?,
-            alpha_iteration_scaling_factor: non_negative(
+            alpha_iteration_scaling_factor: positive(
                 "alpha_iteration_scaling_factor",
                 alpha_iteration_scaling_factor,
             )?,
@@ -977,9 +985,6 @@ fn relay_bp_repr(config: &RelayBpConfig) -> String {
     let default = RelayBpConfig::default();
     let mut args = Vec::new();
     push_option(&mut args, "error_rate", config.error_rate);
-    if config.max_iter != default.max_iter {
-        args.push(format!("max_iter={}", config.max_iter));
-    }
     push_option(&mut args, "alpha", config.alpha);
     if config.alpha_iteration_scaling_factor.to_bits()
         != default.alpha_iteration_scaling_factor.to_bits()

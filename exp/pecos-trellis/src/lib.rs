@@ -1125,6 +1125,13 @@ fn final_score_group_matches_reference() {
 /// `parent` is always in ascending key order at a column boundary: expansion
 /// order determines the load-bearing left-to-right floating-point merge fold.
 #[derive(Clone, Debug, Default)]
+#[cfg_attr(
+    any(test, feature = "runtime-checks"),
+    expect(
+        clippy::struct_excessive_bools,
+        reason = "The check-only path observer extends existing private merge-selection flags without changing hot-path dispatch"
+    )
+)]
 struct FrontierScratch<M> {
     parent: StateBuffer<M>,
     branches: StateBuffer<M>,
@@ -1173,6 +1180,10 @@ impl<M: Copy> FrontierScratch<M> {
     /// Sorting preserves arrival order within each equal-key run. The
     /// first arrival is installed verbatim, then each subsequent arrival applies
     /// `fold(accumulated, next)` in arrival order.
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "Packed arrival indices are masked to at most ten bits and fit both 32-bit and 64-bit usize"
+    )]
     fn merge(&mut self, fold: impl Fn(M, M) -> M) {
         self.sort_merge_indices();
         self.parent.clear(self.stride);
@@ -1294,6 +1305,13 @@ impl<M: Copy> FrontierScratch<M> {
         }
     }
 
+    #[cfg_attr(
+        any(test, feature = "runtime-checks"),
+        expect(
+            clippy::cast_possible_truncation,
+            reason = "Decoded arrival indices are masked to nine or ten bits and cannot truncate on supported pointer widths"
+        )
+    )]
     fn sort_merge_indices_impl(&mut self) {
         self.packed_merge_keys = false;
         self.use_compact_merge_records = false;
@@ -2954,6 +2972,10 @@ impl TrellisResumableDecoder {
     /// # Errors
     /// Returns `InvalidConfiguration` for a missing or undrained attempt.
     /// A failed protocol check leaves the pending attempt unchanged.
+    ///
+    /// # Panics
+    /// Panics if the checked private attempt disappears before consumption,
+    /// indicating an internal state invariant violation.
     pub fn finish(&mut self) -> Result<TrellisDecodeAttempt, DecoderError> {
         if !self
             .attempt
@@ -5151,7 +5173,7 @@ mod tests {
         let mut scratch = super::FrontierScratch::<f64>::default();
         // Reuse across the old/new arrival-bit boundary, both packed formats,
         // unsupported key shapes, a count fallback and a return to the old path.
-        for count in [512, 513, 1023, 1024, 1025, 64] {
+        for count in [512_u32, 513, 1023, 1024, 1025, 64] {
             let arrival_bits = if count <= 512 { 9 } else { 10 };
             for width in [2, 3] {
                 for wide in [false, true] {
@@ -5173,26 +5195,26 @@ mod tests {
                             let logical = if width == 2 { 1 } else { 2 };
                             let mut key = [0_u64; 3];
                             if shape == 0 {
-                                key[0] = 1 + (index % 7) as u64;
-                                key[1] = 1 + ((index / 7) % 5) as u64;
+                                key[0] = 1 + u64::from(index % 7);
+                                key[1] = 1 + u64::from((index / 7) % 5);
                                 if width == 3 {
-                                    key[2] = 1 + ((index / 35) % 3) as u64;
+                                    key[2] = 1 + u64::from((index / 35) % 3);
                                 }
                             } else {
                                 key[0] = if width == 2 {
-                                    u64::MAX - (index % 7) as u64
+                                    u64::MAX - u64::from(index % 7)
                                 } else if shape == 2 {
                                     1_u64 << (63 - arrival_bits)
                                 } else {
                                     (1_u64 << (63 - arrival_bits)) - 1
                                 };
                                 if width == 3 {
-                                    key[1] = u64::MAX - ((index / 7) % 5) as u64;
+                                    key[1] = u64::MAX - u64::from((index / 7) % 5);
                                 }
                                 key[logical] = if shape == 3 || (shape == 2 && width == 2) {
                                     2
                                 } else {
-                                    ((index / 35) % 2) as u64
+                                    u64::from((index / 35) % 2)
                                 };
                             }
                             let mut words = vec![0_u64; stride];
@@ -5325,7 +5347,7 @@ mod tests {
     #[test]
     fn generalized_records_reject_unsampled_overflow_and_unsupported_width() {
         let mut scratch = super::FrontierScratch::<f64>::default();
-        for count in [512, 513, 1024] {
+        for count in [512_u32, 513, 1024] {
             let high_width = if count <= 512 { 44 } else { 43 };
             for special in [0, 1, count - 1] {
                 scratch.reset(&[0, 0], &[0], &[u64::MAX; 2], 0.0);
@@ -5337,7 +5359,7 @@ mod tests {
                         (1_u64 << high_width) - 1,
                         logical,
                     ]);
-                    scratch.branches.masses.push(-(index as f64) * 0.125);
+                    scratch.branches.masses.push(-f64::from(index) * 0.125);
                 }
                 let mut oracle = scratch.clone();
                 oracle.merge_reference(super::logaddexp);
@@ -5360,8 +5382,8 @@ mod tests {
                 scratch
                     .branches
                     .words
-                    .extend_from_slice(&[1, 1, 1, 1, 1 + (index % 17) as u64]);
-                scratch.branches.masses.push(-(index as f64) * 0.25);
+                    .extend_from_slice(&[1, 1, 1, 1, 1 + u64::from(index % 17)]);
+                scratch.branches.masses.push(-f64::from(index) * 0.25);
             }
             let mut oracle = scratch.clone();
             oracle.merge_reference(super::logaddexp);

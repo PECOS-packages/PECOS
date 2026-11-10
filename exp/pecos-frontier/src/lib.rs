@@ -429,6 +429,10 @@ impl FrontierResumableCommittee {
     ///
     /// # Errors
     /// Returns `InvalidConfiguration` for zero budget or a missing begin.
+    ///
+    /// # Panics
+    /// Panics if the private phase and its owned leg attempt disagree,
+    /// indicating an internal coordinator invariant violation.
     pub fn step(&mut self, max_columns: usize) -> Result<FrontierBoundedProgress, DecoderError> {
         if max_columns == 0 {
             return Err(DecoderError::InvalidConfiguration(
@@ -481,6 +485,10 @@ impl FrontierResumableCommittee {
     }
 
     /// Inspect the pending phase without doing DP or terminal work.
+    ///
+    /// # Panics
+    /// Panics if a pending private phase lacks its owned leg attempt,
+    /// indicating an internal coordinator invariant violation.
     #[must_use]
     pub fn progress(&self) -> Option<FrontierBoundedProgress> {
         self.attempt.as_ref().map(|state| match state.phase {
@@ -506,6 +514,10 @@ impl FrontierResumableCommittee {
     /// # Errors
     /// Returns `InvalidConfiguration` before both legs are ready; otherwise
     /// returns exactly the structured resolver's engine error, if any.
+    ///
+    /// # Panics
+    /// Panics if the checked ready phase lacks its stored leg attempts,
+    /// indicating an internal coordinator invariant violation.
     pub fn finish(&mut self) -> Result<FrontierCommitteeResult, DecoderError> {
         if !matches!(self.progress(), Some(FrontierBoundedProgress::Ready)) {
             return Err(DecoderError::InvalidConfiguration(

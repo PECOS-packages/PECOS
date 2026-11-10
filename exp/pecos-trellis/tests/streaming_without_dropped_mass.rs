@@ -67,15 +67,16 @@ fn callbacks_and_all_retained_terminal_bits_match_both_schedules_and_reset() {
             num_observables: 131,
         };
         for d in 0..8 {
+            let label = u32::try_from(d).unwrap();
             dem.mechanisms.push((
-                0.07 + d as f64 * 0.045,
+                0.07 + f64::from(label) * 0.045,
                 vec![row(d)],
-                vec![d as u32, 64 + d as u32],
+                vec![label, 64 + label],
             ));
             dem.mechanisms.push((
-                0.13 + d as f64 * 0.015,
+                0.13 + f64::from(label) * 0.015,
                 vec![row(d), row((d + 1) % 8)],
-                vec![128 + (d % 3) as u32],
+                vec![128 + label % 3],
             ));
         }
         dem.mechanisms.push((0.31, vec![], vec![130]));
@@ -325,7 +326,7 @@ fn binary_factors_match_and_bp_and_integer_rejections_are_unchanged() {
         TrellisStreamingDecoder::from_factor_model(&model, TrellisConfig::default()).unwrap();
     let mut b =
         TrellisStreamingDecoder::from_factor_model(&model, TrellisConfig::default()).unwrap();
-    let mut bits = vec![0; 66];
+    let mut bits = [0; 66];
     bits[0] = 1;
     bits[64] = 1;
     bits[65] = 7;

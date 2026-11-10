@@ -170,12 +170,12 @@ fn fixture_attempts_preserve_full_mass_bits_no_path_and_bp_across_budgets() {
 #[test]
 fn large_wide_model_preserves_chunk_order_and_full_diagnostics() {
     let dem = SparseDem {
-        mechanisms: (0..193)
+        mechanisms: (0_u32..193)
             .map(|index| {
                 (
-                    0.01 + (index % 29) as f64 * 0.01,
-                    vec![(index % 5) as u32, if index % 2 == 0 { 70 } else { 130 }],
-                    vec![(index % 131) as u32],
+                    0.01 + f64::from(index % 29) * 0.01,
+                    vec![index % 5, if index % 2 == 0 { 70 } else { 130 }],
+                    vec![index % 131],
                 )
             })
             .collect(),
@@ -198,13 +198,13 @@ fn large_wide_model_preserves_chunk_order_and_full_diagnostics() {
     for budget in [1, 2, 3, 7, 64, usize::MAX] {
         let mut batch = base.clone();
         let mut bounded = base.clone().into_resumable().unwrap();
-        let expected = batch.decode_attempt(&vec![0; 131]);
+        let expected = batch.decode_attempt(&[0; 131]);
         if let TrellisDecodeAttempt::Success(result) = &expected {
             saw_pruning |= result.dropped_states > 0;
         }
         same_attempt(
             expected,
-            drain(&mut bounded, &vec![0; 131], budget, false),
+            drain(&mut bounded, &[0; 131], budget, false),
             false,
         );
     }

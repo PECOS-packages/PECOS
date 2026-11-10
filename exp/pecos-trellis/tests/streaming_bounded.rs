@@ -33,15 +33,15 @@ fn result_bits_equal(a: &TrellisResult, b: &TrellisResult, omitted: bool) {
     }
 }
 
-fn config_error(error: DecoderError) {
+fn config_error(error: &DecoderError) {
     assert!(
         matches!(error, DecoderError::InvalidConfiguration(_)),
         "{error}"
     );
 }
 
-fn error_equal(a: DecoderError, b: DecoderError) {
-    assert_eq!(std::mem::discriminant(&a), std::mem::discriminant(&b));
+fn error_equal(a: &DecoderError, b: &DecoderError) {
+    assert_eq!(std::mem::discriminant(a), std::mem::discriminant(b));
     assert_eq!(a.to_string(), b.to_string());
 }
 
@@ -59,7 +59,7 @@ fn drain(stream: &mut TrellisStreamingDecoder, budget: usize) -> usize {
     let mut remaining = stream.bounded_columns_remaining().unwrap();
     let mut calls = 0;
     while remaining != 0 {
-        config_error(stream.finish_bounded_advance().unwrap_err());
+        config_error(&stream.finish_bounded_advance().unwrap_err());
         let (processed, done) = stream.step_bounded_advance(budget).unwrap();
         let after = stream.bounded_columns_remaining().unwrap();
         assert_eq!(remaining - after, budget.min(remaining));
@@ -96,11 +96,13 @@ fn every_budget_preserves_every_callback_and_all_terminal_mass_bits() {
         // Each update releases >128 columns. Different global logical bits,
         // duplicate routes and detector closure exercise merge/prune folding.
         for round in 0..4 {
+            let round_label = u32::try_from(round).unwrap();
             for column in 0..140 {
+                let column_label = u32::try_from(column).unwrap();
                 dem.mechanisms.push((
-                    0.01 + (column % 37) as f64 * 0.01,
+                    0.01 + f64::from(column_label % 37) * 0.01,
                     vec![row(round)],
-                    vec![(round * 32 + column % 3) as u32],
+                    vec![round_label * 32 + column_label % 3],
                 ));
             }
         }
@@ -147,19 +149,7 @@ fn every_budget_preserves_every_callback_and_all_terminal_mass_bits() {
                             let pending = begin(&mut bounded, omitted);
                             let calls = drain(&mut bounded, budget);
                             saw_many_steps |= calls > 128;
-                            if update != 3 {
-                                let a = full.advance().unwrap();
-                                let b = bounded.finish_bounded_advance().unwrap();
-                                assert_eq!(
-                                    a, b,
-                                    "width={width} k={k} budget={budget} update={update}"
-                                );
-                                assert_eq!(a.columns_processed - last_processed, pending);
-                                saw_early_commit |=
-                                    a.newly_committed.iter().any(|&(bit, _)| bit < 100);
-                                last_processed = a.columns_processed;
-                                assert_eq!(bounded.bounded_columns_remaining(), None);
-                            } else {
+                            if update == 3 {
                                 let a = full.flush().unwrap();
                                 let b = bounded.finish_bounded_flush().unwrap();
                                 result_bits_equal(&a, &b, omitted);
@@ -173,6 +163,18 @@ fn every_budget_preserves_every_callback_and_all_terminal_mass_bits() {
                                     &bounded.finish_bounded_flush().unwrap(),
                                     omitted,
                                 );
+                            } else {
+                                let a = full.advance().unwrap();
+                                let b = bounded.finish_bounded_advance().unwrap();
+                                assert_eq!(
+                                    a, b,
+                                    "width={width} k={k} budget={budget} update={update}"
+                                );
+                                assert_eq!(a.columns_processed - last_processed, pending);
+                                saw_early_commit |=
+                                    a.newly_committed.iter().any(|&(bit, _)| bit < 100);
+                                last_processed = a.columns_processed;
+                                assert_eq!(bounded.bounded_columns_remaining(), None);
                             }
                         }
                     }
@@ -190,25 +192,25 @@ fn pending_guards_freeze_inputs_modes_and_commitment_cadence_until_finish() {
     let text = "error(0.2) D0 L0\nerror(0.3) D0 L1\nerror(0.4) D1 L130";
     let mut s = TrellisStreamingDecoder::from_dem_str(text, TrellisConfig::default()).unwrap();
     assert_eq!(s.bounded_columns_remaining(), None);
-    config_error(s.step_bounded_advance(64).unwrap_err());
-    config_error(s.finish_bounded_advance().unwrap_err());
+    config_error(&s.step_bounded_advance(64).unwrap_err());
+    config_error(&s.finish_bounded_advance().unwrap_err());
     s.feed_prefix(&[1]).unwrap();
     let target = s.begin_bounded_advance().unwrap();
     assert!(target > 0);
-    config_error(s.begin_bounded_advance().unwrap_err());
-    config_error(s.begin_bounded_advance_without_dropped_mass().unwrap_err());
-    config_error(s.feed_prefix(&[]).unwrap_err());
-    config_error(s.feed_prefix(&[0]).unwrap_err());
-    config_error(s.feed_dense(&[1, 0]).unwrap_err());
-    config_error(s.advance().unwrap_err());
-    config_error(s.advance_prediction().unwrap_err());
-    config_error(s.advance_without_dropped_mass().unwrap_err());
-    config_error(s.advance_prediction_without_evidence().unwrap_err());
+    config_error(&s.begin_bounded_advance().unwrap_err());
+    config_error(&s.begin_bounded_advance_without_dropped_mass().unwrap_err());
+    config_error(&s.feed_prefix(&[]).unwrap_err());
+    config_error(&s.feed_prefix(&[0]).unwrap_err());
+    config_error(&s.feed_dense(&[1, 0]).unwrap_err());
+    config_error(&s.advance().unwrap_err());
+    config_error(&s.advance_prediction().unwrap_err());
+    config_error(&s.advance_without_dropped_mass().unwrap_err());
+    config_error(&s.advance_prediction_without_evidence().unwrap_err());
     config_error(
-        s.set_streaming_mode(StreamingMode::DependencyDriven)
+        &s.set_streaming_mode(StreamingMode::DependencyDriven)
             .unwrap_err(),
     );
-    config_error(s.step_bounded_advance(0).unwrap_err());
+    config_error(&s.step_bounded_advance(0).unwrap_err());
     assert_eq!(s.bounded_columns_remaining(), Some(target));
     drain(&mut s, 1);
     assert!(matches!(
@@ -226,8 +228,8 @@ fn pending_guards_freeze_inputs_modes_and_commitment_cadence_until_finish() {
     s.begin_bounded_advance_without_dropped_mass().unwrap();
     drain(&mut s, 1);
     s.finish_bounded_flush().unwrap();
-    config_error(s.begin_bounded_advance().unwrap_err());
-    config_error(s.advance().unwrap_err());
+    config_error(&s.begin_bounded_advance().unwrap_err());
+    config_error(&s.advance().unwrap_err());
     s.reset();
     assert_eq!(s.bounded_columns_remaining(), None);
     s.feed_dense(&[1, 0]).unwrap();
@@ -269,8 +271,8 @@ fn unsupported_schedule_and_empty_and_incomplete_models_do_not_change_legacy_pat
         window_size: 2,
     })
     .unwrap();
-    config_error(s.begin_bounded_advance().unwrap_err());
-    config_error(s.begin_bounded_advance_without_dropped_mass().unwrap_err());
+    config_error(&s.begin_bounded_advance().unwrap_err());
+    config_error(&s.begin_bounded_advance_without_dropped_mass().unwrap_err());
     assert_eq!(s.bounded_columns_remaining(), None);
     s.feed_dense(&[1, 0]).unwrap();
     assert!(!s.flush().unwrap().dropped_log_mass.is_nan());
@@ -304,7 +306,7 @@ fn decoding_failures_remain_sticky_and_reset_restores_both_diagnostic_modes() {
                     bounded.finish_bounded_flush()
                 })
                 .unwrap_err();
-            error_equal(expected, actual);
+            error_equal(&expected, &actual);
             let sticky = bounded.step_bounded_advance(1).unwrap_err();
             let message = sticky.to_string();
             for later in [

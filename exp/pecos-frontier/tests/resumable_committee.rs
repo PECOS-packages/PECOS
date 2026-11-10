@@ -102,7 +102,7 @@ fn drain(
             }
             (FrontierBoundedProgress::Forward(a), FrontierBoundedProgress::Backward(_))
             | (FrontierBoundedProgress::Backward(a), FrontierBoundedProgress::Ready) => {
-                assert!(a.ready_to_finish)
+                assert!(a.ready_to_finish);
             }
             _ => panic!("phase order changed"),
         }
@@ -209,7 +209,7 @@ fn protocol_guards_cancel_reuse_and_dimension_faults_preserve_resolution() {
         match (batch.decode(shot), drain(&mut bounded, shot, 1, false)) {
             (Ok(expected), Ok(actual)) => same_result(expected, actual, false),
             (Err(expected), Err(actual)) => {
-                assert_eq!(format!("{expected:?}"), format!("{actual:?}"))
+                assert_eq!(format!("{expected:?}"), format!("{actual:?}"));
             }
             _ => panic!("reuse or fault resolution changed"),
         }
@@ -226,7 +226,7 @@ fn empty_and_forced_models_still_run_both_leg_phases() {
             match (batch.decode(shot), drain(&mut bounded, shot, 1, false)) {
                 (Ok(expected), Ok(actual)) => same_result(expected, actual, false),
                 (Err(expected), Err(actual)) => {
-                    assert_eq!(format!("{expected:?}"), format!("{actual:?}"))
+                    assert_eq!(format!("{expected:?}"), format!("{actual:?}"));
                 }
                 _ => panic!("zero-column or preparation attempt changed"),
             }

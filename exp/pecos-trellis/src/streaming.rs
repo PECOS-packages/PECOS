@@ -451,7 +451,7 @@ impl TrellisStreamingDecoder {
     /// actual columns of DP work, not wall-clock time or total decision latency.
     ///
     /// # Errors
-    /// Returns `InvalidConfiguration` for FixedLag, reentry, or full diagnostics
+    /// Returns `InvalidConfiguration` for `FixedLag`, reentry, or full diagnostics
     /// after omitted bookkeeping; returns a stored decoding failure unchanged.
     pub fn begin_bounded_advance(&mut self) -> Result<usize, DecoderError> {
         self.begin_bounded_advance_mode(false)
@@ -597,6 +597,11 @@ impl TrellisStreamingDecoder {
     /// Returns a stored failure first, then the unbounded incomplete-shot error,
     /// or `InvalidConfiguration` for a missing/undrained begin. No failed protocol
     /// check consumes the drain or changes the frontier.
+    ///
+    /// # Panics
+    /// Panics if a complete drain has not processed every model column, or a
+    /// committed bit differs from the terminal prediction. Both indicate an
+    /// internal engine invariant violation.
     pub fn finish_bounded_flush(&mut self) -> Result<TrellisResult, DecoderError> {
         if let Some(failure) = self.failure {
             return Err(failure.error());

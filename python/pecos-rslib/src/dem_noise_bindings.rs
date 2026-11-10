@@ -9,7 +9,7 @@ macro_rules! dem_noise_methods {
         #[pyo3::pymethods]
         impl $class {
             $(#[$attr])*
-            #[pyo3(signature = ($($signature)* p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None, p2_gate_rates=None, p1_gate_rates=None))]
+            #[pyo3(signature = ($($signature)* p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None, p2_gate_rates=None, p1_gate_rates=None, p_idle_linear=None, p_idle_linear_model=None, p_idle_sin_squared=None, p_idle_sin_squared_model=None, p_idle_coherent=None, p_idle_coherent_model=None))]
             fn $method(
                 $($receiver)*,
                 p1: f64,
@@ -41,6 +41,13 @@ macro_rules! dem_noise_methods {
                 measurement_crosstalk_dem_mode: Option<String>,
                 p2_gate_rates: Option<BTreeMap<String, f64>>,
                 p1_gate_rates: Option<BTreeMap<String, f64>>,
+                p_idle_linear: Option<f64>,
+                p_idle_linear_model: Option<BTreeMap<String, f64>>,
+                p_idle_sin_squared: Option<f64>,
+                p_idle_sin_squared_model: Option<BTreeMap<String, f64>>,
+                p_idle_coherent: Option<f64>,
+                p_idle_coherent_model: Option<BTreeMap<String, f64>>,
+
             ) -> pyo3::PyResult<$result> {
                 let $noise = pecos_qec::NoiseConfig::try_from(pecos_qec::NoiseOptions {
                     p1,
@@ -72,7 +79,12 @@ macro_rules! dem_noise_methods {
                     measurement_crosstalk_dem_mode,
                     p2_gate_rates,
                     p1_gate_rates,
-                    ..pecos_qec::NoiseOptions::default()
+                    p_idle_linear,
+                    p_idle_linear_model,
+                    p_idle_sin_squared,
+                    p_idle_sin_squared_model,
+                    p_idle_coherent,
+                    p_idle_coherent_model,
                 })
                 .map_err(pyo3::exceptions::PyValueError::new_err)?;
                 $body

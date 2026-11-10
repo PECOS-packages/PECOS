@@ -27,7 +27,6 @@ from pecos_rslib.qec import DetectorErrorModel as _RustDetectorErrorModel
 
 from pecos._engine_builders import _configure_selene_runtime
 from pecos.programs import Guppy
-from pecos.qec._idle_noise import _translate_structured_idle_noise
 from pecos.qec.dem_spec import GuppyDemBuild, ResultRef, _definition_record
 from pecos.qec.guppy_output_dem import InferredGuppyDemAnnotations, _guppy_dem_program
 
@@ -929,43 +928,6 @@ class GuppyDemBuilder:
             raise ValueError(msg)
 
         noise = self._noise_parameters()
-        structured = {
-            name: noise.pop(name)
-            for name in (
-                "p_idle_linear",
-                "p_idle_linear_model",
-                "p_idle_sin_squared",
-                "p_idle_sin_squared_model",
-                "p_idle_coherent",
-                "p_idle_coherent_model",
-            )
-        }
-        translated_names = (
-            "p_idle_x_linear_rate",
-            "p_idle_y_linear_rate",
-            "p_idle_z_linear_rate",
-            "p_idle_x_quadratic_sine_rate",
-            "p_idle_y_quadratic_sine_rate",
-            "p_idle_z_quadratic_sine_rate",
-        )
-        axes = _translate_structured_idle_noise(
-            **structured,
-            **{
-                name: noise[name]
-                for name in (
-                    "p_idle_linear_rate",
-                    "p_idle_quadratic_rate",
-                    "p_idle_x_linear_rate",
-                    "p_idle_y_linear_rate",
-                    "p_idle_z_linear_rate",
-                    "p_idle_quadratic_sine_rate",
-                    "p_idle_x_quadratic_sine_rate",
-                    "p_idle_y_quadratic_sine_rate",
-                    "p_idle_z_quadratic_sine_rate",
-                )
-            },
-        )
-        noise.update(zip(translated_names, axes, strict=True))
         definitions = {}
         specs = []
         for role, expected in (("detectors", Detector), ("observables", Observable)):

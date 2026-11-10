@@ -2944,6 +2944,12 @@ class qec:
             measurement_crosstalk_dem_mode: str | None = None,
             p2_gate_rates: dict[str, float] | None = None,
             p1_gate_rates: dict[str, float] | None = None,
+            p_idle_linear: float | None = None,
+            p_idle_linear_model: dict[str, float] | None = None,
+            p_idle_sin_squared: float | None = None,
+            p_idle_sin_squared_model: dict[str, float] | None = None,
+            p_idle_coherent: float | None = None,
+            p_idle_coherent_model: dict[str, float] | None = None,
         ) -> qec.DetectorErrorModel: ...
         @staticmethod
         def from_pecos_metadata_json(json: str) -> qec.DetectorErrorModel: ...

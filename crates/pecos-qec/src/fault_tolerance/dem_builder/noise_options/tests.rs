@@ -568,6 +568,7 @@ fn representative_configs_match_previous_binding_assembly() {
         ..NoiseOptions::default()
     };
     let expected = NoiseConfig {
+        idle_noise_parameters: options.idle_noise_parameters(),
         p1: 0.01,
         p2: 0.02,
         p_meas: 0.03,
@@ -611,6 +612,7 @@ fn representative_configs_match_previous_binding_assembly() {
         ..NoiseOptions::default()
     };
     let expected = NoiseConfig {
+        idle_noise_parameters: options.idle_noise_parameters(),
         t1: Some(10.0),
         t2: Some(15.0),
         ..NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
@@ -624,6 +626,7 @@ fn representative_configs_match_previous_binding_assembly() {
         ..NoiseOptions::default()
     };
     let expected = NoiseConfig {
+        idle_noise_parameters: options.idle_noise_parameters(),
         idle_rz: 0.2,
         t1: Some(1e15),
         t2: Some(-1.0 / (1.0 - 2.0 * 0.1_f64.sin().powi(2)).ln()),
@@ -734,6 +737,7 @@ fn structured_config_and_coefficient_composition() {
         ..NoiseOptions::default()
     };
     let expected = NoiseConfig {
+        idle_noise_parameters: options.idle_noise_parameters(),
         p_idle: 0.01,
         p_idle_linear: IdleNoiseFamily::new(
             1.0,
@@ -783,4 +787,57 @@ fn normalization_uses_engines_sum_and_rust_display() {
             None
         ]
     );
+}
+
+#[test]
+fn idle_diagnostics_preserve_public_parameters() {
+    macro_rules! check_rate {
+        ($($name:ident),+ $(,)?) => {
+            $(
+                let noise = NoiseConfig::try_from(NoiseOptions {
+                    $name: Some(0.01),
+                    ..NoiseOptions::default()
+                }).unwrap();
+                assert_eq!(noise.idle_noise_request().unwrap(), concat!(stringify!($name), "=0.01"));
+                let zero = NoiseConfig::try_from(NoiseOptions {
+                    $name: Some(0.0),
+                    ..NoiseOptions::default()
+                }).unwrap();
+                assert_eq!(zero.idle_noise_request(), None);
+            )+
+        };
+    }
+    check_rate!(
+        p_idle,
+        idle_rz,
+        p_idle_linear,
+        p_idle_sin_squared,
+        p_idle_linear_rate,
+        p_idle_quadratic_rate,
+        p_idle_quadratic_sine_rate,
+        p_idle_x_linear_rate,
+        p_idle_y_linear_rate,
+        p_idle_z_linear_rate,
+        p_idle_x_quadratic_rate,
+        p_idle_y_quadratic_rate,
+        p_idle_z_quadratic_rate,
+        p_idle_x_quadratic_sine_rate,
+        p_idle_y_quadratic_sine_rate,
+        p_idle_z_quadratic_sine_rate,
+    );
+    let noise = NoiseConfig::try_from(NoiseOptions {
+        t1: Some(100.0),
+        t2: Some(0.0),
+        p_idle_x_linear_rate: Some(0.01),
+        p_idle_y_quadratic_rate: Some(0.02),
+        ..NoiseOptions::default()
+    })
+    .unwrap();
+    assert_eq!(
+        noise.idle_noise_request().unwrap(),
+        "p_idle_x_linear_rate=0.01, p_idle_y_quadratic_rate=0.02, t1=100, t2=0"
+    );
+    let raw =
+        NoiseConfig::default().set_idle_linear(IdleNoiseFamily::new(0.01, map(&[("X", 1.0)])));
+    assert_eq!(raw.idle_noise_request().unwrap(), "p_idle_linear = 0.01");
 }

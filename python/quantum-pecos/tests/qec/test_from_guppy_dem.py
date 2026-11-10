@@ -777,7 +777,7 @@ def test_from_guppy_inserted_idles_make_idle_noise_effective() -> None:
 
 
 # Every idle-noise parameter the guard must observe; omitting any one from the
-# guard wiring in dem.py must fail the corresponding parametrized case below.
+# Rust translation and guard wiring must fail the corresponding parametrized case below.
 _ALL_IDLE_NOISE_PARAMS = {
     "p_idle_linear": 0.01,
     "p_idle_sin_squared": 0.01,
@@ -800,11 +800,14 @@ _ALL_IDLE_NOISE_PARAMS = {
 
 @pytest.mark.parametrize("idle_param", sorted(_ALL_IDLE_NOISE_PARAMS))
 def test_from_guppy_rejects_idle_noise_without_idle_gates(idle_param: str) -> None:
+    noise = {idle_param: _ALL_IDLE_NOISE_PARAMS[idle_param]}
+    if idle_param in {"t1", "t2"}:
+        noise = {"t1": 100.0, "t2": 100.0}
     with pytest.raises(
         ValueError,
-        match="requires t" if idle_param in {"t1", "t2"} else "idle-noise parameters have no idle gates .*requested:",
+        match=rf"idle-noise parameters have no idle gates .*requested: .*{idle_param}=",
     ):
-        _two_qubit_dem(**{idle_param: _ALL_IDLE_NOISE_PARAMS[idle_param]})
+        _two_qubit_dem(**noise)
 
 
 @pytest.mark.parametrize("idle_param", sorted(set(_ALL_IDLE_NOISE_PARAMS) - {"t1", "t2"}))
@@ -816,7 +819,7 @@ def test_from_guppy_accepts_zero_idle_rate_without_idle_gates(idle_param: str) -
 @pytest.mark.parametrize("time_param", ["t1", "t2"])
 def test_from_guppy_zero_relaxation_time_still_requests_idle_noise(time_param: str) -> None:
     # T1/T2 are times, not rates: zero is not "off", so it still needs idle gates.
-    with pytest.raises(ValueError, match=rf"requested: .*{time_param} = 0"):
+    with pytest.raises(ValueError, match=rf"requested: .*{time_param}=0"):
         _two_qubit_dem(**{**dict.fromkeys(["t1", "t2"], 100.0), time_param: 0.0})
 
 
@@ -852,7 +855,7 @@ def test_build_dem_from_guppy_rejects_idle_noise_without_idle_gates() -> None:
         with pytest.raises(
             ValueError,
             match=(
-                "requires t" if idle_param in {"t1", "t2"} else "idle-noise parameters have no idle gates .*requested:"
+                "requires t" if idle_param in {"t1", "t2"} else rf"idle-noise parameters have no idle gates .*requested: .*{idle_param}="
             ),
         ):
             build_dem_from_guppy(

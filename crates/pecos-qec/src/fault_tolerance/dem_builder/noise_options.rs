@@ -105,6 +105,7 @@ impl TryFrom<NoiseOptions> for NoiseConfig {
     type Error = String;
 
     fn try_from(options: NoiseOptions) -> Result<Self, Self::Error> {
+        let idle_noise_parameters = options.idle_noise_parameters();
         let [
             p_idle_x_linear_rate,
             p_idle_y_linear_rate,
@@ -230,6 +231,7 @@ impl TryFrom<NoiseOptions> for NoiseConfig {
         noise = noise.set_measurement_crosstalk_dem_mode(parse_measurement_crosstalk_dem_mode(
             measurement_crosstalk_dem_mode,
         )?);
+        noise.idle_noise_parameters = idle_noise_parameters;
         Ok(noise)
     }
 }
@@ -503,6 +505,49 @@ fn parse_measurement_crosstalk_transition_model(
 }
 
 impl NoiseOptions {
+    fn idle_noise_parameters(&self) -> BTreeMap<String, f64> {
+        [
+            ("p_idle", self.p_idle),
+            ("t1", self.t1),
+            ("t2", self.t2),
+            ("idle_rz", self.idle_rz),
+            ("p_idle_linear_rate", self.p_idle_linear_rate),
+            ("p_idle_quadratic_rate", self.p_idle_quadratic_rate),
+            ("p_idle_x_linear_rate", self.p_idle_x_linear_rate),
+            ("p_idle_y_linear_rate", self.p_idle_y_linear_rate),
+            ("p_idle_z_linear_rate", self.p_idle_z_linear_rate),
+            ("p_idle_x_quadratic_rate", self.p_idle_x_quadratic_rate),
+            ("p_idle_y_quadratic_rate", self.p_idle_y_quadratic_rate),
+            ("p_idle_z_quadratic_rate", self.p_idle_z_quadratic_rate),
+            (
+                "p_idle_x_quadratic_sine_rate",
+                self.p_idle_x_quadratic_sine_rate,
+            ),
+            (
+                "p_idle_y_quadratic_sine_rate",
+                self.p_idle_y_quadratic_sine_rate,
+            ),
+            (
+                "p_idle_z_quadratic_sine_rate",
+                self.p_idle_z_quadratic_sine_rate,
+            ),
+            (
+                "p_idle_quadratic_sine_rate",
+                self.p_idle_quadratic_sine_rate,
+            ),
+            ("p_idle_linear", self.p_idle_linear),
+            ("p_idle_sin_squared", self.p_idle_sin_squared),
+            ("p_idle_coherent", self.p_idle_coherent),
+        ]
+        .into_iter()
+        .filter_map(|(name, value)| {
+            value
+                .filter(|value| matches!(name, "t1" | "t2") || *value != 0.0)
+                .map(|value| (name.to_string(), value))
+        })
+        .collect()
+    }
+
     /// Translate structured idle families to linear and sine-squared X/Y/Z rates.
     ///
     /// Absent sine axes remain absent, as required by idle-target validation.

@@ -13,6 +13,25 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   seeded outcomes. `BpGraph::from_dense_check_matrix` validates dense binary
   matrices and per-mechanism error probabilities.
 
+- **Breaking:** Guppy DEM construction now prepares the circuit and measurement
+  schema in Rust before building the noise-dependent DEM. Preparation computes
+  exact noiseless references for every detector and observable, rejecting random
+  parities and declared references that disagree. The `evaluate_runtime_record`,
+  `evaluate_measurements`, `evaluate_results`, and `evaluate_result_columns`
+  methods return events and flips relative to those references; use
+  `runtime_record_parities`, `measurement_parities`, `result_parities`, and
+  `result_column_parities` for raw parities. Explicit builds and mixed builds
+  with named references require static schedule evidence; sampled agreement
+  alone does not certify them. Schema fingerprints use canonical version 2,
+  including references, runtime measurement order, and named bindings, so older
+  fingerprints must be regenerated. Error values use Rust formatting rather
+  than Python repr formatting. Supply idle relaxation times `t1` and `t2`
+  together: a lone time is now rejected instead of being silently ignored.
+  Active idle noise still requires `Idle` locations, while explicit zero rates
+  need none. Mixed builds infer the whole requested schema together, preserving
+  explicit definitions and explicit empty lists; fully explicit builds do not
+  run inference probes.
+
 - **Breaking:** Guppy code generation rejects `For` labels that shadow a register,
   allocator, block input or generated temporary. Loop labels, registers,
   allocators and block inputs are also rejected when the same generated function

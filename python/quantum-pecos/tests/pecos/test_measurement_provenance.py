@@ -2,6 +2,7 @@
 
 from collections import defaultdict
 from pathlib import Path
+from types import SimpleNamespace
 
 import pecos
 import pecos_rslib
@@ -195,7 +196,13 @@ def test_unlisted_scalar_external_is_unknown(monkeypatch):
             lambda traces=traces: _index_surface_result_trace_ids(traces),
             lambda traces=traces: _validate_surface_array_slot_provenance(traces, {}),
             lambda: testing.measurement_partition_from_trace(None, 2, {}),
-            lambda traces=traces: _generator_certified_result_traces([("out", 0)], None, traces, required_tags=[]),
+            lambda traces=traces: _generator_certified_result_traces(
+                [("out", 0)],
+                SimpleNamespace(result_tags=({}, 1)),
+                None,
+                traces,
+                required_tags=[],
+            ),
         ]
         for consume in consumers:
             with pytest.raises(ValueError, match=r"out.*occurrence 0.*unknown"):

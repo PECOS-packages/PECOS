@@ -43,7 +43,8 @@ categories = ["science", "simulation"]
 
 # --- Serialization & config ---
 serde = { version = "1", features = ["derive"] }
-# float_roundtrip correctly rounds JSON floats in every crate, whichever crates are built together.
+# float_roundtrip: bitwise snapshots and the DEM schema fingerprint must not depend on
+# which crates Cargo unifies into a build, so every crate parses JSON floats exactly.
 serde_json = { version = "1", features = ["float_roundtrip"] }
 ron = "0.12"
 toml = "1"

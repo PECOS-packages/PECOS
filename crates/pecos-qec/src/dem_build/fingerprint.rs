@@ -118,6 +118,13 @@ mod tests {
     }
 
     #[test]
+    fn typed_float_parsing_is_correctly_rounded() {
+        // Without float_roundtrip, serde_json's fast path yields 0x3fbeb851eb851eb8.
+        let parsed: f64 = serde_json::from_str("0.12000000000000001").unwrap();
+        assert_eq!(parsed.to_bits(), 0x3fbe_b851_eb85_1eb9);
+    }
+
+    #[test]
     fn canonical_number_golden_bytes() {
         for (input, expected) in [
             ("1.0", "1".into()),

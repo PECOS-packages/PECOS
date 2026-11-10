@@ -27,6 +27,7 @@ from pecos_rslib.qec import DetectorErrorModel as _RustDetectorErrorModel
 
 from pecos._engine_builders import _configure_selene_runtime
 from pecos.programs import Guppy
+from pecos.qec._idle_noise import _convert_structured_idle_noise, _warn_legacy_idle_noise
 from pecos.qec.dem_spec import GuppyDemBuild, ResultRef, _definition_record
 from pecos.qec.guppy_output_dem import InferredGuppyDemAnnotations, _guppy_dem_program
 
@@ -928,6 +929,26 @@ class GuppyDemBuilder:
             raise ValueError(msg)
 
         noise = self._noise_parameters()
+        noise.update(
+            _convert_structured_idle_noise(
+                **{
+                    name: noise[name]
+                    for name in (
+                        "p_idle_linear",
+                        "p_idle_linear_model",
+                        "p_idle_sin_squared",
+                        "p_idle_sin_squared_model",
+                        "p_idle_coherent",
+                        "p_idle_coherent_model",
+                    )
+                },
+            ),
+        )
+        _warn_legacy_idle_noise(
+            p_idle_linear_rate=noise["p_idle_linear_rate"],
+            p_idle_quadratic_rate=noise["p_idle_quadratic_rate"],
+            p_idle_quadratic_sine_rate=noise["p_idle_quadratic_sine_rate"],
+        )
         definitions = {}
         specs = []
         for role, expected in (("detectors", Detector), ("observables", Observable)):

@@ -704,6 +704,43 @@ def test_structured_idle_model_validation(entrypoint: str, kwargs: dict[str, obj
 
 @pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
 @pytest.mark.parametrize(
+    ("kwargs", "error", "message"),
+    [
+        ({"p_idle_linear": True}, TypeError, "p_idle_linear must be a finite, non-negative float"),
+        ({"p_idle_linear": "invalid"}, ValueError, "p_idle_linear must be a finite, non-negative float"),
+        ({"p_idle_linear": 0.01, "p_idle_linear_model": [1.0]}, ValueError, "must be a mapping"),
+        ({"p_idle_linear": 0.01, "p_idle_linear_model": {1: 1.0}}, TypeError, "invalid.*key"),
+    ],
+)
+def test_structured_idle_python_conversion_errors(
+    entrypoint: str,
+    kwargs: dict[str, object],
+    error: type[Exception],
+    message: str,
+) -> None:
+    with pytest.raises(error, match=message):
+        _structured_idle_dem(entrypoint, **kwargs)
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+def test_structured_idle_python_conversion_retains_numeric_strings(entrypoint: str) -> None:
+    converted = _structured_idle_dem(
+        entrypoint,
+        idle_after_2q_duration=1.0,
+        p_idle_linear="0.02",
+        p_idle_linear_model={"Z": "1"},
+    )
+    numeric = _structured_idle_dem(
+        entrypoint,
+        idle_after_2q_duration=1.0,
+        p_idle_linear=0.02,
+        p_idle_linear_model={"Z": 1.0},
+    )
+    assert converted.to_string() == numeric.to_string()
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+@pytest.mark.parametrize(
     ("alias", "replacement"),
     [
         ("p_idle_linear_rate", "p_idle_linear"),

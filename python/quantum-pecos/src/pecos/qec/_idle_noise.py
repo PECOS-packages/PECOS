@@ -45,6 +45,47 @@ def _translate_structured_idle_noise(
     float | None,
 ]:
     """Convert Python objects and translate idle families using Rust."""
+    families = _convert_structured_idle_noise(
+        p_idle_linear=p_idle_linear,
+        p_idle_linear_model=p_idle_linear_model,
+        p_idle_sin_squared=p_idle_sin_squared,
+        p_idle_sin_squared_model=p_idle_sin_squared_model,
+        p_idle_coherent=p_idle_coherent,
+        p_idle_coherent_model=p_idle_coherent_model,
+    )
+
+    axes = translate_structured_idle_noise(
+        **families,
+        p_idle_linear_rate=p_idle_linear_rate,
+        p_idle_quadratic_rate=p_idle_quadratic_rate,
+        p_idle_x_linear_rate=p_idle_x_linear_rate,
+        p_idle_y_linear_rate=p_idle_y_linear_rate,
+        p_idle_z_linear_rate=p_idle_z_linear_rate,
+        p_idle_quadratic_sine_rate=p_idle_quadratic_sine_rate,
+        p_idle_x_quadratic_sine_rate=p_idle_x_quadratic_sine_rate,
+        p_idle_y_quadratic_sine_rate=p_idle_y_quadratic_sine_rate,
+        p_idle_z_quadratic_sine_rate=p_idle_z_quadratic_sine_rate,
+    )
+    _warn_legacy_idle_noise(
+        p_idle_linear_rate=p_idle_linear_rate,
+        p_idle_quadratic_rate=p_idle_quadratic_rate,
+        p_idle_quadratic_sine_rate=p_idle_quadratic_sine_rate,
+        stacklevel=4,
+    )
+
+    return axes
+
+
+def _convert_structured_idle_noise(
+    *,
+    p_idle_linear: float | None,
+    p_idle_linear_model: Mapping[str, float] | None,
+    p_idle_sin_squared: float | None,
+    p_idle_sin_squared_model: Mapping[str, float] | None,
+    p_idle_coherent: float | None,
+    p_idle_coherent_model: Mapping[str, float] | None,
+) -> dict[str, float | dict[str, float] | None]:
+    """Convert structured Python values while retaining their public names."""
     families = {}
     for family, rate, model in [
         ("coherent", p_idle_coherent, p_idle_coherent_model),
@@ -84,18 +125,17 @@ def _translate_structured_idle_noise(
         families[rate_name] = converted_rate
         families[model_name] = converted_model
 
-    axes = translate_structured_idle_noise(
-        **families,
-        p_idle_linear_rate=p_idle_linear_rate,
-        p_idle_quadratic_rate=p_idle_quadratic_rate,
-        p_idle_x_linear_rate=p_idle_x_linear_rate,
-        p_idle_y_linear_rate=p_idle_y_linear_rate,
-        p_idle_z_linear_rate=p_idle_z_linear_rate,
-        p_idle_quadratic_sine_rate=p_idle_quadratic_sine_rate,
-        p_idle_x_quadratic_sine_rate=p_idle_x_quadratic_sine_rate,
-        p_idle_y_quadratic_sine_rate=p_idle_y_quadratic_sine_rate,
-        p_idle_z_quadratic_sine_rate=p_idle_z_quadratic_sine_rate,
-    )
+    return families
+
+
+def _warn_legacy_idle_noise(
+    *,
+    p_idle_linear_rate: float | None,
+    p_idle_quadratic_rate: float | None,
+    p_idle_quadratic_sine_rate: float | None,
+    stacklevel: int = 3,
+) -> None:
+    """Name replacements for the deprecated scalar idle aliases."""
     legacy_replacements = {
         "p_idle_linear_rate": (
             p_idle_linear_rate,
@@ -124,7 +164,5 @@ def _translate_structured_idle_noise(
             warnings.warn(
                 f"{name} is deprecated; use {replacement}",
                 DeprecationWarning,
-                stacklevel=3,
+                stacklevel=stacklevel,
             )
-
-    return axes

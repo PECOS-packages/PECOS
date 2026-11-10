@@ -27,10 +27,23 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   fingerprints must be regenerated. Error values use Rust formatting rather
   than Python repr formatting. Supply idle relaxation times `t1` and `t2`
   together: a lone time is now rejected instead of being silently ignored.
+  This applies to every Python DEM noise entry point, including
+  `DetectorErrorModel.from_circuit`, `DemBuilder.with_noise`,
+  `DemSampler.from_circuit` / `from_influence_map`, and
+  `DemSamplerBuilder.with_noise`, as well as Guppy builds.
   Active idle noise still requires `Idle` locations, while explicit zero rates
   need none. Mixed builds infer the whole requested schema together, preserving
   explicit definitions and explicit empty lists; fully explicit builds do not
-  run inference probes.
+  run inference probes. `DemBuilder` now reads detector JSON `reference`,
+  rejecting values other than integer 0, 1, or null.
+  `TickCircuit.circuit_definitions()` detector dictionaries include a
+  `reference` key, with `None` when absent.
+  `pecos.qis_operation_trace_to_tick_circuit` requires
+  `lowered_quantum_ops_complete: true` on every chunk, including terminal and
+  bookkeeping chunks. Stored traces containing `CRZ` are rejected; live traces
+  are unaffected because the runtime lowers CRZ. Malformed stored-trace fields
+  raise `ValueError` where they previously raised `TypeError`. Non-quantum trace
+  operations must deserialize as typed operations; legacy shapes are rejected.
 
 - **Breaking:** Guppy code generation rejects `For` labels that shadow a register,
   allocator, block input or generated temporary. Loop labels, registers,

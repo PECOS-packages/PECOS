@@ -285,11 +285,8 @@ impl RelayBp {
         // Validation guarantees at least one nonempty leg, so best_correction
         // belongs to this decode: the first executed decision if none converged,
         // or the minimum-cost converged correction otherwise.
-        let (correction, weight) = if let Some(weight) = best_weight {
-            (self.best_correction.clone(), Some(weight))
-        } else {
-            (self.best_correction.clone(), None)
-        };
+        let correction = self.best_correction.clone();
+        let weight = best_weight;
 
         Ok(RelayOutcome {
             converged,

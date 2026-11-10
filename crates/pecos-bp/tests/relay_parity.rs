@@ -284,6 +284,8 @@ struct Tally {
     iteration_agreement: usize,
     both_converged: usize,
     same_correction: usize,
+    both_failed: usize,
+    same_failed_observables: usize,
     external_max_iterations: usize,
 }
 
@@ -313,6 +315,15 @@ fn compare(name: &str, dcm: &DemCheckMatrix, shots: &[Shot]) -> Tally {
         if outcome.converged && external.converged {
             tally.both_converged += 1;
             tally.same_correction += usize::from(outcome.correction == external.correction);
+        }
+        // With no converged leg both sides report leg 0's hard decision (pre_iter >= 1).
+        // Raw bits differ at exact-zero ties (external `<= 0`, native `< 0`), so compare
+        // the observable prediction. c7's external failed-shot corrections are stale.
+        if !outcome.converged && !external.converged && compare_logicals {
+            tally.both_failed += 1;
+            tally.same_failed_observables += usize::from(
+                observables(dcm, &outcome.correction) == observables(dcm, &external.correction),
+            );
         }
         tally.external_max_iterations = tally.external_max_iterations.max(external.iterations);
         if name == "c4_operating_point" {
@@ -388,6 +399,15 @@ fn frozen_oracle_per_shot_contracts() {
         assert!(
             tally.same_correction * 20 >= tally.both_converged * 19,
             "{name}: correction agreement"
+        );
+        // 75% floor, measured 2026-11-09: with the first-executed-leg fallback, configs
+        // with relay legs agree on 89-100% of jointly failed shots (exact-zero ties move a
+        // few predictions; lowest c6 42/47, c2 34/38); a last-leg fallback gives 0-7%.
+        assert!(
+            tally.same_failed_observables * 4 >= tally.both_failed * 3,
+            "{name}: failed-shot observable predictions agree on only {} of {}",
+            tally.same_failed_observables,
+            tally.both_failed
         );
     }
 }

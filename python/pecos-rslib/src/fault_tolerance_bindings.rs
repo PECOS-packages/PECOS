@@ -2684,8 +2684,8 @@ impl PyDemBuilder {
     ///     `p_meas`: Measurement error rate.
     ///     `p_prep`: Initialization (prep) error rate.
     ///     `p_idle`: Optional idle noise rate per time unit.
-    ///     t1: Optional T1 relaxation time.
-    ///     t2: Optional T2 dephasing time.
+    ///     t1: Optional T1 relaxation time; requires t2.
+    ///     t2: Optional T2 dephasing time; requires t1.
     ///
     /// Returns:
     ///     Self for method chaining.

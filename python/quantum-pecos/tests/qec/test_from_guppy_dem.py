@@ -815,6 +815,12 @@ def test_from_guppy_zero_relaxation_time_still_requests_idle_noise(time_param: s
         _two_qubit_dem(**{time_param: 0.0})
 
 
+@pytest.mark.parametrize("time_param, partner", [("t1", "t2"), ("t2", "t1")])
+def test_from_guppy_rejects_lone_relaxation_time_with_idle_gates(time_param: str, partner: str) -> None:
+    with pytest.raises(ValueError, match=rf"{time_param} requires {partner}"):
+        _two_qubit_dem(idle_after_2q_duration=1.0, **{time_param: 100.0})
+
+
 @pytest.mark.parametrize("bad_duration", [0.0, -1.0, float("nan"), float("inf")])
 def test_from_guppy_rejects_non_positive_idle_duration(bad_duration: float) -> None:
     with pytest.raises(ValueError, match=r"finite, positive duration"):

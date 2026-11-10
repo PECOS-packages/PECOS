@@ -561,8 +561,8 @@ class _DetectorErrorModelMixin:
                 coherent family rate is rejected. ``"L"`` is not a
                 coherent-model key, and ``"U"`` is reserved for future
                 Hamiltonian-level support and rejected.
-            t1: Optional T1 relaxation time for explicit idle gates.
-            t2: Optional T2 dephasing time for explicit idle gates.
+            t1: Optional T1 relaxation time for explicit idle gates; requires ``t2``.
+            t2: Optional T2 dephasing time for explicit idle gates; requires ``t1``.
             p_idle_linear_rate: Deprecated bare Z-only alias for a stochastic
                 rate linear in idle duration. Use ``p_idle_linear`` with a
                 Z-only model, or ``p_idle_z_linear_rate`` for literal behavior.
@@ -1827,8 +1827,8 @@ def build_dem_from_guppy(
             coherent family rate is rejected. ``"L"`` is not a coherent-model
             key; ``"U"`` is reserved for future Hamiltonian-level support and
             rejected.
-        t1: Optional T1 relaxation time for explicit idle gates.
-        t2: Optional T2 dephasing time for explicit idle gates.
+        t1: Optional T1 relaxation time for explicit idle gates; requires ``t2``.
+        t2: Optional T2 dephasing time for explicit idle gates; requires ``t1``.
         p_idle_linear_rate: Deprecated bare Z-only alias for a stochastic rate
             linear in idle duration. Use ``p_idle_linear`` with a Z-only model,
             or ``p_idle_z_linear_rate`` for literal behavior.

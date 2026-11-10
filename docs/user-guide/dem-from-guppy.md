@@ -488,7 +488,10 @@ scheduled idles or you insert them explicitly. `from_guppy` raises
 `ValueError`, naming the offending parameters, when a nonzero idle-noise rate
 or `t1`/`t2` is supplied but the final traced circuit contains no `Idle` gates;
 it does not silently build a DEM without the requested noise. Zero rates are
-accepted, so a rate sweep may start at zero.
+accepted, so a rate sweep may start at zero. Supply `t1` and `t2` together;
+a lone relaxation time is rejected instead of being silently ignored, including
+when idle gates are present. Relaxation times must be finite and positive, with
+`t2 <= 2 * t1`.
 
 Both `DetectorErrorModel.from_guppy` and `build_dem_from_guppy` accept two
 passes for controlling those locations:

@@ -182,7 +182,7 @@ fn terminal_chunk_rejects_each_payload_without_raw_operations() {
         let mut trace = fixture();
         trace[1][field] = value;
         let chunks = decode(&trace);
-        assert!(chunks[1].operations.is_empty());
+        assert_eq!(chunks[1].operations, Vec::<Operation>::new());
         assert_eq!(
             validate_shot(&chunks).unwrap_err().to_string(),
             "terminal trace chunk must contain no operations or named outputs",

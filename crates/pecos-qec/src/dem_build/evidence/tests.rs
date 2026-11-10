@@ -321,7 +321,7 @@ fn optional_certification_errors_drop_enrichment_but_required_references_fail() 
         if required {
             assert_eq!(
                 result.err().unwrap().to_string(),
-                "Cannot bind result_ref: the program's lowered form could not be certified; use records, rec[-k], or meas_ids instead."
+                "Cannot bind result_ref: the program's lowered form could not be certified; use records, rec[-k], or meas_ids instead. unsupported control flow"
             );
         } else {
             assert!(result.unwrap().named_result_measurements().is_empty());

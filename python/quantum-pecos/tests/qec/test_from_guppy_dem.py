@@ -864,7 +864,9 @@ def test_build_dem_from_guppy_rejects_idle_noise_without_idle_gates() -> None:
         with pytest.raises(
             ValueError,
             match=(
-                "requires t" if idle_param in {"t1", "t2"} else rf"idle-noise parameters have no idle gates .*requested: .*{idle_param}="
+                "requires t"
+                if idle_param in {"t1", "t2"}
+                else rf"idle-noise parameters have no idle gates .*requested: .*{idle_param}="
             ),
         ):
             build_dem_from_guppy(

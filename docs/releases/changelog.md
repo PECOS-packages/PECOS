@@ -29,10 +29,14 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   together: a lone time is now rejected instead of being silently ignored.
   This applies to every Python DEM noise entry point, including
   `DetectorErrorModel.from_circuit`, `DemBuilder.with_noise`,
-  `DemSampler.from_circuit` / `from_influence_map`, and
+  `DemSampler.from_circuit` / `with_detectors`, and
   `DemSamplerBuilder.with_noise`, as well as Guppy builds.
-  Active idle noise still requires `Idle` locations, while explicit zero rates
-  need none. Mixed builds infer the whole requested schema together, preserving
+  `DetectorErrorModel.from_circuit` also accepts the structured idle keywords
+  (`p_idle_linear`, `p_idle_sin_squared`, `p_idle_coherent` and their `_model`
+  forms). Active idle noise still requires `Idle` locations, while explicit zero
+  rates need none; the rejection names the public keywords passed, as
+  `name=value`. Rust `NoiseConfig` gains a public `idle_noise_parameters` field,
+  so struct literals that list every field must add it. Mixed builds infer the whole requested schema together, preserving
   explicit definitions and explicit empty lists; fully explicit builds do not
   run inference probes. `DemBuilder` now reads detector JSON `reference`,
   rejecting values other than integer 0, 1, or null.

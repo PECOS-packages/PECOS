@@ -2878,7 +2878,9 @@ pub struct PyRelayBpDecoder {
 impl PyRelayBpDecoder {
     /// Create a DEM-aware Relay BP decoder from a Detector Error Model.
     ///
-    /// * `error_rate` - Uniform prior override; model mismatch can reduce accuracy, with little runtime effect
+    /// * `error_rate` - Uniform probability per original DEM error line, before merging
+    ///   identical detector and observable sets. A group of k lines receives the
+    ///   k-fold independent XOR of this rate (default: use DEM probabilities before merging).
     /// * `max_iter` - BP iteration cap; larger values can improve convergence but increase runtime
     /// * `alpha` - Min-sum scaling factor; tuning can improve accuracy with negligible runtime cost
     /// * `seed` - Reproducible relay sampling; changes exploration without increasing its runtime bound
@@ -3066,7 +3068,9 @@ pub struct PyMinSumBpDecoder {
 impl PyMinSumBpDecoder {
     /// Create a DEM-aware min-sum BP decoder from a Detector Error Model.
     ///
-    /// * `error_rate` - Uniform prior override; model mismatch can reduce accuracy, with little runtime effect
+    /// * `error_rate` - Uniform probability per original DEM error line, before merging
+    ///   identical detector and observable sets. A group of k lines receives the
+    ///   k-fold independent XOR of this rate (default: use DEM probabilities before merging).
     /// * `max_iter` - BP iteration cap; larger values can improve convergence but increase runtime
     /// * `alpha` - Min-sum scaling factor; tuning can improve accuracy with negligible runtime cost
     #[staticmethod]
@@ -3178,6 +3182,7 @@ impl DemDecoderConfig {
 pub struct PyDemAwareDecoder {
     inner: InnerDecoder,
     dem_check_matrix: DemCheckMatrix,
+    original_num_mechanisms: usize,
 }
 
 impl PyDemAwareDecoder {
@@ -3208,6 +3213,21 @@ impl PyDemAwareDecoder {
             vec![p; dcm.num_mechanisms]
         } else {
             dcm.error_priors.clone()
+        };
+
+        let original_num_mechanisms = dcm.num_mechanisms;
+        let (dcm, priors) = if matches!(
+            config,
+            DemDecoderConfig::RelayBp(_) | DemDecoderConfig::MinSumBp(_)
+        ) {
+            let mut matrix = dcm;
+            // Apply a uniform override to original mechanisms before XOR merging.
+            matrix.error_priors = priors;
+            let matrix = matrix.merge_duplicate_symptoms();
+            let priors = matrix.error_priors.clone();
+            (matrix, priors)
+        } else {
+            (dcm, priors)
         };
 
         // The check matrix shape and observable map are structural properties of
@@ -3292,6 +3312,7 @@ impl PyDemAwareDecoder {
         Ok(Self {
             inner,
             dem_check_matrix: dcm,
+            original_num_mechanisms,
         })
     }
 }
@@ -3360,7 +3381,9 @@ impl PyDemAwareDecoder {
     ///
     /// * `dem` - DEM string in Stim format
     /// * `decoder_type` - One of "`bp_osd`", "`bp_lsd`", "`union_find`", "`relay_bp`", "`min_sum_bp`"
-    /// * `error_rate` - Override error rate for BP priors (default: use DEM probabilities)
+    /// * `error_rate` - Uniform probability per original DEM error line (default: use DEM probabilities).
+    ///   For `relay_bp` and `min_sum_bp`, this is applied before merging identical detector
+    ///   and observable sets; a group of k lines receives the k-fold independent XOR of the rate.
     /// * `max_iter` - Maximum BP iterations (default: 100)
     ///
     /// # Example
@@ -3475,7 +3498,7 @@ impl PyDemAwareDecoder {
     /// Number of error mechanisms in the model.
     #[getter]
     fn num_mechanisms(&self) -> usize {
-        self.dem_check_matrix.num_mechanisms
+        self.original_num_mechanisms
     }
 
     fn __repr__(&self) -> String {
@@ -3490,7 +3513,7 @@ impl PyDemAwareDecoder {
             "DemAwareDecoder(type={}, detectors={}, mechanisms={}, observables={})",
             decoder_name,
             self.dem_check_matrix.num_detectors,
-            self.dem_check_matrix.num_mechanisms,
+            self.original_num_mechanisms,
             self.dem_check_matrix.num_observables,
         )
     }
@@ -4025,6 +4048,45 @@ mod dem_tuning_tests {
         assert_eq!(inner.max_iter(), 23);
         assert_eq!(inner.alpha(), Some(0.8));
         assert_eq!(inner.seed(), 91);
+    }
+
+    // Red/green: both DEM constructors override original priors before merging.
+    #[test]
+    fn relay_family_duplicate_dem_observables_and_override() {
+        let dem = "error(0.1) D0 D1 L65\nerror(0.2) D2 L0\nerror(0.3) D0 D1 L65";
+        for config in [
+            DemDecoderConfig::RelayBp(relay_bp_config(Some(0.25), None, None, None)),
+            DemDecoderConfig::MinSumBp(min_sum_bp_config(Some(0.25), None, None)),
+        ] {
+            let mut decoder = PyDemAwareDecoder::from_dem_with_config(dem, config).unwrap();
+            assert_eq!(decoder.dem_check_matrix.error_priors, [0.375, 0.25]);
+            assert_eq!(decoder.num_mechanisms(), 3);
+            assert!(decoder.__repr__().contains("mechanisms=3"));
+            let bits = match &decoder.inner {
+                InnerDecoder::RelayBp(inner) => inner.bit_count(),
+                InnerDecoder::MinSumBp(inner) => inner.bit_count(),
+                _ => panic!("expected Relay/min-sum"),
+            };
+            assert_eq!(bits, 2);
+            let result = decoder.decode_syndrome(vec![1, 1, 0]).unwrap();
+            assert!(result.converged);
+            assert_eq!(result.observables.iter_set_bits().collect::<Vec<_>>(), [65]);
+        }
+    }
+
+    // Compatibility: other DEM decoders retain one column per original mechanism.
+    #[test]
+    fn other_dem_decoders_keep_duplicate_columns() {
+        let dem = "error(0.1) D0 L0\nerror(0.1) D0 L0";
+        for config in [
+            DemDecoderConfig::BpOsd(BpOsdDemConfig::default()),
+            DemDecoderConfig::BpLsd(BpLsdDemConfig::default()),
+            DemDecoderConfig::UnionFind(UnionFindDemConfig::default()),
+        ] {
+            let decoder = PyDemAwareDecoder::from_dem_with_config(dem, config).unwrap();
+            assert_eq!(decoder.dem_check_matrix.num_mechanisms, 2);
+            assert_eq!(decoder.num_mechanisms(), 2);
+        }
     }
 
     #[test]

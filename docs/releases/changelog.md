@@ -6,6 +6,10 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- Relay-BP and min-sum decoders built from a DEM merge mechanisms with identical
+  detector and observable sets using independent-XOR probabilities. This improves
+  decoding of repeated symptoms, such as stim's flattened multi-round DEMs.
+
 - **Breaking:** `pecos-bp` replaces `RelayConfig`'s convergence count and scalar
   alpha with `StopRule` and `Alpha` enums, adding `PreIter` stopping and dynamic
   alpha schedules. Relay-BP now permits `pre_iterations = 0` when relay legs run

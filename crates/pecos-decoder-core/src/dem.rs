@@ -318,6 +318,59 @@ pub struct DemCheckMatrix {
 }
 
 impl DemCheckMatrix {
+    /// Merge mechanisms with identical detector AND observable columns.
+    ///
+    /// Probabilities are combined as independent XOR events, folded in input
+    /// order. Columns remain in first-occurrence order, and singleton probabilities
+    /// are preserved bit for bit. Lookup keys store only nonzero row indices;
+    /// the input matrices are consumed, selecting only the surviving columns.
+    #[must_use]
+    pub fn merge_duplicate_symptoms(mut self) -> Self {
+        let mut positions = std::collections::HashMap::new();
+        let mut representatives = Vec::new();
+        let mut priors = Vec::new();
+        for (column, &probability) in self.error_priors.iter().enumerate() {
+            // Row iteration gives sorted sparse supports without narrowing indices.
+            let detectors: Vec<usize> = self
+                .check_matrix
+                .column(column)
+                .indexed_iter()
+                .filter_map(|(row, &value)| (value != 0).then_some(row))
+                .collect();
+            let observables: Vec<usize> = self
+                .observable_matrix
+                .column(column)
+                .indexed_iter()
+                .filter_map(|(row, &value)| (value != 0).then_some(row))
+                .collect();
+            let key = (detectors, observables);
+            match positions.entry(key) {
+                std::collections::hash_map::Entry::Occupied(entry) => {
+                    let position = *entry.get();
+                    priors[position] =
+                        crate::correlation_table::bernoulli_xor(priors[position], probability);
+                }
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    entry.insert(representatives.len());
+                    representatives.push(column);
+                    priors.push(probability);
+                }
+            }
+        }
+        // Release lookup storage before allocating a selected matrix. Replacing
+        // each matrix immediately also releases its original dense allocation.
+        drop(positions);
+        if representatives.len() != self.num_mechanisms {
+            self.check_matrix = self.check_matrix.select(ndarray::Axis(1), &representatives);
+            self.observable_matrix = self
+                .observable_matrix
+                .select(ndarray::Axis(1), &representatives);
+            self.error_priors = priors;
+            self.num_mechanisms = representatives.len();
+        }
+        self
+    }
+
     /// Parse a DEM string into check matrix form.
     ///
     /// Each `error(p) D_i D_j ... L_k ...` line becomes one column in the
@@ -947,6 +1000,91 @@ impl Default for DemConfigBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Red/green: merge only full symptoms, preserving first occurrence and XOR order.
+    #[test]
+    fn merge_duplicate_symptoms_groups_and_priors() {
+        let dem = "error(0.1) D2 L1\nerror(0.2) D0\nerror(0.3) D2 L1\n\
+                   error(0.4) D2 L0\nerror(0.2) D0\nerror(0.7) D2 L1";
+        let original = DemCheckMatrix::from_dem_str(dem).unwrap();
+        let merged = original.clone().merge_duplicate_symptoms();
+        let representatives = [0, 1, 3];
+        assert_eq!(merged.num_mechanisms, 3);
+        assert_eq!(merged.num_detectors, 3);
+        assert_eq!(merged.num_observables, 2);
+        let pair = 0.1_f64 * (1.0 - 0.3) + 0.3 * (1.0 - 0.1);
+        let triple = pair * (1.0 - 0.7) + 0.7 * (1.0 - pair);
+        let equal = 0.2_f64 * (1.0 - 0.2) + 0.2 * (1.0 - 0.2);
+        assert_eq!(
+            merged
+                .error_priors
+                .iter()
+                .map(|p| p.to_bits())
+                .collect::<Vec<_>>(),
+            [triple.to_bits(), equal.to_bits(), 0.4_f64.to_bits()]
+        );
+        for (column, &representative) in representatives.iter().enumerate() {
+            assert_eq!(
+                merged.check_matrix.column(column),
+                original.check_matrix.column(representative)
+            );
+            assert_eq!(
+                merged.observable_matrix.column(column),
+                original.observable_matrix.column(representative)
+            );
+        }
+    }
+
+    // Compatibility: singleton priors are copied without floating-point arithmetic.
+    #[test]
+    fn merge_duplicate_symptoms_identity() {
+        for dem in [
+            "",
+            "detector D2\nlogical_observable L3",
+            "error(0) D0\nerror(1) D1 L0\nerror(0.123456789) D0 L0\nerror(0.5) L1",
+        ] {
+            let mut original = DemCheckMatrix::from_dem_str(dem).unwrap();
+            if let Some(first) = original.error_priors.first_mut() {
+                *first = -0.0;
+            }
+            let merged = original.clone().merge_duplicate_symptoms();
+            assert_eq!(merged.check_matrix, original.check_matrix);
+            assert_eq!(merged.observable_matrix, original.observable_matrix);
+            assert_eq!(merged.num_detectors, original.num_detectors);
+            assert_eq!(merged.num_observables, original.num_observables);
+            assert_eq!(merged.num_mechanisms, original.num_mechanisms);
+            assert_eq!(
+                merged
+                    .error_priors
+                    .iter()
+                    .map(|p| p.to_bits())
+                    .collect::<Vec<_>>(),
+                original
+                    .error_priors
+                    .iter()
+                    .map(|p| p.to_bits())
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+
+    // Red/green: zero-row matrices and detector-silent mechanisms still have symptoms.
+    #[test]
+    fn merge_duplicate_symptoms_empty_supports() {
+        for dem in [
+            "error(0.1)\nerror(0.2)",
+            "error(0.1) L2\nerror(0.2) L2",
+            "error(0.1) D2\nerror(0.2) D2",
+        ] {
+            let original = DemCheckMatrix::from_dem_str(dem).unwrap();
+            let merged = original.merge_duplicate_symptoms();
+            assert_eq!(merged.num_mechanisms, 1);
+            assert_eq!(
+                merged.error_priors[0].to_bits(),
+                (0.1_f64 * 0.8 + 0.2 * 0.9).to_bits()
+            );
+        }
+    }
 
     #[test]
     fn merged_graph_discards_detector_free_faults() {

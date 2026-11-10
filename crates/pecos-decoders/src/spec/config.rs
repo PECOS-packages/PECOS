@@ -207,6 +207,9 @@ pub enum RelayStoppingCriterion {
 /// Relay BP construction options.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RelayBpConfig {
+    /// Uniform probability per original DEM error line, before duplicate merging.
+    /// A group of k identical symptoms receives the k-fold independent XOR of
+    /// this rate. `None` uses the original DEM probabilities before merging.
     pub error_rate: Option<f64>,
     pub max_iter: usize,
     pub alpha: Option<f64>,
@@ -241,6 +244,9 @@ impl Default for RelayBpConfig {
 /// Standalone min-sum BP construction options.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MinSumBpConfig {
+    /// Uniform probability per original DEM error line, before duplicate merging.
+    /// A group of k identical symptoms receives the k-fold independent XOR of
+    /// this rate. `None` uses the original DEM probabilities before merging.
     pub error_rate: Option<f64>,
     pub max_iter: usize,
     pub alpha: Option<f64>,

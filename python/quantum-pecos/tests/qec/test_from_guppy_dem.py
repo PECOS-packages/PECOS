@@ -5,6 +5,7 @@
 
 import inspect
 import json
+import math
 import warnings
 from typing import ClassVar
 
@@ -831,8 +832,16 @@ def test_from_guppy_rejects_lone_relaxation_time_with_idle_gates(time_param: str
 
 @pytest.mark.parametrize("bad_duration", [0.0, -1.0, float("nan"), float("inf")])
 def test_from_guppy_rejects_non_positive_idle_duration(bad_duration: float) -> None:
-    with pytest.raises(ValueError, match=r"finite positive duration"):
+    with pytest.raises(
+        ValueError,
+        match=r"^idle_after_2q_duration must be a finite, positive duration; got ",
+    ) as raised:
         _two_qubit_dem(idle_after_2q_duration=bad_duration, p_idle_linear=0.01)
+    reported = float(str(raised.value).split("; got ")[1])
+    if math.isnan(bad_duration):
+        assert math.isnan(reported)
+    else:
+        assert reported == bad_duration
 
 
 def test_from_guppy_idle_guard_accepts_inserted_idles_and_idles_without_noise() -> None:
@@ -869,7 +878,10 @@ def test_build_dem_from_guppy_rejects_idle_noise_without_idle_gates() -> None:
 
 
 def test_build_dem_from_guppy_rejects_non_positive_idle_duration() -> None:
-    with pytest.raises(ValueError, match=r"finite positive duration"):
+    with pytest.raises(
+        ValueError,
+        match=r"^idle_after_2q_duration must be a finite, positive duration; got 0$",
+    ):
         build_dem_from_guppy(
             _two_qubit_idle_target,
             num_qubits=2,

@@ -673,13 +673,12 @@ impl DemBuildBuilder {
         if let Some(settings) = &settings {
             settings.validate()?;
         }
-        if self
-            .idle_after_2q
-            .is_some_and(|duration| !duration.is_finite() || duration <= 0.0)
+        if let Some(duration) = self.idle_after_2q
+            && (!duration.is_finite() || duration <= 0.0)
         {
-            return Err(DemBuildError::Configuration(
-                "idle_after_2q must be a finite positive duration".into(),
-            ));
+            return Err(DemBuildError::Configuration(format!(
+                "idle_after_2q_duration must be a finite, positive duration; got {duration}"
+            )));
         }
         let input = match (self.circuit, self.program.as_mut()) {
             (Some(circuit), None) => {

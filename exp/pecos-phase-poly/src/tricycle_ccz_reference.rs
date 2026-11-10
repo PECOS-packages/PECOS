@@ -4,11 +4,12 @@
 //! Static Clifford reference for arXiv:2510.07269, Table II and the appendix
 //! "Details for simulations". Three logical-plus blocks undergo one Z-check
 //! extraction round without repair, a correlated-Z surrogate, and X readout.
-//! Table II's LER corresponds to the particular CX schedule recorded with the
-//! paper's run. Other valid colorings admit weight-two undetected logical faults
-//! through ancilla-to-data Z propagation and give about 15 times higher LER for
-//! C27 at p = 0.001. Acceptance does not depend on the schedule. Cup-product
-//! supports and the edge-coloring constructor are shared with `tricycle_ccz_noisy`.
+//! The CX schedule is explicit. Edge coloring admits ancilla Z hooks and has
+//! extraction fault distances 2 for C27 and 3 for C81. `ExtractionSchedule::hook_safe`
+//! reaches their block Z distances 3 and 5; the recorded C27 schedule reaches 3.
+//! Table II uses that recorded schedule; acceptance does not depend on the schedule.
+//! The circuit builder, schedule constructors, and cup-product supports are
+//! shared with `tricycle_ccz_noisy`.
 //! Exact and sampled fault-count strata retain their unconditional PMF weights.
 //! Omitted mass is reported separately from statistical uncertainty.
 
@@ -24,7 +25,7 @@ use pecos_quantum::TickCircuit;
 use pecos_random::PecosRng;
 
 use crate::distillation::validate_probability;
-use crate::tricycle_ccz_noisy::{ExtractionSchedule, surrogate_supports};
+use crate::tricycle_ccz_noisy::{ExtractionSchedule, extraction_circuit, surrogate_supports};
 
 #[cfg(test)]
 mod tests;
@@ -37,39 +38,7 @@ pub fn paper_circuit(
     code: &BivariateTricycleCode,
     schedule: &ExtractionSchedule,
 ) -> Result<TickCircuit, String> {
-    schedule.validate(code)?;
-    let n = code.num_qubits();
-    let total = n
-        .checked_add(code.hz().num_checks())
-        .and_then(|v| v.checked_mul(3))
-        .ok_or("three-block circuit size overflows usize")?;
-    let mut circuit = TickCircuit::new();
-    circuit.tick().px(&(0..3 * n).collect::<Vec<_>>());
-    circuit.tick_at(0).pz(&(3 * n..total).collect::<Vec<_>>());
-    for pairs in schedule.three_blocks() {
-        circuit.tick().cx(&pairs);
-    }
-    circuit.tick().mz(&(3 * n..total).collect::<Vec<_>>());
-    let measurements = circuit.tick().mx(&(0..3 * n).collect::<Vec<_>>());
-    for block in 0..3 {
-        for row in code.hx().rows() {
-            let records = row
-                .iter()
-                .enumerate()
-                .filter_map(|(q, &b)| (b != 0).then_some(measurements[block * n + q]))
-                .collect::<Vec<_>>();
-            circuit.detector(&records).map_err(|e| e.to_string())?;
-        }
-        for row in code.logical_x().rows() {
-            let records = row
-                .iter()
-                .enumerate()
-                .filter_map(|(q, &b)| (b != 0).then_some(measurements[block * n + q]))
-                .collect::<Vec<_>>();
-            circuit.observable(&records).map_err(|e| e.to_string())?;
-        }
-    }
-    Ok(circuit)
+    extraction_circuit(code, schedule, 3)
 }
 
 /// Build paper-noise mechanisms, including one explicit surrogate per data qubit.

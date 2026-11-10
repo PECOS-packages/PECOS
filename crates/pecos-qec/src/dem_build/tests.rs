@@ -892,3 +892,44 @@ fn preparation_does_not_overwrite_an_invalid_declared_circuit_count() {
         })
     ));
 }
+
+#[test]
+fn paired_relaxation_options_reach_native_idle_validation_without_panicking() {
+    for (t1, t2) in [
+        (0.0, 0.0),
+        (0.0, 100.0),
+        (100.0, 0.0),
+        (1.0, 3.0),
+        (f64::NAN, 1.0),
+        (1.0, f64::INFINITY),
+    ] {
+        let noise = NoiseConfig::try_from(crate::NoiseOptions {
+            t1: Some(t1),
+            t2: Some(t2),
+            ..crate::NoiseOptions::default()
+        })
+        .unwrap();
+        for with_idle in [false, true] {
+            let mut circuit = TickCircuit::new();
+            circuit.tick().pz(&[0]);
+            if with_idle {
+                circuit.tick().idle(1, &[0]);
+            }
+            circuit.tick().mz(&[0]);
+            let prepared = DetectorErrorModel::builder()
+                .with_circuit(circuit)
+                .with_detectors(vec![vec![0]])
+                .prepare()
+                .unwrap();
+            let error = prepared.build_dem(noise.clone()).err().unwrap().to_string();
+            assert!(
+                error.contains(if with_idle {
+                    "invalid idle T1/T2 values"
+                } else {
+                    "idle-noise parameters have no idle gates"
+                }),
+                "{error}"
+            );
+        }
+    }
+}

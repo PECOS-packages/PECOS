@@ -173,9 +173,10 @@ impl TryFrom<NoiseOptions> for NoiseConfig {
             return Err("t2 requires t1; both relaxation times must be supplied".to_string());
         }
         noise.p_idle = p_idle.unwrap_or(0.0);
-        if let (Some(t1_val), Some(t2_val)) = (t1, t2) {
-            noise = noise.set_t1_t2(t1_val, t2_val);
-        }
+        // Channel validation belongs to the DEM builder, including idle-target
+        // checks. The infallible setter asserts the T2/T1 bound prematurely.
+        noise.t1 = t1;
+        noise.t2 = t2;
         if let Some(rz) = idle_rz {
             noise = noise.set_idle_rz(rz);
         }

@@ -27,8 +27,7 @@ rand.workspace = true
 rand_core.workspace = true
 rayon.workspace = true
 batsat.workspace = true
-# Match arbitrary_precision parsing: float_roundtrip correctly rounds JSON floats.
-serde_json = { workspace = true, features = ["float_roundtrip"] }
+serde_json.workspace = true
 sha2.workspace = true
 smallvec.workspace = true
 thiserror.workspace = true

@@ -901,6 +901,23 @@ def _copy_surface_tick_circuit_metadata(
     measurement_index_remap: dict[int, int] | None = None,
 ) -> None:
     """Copy the surface-level metadata needed by the native DEM/sampler builders."""
+    import json
+
+    classes_json = source_tc.get_meta("measurement_classes")
+    if classes_json is not None and measurement_index_remap is not None:
+        classes = source_tc.circuit_definitions()["measurement_classes"]
+        _validate_result_tag_remap_against_traced_measurements(
+            target_tc,
+            measurement_index_remap,
+            expected_measurements=len(classes),
+        )
+        # The result-tag remap names target MeasIds; classes index emission
+        # positions, even when those ids are sparse or out of order.
+        positions = {mid: position for position, mid in enumerate(measurement_ids_in_execution_order(target_tc))}
+        remapped_classes = [None] * len(classes)
+        for ordinal, entry in enumerate(classes):
+            remapped_classes[positions[measurement_index_remap[ordinal]]] = entry
+        classes_json = json.dumps(remapped_classes)
     for key in (
         "basis",
         "detectors",
@@ -926,6 +943,8 @@ def _copy_surface_tick_circuit_metadata(
                     definition_kind="detectors" if key in ("detectors", "detector_descriptors") else "observables",
                 )
             target_tc.set_meta(key, value)
+    if classes_json is not None:
+        target_tc.set_meta("measurement_classes", classes_json)
 
 
 def _measurement_index_remap_for_orders(

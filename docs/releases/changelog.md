@@ -17,6 +17,15 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   seeded outcomes. `BpGraph::from_dense_check_matrix` validates dense binary
   matrices and per-mechanism error probabilities.
 
+- **Breaking:** Python surface memory and logical circuit builders no longer
+  write raw detector `fault_sector` labels; they export `measurement_classes`.
+  Callers copying raw `detectors` JSON into another builder must also forward
+  the classes, using `from_guppy(measurement_classes_json=...)` or
+  `with_circuit_metadata(circuit)` when building from the same circuit.
+  Copying only detector JSON gives `None` labels. Resolved labels are unchanged
+  for built-in routes, including traced circuits and cached logical DEMs.
+  DEM schema fingerprints now include measurement classes when present.
+
 - **Breaking:** Guppy code generation rejects `For` labels that shadow a register,
   allocator, block input or generated temporary. Loop labels, registers,
   allocators and block inputs are also rejected when the same generated function

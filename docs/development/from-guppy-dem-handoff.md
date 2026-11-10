@@ -81,6 +81,10 @@ direct scalar measurement reads carry provenance; unsupported values preserve
 an unresolved occurrence, and uncertifiable schedules fail closed. The runtime
 measurement count and identities are checked against the certified program.
 
+When using detector JSON from the surface builder, also forward its
+`measurement_classes` JSON. Both arrays must use the traced program's
+measurement emission order.
+
 This should support calls like:
 
 ```python,notest
@@ -98,6 +102,7 @@ dem = DetectorErrorModel.from_guppy(
     program,
     num_qubits=get_num_qubits(9, ancilla_budget=17),
     detectors_json=detectors_json,
+    measurement_classes_json=measurement_classes_json,
     observables_json=observables_json,
     num_measurements=num_measurements,
     p1=p,

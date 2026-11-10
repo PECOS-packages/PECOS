@@ -42,6 +42,7 @@ def test_dem_matches_legacy(distance: int, num_rounds: int, basis: str, ancilla_
     kwargs = {
         "num_qubits": get_num_qubits(distance, ancilla_budget=ancilla_budget),
         "detectors_json": circuit.get_meta("detectors"),
+        "measurement_classes_json": circuit.get_meta("measurement_classes"),
         "observables_json": circuit.get_meta("observables"),
         **NOISE,
     }
@@ -153,6 +154,7 @@ def test_patch_and_check_plan(basis: str) -> None:
         )
     )
     build.with_detectors_json(circuit.get_meta("detectors"))
+    build.with_measurement_classes_json(circuit.get_meta("measurement_classes"))
     build.with_observables_json(circuit.get_meta("observables"))
     assert build.build().audit["named_result_binding"] == "generator_layout_v2_program_bound"
 

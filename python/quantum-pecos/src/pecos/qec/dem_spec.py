@@ -249,9 +249,11 @@ def surface_memory_dem_spec(
             )
         return [int(record) for record in records]
 
+    effective_sectors = {entry["id"]: entry["fault_sector"] for entry in circuit.circuit_definitions()["detectors"]}
     detectors = []
     for entry in detector_entries:
         metadata = {key: value for key, value in entry.items() if key not in {"id", "records", "coords"}}
+        metadata["fault_sector"] = effective_sectors[entry["id"]]
         detectors.append(
             Detector(
                 *(rec[record] for record in records_of(entry, "detector")),
@@ -645,6 +647,9 @@ def _resolve_dem_specs(
         "runtime_measurement_order": runtime_order,
         "named_result_measurements": result_ids_by_tag,
     }
+    measurement_classes = circuit.get_meta("measurement_classes")
+    if measurement_classes is not None:
+        fingerprint_payload["measurement_classes"] = json.loads(measurement_classes)
     fingerprint = hashlib.sha256(
         json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":")).encode(),
     ).hexdigest()
@@ -714,6 +719,9 @@ def _resolved_schema_from_validated_json(
         "runtime_measurement_order": runtime_order,
         "named_result_measurements": result_ids_by_tag,
     }
+    measurement_classes = circuit.get_meta("measurement_classes")
+    if measurement_classes is not None:
+        fingerprint_payload["measurement_classes"] = json.loads(measurement_classes)
     fingerprint = hashlib.sha256(
         json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":")).encode(),
     ).hexdigest()

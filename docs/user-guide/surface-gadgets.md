@@ -196,6 +196,7 @@ memory_circuit = generate_tick_circuit_from_patch(memory_patch, 2, "Z", ancilla_
 dem_options = dict(
     num_qubits=get_num_qubits(patch=memory_patch, ancilla_budget=2),
     detectors_json=memory_circuit.get_meta("detectors"),
+    measurement_classes_json=memory_circuit.get_meta("measurement_classes"),
     observables_json=memory_circuit.get_meta("observables"),
     p1=0.001,
     p2=0.001,

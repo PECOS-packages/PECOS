@@ -278,7 +278,17 @@ pub unsafe extern "C-unwind" fn selene_qubit_measure(
                 value: false,
             };
         }
-        return unsafe { selene_future_read_bool(std::ptr::null_mut(), future.value) };
+        let result = unsafe { selene_future_read_bool(std::ptr::null_mut(), future.value) };
+        if result.error_code != 0 {
+            return result;
+        }
+        // Eager measurement owns this temporary future: no handle escapes to
+        // the program, so release it after the read has recorded provenance.
+        let released = unsafe { selene_refcount_decrement(std::ptr::null_mut(), future.value) };
+        return SeleneBoolResult {
+            error_code: released.error_code,
+            value: result.value,
+        };
     }
 
     let result = unsafe { ffi::__quantum__rt__result_allocate() };

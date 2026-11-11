@@ -7,6 +7,7 @@ Asymmetric noise histories make incorrect tag bindings change the DEM string.
 """
 
 import json
+import re
 
 import pytest
 from guppylang import guppy
@@ -14,7 +15,7 @@ from guppylang.std.builtins import result
 from guppylang.std.lang import owned
 from guppylang.std.quantum import cx, h, measure, qubit, x
 from pecos.guppy_gen import get_num_qubits, make_surface_code
-from pecos.qec import Detector, DetectorErrorModel, build_dem_from_guppy, rec, result_ref
+from pecos.qec import Detector, DetectorErrorModel, build_dem_from_guppy, result_ref
 from pecos.qec._qis_result_tags import _CertificationError
 
 from qec._measurement_expectations import measurement_layout
@@ -132,8 +133,18 @@ def test_result_tags_with_runtime_loop_program_fails_loud() -> None:
     with pytest.raises(
         ValueError,
         match=(
-            r"^Cannot bind result_tags: the program's lowered form could not be certified; "
-            r"use records, rec\[-k\], or meas_ids instead\.$"
+            "^"
+            + re.escape(
+                "Cannot bind result_tags: the program's lowered form could not be certified. "
+                "For a measurement-independent quantum schedule with raw and parity outputs, use "
+                "infer_guppy_dem_annotations(program, num_qubits=...).build_dem(). Alternatively, pass "
+                "DetectorErrorModel.from_guppy(..., detectors_json=..., observables_json=...) JSON with "
+                "meas_ids and no result_tags; the static-schedule preflight still applies. MeasIds label "
+                "compiled measurements, not source positions: take them from "
+                "infer_guppy_dem_annotations(...).detectors_json / .observables_json or from a traced "
+                "GuppyDemBuild.measurement_ledger entry's .meas_id.",
+            )
+            + "$"
         ),
     ) as raised:
         DetectorErrorModel.from_guppy(
@@ -254,25 +265,25 @@ def test_inlined_result_tags_match_positional_records() -> None:
         assert build("result_tags", f'"{tag}"') == positional[offset], tag
 
 
-def test_inlined_typed_result_refs_match_positional_records() -> None:
-    positional = {
+def test_inlined_typed_result_refs_match_verified_runtime_records() -> None:
+    named = {
         offset: build_dem_from_guppy(
-            _inlined_three_measurements,
-            num_qubits=3,
-            detectors=[Detector(rec[offset])],
-            seed=0,
-            **_NOISE,
-        )
-        for offset in (-3, -2, -1)
-    }
-    assert len({build.dem.to_string() for build in positional.values()}) == 3
-    for tag, offset in _tag_offsets(_inlined_three_measurements).items():
-        tagged = build_dem_from_guppy(
             _inlined_three_measurements,
             num_qubits=3,
             detectors=[Detector(result_ref(tag))],
             seed=0,
             **_NOISE,
         )
-        assert tagged.detectors_json == positional[offset].detectors_json, tag
-        assert tagged.dem.to_string() == positional[offset].dem.to_string(), tag
+        for tag, offset in _tag_offsets(_inlined_three_measurements).items()
+    }
+    assert len({build.dem.to_string() for build in named.values()}) == 3
+    for tag, offset in _tag_offsets(_inlined_three_measurements).items():
+        from_records = DetectorErrorModel.from_guppy(
+            _inlined_three_measurements,
+            num_qubits=3,
+            detectors_json=json.dumps([{"id": 0, "records": [offset]}]),
+            seed=0,
+            **_NOISE,
+        )
+        assert json.loads(named[offset].detectors_json) == [{"id": 0, "meas_ids": [3 + offset]}], tag
+        assert from_records.to_string() == named[offset].dem.to_string(), tag

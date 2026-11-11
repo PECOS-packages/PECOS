@@ -32,7 +32,7 @@ dependencies = [
     "pecos-rslib-llvm==0.11.0.dev0",
     "phir>=0.3.3",
     "networkx>=2.1.0",
-    # Guppy 1.0 release candidates and Selene 0.3 use the current tket/HUGR format.
+    # guppylang 1.2 requires selene-hugr-qis-compiler 0.5.1. The selene-sim floor is the tested 0.3.7.
     "guppylang~=1.2.0",
     "tket~=0.15.9",
     "hugr~=0.18.0",

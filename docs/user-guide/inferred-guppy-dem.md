@@ -93,7 +93,7 @@ are concatenated in execution order, with array elements in array order.
 
 <!--skip: API template requires caller-supplied program; covered by test_dem_inference_builder.py.-->
 ```python
-from pecos.qec import Detector, Observable, rec
+from pecos.qec import Detector, Observable, result_ref
 
 build = (
     DetectorErrorModel.builder()
@@ -101,14 +101,14 @@ build = (
     .with_qubits(num_qubits)
     .with_detectors(
         [
-            Detector(rec[-2], rec[-1]),
+            Detector(result_ref("m0"), result_ref("m1")),
             Detector.inferred("checks", element=3),
         ]
     )
     .with_observables(
         [
             Observable.inferred("logical", element=0, id=0),
-            Observable(rec[-1], id=1),
+            Observable(result_ref("m1"), id=1),
         ]
     )
     .with_inference(DemInferenceSettings().with_validation_rows(32))
@@ -125,9 +125,10 @@ dense, and observable IDs must be unique.
 
 Only selected outputs are fitted or required. Fully explicit lists skip probes,
 raw-output binding and the inference solver, even if settings are supplied.
-Inference-only builds skip compiler named-reference analysis. Mixed definitions
-using `rec[...]` also avoid that analysis; explicit named references retain the
-existing compiler certification requirements. All inferred outputs share probes
+Inference-only builds skip compiler named-reference analysis. Explicit named
+references in mixed definitions retain the compiler certification requirements.
+Typed `rec[...]` references are rejected because compiled Guppy programs do not
+preserve source measurement order. All inferred outputs share probes
 and one GF(2) solve, and the combined definitions feed one fault-propagation pass.
 Explicit JSON definitions can also be combined with an inferred opposite role.
 

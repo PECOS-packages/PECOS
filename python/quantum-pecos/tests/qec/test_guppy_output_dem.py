@@ -96,14 +96,15 @@ def test_infers_computed_detector_and_observable_parities_and_builds_dem() -> No
         require_raw_provenance=False,
     )
 
-    assert inferred.raw_measurement_ids == (0, 1, 2)
-    assert inferred.detector_supports == ((0, 1), (1, 2))
-    assert inferred.observable_supports == ((0, 2),)
+    ids, _ = measurement_layout(_computed_parity_outputs, 3)
+    assert inferred.raw_measurement_ids == tuple(ids[q] for q in range(3))
+    assert inferred.detector_supports == ((ids[0], ids[1]), (ids[1], ids[2]))
+    assert inferred.observable_supports == ((ids[0], ids[2]),)
     assert inferred.observable_labels == (("obs", 0),)
     assert inferred.raw_binding == "runtime_result_ids"
     assert json.loads(inferred.detectors_json) == [
-        {"id": 0, "meas_ids": [0, 1], "inferred_from_result_tag": "DETECTOR"},
-        {"id": 1, "meas_ids": [1, 2], "inferred_from_result_tag": "DETECTOR"},
+        {"id": 0, "meas_ids": [ids[0], ids[1]], "inferred_from_result_tag": "DETECTOR"},
+        {"id": 1, "meas_ids": [ids[1], ids[2]], "inferred_from_result_tag": "DETECTOR"},
     ]
 
     dem = inferred.build_dem(p1=0.0, p2=0.0, p_meas=0.1, p_prep=0.0)

@@ -16,7 +16,7 @@ from guppylang.std.qsystem.helios import zz_phase
 from guppylang.std.quantum import measure, qubit
 from pecos import NoiseParameters
 from pecos._traced_circuit import normalize_traced_tick_circuit
-from pecos.qec import DemInferenceSettings, Detector, DetectorErrorModel, Observable, rec
+from pecos.qec import DemInferenceSettings, Detector, DetectorErrorModel, Observable, result_ref
 from pecos.qec.surface.circuit_builder import tick_circuit_to_stim
 from pecos.quantum import TickCircuit
 from pecos.tracing import capture_qis_operation_trace, qis_operation_trace_to_tick_circuit
@@ -58,7 +58,12 @@ def test_guppy_half_turn_retains_correlated_two_qubit_noise(runtime_name: str, *
     if inferred:
         builder = builder.with_inference(DemInferenceSettings().with_validation_rows(8))
     else:
-        builder = builder.with_detectors([Detector(rec[-2]), Detector(rec[-1])]).with_observables([Observable(rec[-2])])
+        builder = builder.with_detectors(
+            [
+                Detector(result_ref("raw measurements", occurrence=0)),
+                Detector(result_ref("raw measurements", occurrence=1)),
+            ],
+        ).with_observables([Observable(result_ref("raw measurements", occurrence=0))])
     build = builder.build()
     assert build.circuit.gate_counts_by_type()["RZZ"] == 1
     assert [line for line in build.dem.to_string().splitlines() if line.startswith("error(")] == ["error(0.2) D0 D1 L0"]

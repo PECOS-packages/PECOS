@@ -70,6 +70,7 @@ from pecos.qec.dem_spec import (
     _metadata_entry,
     _resolve_dem_specs,
     _resolved_schema_from_validated_json,
+    _validate_guppy_measurement_ref,
 )
 
 if TYPE_CHECKING:
@@ -457,10 +458,9 @@ class _DetectorErrorModelMixin:
 
                 - ``records``: negative measurement offsets (Stim convention),
                   positional in the traced measurement record.
-                - ``meas_ids``: stable stamped ``MeasId``s -- resolved in Rust
-                  against the circuit's actual ids, so robust to any
-                  measurement reordering Guppy/Selene compilation may
-                  introduce.
+                - ``meas_ids``: stable labels of compiled measurements. Read these
+                  from ``GuppyDemBuild.measurement_ledger`` entries
+                  (``meas_id``) or inference output, never from source order.
                 - ``result_tags``: Guppy ``result(tag, ...)`` tag strings
                   (e.g. ``[{"id": 0, "result_tags": ["syn_a"]}]``). The
                   reorder-immune ``tag -> measurement`` binding is recovered
@@ -637,7 +637,7 @@ class _DetectorErrorModelMixin:
             branching and looping HUGR control flow is conservatively rejected
             because one sampled branch cannot certify a static circuit. Built-in
             generators may carry a measurement-layout certificate that admits their
-            static schedule; its layout is checked against independent evidence.
+            static schedule; slot identities are resolved from independent evidence.
 
             Every measurement is anchored to a stable MeasId automatically:
             ``measure()`` itself allocates the result slot in the trace (a
@@ -801,8 +801,14 @@ def _preflight_guppy_static_schedule(
 
 def _tag_certification_message(reference: str) -> str:
     return (
-        f"Cannot bind {reference}: the program's lowered form could not be certified; "
-        "use records, rec[-k], or meas_ids instead."
+        f"Cannot bind {reference}: the program's lowered form could not be certified. "
+        "For a measurement-independent quantum schedule with raw and parity outputs, use "
+        "infer_guppy_dem_annotations(program, num_qubits=...).build_dem(). Alternatively, pass "
+        "DetectorErrorModel.from_guppy(..., detectors_json=..., observables_json=...) JSON with "
+        "meas_ids and no result_tags; the static-schedule preflight still applies. MeasIds label "
+        "compiled measurements, not source positions: take them from "
+        "infer_guppy_dem_annotations(...).detectors_json / .observables_json or from a traced "
+        "GuppyDemBuild.measurement_ledger entry's .meas_id."
     )
 
 
@@ -912,7 +918,7 @@ def _generator_certified_result_traces(
     *,
     required_tags: Sequence[str],
 ) -> list[dict[str, Any]]:
-    """Validate a generator-supplied named-output to source-measurement layout."""
+    """Resolve a generator-owned output-slot inventory from measurement evidence."""
     if not isinstance(layout, Sequence) or isinstance(layout, (str, bytes)):
         msg = "Guppy named measurement layout certificate must be a sequence"
         raise TypeError(msg)
@@ -965,9 +971,14 @@ def _generator_certified_result_traces(
         msg = f"result_ref tag(s) are absent from the generator-certified layout: {missing_required}"
         raise ValueError(msg)
 
-    # A generator layout is a claim, never a source of measurement identity.
-    # Resolve every slot eagerly from runtime provenance or compiled scalar
-    # analysis; both must agree when available, then agree with the layout.
+    # The layout is an output-slot inventory, never a source of measurement
+    # identity; its order is informational. Resolve every slot eagerly from
+    # runtime provenance or compiled scalar analysis; both must agree when
+    # available. Tags carry identity (including array element indices). We
+    # assume occurrence k of a tag in the abstract schedule is compiled print
+    # k of that tag: measurements may reorder, but result() calls retain order.
+    # There is no positional cross-check of the trace against the abstract
+    # schedule. The program/layout digest supplies producer integrity.
     # Only an uncertifiable schedule makes static evidence unavailable. A
     # resolved measurement-count mismatch remains a hard error.
     try:
@@ -977,6 +988,7 @@ def _generator_certified_result_traces(
     else:
         _check_measurement_count(static_measurement_count, source_measurement_ids)
 
+    valid_result_ids = set(source_measurement_ids)
     runtime_ids_by_slot: dict[tuple[str, int], int] = {}
     runtime_offsets: dict[str, int] = {}
     nonscalar_tags: set[str] = set()
@@ -993,18 +1005,19 @@ def _generator_certified_result_traces(
         if not isinstance(result_ids, list) or len(result_ids) != len(values):
             continue
         for element, result_id in enumerate(result_ids):
-            if isinstance(result_id, bool) or not isinstance(result_id, int) or result_id < 0:
+            if isinstance(result_id, bool) or not isinstance(result_id, int) or result_id not in valid_result_ids:
                 msg = f"runtime result trace {tag!r}[{offset + element}] has an invalid measurement id"
                 raise ValueError(msg)
             runtime_ids_by_slot[(tag, offset + element)] = result_id
 
     certified: list[dict[str, Any]] = []
-    for source_index, slot in enumerate(entries):
+    slots_by_result_id: dict[int, tuple[str, int]] = {}
+    for slot in entries:
         runtime_result_id = runtime_ids_by_slot.get(slot)
         if runtime_result_id is None:
             # Guppy v1 may expose an element's available provenance only on
             # the collected base array ``tag``. Resolve that exact element
-            # before comparing it to the certified source order.
+            # using the base array's per-element evidence.
             tag, value_index = slot
             base_tag, separator, element_text = tag.rpartition(":meas:")
             if separator and element_text.isdecimal() and value_index == 0:
@@ -1028,19 +1041,14 @@ def _generator_certified_result_traces(
                 "neither runtime provenance nor compiled analysis identifies its measurement"
             )
             raise ValueError(msg)
-        expected_result_id = source_measurement_ids[source_index]
-        if runtime_result_id is not None and runtime_result_id != expected_result_id:
-            msg = (
-                f"runtime result trace {slot[0]!r}[{slot[1]}] has measurement id {runtime_result_id}, "
-                f"but the generator-certified layout requires {expected_result_id}"
-            )
+        # A generator inventory has one slot per measurement, unlike arbitrary
+        # user result tags, which may alias. With the count and membership checks
+        # above, distinct identities make this binding a bijection onto the trace.
+        if result_id in slots_by_result_id:
+            previous_slot = slots_by_result_id[result_id]
+            msg = f"generator layout slots {previous_slot!r} and {slot!r} both resolve to measurement id {result_id}"
             raise ValueError(msg)
-        if result_id != expected_result_id:
-            msg = (
-                f"compiled analysis {slot[0]!r}[{slot[1]}] has measurement id {result_id}, "
-                f"but the generator-certified layout requires {expected_result_id}"
-            )
-            raise ValueError(msg)
+        slots_by_result_id[result_id] = slot
         certified.append(
             {"name": slot[0], "occurrence": slot[1], "values": [False], "result_ids": [result_id]},
         )
@@ -1437,6 +1445,8 @@ class GuppyDemBuilder:
                 if isinstance(identity, bool) or not isinstance(identity, int) or identity < 0:
                     msg = f"{role} ids must be non-negative integers"
                     raise ValueError(msg)
+                for ref in spec.refs:
+                    _validate_guppy_measurement_ref(ref, context=f"{role[:-1]} {identity}")
                 ids.append(identity)
                 if spec.inferred_output is not None:
                     outputs.append((spec.inferred_output.tag, spec.inferred_output.element))
@@ -1467,8 +1477,9 @@ class GuppyDemBuilder:
         inference = None
         generator_layout = None
         analysis = None
-        # Pure inference and mixed record-ID definitions need no compiler tag
-        # analysis. Explicit programs retain their static-schedule certification.
+        # Pure inference and inference mixed with JSON measurement IDs need no
+        # compiler tag analysis. Typed record offsets have already been rejected.
+        # Explicit programs retain their static-schedule certification.
         if not needs_inference or referenced_tags or json_needs_tags:
             generator_layout, analysis = _preflight_guppy_static_schedule(
                 program,
@@ -1783,11 +1794,10 @@ def build_dem_from_guppy(
 ) -> GuppyDemBuild:
     """Trace once and build an audited DEM from typed measurement references.
 
-    ``rec[-k]`` references the canonical dense Guppy result-id stream, not the
-    runtime's scheduled measurement-gate order. ``result_ref(...)`` resolves
-    through the executed lowered program's dataflow and is checked against the traced
-    measurement count. Both forms lower to stable ``MeasId`` metadata before
-    DEM construction.
+    Typed ``rec[-k]`` references are rejected: compiled Guppy programs do not
+    preserve source measurement order. Use ``result_ref(tag)`` or
+    ``result_ref(tag, occurrence=...)`` for repeated tags. Named references
+    resolve through measurement provenance to the traced ``MeasId`` metadata.
 
     Measurement-dependent quantum control remains unsupported because one
     captured execution is not a static circuit model.
@@ -1803,8 +1813,8 @@ def build_dem_from_guppy(
         guppy: A HUGR-certifiable Guppy program to trace once under the Selene
             QIS engine.
         num_qubits: Number of qubits to allocate for the trace.
-        detectors: Typed detector definitions using ``rec[...]`` or
-            ``result_ref(...)`` measurement references.
+        detectors: Typed detector definitions using ``result_ref(...)`` measurement
+            references or bare tag strings.
         observables: Typed logical-observable definitions using the same
             measurement-reference forms as ``detectors``.
         noise: Complete grouped noise configuration. When supplied, its values

@@ -81,8 +81,8 @@ The generated program produces these result keys:
 | `final` | Final data qubit measurements |
 
 Generated surface programs also emit scalar `*:meas:*` sideband tags. These
-carry the same measurement bits with a generator-certified mapping to the
-canonical measurement stream for audited DEM shot conversion; most users
+carry the same measurement bits with identities resolved from runtime provenance
+or compiled analysis for audited DEM shot conversion; most users
 should continue reading the aggregate keys above for ordinary analysis.
 
 ```python
@@ -107,8 +107,7 @@ different order from the Guppy program. It captures one runtime trace, builds
 the DEM from that exact circuit, and returns the measurement-identity ledger
 needed to convert simulation results into decoder inputs.
 
-Researchers can describe the same detector in either Stim-style record terms
-or with Guppy `result()` tags:
+Describe detectors with Guppy `result()` tags:
 
 ```python
 from guppylang import guppy
@@ -120,7 +119,6 @@ from pecos.qec import (
     Detector,
     Observable,
     build_dem_from_guppy,
-    rec,
     result_ref,
 )
 
@@ -135,21 +133,15 @@ def program() -> None:
     result("m1", m1)
 
 
-# Relative to the canonical Guppy measurement stream, before runtime
-# scheduling. These have the same meaning as Stim rec[-k] references.
-stim_style = [
-    Detector(rec[-2], rec[-1]),
-]
-
-# Equivalent when the program emits result("m0", ...), etc.
-guppy_style = [
+# Named references retain measurement identity across compiler scheduling.
+detectors = [
     Detector(result_ref("m0"), result_ref("m1")),
 ]
 
 build = build_dem_from_guppy(
     program,
     num_qubits=2,
-    detectors=stim_style,
+    detectors=detectors,
     observables=[Observable(result_ref("m1"))],
     p1=0.001,
     p2=0.005,
@@ -194,12 +186,14 @@ Effects with more than 12 detectors or reducible only with overlapping component
 are refused under either policy; `irreducible="drop"` does not apply to them.
 Use a hyperedge-capable decoder such as `bp_osd()` or `tesseract()` for these effects.
 
-`rec[-k]` is deliberately **not** interpreted against the runtime's final gate
-order. PECOS first resolves it to the canonical Guppy result ID, then follows
-that identity through runtime lowering. `result_ref(...)` binds direct scalar
-measurement reads from the lowered QIS program that is executed and resolves to
-the same `MeasId` representation. A runtime can therefore reorder measurements
-without changing detector meaning.
+Typed Guppy DEM specs reject `rec[-k]`: compiled Guppy programs do not preserve
+source measurement order. Use `result_ref(tag)` or
+`result_ref(tag, occurrence=...)` for repeated tags. Named references resolve
+through measurement provenance to the traced `MeasId`.
+
+The audit fields `runtime_order_is_canonical`, `runtime_order_mismatch_count`
+and `canonical_record_index` describe runtime positions relative to compiled
+MeasIds. They do not certify source measurement order.
 
 ### Converting shots for a decoder
 
@@ -214,9 +208,17 @@ raw measurements in runtime execution order, use
 detector order and packed observable mask expected by the DEM.
 
 Built-in generators may supply a program-bound named-measurement layout
-certificate. Every layout slot is checked against independent runtime provenance
-or compiled scalar analysis; missing evidence or disagreement rejects the build.
-The certificate still admits the generator's static schedule.
+certificate. Each slot's measurement identity is resolved from runtime provenance or
+compiled scalar analysis; missing evidence or disagreement between the two
+rejects the build. Layout order is informational. The certificate admits the
+generator's static schedule, checks entry count against the trace, slot inventory
+against runtime value counts, and required tags. Distinct slots must resolve to
+distinct measurements. The certificate also detects changes to the program or
+its slot inventory. Tags carry identity; occurrence k assumes the k-th
+compiled print of that tag is the k-th abstract occurrence, since `result()`
+calls retain source order while measurements may reorder. No check compares the
+executed trace's measurement order against the abstract schedule; identity rests
+on the tags and the evidence above.
 `make_surface_code(...)` does this automatically, so its scalar
 sidebands work with `evaluate_results(...)` and
 `evaluate_result_columns(...)` even though its round loop is not statically
@@ -244,7 +246,7 @@ surface_build = build_dem_from_guppy(
 ### Current soundness boundary
 
 - DEM construction supports straight-line static schedules and built-in
-  generator certificates, whose layouts are checked against independent
+  generator certificates, whose slot identities are resolved from independent
   evidence. Generic branching and looping Guppy programs are
   rejected because one trace cannot certify all quantum-operation paths.
 - Scalar `result(tag, measure(q).read())` provenance is the certified generic tag
@@ -260,7 +262,7 @@ surface_build = build_dem_from_guppy(
 - An audited runtime-lowered build must provide a complete lowered operation
   stream and measurement result IDs. PECOS will not silently build from the raw
   pre-lowering QIS stream.
-- `build.audit` exposes every canonical ID, runtime record position, result
+- `build.audit` exposes every compiled measurement ID, runtime record position, result
   reference, and the schema fingerprint. Persist it with simulation data.
 
 ## Color Code Memory Experiments

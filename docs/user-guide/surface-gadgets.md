@@ -140,7 +140,7 @@ slots for the same budget and schedule; `default_allocation` accepts both.
 The Guppy module derives its batching schedule from the CX `check_plan`;
 the gadget API takes `ancilla_budget` and `ancilla_schedule` separately.
 Returned syndrome arrays retain stabilizer-index order, while
-scalar tag ordinals follow the physical measurement order.
+scalar tag suffixes follow the abstract schedule; compiled measurements may reorder.
 
 ```python
 from pecos.guppy_gen import get_num_qubits
@@ -178,8 +178,16 @@ assert "def make_memory_x" in source
 gadget memory definition with a program-bound measurement-layout certificate.
 Memory modules require nonempty X and Z stabilizer families because Guppy
 cannot infer the type of the empty syndrome arrays emitted otherwise.
-Its layout comes from the gadget steps, including batch order when ancillas are
-reused. `build_dem_from_guppy`, `GuppyDemBuilder.build`, and
+Its layout inventories tagged output slots from the gadget steps; its order is
+informational. Measurement identity is resolved from runtime per-element
+provenance or compiled scalar analysis, with agreement required when both exist.
+Tags carry identity; per-tag occurrence k assumes `result()` calls retain their
+abstract source order even when measurements reorder. The certificate checks
+entry count against the trace, runtime value counts and required tags; distinct
+slots must resolve to distinct measurements. The certificate also detects changes
+to the program or its slot inventory. No check compares the executed trace's
+measurement order against the abstract schedule; identity rests on the tags and
+the evidence above. `build_dem_from_guppy`, `GuppyDemBuilder.build`, and
 `DetectorErrorModel.from_guppy` need this certificate for programs whose compiled
 form contains loops or conditionals. The abstract-circuit route and the builder
 route (`LogicalCircuitBuilder.to_tick_circuit()` then
@@ -187,16 +195,15 @@ route (`LogicalCircuitBuilder.to_tick_circuit()` then
 
 ```python
 from pecos.guppy_gen import get_num_qubits, make_surface_code, make_surface_memory
-from pecos.qec import DetectorErrorModel
+from pecos.qec import build_dem_from_guppy, surface_memory_dem_spec
 from pecos.qec.surface import SurfacePatch
-from pecos.qec.surface.circuit_builder import generate_tick_circuit_from_patch
 
 memory_patch = SurfacePatch.create(distance=3)
-memory_circuit = generate_tick_circuit_from_patch(memory_patch, 2, "Z", ancilla_budget=2)
+detectors, observables = surface_memory_dem_spec(3, 2, "Z", ancilla_budget=2)
 dem_options = dict(
     num_qubits=get_num_qubits(patch=memory_patch, ancilla_budget=2),
-    detectors_json=memory_circuit.get_meta("detectors"),
-    observables_json=memory_circuit.get_meta("observables"),
+    detectors=detectors,
+    observables=observables,
     p1=0.001,
     p2=0.001,
     p_meas=0.001,
@@ -204,8 +211,8 @@ dem_options = dict(
 )
 gadget_memory = make_surface_memory(memory_patch, 2, "Z", ancilla_budget=2)
 legacy_memory = make_surface_code(3, 2, "Z", ancilla_budget=2)
-gadget_dem = DetectorErrorModel.from_guppy(gadget_memory, **dem_options)
-legacy_dem = DetectorErrorModel.from_guppy(legacy_memory, **dem_options)
+gadget_dem = build_dem_from_guppy(gadget_memory, **dem_options).dem
+legacy_dem = build_dem_from_guppy(legacy_memory, **dem_options).dem
 assert gadget_dem.to_string() == legacy_dem.to_string()
 ```
 
@@ -952,8 +959,8 @@ for dagger in (False, True):
     assert program.compile() is not None
     assert builder.to_tick_circuit().num_measurements() == 33
     assert_same_measurement_partition(
-        measurement_partition_from_trace(program, patch.geometry.num_qubits, {"a": "D"}),
-        measurement_partition_from_builder(builder),
+        measurement_partition_from_trace(program, patch.geometry.num_qubits, {"a": "D"}, by_index=True),
+        measurement_partition_from_builder(builder, by_index=True),
     )
 ```
 
@@ -1560,13 +1567,18 @@ for recipe in ("h", "cx", "sz", "t"):
         program = module["make_t_teleportation_placeholder"](2, 2)
         builder.add_t_teleportation_placeholder("D", "A", 2, 2)
         scopes = {"data": "D", "anc": "A"}
-    expected = measurement_partition_from_builder(builder)
+    expected = measurement_partition_from_builder(builder, by_index=True)
     num_qubits = patch.geometry.num_qubits
     if recipe != "h":
         num_qubits += patch.geometry.num_data
-    actual = measurement_partition_from_trace(program, num_qubits, scopes)
+    actual = measurement_partition_from_trace(program, num_qubits, scopes, by_index=True)
     assert_same_measurement_partition(actual, expected)
 ```
+
+Indexed partitions compare (patch, family, round, check index) keys, equal
+cardinalities, and exactly one trace measurement per key. Final-array element i
+is patch data qubit i because preparation constructs `code.data` in patch data
+order. Ordinals remain local to each circuit and may differ across schedules.
 
 The Clifford Guppy protocol factories below cannot be traced into a DEM:
 they contain `comptime` loops and carry no trusted measurement-layout
@@ -1749,7 +1761,7 @@ for before_preparation in (True, False):
 | `render_surface_t_teleportation_module`, `load_surface_t_teleportation_module` | `pecos.guppy_gen` | Reusable preparation, resource consumption and correction functions |
 | `render_surface_protocol_module`, `load_surface_protocol_module` | `pecos.guppy_gen` | Render or load surface protocol factories |
 | `simulate_tick_circuit`, `stabilizer_generators_after`, `group_contains` | `pecos.testing` | Noiseless simulation and signed stabilizer oracles |
-| `measurement_partition_from_builder`, `measurement_partition_from_trace`, `assert_same_measurement_partition` | `pecos.testing` | Measurement-partition agreement, not circuit or state-action equivalence |
+| `measurement_partition_from_builder`, `measurement_partition_from_trace`, `assert_same_measurement_partition` | `pecos.testing` | With `by_index=True`, compare (patch, family, round, check/data index) keys and one measurement per key across schedules; not circuit or state-action equivalence |
 | `DetectorErrorModel.from_circuit` | `pecos.qec` | Circuit fault analysis and observable distances |
 
 `OpType.RELABEL` in `pecos.qec.circuit_steps` exchanges the physical qubits

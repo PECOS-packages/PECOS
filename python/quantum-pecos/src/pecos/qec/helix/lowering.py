@@ -11,12 +11,11 @@ lowering preserves physical-qubit order and reports actual measurement order.
 from __future__ import annotations
 
 import re
-from collections import Counter
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from pecos.qec.circuit_steps import OpType
-from pecos.qec.measurement_layout import abstract_result_refs
+from pecos.qec.measurement_layout import abstract_result_refs, named_result_slots
 from pecos.quantum import TickCircuit
 
 if TYPE_CHECKING:
@@ -122,10 +121,4 @@ def helix_result_classifier() -> Callable[[str, Callable[[str], object]], Result
 
 def helix_result_refs(tc: TickCircuit) -> list[tuple[str, int]]:
     """Read (tag, occurrence) references in the circuit's measurement record order."""
-    occurrences: Counter[str] = Counter()
-    refs = []
-    for ref in abstract_result_refs(tc, helix_result_classifier, family="helix"):
-        tag = ref[1]
-        refs.append((tag, occurrences[tag]))
-        occurrences[tag] += 1
-    return refs
+    return list(named_result_slots(abstract_result_refs(tc, helix_result_classifier, family="helix")))

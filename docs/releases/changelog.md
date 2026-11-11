@@ -9,6 +9,10 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 - Added Python Relay-BP explicit gamma rows and sampling interval setters, plus
   GIL-releasing flat-byte batch decoding for native Relay-BP and min-sum BP.
 
+- **Breaking:** Typed Guppy DEM specs reject `rec[...]` because compiled programs
+  do not preserve source measurement order; use `result_ref(tag)` or
+  `result_ref(tag, occurrence=...)` for repeated tags.
+
 - **Breaking:** PECOS now requires guppylang 1.2, selene-hugr-qis-compiler 0.5.1 and
   selene-sim 0.3.7. guppylang 1.2 orders measurements only by data dependencies, so
   the compiled program can measure independent qubits in a different order from the
@@ -78,7 +82,12 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 - Fixed generator-certified Guppy DEM builds binding measurements from layout
   order when provenance was missing. Every layout slot now requires independent
   runtime provenance or compiled scalar analysis, with agreement required when
-  both are available.
+  both are available. Layout order is informational: tags and per-tag print
+  occurrences identify slots even when compiled measurements reorder. The v2
+  certificate retains schedule admission, counts, required tags and its digest;
+  it no longer checks trace positions against the abstract schedule.
+  `surface_memory_dem_spec` now returns named `result_ref` references resolved
+  from measurement provenance instead of abstract `rec[...]` offsets.
 
 - **Breaking:** Guppy code generation rejects `For` labels that shadow a register,
   allocator, block input or generated temporary. Loop labels, registers,

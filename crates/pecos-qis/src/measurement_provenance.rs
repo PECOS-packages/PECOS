@@ -296,6 +296,9 @@ impl Writer<'_> {
             "call" => {
                 let callee = syntax::call(a)?;
                 reject_vector(&callee.ty, "SSA")?;
+                for (ty, value) in &callee.args {
+                    reject_vector(ty, value)?;
+                }
                 if self.internal.contains(&callee.symbol) {
                     self.op(op::PUSH_FRAME, &[]);
                     for (i, (_, v)) in callee.args.iter().enumerate() {
@@ -454,7 +457,9 @@ impl Writer<'_> {
                     let h = if a[0] == "void" {
                         CONSTANT.to_string()
                     } else {
-                        self.shadow(&typed(a)?.1)?
+                        let (ty, value) = typed(a)?;
+                        reject_vector(&ty, &value)?;
+                        self.shadow(&value)?
                     };
                     self.op(op::SET_RETURN, &[h]);
                 }
@@ -479,7 +484,7 @@ impl Writer<'_> {
                 let args = split(a);
                 let start = usize::from(args[0].first().is_some_and(|s| s == "volatile"));
                 let (ty, v) = typed(&args[0][start..])?;
-                reject_vector(&ty, &v)?;
+                reject_memory_vector(&ty, &v)?;
                 let (_, p) = typed(&args[1])?;
                 let h = self.shadow(&v)?;
                 let ph = self.shadow(&p)?;
@@ -491,7 +496,7 @@ impl Writer<'_> {
                 let args = split(a);
                 let start = usize::from(args[0].first().is_some_and(|s| s == "volatile"));
                 let ty = text(&args[0][start..]);
-                reject_vector(&ty, "SSA")?;
+                reject_memory_vector(&ty, "SSA")?;
                 let (_, p) = typed(&args[1])?;
                 let ph = self.shadow(&p)?;
                 self.line(raw);
@@ -587,7 +592,8 @@ impl Writer<'_> {
                 }
                 self.line(raw);
                 if ins.op == "insertvalue" {
-                    let (_, v) = typed(&args[1])?;
+                    let (value_ty, v) = typed(&args[1])?;
+                    reject_vector(&value_ty, &v)?;
                     let mh = self.shadow(&v)?;
                     self.insert(&h, &mh, &member, &offset, &ty)
                 } else {
@@ -682,9 +688,29 @@ impl Writer<'_> {
         false
     }
 }
+
+// Fixed-width integer loads/stores copy representation bytes unchanged. Keep
+// all computation on vector SSA values unsupported, including calls/returns.
+fn reject_memory_vector(ty: &str, value: &str) -> Result<()> {
+    let t = tokens(ty);
+    if let [open, count, x, element, close] = t.as_slice()
+        && open == "<"
+        && close == ">"
+        && x == "x"
+        && count.parse::<usize>().is_ok_and(|n| n > 0)
+        && element
+            .strip_prefix('i')
+            .is_some_and(|width| width.parse::<usize>().is_ok_and(|n| n > 0))
+    {
+        return Ok(());
+    }
+    // Preserve the existing constant-store path for other element types.
+    // Only integer vectors gain support for loaded SSA values.
+    reject_vector(ty, value)
+}
 fn reject_vector(ty: &str, value: &str) -> Result<()> {
     if ty.starts_with('<') && !ty.starts_with("< {") && (value == "SSA" || value.starts_with('%')) {
-        return Err(error("non-constant vector value"));
+        return Err(error(format!("non-constant vector value {value}")));
     }
     Ok(())
 }

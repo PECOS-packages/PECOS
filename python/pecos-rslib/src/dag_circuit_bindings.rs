@@ -570,6 +570,12 @@ impl PyGateType {
     }
 
     #[classattr]
+    #[pyo3(name = "MeasureZ")]
+    fn measure_z() -> Self {
+        Self::mz()
+    }
+
+    #[classattr]
     #[pyo3(name = "MeasureFree")]
     fn mz_free() -> Self {
         Self {

@@ -519,7 +519,7 @@ impl<'a> InfluenceBuilder<'a> {
                         meas_idx += 1;
                     }
                     // A record-less collapse preserves the node-to-record map.
-                    pecos_quantum::GateType::MeasureLeaked => sim.mz_unrecorded(&qubits),
+                    pecos_quantum::GateType::MeasureZLeaked => sim.mz_unrecorded(&qubits),
                     // Resets project onto |0>. Skipping them treated a reused
                     // qubit as still carrying its pre-reset correlations.
                     gate_type if is_supported_prep_gate(gate_type) => {
@@ -1717,7 +1717,7 @@ mod tests {
         let mut dag = DagCircuit::new();
         dag.pz(&[0]);
         dag.h(&[0]);
-        dag.add_gate_auto_wire(pecos_quantum::Gate::measure_leaked(&[0usize]));
+        dag.add_gate_auto_wire(pecos_quantum::Gate::measure_z_leaked(&[0usize]));
         dag.h(&[0]);
         dag.mz(&[0]);
 
@@ -1802,7 +1802,7 @@ mod tests {
     fn an_observable_ref_to_a_record_less_measurement_is_an_error() {
         let mut dag = DagCircuit::new();
         dag.pz(&[0, 1]);
-        let mut leaked = pecos_core::Gate::measure_leaked(&[0usize]);
+        let mut leaked = pecos_core::Gate::measure_z_leaked(&[0usize]);
         leaked.meas_ids = smallvec::smallvec![pecos_core::MeasId::from_raw(7)];
         dag.try_add_gate(leaked).expect("gate is valid");
         dag.mz(&[1]);
@@ -1817,7 +1817,7 @@ mod tests {
             .unwrap()
             .with_circuit_annotations()
         else {
-            panic!("MeasureLeaked consumes no record, so ingest must fail");
+            panic!("MeasureZLeaked consumes no record, so ingest must fail");
         };
         assert!(matches!(
             err,

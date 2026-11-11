@@ -2079,6 +2079,7 @@ class GateType:
     CCX: GateType
     MeasureX: GateType
     Measure: GateType
+    MeasureZ: GateType
     MeasureFree: GateType
     PrepX: GateType
     Prep: GateType

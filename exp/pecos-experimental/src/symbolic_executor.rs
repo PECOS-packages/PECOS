@@ -141,7 +141,7 @@ impl std::error::Error for SymbolicExecutionError {}
 /// - Single-qubit: I, X, Y, Z, H, SX, SY, SZ and their adjoints
 /// - Two-qubit: CX, CY, CZ, SXX, SYY, SZZ and their adjoints
 /// - Rotations at Clifford angles accepted by the shared lowering policy
-/// - Measurements: MX, MZ, `MeasureFree`, `MeasureLeaked`
+/// - Measurements: MX, MZ, `MeasureFree`, `MeasureZLeaked`
 /// - Preparations: PX, PZ, `QAlloc` (reset to |0⟩)
 /// - Measurement and reset: MPZ (measure Z, then reset to |0⟩)
 /// - Release, timing and metadata: `QFree`, `Idle`, `MeasCrosstalkGlobalPayload`,
@@ -363,7 +363,7 @@ pub(crate) fn named_action(
             reset: false,
             release: false,
         },
-        GateType::MZ | GateType::MeasureLeaked => NamedAction::Measure {
+        GateType::MZ | GateType::MeasureZLeaked => NamedAction::Measure {
             x_basis: false,
             reset: false,
             release: false,

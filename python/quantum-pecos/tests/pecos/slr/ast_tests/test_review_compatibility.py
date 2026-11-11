@@ -88,7 +88,7 @@ class ScratchFence(Block):
     def __init__(self, a, out, fence=Barrier) -> None:
         super().__init__()
         self.a, self.out = a, out
-        self.extend(fence(a), qb.PZ(a), qb.Measure(a) > out, fence(a))
+        self.extend(fence(a), qb.PZ(a), qb.MeasureZ(a) > out, fence(a))
 
 
 def scratch_internal_program(fence):
@@ -110,7 +110,7 @@ def test_stim_classical_bit_permute_restores_circuit_and_invalidates_records(rep
     q, c = QReg("q", 2), CReg("c", 2)
     swap = Permute([c[0], c[1]], [c[1], c[0]])
     operation = Repeat(2).block(swap) if repeat else swap
-    measurements = (qb.Measure(q[1]) > c[1], qb.Measure(q[0]) > c[0])
+    measurements = (qb.MeasureZ(q[1]) > c[1], qb.MeasureZ(q[0]) > c[0])
     prefix = (q, c, qb.X(q[0]), *measurements, operation)
     converter = SlrConverter(Main(*prefix, *measurements))
     assert str(converter.stim()) == "X 0\nM 1 0 1 0"
@@ -166,7 +166,7 @@ def test_symbolic_classical_measurement_result_rejected() -> None:
     """The shared bit-ref converter must reject symbolic measurement destinations too."""
     q, c, i = QReg("q", 1), CReg("c", 2), LoopVar("i")
     with pytest.raises(NotImplementedError, match=r"For loop variable 'i'.*symbolic bit indices"):
-        slr_to_ast(Main(q, c, For(i, 0, 2).Do(qb.Measure(q[0]) > c[i])))
+        slr_to_ast(Main(q, c, For(i, 0, 2).Do(qb.MeasureZ(q[0]) > c[i])))
 
 
 def symbolic_classical_assignment_program() -> Main:
@@ -217,7 +217,7 @@ def test_symbolic_classical_assignment_preserves_backend_errors(backend) -> None
 @pytest.mark.parametrize("backend", ["qasm", "qir", "guppy"])
 def test_symbolic_measurement_backend_errors(backend) -> None:
     q, c, i = QReg("q", 1), CReg("c", 2), LoopVar("i")
-    program = Main(q, c, For(i, 0, 2).Do(qb.Measure(q[0]) > c[i]))
+    program = Main(q, c, For(i, 0, 2).Do(qb.MeasureZ(q[0]) > c[i]))
     error = GuppyCodegenError if backend == "guppy" else NotImplementedError
     message = (
         "AST -> Guppy v1 does not support symbolic LoopVar indexing"

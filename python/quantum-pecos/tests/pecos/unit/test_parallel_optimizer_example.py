@@ -36,7 +36,7 @@ def test_parallel_optimization_example() -> None:
                 qb.CX(q[4], q[5]),
             ),
         ),
-        qb.Measure(q) > c,
+        qb.MeasureZ(q) > c,
     )
 
     # Generate QASM without optimization

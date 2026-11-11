@@ -146,7 +146,7 @@ fn rejected_kinds_have_locations_at_every_angle() {
         GateType::Tdg,
         GateType::CH,
         GateType::CCX,
-        GateType::MeasureLeaked,
+        GateType::MeasureZLeaked,
         GateType::MeasureFree,
         GateType::Custom,
         GateType::QAlloc,

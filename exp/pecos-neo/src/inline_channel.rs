@@ -210,7 +210,7 @@ fn apply_gate_to_density_matrix(
             sim.pz(qubits);
             Ok(Vec::new())
         }
-        GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked => Ok(sim
+        GateType::MZ | GateType::MeasureFree | GateType::MeasureZLeaked => Ok(sim
             .mz(qubits)
             .into_iter()
             .map(|r| u8::from(r.outcome))
@@ -442,7 +442,7 @@ fn apply_gate_to_stabilizer_with_pauli_channels(
             sim.pz(qubits);
             Ok(Vec::new())
         }
-        GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked => Ok(sim
+        GateType::MZ | GateType::MeasureFree | GateType::MeasureZLeaked => Ok(sim
             .mz(qubits)
             .into_iter()
             .map(|r| u8::from(r.outcome))

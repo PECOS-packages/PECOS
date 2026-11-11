@@ -4970,7 +4970,7 @@ fn core_gate_to_neo(gate: GateType) -> pecos_neo::GateType {
         GateType::RXYXY2Q => pecos_neo::GateType::RXYXY2Q,
         GateType::CCX => pecos_neo::GateType::CCX,
         GateType::MZ => pecos_neo::GateType::MZ,
-        GateType::MeasureLeaked => pecos_neo::GateType::MeasureLeaked,
+        GateType::MeasureZLeaked => pecos_neo::GateType::MeasureLeaked,
         GateType::MeasureFree => pecos_neo::GateType::MeasureFree,
         GateType::PZ => pecos_neo::GateType::PZ,
         GateType::QAlloc => pecos_neo::GateType::QAlloc,

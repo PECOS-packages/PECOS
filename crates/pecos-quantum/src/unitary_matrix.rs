@@ -1935,7 +1935,7 @@ fn gate_to_matrix(gate_type: GateType, qubits: &[usize], num_qubits: usize) -> D
         // Non-unitary operations
         GateType::MX
         | GateType::MZ
-        | GateType::MeasureLeaked
+        | GateType::MeasureZLeaked
         | GateType::MeasureFree
         | GateType::MPZ
         | GateType::PX

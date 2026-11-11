@@ -90,10 +90,10 @@ def test_stim_symbolic_write_invalidates_register(repeated) -> None:
             q,
             d,
             qb.X(q[0]),
-            qb.Measure(q[0]) > d[0],
+            qb.MeasureZ(q[0]) > d[0],
             *assignments,
             If(d[0] == 1).Then(qb.X(q[1])),
-            qb.Measure(q[1]) > d[1],
+            qb.MeasureZ(q[1]) > d[1],
         )
 
     with pytest.raises(NotImplementedError, match="no longer comes from a tracked measurement") as explicit:
@@ -134,8 +134,8 @@ def test_symbolic_permute_index_has_actionable_error(backend, classical) -> None
 
 def test_stim_local_classical_permute_matches_main_scope() -> None:
     q, loc = QReg("q", 2), CReg("loc", 2)
-    program = Main(q, Block(loc, qb.Measure(q) > loc, Permute([loc[0], loc[1]], [loc[1], loc[0]])))
-    outer = Main(q, loc, qb.Measure(q) > loc, Permute([loc[0], loc[1]], [loc[1], loc[0]]))
+    program = Main(q, Block(loc, qb.MeasureZ(q) > loc, Permute([loc[0], loc[1]], [loc[1], loc[0]])))
+    outer = Main(q, loc, qb.MeasureZ(q) > loc, Permute([loc[0], loc[1]], [loc[1], loc[0]]))
     assert str(SlrConverter(program).stim()) == str(SlrConverter(outer).stim())
 
 
@@ -170,6 +170,6 @@ def test_overlapping_barriers_fence_each_physical_qubit_once(parent_first, offse
 def test_bracketed_register_name_is_a_whole_register_target() -> None:
     q, a = QReg("q", 2), CReg("a[0]", 2)
     assert SlrConverter(Main(q, a, a.set(1))).qir()
-    stale = Main(q, a, qb.Measure(q[0]) > a[0], a.set(0), If(a[0] == 1).Then(qb.X(q[1])))
+    stale = Main(q, a, qb.MeasureZ(q[0]) > a[0], a.set(0), If(a[0] == 1).Then(qb.X(q[1])))
     with pytest.raises(NotImplementedError, match="no longer comes from a tracked measurement"):
         SlrConverter(stale).stim()

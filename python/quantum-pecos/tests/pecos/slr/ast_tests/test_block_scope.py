@@ -317,7 +317,7 @@ def _placement_program(shape, *, parent_first=False):
         allocators = (root, first, target, last)
         regions = (first, Block(target), last)
     ops = (qb.X(first[0]), qb.X(target[0]), qb.Z(target[0]))
-    measures = (qb.Measure(first[0]) > c[0], qb.Measure(target[0]) > c[1])
+    measures = (qb.MeasureZ(first[0]) > c[0], qb.MeasureZ(target[0]) > c[1])
     if parent_first:
         program = Main(*allocators, c, *ops, *measures)
     elif shape == "p7":
@@ -393,7 +393,7 @@ def test_round2_root_block_inputs_is_inline() -> None:
         block_inputs: ClassVar[dict[str, str]] = {"q": "live_preserved"}
 
         def __init__(self) -> None:
-            super().__init__(q, c, qb.X(q[0]), qb.Measure(q[0]) > c[0])
+            super().__init__(q, c, qb.X(q[0]), qb.MeasureZ(q[0]) > c[0])
             self.q = q
 
     ast = slr_to_ast(Root())
@@ -454,7 +454,7 @@ def test_round2_undeclared_quantum_reference(backend, child) -> None:
     root = QAlloc(2, name="root")
     missing = root.child(1, name="missing") if child else QReg("missing", 1)
     c = CReg("c", 1)
-    program = Main(root, c, qb.H(missing[0]), qb.Measure(missing[0]) > c[0])
+    program = Main(root, c, qb.H(missing[0]), qb.MeasureZ(missing[0]) > c[0])
     with pytest.raises(ValueError, match=r"missing.*declare"):
         getattr(SlrConverter(program), backend)()
 
@@ -466,7 +466,7 @@ def test_round2_undeclared_quantum_reference(backend, child) -> None:
 def test_round2_qasm_undeclared_classical_reference(use) -> None:
     q, c, missing = QReg("q", 1), CReg("c", 1), CReg("missing", 1)
     ops = {
-        "measurement": qb.Measure(q[0]) > missing[0],
+        "measurement": qb.MeasureZ(q[0]) > missing[0],
         "bit_target": missing[0].set(1),
         "register_target": missing.set(1),
         "bit_value": c[0].set(missing[0]),
@@ -479,7 +479,7 @@ def test_round2_qasm_undeclared_classical_reference(use) -> None:
 
 def test_round2_qasm_inline_bitswap_is_rejected() -> None:
     q, c, inline = QReg("q", 1), CReg("c", 2), CReg("bitswap", 1)
-    program = Main(q, c, c.set(1), Permute([c[0], c[1]], [c[1], c[0]]), qb.Measure(q[0]) > inline[0])
+    program = Main(q, c, c.set(1), Permute([c[0], c[1]], [c[1], c[0]]), qb.MeasureZ(q[0]) > inline[0])
     with pytest.raises(ValueError, match=r"bitswap.*declare"):
         SlrConverter(program).qasm()
 
@@ -488,7 +488,7 @@ def test_round2_qasm_inline_bitswap_is_rejected() -> None:
 def test_round2_undeclared_measurement_output(backend) -> None:
     q, missing = QReg("q", 1), CReg("missing", 1)
     with pytest.raises(ValueError, match=r"missing.*declare"):
-        getattr(SlrConverter(Main(q, qb.Measure(q[0]) > missing[0])), backend)()
+        getattr(SlrConverter(Main(q, qb.MeasureZ(q[0]) > missing[0])), backend)()
 
 
 def test_round2_parallel_allocator_declarations() -> None:
@@ -510,7 +510,7 @@ def test_round2_nested_register_selene_oracle(region) -> None:
 
     def run(nested):
         q, c, flag = QReg("q", 1), CReg("c", 2), CReg("flag", 1)
-        inner = Block(*([c] if nested else []), qb.X(q[0]), qb.Measure(q[0]) > c[0], qb.PZ(q[0]), c[1].set(1))
+        inner = Block(*([c] if nested else []), qb.X(q[0]), qb.MeasureZ(q[0]) > c[0], qb.PZ(q[0]), c[1].set(1))
         body = If(flag[0] == 0).Then(inner) if region == "if" else Block(inner)
         program = Main(q, flag, *([] if nested else [c]), body, Print(c), Return(c))
         hugr_bytes = SlrConverter(program).hugr().to_str().encode("utf-8")
@@ -581,7 +581,7 @@ def test_compat_guppy_inline_measurement_has_separate_storage() -> None:
         c,
         c[0].set(True),
         Permute([c[0], c[1]], [c[1], c[0]]),
-        qb.Measure(q[0]) > inline[0],
+        qb.MeasureZ(q[0]) > inline[0],
         Print(c),
         Print(inline[0]),
     )
@@ -606,7 +606,7 @@ def test_round3_fragment_quantum_reference(backend, child, optimized) -> None:
     root = QAlloc(2, name="root")
     missing = root.child(1, name="missing") if child else QReg("missing", 1)
     c = CReg("c", 1)
-    fragment = Block(root, c, qb.H(missing[0]), qb.Measure(missing[0]) > c[0])
+    fragment = Block(root, c, qb.H(missing[0]), qb.MeasureZ(missing[0]) > c[0])
     assert slr_to_ast(fragment).is_fragment
     output = getattr(SlrConverter(fragment, optimize_parallel=optimized), backend)()
     if backend == "qasm":
@@ -636,7 +636,7 @@ def test_round3_fragment_quantum_reference(backend, child, optimized) -> None:
 def test_round3_fragment_qasm_classical_reference(use, expected) -> None:
     q, c, missing = QReg("q", 1), CReg("c", 1), CReg("missing", 1)
     ops = {
-        "measurement": qb.Measure(q[0]) > missing[0],
+        "measurement": qb.MeasureZ(q[0]) > missing[0],
         "bit_target": missing[0].set(1),
         "register_target": missing.set(1),
         "bit_value": c[0].set(missing[0]),
@@ -651,7 +651,7 @@ def test_round3_fragment_qasm_classical_reference(use, expected) -> None:
 @pytest.mark.parametrize("backend", ["qasm", "stim", "quantum_circuit"])
 def test_round3_fragment_measurement_output(backend) -> None:
     q, missing = QReg("q", 1), CReg("missing", 1)
-    output = getattr(SlrConverter(Block(q, qb.Measure(q[0]) > missing[0])), backend)()
+    output = getattr(SlrConverter(Block(q, qb.MeasureZ(q[0]) > missing[0])), backend)()
     if backend == "qasm":
         assert "measure q[0] -> missing[0];" in output
         assert "creg missing" not in output
@@ -663,7 +663,7 @@ def test_round3_fragment_measurement_output(backend) -> None:
 
 def test_round3_fragment_qasm_inline_bitswap() -> None:
     q, c, inline = QReg("q", 1), CReg("c", 2), CReg("bitswap", 1)
-    fragment = Block(q, c, c.set(1), Permute([c[0], c[1]], [c[1], c[0]]), qb.Measure(q[0]) > inline[0])
+    fragment = Block(q, c, c.set(1), Permute([c[0], c[1]], [c[1], c[0]]), qb.MeasureZ(q[0]) > inline[0])
     output = SlrConverter(fragment).qasm()
     assert "measure q[0] -> bitswap[0];" in output
 
@@ -719,7 +719,7 @@ def test_round3_fragment_declared_child_placement(backend, declare_root) -> None
 def test_compat_fragment_qir_requires_classical_storage() -> None:
     q, missing = QReg("q", 1), CReg("missing", 1)
     with pytest.raises(ValueError, match=r"missing.*no QIR storage"):
-        SlrConverter(Block(q, qb.Measure(q[0]) > missing[0])).qir()
+        SlrConverter(Block(q, qb.MeasureZ(q[0]) > missing[0])).qir()
 
 
 @pytest.mark.parametrize("whole", [False, True])
@@ -818,7 +818,7 @@ def test_round4_allocator_layout_guards(bad) -> None:
 @pytest.mark.parametrize("backend", ["stim", "quantum_circuit"])
 def test_round4_inline_measurement_outputs(backend) -> None:
     q, m = QReg("q", 2), CReg("m", 2)
-    ops = (qb.X(q[0]), qb.Measure(q) > m)
+    ops = (qb.X(q[0]), qb.MeasureZ(q) > m)
     inline, declared = SlrConverter(Main(q, *ops)), SlrConverter(Main(q, m, *ops))
     if backend == "stim":
         actual, records = inline.stim_with_records()
@@ -839,7 +839,7 @@ def test_round4_inline_measurement_outputs(backend) -> None:
 def test_round4_qasm_inline_measurement_diagnostic() -> None:
     q = QReg("q", 2)
     with pytest.raises(ValueError, match=r"'m'.*QASM needs every classical register declared.*declare it in Main"):
-        SlrConverter(Main(q, qb.X(q[0]), qb.Measure(q) > CReg("m", 2))).qasm()
+        SlrConverter(Main(q, qb.X(q[0]), qb.MeasureZ(q) > CReg("m", 2))).qasm()
 
 
 @pytest.mark.parametrize("backend", ["qasm", "qir", "stim", "quantum_circuit"])

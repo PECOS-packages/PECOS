@@ -28,7 +28,7 @@ from pecos import Hugr, selene_engine, sim
 from pecos.slr import CReg, For, If, Main, Print, QReg, Repeat, Return, SlrConverter
 from pecos.slr.ast.codegen.guppy import GuppyCodegenError
 from pecos.slr.qeclib import qubit as qb
-from pecos.slr.qeclib.qubit.measures import Measure
+from pecos.slr.qeclib.qubit.measures import MeasureZ
 
 
 def _run_and_get_result_dict(prog: Main, *, shots: int = 10, seed: int = 42, qubits: int = 1) -> dict:
@@ -53,7 +53,7 @@ class TestTagDerivation:
             q := QReg("q", 2),
             c := CReg("c", 2),
             qb.X(q[0]),
-            Measure(q) > c,
+            MeasureZ(q) > c,
             Print(c),
             Return(c),
         )
@@ -66,7 +66,7 @@ class TestTagDerivation:
             q := QReg("q", 1),
             c := CReg("c", 1),
             qb.X(q[0]),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             Print(c[0]),
             Return(c),
         )
@@ -85,7 +85,7 @@ class TestNamespaceAndTag:
             q := QReg("q", 1),
             c := CReg("c", 1),
             qb.X(q[0]),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             Print(c, namespace="debug"),
             Return(c),
         )
@@ -97,7 +97,7 @@ class TestNamespaceAndTag:
             q := QReg("q", 1),
             c := CReg("c", 1),
             qb.X(q[0]),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             Print(c, tag="step_1"),
             Return(c),
         )
@@ -109,7 +109,7 @@ class TestNamespaceAndTag:
             q := QReg("q", 1),
             c := CReg("c", 1),
             qb.X(q[0]),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             Print(c, tag="r1", namespace="debug"),
             Return(c),
         )
@@ -137,7 +137,7 @@ class TestPrintInLoops:
             c := CReg("c", 1),
             Repeat(n_iters).block(
                 qb.X(q[0]),
-                Measure(q[0]) > c[0],
+                MeasureZ(q[0]) > c[0],
                 qb.PZ(q[0]),
                 Print(c, tag="iter"),
             ),
@@ -160,7 +160,7 @@ class TestPrintInLoops:
             c := CReg("c", 1),
             For("i", 0, n_iters).Do(
                 qb.X(q[0]),
-                Measure(q[0]) > c[0],
+                MeasureZ(q[0]) > c[0],
                 qb.PZ(q[0]),
                 Print(c, tag="loop"),
             ),
@@ -251,7 +251,7 @@ class TestPrintAndSeleneOutput:
             q := QReg("q", 1),
             c := CReg("c", 1),
             qb.X(q[0]),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             Return(c),
         )
         raw = _run_and_get_result_dict(prog, shots=2)
@@ -271,7 +271,7 @@ class TestPrintAndSeleneOutput:
             q := QReg("q", 1),
             c := CReg("c", 1),
             qb.X(q[0]),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             Print(c, tag="p"),
             Return(c),
         )
@@ -285,11 +285,11 @@ class TestPrintAndSeleneOutput:
             q := QReg("q", 1),
             c := CReg("c", 1),
             qb.X(q[0]),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             Print(c, tag="early"),
             qb.PZ(q[0]),
             qb.X(q[0]),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             Print(c, tag="late"),
             Return(c),
         )
@@ -307,11 +307,11 @@ class TestPrintAndSeleneOutput:
             q := QReg("q", 1),
             c := CReg("c", 1),
             qb.X(q[0]),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             Print(c, tag="same"),
             qb.PZ(q[0]),
             qb.X(q[0]),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             Print(c, tag="same"),  # same tag, second emission
             Return(c),
         )
@@ -342,7 +342,7 @@ class TestPathSignatureValidator:
             q := QReg("q", 1),
             c := CReg("c", 1),
             qb.X(q[0]),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             If(c[0]).Then(Print(c, tag="only_then")),
             Return(c),
         )
@@ -355,7 +355,7 @@ class TestPathSignatureValidator:
             q := QReg("q", 1),
             c := CReg("c", 1),
             qb.X(q[0]),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             If(c[0]).Then(Print(c, tag="branch_taken")).Else(Print(c, tag="branch_taken")),
             Return(c),
         )
@@ -367,7 +367,7 @@ class TestPathSignatureValidator:
             q := QReg("q", 1),
             c := CReg("c", 1),
             qb.X(q[0]),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             If(c[0]).Then(Print(c, tag="branch_a")).Else(Print(c, tag="branch_b")),
             Return(c),
         )
@@ -380,7 +380,7 @@ class TestPathSignatureValidator:
             q := QReg("q", 1),
             c := CReg("c", 1),
             qb.X(q[0]),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             If(c[0])
             .Then(
                 Print(c, tag="event"),
@@ -398,7 +398,7 @@ class TestPathSignatureValidator:
             q := QReg("q", 1),
             c := CReg("c", 1),
             qb.X(q[0]),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             If(c[0]).Then(Print(c, tag="x")).Else(Print(c, namespace="debug", tag="x")),
             Return(c),
         )
@@ -412,7 +412,7 @@ class TestPathSignatureValidator:
             c := CReg("c", 1),
             Repeat(3).block(
                 qb.X(q[0]),
-                Measure(q[0]) > c[0],
+                MeasureZ(q[0]) > c[0],
                 qb.PZ(q[0]),
                 Print(c, tag="iter"),
             ),
@@ -427,7 +427,7 @@ class TestPathSignatureValidator:
             c := CReg("c", 1),
             For("i", 0, 3).Do(
                 qb.X(q[0]),
-                Measure(q[0]) > c[0],
+                MeasureZ(q[0]) > c[0],
                 qb.PZ(q[0]),
                 Print(c, tag="loop"),
             ),
@@ -441,8 +441,8 @@ class TestPathSignatureValidator:
             q := QReg("q", 2),
             c := CReg("c", 2),
             qb.X(q[0]),
-            Measure(q[0]) > c[0],
-            Measure(q[1]) > c[1],
+            MeasureZ(q[0]) > c[0],
+            MeasureZ(q[1]) > c[1],
             If(c[0])
             .Then(
                 If(c[1]).Then(Print(c, tag="inner")).Else(Print(c, tag="inner")),
@@ -462,8 +462,8 @@ class TestPathSignatureValidator:
             q := QReg("q", 2),
             c := CReg("c", 2),
             qb.X(q[0]),
-            Measure(q[0]) > c[0],
-            Measure(q[1]) > c[1],
+            MeasureZ(q[0]) > c[0],
+            MeasureZ(q[1]) > c[1],
             If(c[0]).Then(If(c[1]).Then(Print(c, tag="leak"))),  # Else missing on inner
             Return(c),
         )
@@ -498,7 +498,7 @@ class TestInlineCRegDefiniteAssignment:
             q := QReg("q", 1),
             qb.X(q[0]),
             Print(inline[0], tag="before_measure"),
-            Measure(q[0]) > inline[0],
+            MeasureZ(q[0]) > inline[0],
             Return(inline),
         )
         with pytest.raises(GuppyCodegenError, match=r"references inline CReg"):
@@ -510,7 +510,7 @@ class TestInlineCRegDefiniteAssignment:
         prog = Main(
             q := QReg("q", 1),
             qb.X(q[0]),
-            Measure(q[0]) > inline[0],
+            MeasureZ(q[0]) > inline[0],
             Print(inline[0], tag="after_measure"),
             Return(inline),
         )
@@ -523,7 +523,7 @@ class TestInlineCRegDefiniteAssignment:
             c := CReg("c", 1),  # declared positional, not inline
             Print(c, tag="zero_init"),  # user knows c starts all-False
             qb.X(q[0]),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             Print(c, tag="after"),
             Return(c),
         )
@@ -536,8 +536,8 @@ class TestInlineCRegDefiniteAssignment:
             q := QReg("q", 2),
             qb.X(q[0]),
             Print(inline[0], tag="early"),
-            Measure(q[0]) > inline[0],
-            Measure(q[1]) > inline[1],
+            MeasureZ(q[0]) > inline[0],
+            MeasureZ(q[1]) > inline[1],
             Return(inline),
         )
         with pytest.raises(GuppyCodegenError, match=r"references inline CReg"):
@@ -550,8 +550,8 @@ class TestInlineCRegDefiniteAssignment:
             q := QReg("q", 2),
             c := CReg("c", 1),
             qb.X(q[0]),
-            Measure(q[0]) > c[0],
-            If(c[0]).Then(qb.X(q[1]), Measure(q[1]) > inline[0]).Else(Measure(q[1]) > inline[0]),
+            MeasureZ(q[0]) > c[0],
+            If(c[0]).Then(qb.X(q[1]), MeasureZ(q[1]) > inline[0]).Else(MeasureZ(q[1]) > inline[0]),
             Print(inline[0], tag="post_if"),
             Return(c),
         )
@@ -564,8 +564,8 @@ class TestInlineCRegDefiniteAssignment:
             q := QReg("q", 1),
             c := CReg("c", 1),
             qb.X(q[0]),
-            Measure(q[0]) > c[0],
-            If(c[0]).Then(Measure(q[0]) > inline[0]),
+            MeasureZ(q[0]) > c[0],
+            If(c[0]).Then(MeasureZ(q[0]) > inline[0]),
             Print(inline[0], tag="maybe"),
             Return(c),
         )
@@ -577,7 +577,7 @@ class TestInlineCRegDefiniteAssignment:
         inline = CReg("inline", 1)
         prog = Main(
             q := QReg("q", 1),
-            Repeat(3).block(qb.X(q[0]), Measure(q[0]) > inline[0], qb.PZ(q[0])),
+            Repeat(3).block(qb.X(q[0]), MeasureZ(q[0]) > inline[0], qb.PZ(q[0])),
             Print(inline[0], tag="post_repeat"),
             Return(inline),
         )
@@ -588,7 +588,7 @@ class TestInlineCRegDefiniteAssignment:
         inline = CReg("inline", 1)
         prog = Main(
             q := QReg("q", 1),
-            For("i", 0, 2).Do(qb.X(q[0]), Measure(q[0]) > inline[0], qb.PZ(q[0])),
+            For("i", 0, 2).Do(qb.X(q[0]), MeasureZ(q[0]) > inline[0], qb.PZ(q[0])),
             Print(inline[0], tag="post_for"),
             Return(inline),
         )
@@ -607,7 +607,7 @@ class TestInlineCRegDefiniteAssignment:
         prog = Main(
             q := QReg("q", 2),
             qb.X(q[0]),
-            Measure(q[0]) > inline[0],
+            MeasureZ(q[0]) > inline[0],
             Print(inline[1], tag="bit1"),
             Return(inline),
         )
@@ -628,8 +628,8 @@ class TestInlineCRegDefiniteAssignment:
         prog = Main(
             q := QReg("q", 2),
             qb.X(q[0]),
-            Measure(q[0]) > inline[0],
-            Measure(q[1]) > inline[1],
+            MeasureZ(q[0]) > inline[0],
+            MeasureZ(q[1]) > inline[1],
             Print(inline, tag="full"),
             Return(inline),
         )
@@ -649,7 +649,7 @@ class TestInlineCRegDefiniteAssignment:
         prog = Main(
             q := QReg("q", 2),
             qb.X(q[0]),
-            Measure(q[0]) > inline[0],
+            MeasureZ(q[0]) > inline[0],
             Print(inline, tag="whole"),
             Return(inline),
         )
@@ -665,8 +665,8 @@ class TestInlineCRegDefiniteAssignment:
             c := CReg("c", 2),  # declared positional -> not inline
             qb.X(q[0]),
             qb.X(q[1]),
-            Measure(q[0]) > c[0],
-            Measure(q[1]) > c[1],
+            MeasureZ(q[0]) > c[0],
+            MeasureZ(q[1]) > c[1],
             Print(c, tag="whole"),
             Return(c),
         )
@@ -687,11 +687,11 @@ class TestPathSignatureEdgeCases:
             q := QReg("q", 1),
             c := CReg("c", 1),
             qb.X(q[0]),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             While(c[0] == 0).Do(
                 Print(c, tag="loop"),
                 qb.PZ(q[0]),
-                Measure(q[0]) > c[0],
+                MeasureZ(q[0]) > c[0],
             ),
             Return(c),
         )
@@ -707,8 +707,8 @@ class TestPathSignatureEdgeCases:
             c := CReg("c", 2),
             qb.X(q[0]),
             qb.X(q[1]),
-            Measure(q[0]) > c[0],
-            Measure(q[1]) > c[1],
+            MeasureZ(q[0]) > c[0],
+            MeasureZ(q[1]) > c[1],
             Parallel(
                 Print(c[0], tag="bit0"),
                 Print(c[1], tag="bit1"),
@@ -728,7 +728,7 @@ class TestPathSignatureEdgeCases:
             Repeat(0).block(
                 Print(inline[0], tag="never_runs"),  # inline[0] never written anywhere
             ),
-            Measure(q[0]) > inline[0],
+            MeasureZ(q[0]) > inline[0],
             Return(inline),
         )
         with pytest.raises(GuppyCodegenError, match=r"references inline CReg"):
@@ -786,7 +786,7 @@ class TestCrossCodegenPrintEmission:
             c := CReg("c", 2),
             qb.H(q[0]),
             qb.CX(q[0], q[1]),
-            Measure(q) > c,
+            MeasureZ(q) > c,
             Return(c),
         )
 
@@ -797,7 +797,7 @@ class TestCrossCodegenPrintEmission:
             c := CReg("c", 2),
             qb.H(q[0]),
             qb.CX(q[0], q[1]),
-            Measure(q) > c,
+            MeasureZ(q) > c,
             Print(c, tag="debug"),
             Return(c),
         )
@@ -861,7 +861,7 @@ class TestSeleneShapeEdgeCases:
             c := CReg("c", 2),
             Repeat(2).block(
                 qb.X(q[0]),
-                Measure(q[0]) > c[0],
+                MeasureZ(q[0]) > c[0],
                 qb.PZ(q[0]),
                 Print(c, tag="iter"),
             ),
@@ -902,7 +902,7 @@ class TestSeleneShapeEdgeCases:
             q := QReg("q", 1),
             c := CReg("c", 1),
             Print(c, tag="zero_init"),  # before Measure: bit is the False init
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             Return(c),
         )
         raw = _run_and_get_result_dict(prog, shots=2)
@@ -924,8 +924,8 @@ class TestSeleneShapeEdgeCases:
             q := QReg("q", 2),
             c := CReg("c", 2),
             qb.X(q[0]),
-            Measure(q[0]) > c[0],
-            Measure(q[1]) > c[1],
+            MeasureZ(q[0]) > c[0],
+            MeasureZ(q[1]) > c[1],
             Print(c, tag="pair"),
             Return(c),
         )

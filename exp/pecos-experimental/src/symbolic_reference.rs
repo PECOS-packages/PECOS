@@ -166,7 +166,7 @@ pub(crate) fn reference_distribution(gates: &[Gate]) -> Vec<f64> {
                 | GateType::MZ
                 | GateType::MPZ
                 | GateType::MeasureFree
-                | GateType::MeasureLeaked
+                | GateType::MeasureZLeaked
         );
         let prepared = matches!(
             gate.gate_type,

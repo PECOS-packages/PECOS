@@ -71,7 +71,7 @@ fn gate_symbol(gate_type: GateType) -> &'static str {
         GateType::CSdg => "CSdg",
         GateType::MX => "MX",
         GateType::MZ => "MZ",
-        GateType::MeasureLeaked => "ML",
+        GateType::MeasureZLeaked => "ML",
         GateType::MeasureFree => "MF",
         GateType::MPZ => "MPZ",
         GateType::PX => "PX",
@@ -214,7 +214,7 @@ fn gate_color(gate_type: GateType) -> CellColor {
         // No clear single-axis color: idle, alloc/free, multi-qubit, custom
         GateType::Idle
         | GateType::I
-        | GateType::MeasureLeaked
+        | GateType::MeasureZLeaked
         | GateType::MeasureFree
         | GateType::MPZ
         | GateType::QAlloc
@@ -245,7 +245,7 @@ fn gate_color(gate_type: GateType) -> CellColor {
 /// gates keep their asymmetric brackets (`|MZ)` and `(PZ|`).
 fn gate_family(gate_type: GateType) -> GateFamily {
     match gate_type {
-        GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree | GateType::MPZ => {
+        GateType::MZ | GateType::MeasureZLeaked | GateType::MeasureFree | GateType::MPZ => {
             GateFamily::Measurement
         }
         GateType::PZ | GateType::QAlloc | GateType::QFree => GateFamily::Preparation,

@@ -20,7 +20,7 @@ class TestMultiQubitMeasurements:
         prog = Main(
             q := QReg("q", 3),
             c := CReg("c", 3),
-            qubit.Measure(q[0], q[1], q[2]) > (c[0], c[1], c[2]),
+            qubit.MeasureZ(q[0], q[1], q[2]) > (c[0], c[1], c[2]),
             Return(c),
         )
         assert_ast_guppy_compiles(prog)
@@ -28,7 +28,7 @@ class TestMultiQubitMeasurements:
     def test_multi_qubit_without_outputs(self) -> None:
         prog = Main(
             q := QReg("q", 3),
-            qubit.Measure(q[0], q[1], q[2]),
+            qubit.MeasureZ(q[0], q[1], q[2]),
         )
         assert_ast_guppy_compiles(prog)
 
@@ -36,9 +36,9 @@ class TestMultiQubitMeasurements:
         prog = Main(
             q := QReg("q", 5),
             c := CReg("c", 5),
-            qubit.Measure(q[0]) > c[0],
-            qubit.Measure(q[1], q[2], q[3]) > (c[1], c[2], c[3]),
-            qubit.Measure(q[4]) > c[4],
+            qubit.MeasureZ(q[0]) > c[0],
+            qubit.MeasureZ(q[1], q[2], q[3]) > (c[1], c[2], c[3]),
+            qubit.MeasureZ(q[4]) > c[4],
             Return(c),
         )
         assert_ast_guppy_compiles(prog)
@@ -51,7 +51,7 @@ class TestMultiQubitMeasurementEdgeCases:
         prog = Main(
             q := QReg("q", 2),
             c := CReg("c", 2),
-            qubit.Measure(q[0], q[1]) > (c[0], c[1]),
+            qubit.MeasureZ(q[0], q[1]) > (c[0], c[1]),
             Return(c),
         )
         assert_ast_guppy_compiles(prog)
@@ -60,7 +60,7 @@ class TestMultiQubitMeasurementEdgeCases:
         prog = Main(
             q := QReg("q", 7),
             c := CReg("c", 7),
-            qubit.Measure(q[0], q[1], q[2], q[3], q[4], q[5], q[6]) > (c[0], c[1], c[2], c[3], c[4], c[5], c[6]),
+            qubit.MeasureZ(q[0], q[1], q[2], q[3], q[4], q[5], q[6]) > (c[0], c[1], c[2], c[3], c[4], c[5], c[6]),
             Return(c),
         )
         assert_ast_guppy_compiles(prog)
@@ -73,7 +73,7 @@ class TestSingleQubitMeasurementRegression:
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
-            qubit.Measure(q[0]) > c[0],
+            qubit.MeasureZ(q[0]) > c[0],
             Return(c),
         )
         assert_ast_guppy_compiles(prog)
@@ -81,6 +81,6 @@ class TestSingleQubitMeasurementRegression:
     def test_single_qubit_without_output(self) -> None:
         prog = Main(
             q := QReg("q", 1),
-            qubit.Measure(q[0]),
+            qubit.MeasureZ(q[0]),
         )
         assert_ast_guppy_compiles(prog)

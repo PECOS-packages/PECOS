@@ -73,7 +73,7 @@ from collections.abc import Callable
 import pytest
 from pecos.slr import CReg, Main, QReg, Return, SlrConverter, rad
 from pecos.slr.qeclib import qubit as qb
-from pecos.slr.qeclib.qubit.measures import Measure
+from pecos.slr.qeclib.qubit.measures import MeasureZ
 
 from .audit_runner import _curated_cases  # noqa: TID252
 from .test_qir_spec_compliance import _qir_state  # noqa: TID252
@@ -375,7 +375,7 @@ def test_sqrt_clifford_gates_executable() -> None:
     def _run(build):
         q = QReg("q", 1)
         c = CReg("c", 1)
-        prog = Main(q, c, *build(q), Measure(q[0]) > c[0], Return(c))
+        prog = Main(q, c, *build(q), MeasureZ(q[0]) > c[0], Return(c))
         obs: set[tuple[int, ...]] = set()
         for seed in _SEEDS:
             for rec in _qis_exec_records(prog, 1, shots=_SHOTS, seed=seed):
@@ -408,7 +408,7 @@ def test_face_clifford_gates_executable() -> None:
     def _run(build):
         q = QReg("q", 1)
         c = CReg("c", 1)
-        prog = Main(q, c, *build(q), Measure(q[0]) > c[0], Return(c))
+        prog = Main(q, c, *build(q), MeasureZ(q[0]) > c[0], Return(c))
         obs: set[tuple[int, ...]] = set()
         for seed in _SEEDS:
             for rec in _qis_exec_records(prog, 1, shots=_SHOTS, seed=seed):
@@ -447,7 +447,7 @@ def test_sqrt_pauli_2q_gates_executable() -> None:
     def _run(prep, ops, meas_idx=0):
         q = QReg("q", 2)
         c = CReg("c", 1)
-        prog = Main(q, c, *[g(q) for g in prep], *[g(q) for g in ops], Measure(q[meas_idx]) > c[0], Return(c))
+        prog = Main(q, c, *[g(q) for g in prep], *[g(q) for g in ops], MeasureZ(q[meas_idx]) > c[0], Return(c))
         obs: set[tuple[int, ...]] = set()
         for seed in _SEEDS:
             for rec in _qis_exec_records(prog, 2, shots=_SHOTS, seed=seed):
@@ -535,7 +535,7 @@ def test_ch_executable() -> None:
     def _run(prep, ops, meas_idx=0):
         q = QReg("q", 2)
         c = CReg("c", 1)
-        prog = Main(q, c, *[g(q) for g in prep], *[g(q) for g in ops], Measure(q[meas_idx]) > c[0], Return(c))
+        prog = Main(q, c, *[g(q) for g in prep], *[g(q) for g in ops], MeasureZ(q[meas_idx]) > c[0], Return(c))
         obs: set[tuple[int, ...]] = set()
         for seed in _SEEDS:
             for rec in _qis_exec_records(prog, 2, shots=_SHOTS, seed=seed, simulator_factory=quest):
@@ -599,7 +599,7 @@ def test_controlled_rotations_executable() -> None:
     def _run(prep, ops, meas_idx=0):
         q = QReg("q", 2)
         c = CReg("c", 1)
-        prog = Main(q, c, *[g(q) for g in prep], *[g(q) for g in ops], Measure(q[meas_idx]) > c[0], Return(c))
+        prog = Main(q, c, *[g(q) for g in prep], *[g(q) for g in ops], MeasureZ(q[meas_idx]) > c[0], Return(c))
         obs: set[tuple[int, ...]] = set()
         for seed in _SEEDS:
             for rec in _qis_exec_records(prog, 2, shots=_SHOTS, seed=seed, simulator_factory=quest):

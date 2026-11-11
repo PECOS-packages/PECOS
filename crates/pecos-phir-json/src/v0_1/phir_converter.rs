@@ -39,9 +39,10 @@ struct BitIndexedWrite {
 /// Returns an error if JSON parsing fails or the structure is invalid
 pub fn phir_json_to_module(json_str: &str) -> Result<Module, PecosError> {
     // Parse JSON
-    let json_value: Value = serde_json::from_str(json_str)
+    let mut json_value: Value = serde_json::from_str(json_str)
         .map_err(|e| PecosError::Input(format!("Failed to parse PHIR-JSON: {e}")))?;
 
+    super::ast::canonicalize_measurement_qops(&mut json_value);
     super::classical_validation::validate_classical_inputs(&json_value)?;
 
     let obj = json_value

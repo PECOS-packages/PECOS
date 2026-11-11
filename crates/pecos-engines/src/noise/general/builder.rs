@@ -1578,7 +1578,7 @@ impl GeneralNoiseModelBuilder {
     // Frame events execute as unnoised physical commands. Hooks may coexist
     // with them: a FLIP on a hook-leaked qubit only changes the simulator's
     // placeholder state, which no readout in this profile can observe (MZ reads
-    // 1, MeasureLeaked reads 2, and every exit from leakage resets the qubit).
+    // 1, MeasureZLeaked reads 2, and every exit from leakage resets the qubit).
     // Other callers of simple_probabilities must still reject hooks they
     // cannot translate.
     // Returns false if a setter error is recorded.

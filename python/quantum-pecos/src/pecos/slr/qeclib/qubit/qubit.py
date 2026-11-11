@@ -71,6 +71,6 @@ class PhysicalQubit:
     def mz(
         qubits: tuple[Qubit, ...],
         outputs: Bit | tuple[Bit, ...],
-    ) -> measures.Measure:
+    ) -> measures.MeasureZ:
         """Measurement gate."""
-        return measures.Measure(*qubits) > outputs
+        return measures.MeasureZ(*qubits) > outputs

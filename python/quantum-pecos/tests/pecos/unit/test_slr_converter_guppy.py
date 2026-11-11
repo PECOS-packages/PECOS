@@ -28,7 +28,7 @@ def test_slr_converter_guppy_does_not_have_undefined_variables() -> None:
         c := CReg("c", 2),
         qb.H(q[0]),
         qb.CX(q[0], q[1]),
-        qb.Measure(q) > c,
+        qb.MeasureZ(q) > c,
     )
 
     guppy_code = SlrConverter(prog).guppy()
@@ -70,7 +70,7 @@ def test_slr_converter_hugr_simple() -> None:
         c := CReg("c", 2),
         qb.H(q[0]),
         qb.CX(q[0], q[1]),
-        qb.Measure(q) > c,
+        qb.MeasureZ(q) > c,
     )
 
     # This should not raise an exception
@@ -88,7 +88,7 @@ def test_slr_converter_guppy_has_main_function() -> None:
         q := QReg("q", 1),
         c := CReg("c", 1),
         qb.H(q[0]),
-        qb.Measure(q) > c,
+        qb.MeasureZ(q) > c,
     )
 
     guppy_code = SlrConverter(prog).guppy()

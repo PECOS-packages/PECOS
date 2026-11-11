@@ -283,7 +283,7 @@ require separate seeded and statistical parity checks.
 
 The Rust general noise model records leakage when each measurement is emitted.
 A later reset or leakage fault in the same batch cannot change that earlier
-readout. `MeasureLeaked` returns 2 for a leaked qubit; ordinary measurement starts
+readout. `MeasureZLeaked` returns 2 for a leaked qubit; ordinary measurement starts
 at 1 and still applies the configured asymmetric readout fault.
 
 `MPZ` measures and then prepares zero: its readout uses the pre-reset leakage,
@@ -340,7 +340,7 @@ noise = (
     # Multiple gates
     .with_noiseless_gate("S")
     .with_noiseless_gate("T")
-    .with_noiseless_gate("MEASURE")
+    .with_noiseless_gate("MEASUREZ")
 )
 ```
 

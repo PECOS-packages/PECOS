@@ -52,7 +52,7 @@ def _assert_matches_qasm(registers, operations, expected) -> None:
     for reg in registers:
         reads.extend(If(reg[index] == 1).Then(qb.X(q[offset + index])) for index in range(reg.size))
         offset += reg.size
-    prog = Main(q, observed, *registers, *operations, *reads, qb.Measure(q) > observed, Return(*registers, observed))
+    prog = Main(q, observed, *registers, *operations, *reads, qb.MeasureZ(q) > observed, Return(*registers, observed))
     converter = SlrConverter(prog)
     package = converter.hugr()
     selene = sim(Hugr(package.to_str().encode("utf-8"))).classical(selene_engine()).qubits(size).seed(42).run(2)
@@ -305,7 +305,7 @@ def test_repeat_counter_preserves_user_underscore_loop(repetitions: int) -> None
             Repeat(repetitions).block(),
             c[0].set(u == 0),
             If(c[0] == 1).Then(qb.X(q[0])),
-            qb.Measure(q),
+            qb.MeasureZ(q),
             qb.PZ(q),
         ),
     )

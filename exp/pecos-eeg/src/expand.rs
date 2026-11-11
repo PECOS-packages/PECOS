@@ -201,8 +201,8 @@ pub fn expand_circuit(gates: &[Gate]) -> Result<ExpandedCircuit, EegBuildError> 
         // `MeasureFree` is record-bearing and lowers to `MZ` below -- the
         // "free" is resource bookkeeping with no stabilizer effect, and a
         // reused qubit reappears behind an explicit prep the expansion keeps.
-        // MeasureLeaked has no record and cannot be represented here.
-        if gate.gate_type == GateType::MeasureLeaked {
+        // MeasureZLeaked has no record and cannot be represented here.
+        if gate.gate_type == GateType::MeasureZLeaked {
             return Err(EegBuildError::UnsupportedMeasurement {
                 gate_type: gate.gate_type,
             });

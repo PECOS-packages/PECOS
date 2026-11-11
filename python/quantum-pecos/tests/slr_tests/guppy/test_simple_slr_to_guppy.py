@@ -10,7 +10,7 @@ set.
 
 from pecos.slr import Block, CReg, Main, QReg, Return
 from pecos.slr.qeclib import qubit as qb
-from pecos.slr.qeclib.qubit.measures import Measure
+from pecos.slr.qeclib.qubit.measures import MeasureZ
 from pecos.slr.qeclib.qubit.preps import PZ
 
 from ..ast_guppy._harness import assert_ast_guppy_compiles  # noqa: TID252
@@ -25,7 +25,7 @@ def test_simple_explicit_reset_in_loop() -> None:
             self.q = q
             self.c = c
             self.ops = [
-                Measure(q[0]) > c[0],
+                MeasureZ(q[0]) > c[0],
                 PZ(q[0]),
             ]
 
@@ -49,7 +49,7 @@ def test_simple_measurement_then_reset() -> None:
             self.q = q
             self.c = c
             self.ops = [
-                Measure(q[0]) > c[0],
+                MeasureZ(q[0]) > c[0],
                 PZ(q[0]),
             ]
 

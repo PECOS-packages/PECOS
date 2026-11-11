@@ -123,7 +123,7 @@ fn is_supported_measurement_gate(gate_type: GateType) -> bool {
         GateType::MX
             | GateType::MZ
             | GateType::MeasureFree
-            | GateType::MeasureLeaked
+            | GateType::MeasureZLeaked
             | GateType::MPZ
     )
 }
@@ -192,7 +192,7 @@ pub(crate) enum PauliType {
 /// - Two-qubit Clifford: `CX`, `CY`, `CZ`, `SXX`, `SXXdg`, `SYY`, `SYYdg`,
 ///   `SZZ`, `SZZdg`, `SWAP` → `p=p2`, 15 alternatives
 /// - State preparation: `PZ`, `QAlloc` → mechanism with `p=p_prep`, 1 alternative (`X`)
-/// - Measurement: `MZ`, `MeasureFree`, `MeasureLeaked` → mechanism with
+/// - Measurement: `MZ`, `MeasureFree`, `MeasureZLeaked` → mechanism with
 ///   `p=p_meas`, 1 alternative (flip)
 ///
 /// Each mechanism fires at most once per shot (Bernoulli with total probability p).
@@ -204,7 +204,7 @@ pub(crate) enum PauliType {
 /// - All single-qubit Cliffords: Clifford conjugation via direct Pauli-basis updates
 /// - All two-qubit Cliffords: Clifford conjugation via direct Pauli-basis updates
 /// - `PZ`, `QAlloc`: absorbs all Pauli components on the reset qubit
-/// - `MZ`, `MeasureLeaked`: records `X`-component flip, then absorbs the Z
+/// - `MZ`, `MeasureZLeaked`: records `X`-component flip, then absorbs the Z
 ///   component only -- collapse projects, it does not reset, so the X keeps
 ///   propagating. `MeasureFree` absorbs everything: the qubit is discarded.
 ///
@@ -540,7 +540,7 @@ pub(crate) fn propagate_forward(
             GateType::MX
             | GateType::MZ
             | GateType::MeasureFree
-            | GateType::MeasureLeaked
+            | GateType::MeasureZLeaked
             | GateType::MPZ
                 if !loc.qubits.is_empty() =>
             {
@@ -1330,7 +1330,7 @@ fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, Faul
             GateType::MX
             | GateType::MZ
             | GateType::MeasureFree
-            | GateType::MeasureLeaked
+            | GateType::MeasureZLeaked
             | GateType::MPZ => {
                 if let Some(&meas_idx) = meas_positions.get(&loc_idx) {
                     let affected = vec![meas_idx];
@@ -1555,7 +1555,7 @@ impl From<UnsupportedGateError> for MeasurementHistoryError {
 /// Iterates tick-by-tick to match the `TickCircuit`'s measurement numbering
 /// (which detector/DEM-output record indices reference).
 ///
-/// One column per measurement *record*. `MeasureLeaked` collapses its qubit but
+/// One column per measurement *record*. `MeasureZLeaked` collapses its qubit but
 /// consumes no record. Its random outcome stays hidden until a recorded
 /// measurement observes it, so simulator indices equal record columns.
 ///
@@ -1633,7 +1633,7 @@ pub(crate) fn replay_measurement_history(
                 }
                 // Collapse without advancing record indices; later observations
                 // re-root any hidden outcome onto a recorded measurement.
-                GateType::MeasureLeaked => sim.mz_unrecorded(&qs),
+                GateType::MeasureZLeaked => sim.mz_unrecorded(&qs),
                 GateType::MX | GateType::MZ | GateType::MeasureFree | GateType::MPZ => {
                     if gate.gate_type == GateType::MX {
                         sim.h(&qs);
@@ -2530,7 +2530,7 @@ mod tests {
         assert_eq!(err.qubits, vec![0], "full original qubit list");
     }
 
-    /// The fault catalogue numbers measurements by record, so a `MeasureLeaked`
+    /// The fault catalogue numbers measurements by record, so a `MeasureZLeaked`
     /// must not take a position. It used to, which put every later measurement's
     /// faults one column off from the detector metadata.
     #[test]
@@ -2538,7 +2538,7 @@ mod tests {
         let mut tc = TickCircuit::new();
         tc.tick().pz(&[0, 1]);
         tc.tick()
-            .try_add_gate(pecos_core::Gate::measure_leaked(&[0usize]))
+            .try_add_gate(pecos_core::Gate::measure_z_leaked(&[0usize]))
             .expect("gate is valid");
         tc.tick().mz(&[1]);
 
@@ -2565,7 +2565,7 @@ mod tests {
         let mut tc = TickCircuit::new();
         tc.tick().pz(&[0, 1]);
         tc.tick()
-            .try_add_gate(pecos_core::Gate::measure_leaked(&[0usize]))
+            .try_add_gate(pecos_core::Gate::measure_z_leaked(&[0usize]))
             .expect("gate is valid");
         tc.tick().mz(&[1]);
 
@@ -2587,7 +2587,7 @@ mod tests {
         tc.tick().h(&[0]);
         tc.tick().cx(&[(0, 1)]);
         tc.tick()
-            .try_add_gate(pecos_core::Gate::measure_leaked(&[0usize]))
+            .try_add_gate(pecos_core::Gate::measure_z_leaked(&[0usize]))
             .expect("gate is valid");
         tc.tick().mz(&[1]);
 

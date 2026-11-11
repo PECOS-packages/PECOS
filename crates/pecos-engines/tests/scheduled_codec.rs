@@ -39,7 +39,7 @@ fn fixture() -> (Vec<ScheduledEventBatch>, Vec<u8>, Vec<Vec<u8>>) {
         Gate::rxyxy2q(Angle64::new(3), Angle64::new(5), &[(1, 2)]),
         Gate::pz(&[2]),
         Gate::mz(&[0]),
-        Gate::measure_leaked(&[1]),
+        Gate::measure_z_leaked(&[1]),
     ];
     let records = [
         [1, 0, 0, 1, u64::MAX],

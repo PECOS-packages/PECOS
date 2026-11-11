@@ -186,7 +186,7 @@ class TestAstToStimPrepMeasure:
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
-            qb.Measure(q[0]) > c[0],
+            qb.MeasureZ(q[0]) > c[0],
         )
         ast = slr_to_ast(prog)
 
@@ -199,8 +199,8 @@ class TestAstToStimPrepMeasure:
         prog = Main(
             q := QReg("q", 2),
             c := CReg("c", 2),
-            qb.Measure(q[0]) > c[0],
-            qb.Measure(q[1]) > c[1],
+            qb.MeasureZ(q[0]) > c[0],
+            qb.MeasureZ(q[1]) > c[1],
         )
         ast = slr_to_ast(prog)
 
@@ -290,9 +290,9 @@ class TestAstToStimConditionals:
             q := QReg("q", 2),
             c := CReg("c", 2),
             qb.H(q[0]),
-            qb.Measure(q[0]) > c[0],
+            qb.MeasureZ(q[0]) > c[0],
             If(make_condition(c)).Then(pauli(q[1])),
-            qb.Measure(q[1]) > c[1],
+            qb.MeasureZ(q[1]) > c[1],
         )
 
         rows = _sample(prog)
@@ -307,11 +307,11 @@ class TestAstToStimConditionals:
             q := QReg("q", 2),
             c := CReg("c", 2),
             qb.H(q[0]),
-            qb.Measure(q[0]) > c[0],
+            qb.MeasureZ(q[0]) > c[0],
             qb.H(q[1]),
             If(c[0] == 1).Then(qb.Z(q[1])),
             qb.H(q[1]),
-            qb.Measure(q[1]) > c[1],
+            qb.MeasureZ(q[1]) > c[1],
         )
 
         rows = _sample(prog)
@@ -324,11 +324,11 @@ class TestAstToStimConditionals:
             q := QReg("q", 3),
             c := CReg("c", 2),
             qb.H(q[0]),
-            qb.Measure(q[0]) > c[0],
+            qb.MeasureZ(q[0]) > c[0],
             qb.H(q[1]),
-            qb.Measure(q[1]) > c[0],
+            qb.MeasureZ(q[1]) > c[0],
             If(c[0] == 1).Then(qb.X(q[2])),
-            qb.Measure(q[2]) > c[1],
+            qb.MeasureZ(q[2]) > c[1],
         )
 
         rows = _sample(prog)
@@ -344,9 +344,9 @@ class TestAstToStimConditionals:
                 qb.PZ(q[0]),
                 qb.PZ(q[1]),
                 qb.H(q[0]),
-                qb.Measure(q[0]) > c[0],
+                qb.MeasureZ(q[0]) > c[0],
                 If(c[0] == 1).Then(qb.X(q[1])),
-                qb.Measure(q[1]) > c[1],
+                qb.MeasureZ(q[1]) > c[1],
             ),
         )
 
@@ -362,11 +362,11 @@ class TestAstToStimConditionals:
             Repeat(cond=3).block(
                 qb.PZ(q[0]),
                 qb.H(q[0]),
-                qb.Measure(q[0]) > c[0],
-                qb.Measure(q[1]) > c[1],
+                qb.MeasureZ(q[0]) > c[0],
+                qb.MeasureZ(q[1]) > c[1],
             ),
             If(c[0] == 1).Then(qb.X(q[2])),
-            qb.Measure(q[2]) > c[2],
+            qb.MeasureZ(q[2]) > c[2],
         )
 
         rows = _sample(prog)
@@ -380,10 +380,10 @@ class TestAstToStimConditionals:
             c := CReg("c", 3),
             qb.H(q[0]),
             qb.H(q[1]),
-            qb.Measure(q[0]) > c[0],
-            qb.Measure(q[1]) > c[1],
+            qb.MeasureZ(q[0]) > c[0],
+            qb.MeasureZ(q[1]) > c[1],
             If(c[0] == 1).Then(qb.X(q[2])),
-            qb.Measure(q[2]) > c[2],
+            qb.MeasureZ(q[2]) > c[2],
         )
 
         rows = _sample(prog)
@@ -402,9 +402,9 @@ class TestAstToStimConditionals:
                 qb.PZ(q[2]),
                 qb.H(q[0]),
                 qb.H(q[1]),
-                qb.Measure(q[0], q[1]) > (c[0], c[1]),
+                qb.MeasureZ(q[0], q[1]) > (c[0], c[1]),
                 If(c[0] == 1).Then(qb.X(q[2])),
-                qb.Measure(q[2]) > c[2],
+                qb.MeasureZ(q[2]) > c[2],
             ),
         )
 
@@ -418,8 +418,8 @@ class TestAstToStimConditionals:
         prog = Main(
             q := QReg("q", 3),
             c := CReg("c", 2),
-            qb.Measure(q[0]) > c[0],
-            qb.Measure(q[1]) > c[1],
+            qb.MeasureZ(q[0]) > c[0],
+            qb.MeasureZ(q[1]) > c[1],
             Permute([c[0], c[1]], [c[1], c[0]]),
             If(c[0] == 1).Then(qb.X(q[2])),
         )
@@ -432,7 +432,7 @@ class TestAstToStimConditionals:
         prog = Main(
             q := QReg("q", 3),
             c := CReg("c", 2),
-            qb.Measure(q[0]) > c[0],
+            qb.MeasureZ(q[0]) > c[0],
             Repeat(cond=2).block(
                 Permute([c[0], c[1]], [c[1], c[0]]),
             ),
@@ -453,7 +453,7 @@ class TestAstToStimConditionals:
             out := CReg("out", 2),
             qb.X(q[0]),
             Permute([q[0], q[1]], [q[1], q[0]]),
-            qb.Measure(q) > out,
+            qb.MeasureZ(q) > out,
         )
 
         if collision:
@@ -468,7 +468,7 @@ class TestAstToStimConditionals:
         prog = Main(
             q := QReg("q", 2),
             c := CReg("c", 1),
-            qb.Measure(q[0]) > c[0],
+            qb.MeasureZ(q[0]) > c[0],
             If(c[0] == 1).Then(qb.X(q[1])).Else(qb.Z(q[1])),
         )
 
@@ -480,7 +480,7 @@ class TestAstToStimConditionals:
         prog = Main(
             q := QReg("q", 2),
             c := CReg("c", 1),
-            qb.Measure(q[0]) > c[0],
+            qb.MeasureZ(q[0]) > c[0],
             If(c[0] == 1).Then(qb.H(q[1])),
         )
 
@@ -492,7 +492,7 @@ class TestAstToStimConditionals:
         prog = Main(
             q := QReg("q", 2),
             c := CReg("c", 2),
-            qb.Measure(q[0]) > c[0],
+            qb.MeasureZ(q[0]) > c[0],
             If(c == 1).Then(qb.X(q[1])),
         )
 
@@ -515,10 +515,10 @@ class TestAstToStimConditionals:
         prog = Main(
             q := QReg("q", 2),
             c := CReg("c", 2),
-            qb.Measure(q[0]) > c[0],
+            qb.MeasureZ(q[0]) > c[0],
             Repeat(cond=2).block(
                 If(c[0] == 1).Then(qb.X(q[1])),
-                qb.Measure(q[1]) > c[1],
+                qb.MeasureZ(q[1]) > c[1],
             ),
         )
 
@@ -531,7 +531,7 @@ class TestAstToStimConditionals:
         c = CReg("inline", 1)
         prog = Main(
             q,
-            qb.Measure(q[0]) > c[0],
+            qb.MeasureZ(q[0]) > c[0],
             c.set(1),
             If(c[0] == 1).Then(qb.X(q[1])),
         )
@@ -544,7 +544,7 @@ class TestAstToStimConditionals:
         prog = Main(
             q := QReg("q", 2),
             c := CReg("c", 1),
-            qb.Measure(q[0]) > c[0],
+            qb.MeasureZ(q[0]) > c[0],
             c[0].set(1),
             If(c[0] == 1).Then(qb.X(q[1])),
         )
@@ -557,7 +557,7 @@ class TestAstToStimConditionals:
         prog = Main(
             q := QReg("q", 2),
             c := CReg("c", 1),
-            qb.Measure(q[0]) > c[0],
+            qb.MeasureZ(q[0]) > c[0],
             Repeat(cond=2).block(
                 c.set(0),
             ),
@@ -572,7 +572,7 @@ class TestAstToStimConditionals:
         prog = Main(
             q := QReg("q", 2),
             c := CReg("c", 1),
-            qb.Measure(q[0]) > c[0],
+            qb.MeasureZ(q[0]) > c[0],
             If(c[0] == 1).Then(qb.X(q[1])),
         )
 
@@ -591,7 +591,7 @@ class TestAstToStimQEC:
             c := CReg("c", 1),
             qb.CX(data[0], ancilla[0]),
             qb.CX(data[1], ancilla[0]),
-            qb.Measure(ancilla[0]) > c[0],
+            qb.MeasureZ(ancilla[0]) > c[0],
         )
         ast = slr_to_ast(prog)
 
@@ -613,7 +613,7 @@ class TestAstToStimQEC:
             Repeat(cond=3).block(
                 qb.CX(data[0], ancilla[0]),
                 qb.CX(data[1], ancilla[0]),
-                qb.Measure(ancilla[0]) > c[0],
+                qb.MeasureZ(ancilla[0]) > c[0],
                 qb.PZ(ancilla[0]),
             ),
         )
@@ -658,9 +658,9 @@ class TestAstToStimGenerator:
         prog = Main(
             q := QReg("q", 3),
             c := CReg("c", 3),
-            qb.Measure(q[0]) > c[0],
-            qb.Measure(q[1]) > c[1],
-            qb.Measure(q[2]) > c[2],
+            qb.MeasureZ(q[0]) > c[0],
+            qb.MeasureZ(q[1]) > c[1],
+            qb.MeasureZ(q[2]) > c[2],
         )
         ast = slr_to_ast(prog)
 
@@ -696,8 +696,8 @@ class TestAstToStimFullPipeline:
             c := CReg("c", 2),
             qb.H(q[0]),
             qb.CX(q[0], q[1]),
-            qb.Measure(q[0]) > c[0],
-            qb.Measure(q[1]) > c[1],
+            qb.MeasureZ(q[0]) > c[0],
+            qb.MeasureZ(q[1]) > c[1],
         )
 
         ast = slr_to_ast(prog)
@@ -777,39 +777,39 @@ def _assert_record_values(circuit, records, expected):
 def record_program(request):
     """Programs with independently known classical values and baseline Stim text."""
     q, c, d = QReg("q", 2), CReg("c", 2), CReg("d", 1)
-    measurements = (qb.Measure(q[1]) > c[1], qb.Measure(q[0]) > c[0])
+    measurements = (qb.MeasureZ(q[1]) > c[1], qb.MeasureZ(q[0]) > c[0])
     cases = {
         "no_measurements": ((), {"c": [0, 0]}, "X 0"),
         "out_of_order": (measurements, {"c": [1, 0]}, "X 0\nM 1 0"),
-        "multi_target": ((qb.Measure(q[1], q[0]) > (c[1], c[0]),), {"c": [1, 0]}, "X 0\nM 1 0"),
+        "multi_target": ((qb.MeasureZ(q[1], q[0]) > (c[1], c[0]),), {"c": [1, 0]}, "X 0\nM 1 0"),
         "two_registers": (
-            (qb.Measure(q[1]) > d[0], qb.Measure(q[0]) > c[0]),
+            (qb.MeasureZ(q[1]) > d[0], qb.MeasureZ(q[0]) > c[0]),
             {"c": [1, 0], "d": [0]},
             "X 0\nM 1 0",
         ),
         "overwritten": (
-            (qb.Measure(q[1]) > c[0], *measurements),
+            (qb.MeasureZ(q[1]) > c[0], *measurements),
             {"c": [1, 0]},
             "X 0\nM 1 1 0",
         ),
         "bare_and_short_results": (
-            (qb.Measure(q[1]), qb.Measure(q[0], q[1]) > c[0]),
+            (qb.MeasureZ(q[1]), qb.MeasureZ(q[0], q[1]) > c[0]),
             {"c": [1, 0]},
             "X 0\nM 1 0 1",
         ),
-        "long_results": ((qb.Measure(q[0]) > (c[0], c[1]),), {"c": [1, 0]}, "X 0\nM 0"),
+        "long_results": ((qb.MeasureZ(q[0]) > (c[0], c[1]),), {"c": [1, 0]}, "X 0\nM 0"),
         "partial_register": (
-            (qb.Measure(q[0]) > c[1],),
+            (qb.MeasureZ(q[0]) > c[1],),
             {"c": [0, 1]},
             "X 0\nM 0",
         ),
         "repeat": (
-            (qb.Measure(q[0]), Repeat(3).block(*measurements), qb.Measure(q[1]) > d[0]),
+            (qb.MeasureZ(q[0]), Repeat(3).block(*measurements), qb.MeasureZ(q[1]) > d[0]),
             {"c": [1, 0], "d": [0]},
             "X 0\nM 0\nREPEAT 3 {\n    M 1 0\n}\nM 1",
         ),
         "nested_repeat": (
-            (Repeat(2).block(qb.Measure(q[0]), Repeat(3).block(*measurements), qb.Measure(q[1])),),
+            (Repeat(2).block(qb.MeasureZ(q[0]), Repeat(3).block(*measurements), qb.MeasureZ(q[1])),),
             {"c": [1, 0]},
             "X 0\nREPEAT 2 {\n    M 0\n    REPEAT 3 {\n        M 1 0\n    }\n    M 1\n}",
         ),
@@ -840,7 +840,7 @@ def record_program(request):
             "X 0\nM 1 0 1 0",
         ),
         "conditional": (
-            (qb.Measure(q[0]) > c[0], If(c[0] == 0).Then(qb.X(q[1])), qb.Measure(q[1]) > c[1]),
+            (qb.MeasureZ(q[0]) > c[0], If(c[0] == 0).Then(qb.X(q[1])), qb.MeasureZ(q[1]) > c[1]),
             {"c": [1, 0]},
             "X 0\nM 0\nX 1\nCX rec[-1] 1\nM 1",
         ),
@@ -959,7 +959,7 @@ def test_record_history_resets_between_programs(record_program) -> None:
     program, qasm, expected, _baseline = record_program
     previous = QReg("previous", 1)
     generator = AstToStim(collect_records=True)
-    generator.generate(slr_to_ast(Main(previous, qb.X(previous[0]), qb.Measure(previous[0]))))
+    generator.generate(slr_to_ast(Main(previous, qb.X(previous[0]), qb.MeasureZ(previous[0]))))
     circuit = generator.generate(slr_to_ast(program))
     records = tuple(generator.context.record_bits)
     assert records == _qasm_record_bits(qasm)

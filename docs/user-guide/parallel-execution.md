@@ -28,7 +28,7 @@ prog = Main(
         qb.H(q[2]),
         qb.H(q[3]),
     ),
-    qb.Measure(q) > c,
+    qb.MeasureZ(q) > c,
 )
 ```
 
@@ -58,7 +58,7 @@ prog = Main(
             qb.CX(q[4], q[5]),
         ),
     ),
-    qb.Measure(q) > c,
+    qb.MeasureZ(q) > c,
 )
 ```
 
@@ -187,9 +187,9 @@ prog = Main(
     qb.H(q[2]),
     # Measure ancillas
     Parallel(
-        qb.Measure(q[0]) > c[0],
-        qb.Measure(q[1]) > c[1],
-        qb.Measure(q[2]) > c[2],
+        qb.MeasureZ(q[0]) > c[0],
+        qb.MeasureZ(q[1]) > c[1],
+        qb.MeasureZ(q[2]) > c[2],
     ),
 )
 

@@ -10,7 +10,7 @@ acceptance set in ``tests/slr_tests/ast_guppy/test_v1_acceptance.py``.
 
 from pecos.slr import Block, CReg, Main, QReg, Return
 from pecos.slr.qeclib import qubit
-from pecos.slr.qeclib.qubit.measures import Measure
+from pecos.slr.qeclib.qubit.measures import MeasureZ
 
 from ..ast_guppy._harness import assert_ast_guppy_compiles  # noqa: TID252
 
@@ -27,8 +27,8 @@ def test_block_with_partial_measurements() -> None:
             self.ops = [
                 qubit.CX(data[0], ancilla[0]),
                 qubit.CX(data[1], ancilla[1]),
-                Measure(ancilla[0]) > syndrome[0],
-                Measure(ancilla[1]) > syndrome[1],
+                MeasureZ(ancilla[0]) > syndrome[0],
+                MeasureZ(ancilla[1]) > syndrome[1],
             ]
 
     prog = Main(
@@ -37,7 +37,7 @@ def test_block_with_partial_measurements() -> None:
         syndrome := CReg("syndrome", 2),
         final := CReg("final", 2),
         MeasureAncillas(data, ancilla, syndrome),
-        Measure(data) > final,
+        MeasureZ(data) > final,
         Return(syndrome, final),
     )
     assert_ast_guppy_compiles(prog)
@@ -55,16 +55,16 @@ def test_partial_array_operations() -> None:
                 qubit.H(q[1]),
                 qubit.H(q[2]),
                 qubit.H(q[3]),
-                Measure(q[1]),
-                Measure(q[3]),
+                MeasureZ(q[1]),
+                MeasureZ(q[3]),
             ]
 
     prog = Main(
         q := QReg("q", 4),
         result := CReg("result", 2),
         SelectEvenQubits(q),
-        Measure(q[0]) > result[0],
-        Measure(q[2]) > result[1],
+        MeasureZ(q[0]) > result[0],
+        MeasureZ(q[2]) > result[1],
         Return(result),
     )
     assert_ast_guppy_compiles(prog)
@@ -80,8 +80,8 @@ def test_multiple_blocks_with_measurements() -> None:
             self.b = b
             self.results = results
             self.ops = [
-                Measure(a[0]) > results[0],
-                Measure(b[0]) > results[1],
+                MeasureZ(a[0]) > results[0],
+                MeasureZ(b[0]) > results[1],
             ]
 
     prog = Main(
@@ -89,8 +89,8 @@ def test_multiple_blocks_with_measurements() -> None:
         b := QReg("b", 2),
         results := CReg("results", 4),
         SplitAndMeasure(a, b, results[0:2]),
-        Measure(a[1]) > results[2],
-        Measure(b[1]) > results[3],
+        MeasureZ(a[1]) > results[2],
+        MeasureZ(b[1]) > results[3],
         Return(results),
     )
     assert_ast_guppy_compiles(prog)
@@ -105,8 +105,8 @@ def test_all_qubits_consumed() -> None:
             self.q = q
             self.c = c
             self.ops = [
-                Measure(q[0]) > c[0],
-                Measure(q[1]) > c[1],
+                MeasureZ(q[0]) > c[0],
+                MeasureZ(q[1]) > c[1],
             ]
 
     prog = Main(

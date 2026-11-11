@@ -23,7 +23,7 @@ import pytest
 from pecos.slr import CReg, Main, QReg, Return, SlrConverter
 from pecos.slr.ast.nodes import RegisterDecl
 from pecos.slr.qeclib import qubit as qb
-from pecos.slr.qeclib.qubit.measures import Measure
+from pecos.slr.qeclib.qubit.measures import MeasureZ
 
 from ._selene_harness import run_ast_guppy_via_selene  # noqa: TID252
 
@@ -66,7 +66,7 @@ class TestNoImplicitReturn:
             q := QReg("q", 1),
             c := CReg("c", 1),
             qb.X(q[0]),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
         )
 
         source = SlrConverter(prog).guppy()
@@ -79,7 +79,7 @@ class TestNoImplicitReturn:
             q := QReg("q", 1),
             c := CReg("c", 1),
             qb.X(q[0]),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
         )
 
         package = SlrConverter(prog).hugr()
@@ -91,7 +91,7 @@ class TestNoImplicitReturn:
             q := QReg("q", 1),
             c := CReg("c", 1),
             qb.X(q[0]),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
         )
 
         with pytest.raises(ValueError, match="requires an explicit"):
@@ -102,7 +102,7 @@ class TestNoImplicitReturn:
             q := QReg("q", 1),
             c := CReg("c", 1),
             qb.X(q[0]),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             Return(c),
         )
 

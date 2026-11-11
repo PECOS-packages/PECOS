@@ -564,7 +564,7 @@ pub(crate) fn fields(g: &Gate) -> Result<(u64, u64, u64, u64, u64), PecosError> 
         // revisit the idle-omission rule in ScheduleTimeline::prepare.
         GateType::PZ => (5, 1, 0),
         GateType::MZ => (6, 1, 0),
-        GateType::MeasureLeaked => (7, 1, 0),
+        GateType::MeasureZLeaked => (7, 1, 0),
         _ => return Err(error("unsupported scheduled gate")),
     };
     if g.qubits.len() != n
@@ -771,7 +771,7 @@ pub(crate) fn decode_bytes(bytes: &[u8]) -> Result<Vec<TimedBatch>, PecosError> 
                 4 => Gate::rxyxy2q(a, p, &[(q0, q1)]),
                 5 => Gate::pz(&[q0]),
                 6 => Gate::mz(&[q0]),
-                7 => Gate::measure_leaked(&[q0]),
+                7 => Gate::measure_z_leaked(&[q0]),
                 _ => return Err(error("unknown mandatory scheduled operation")),
             };
             if !matches!(op, 3 | 4) && q1 != 0

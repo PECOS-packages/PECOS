@@ -11,7 +11,7 @@ patterns that are in v1 scope but not part of the v1 acceptance set in
 import pytest
 from pecos.slr import Block, CReg, Main, QReg, Return, SlrConverter
 from pecos.slr.qeclib import qubit
-from pecos.slr.qeclib.qubit.measures import Measure
+from pecos.slr.qeclib.qubit.measures import MeasureZ
 
 from ..ast_guppy._harness import assert_ast_guppy_compiles  # noqa: TID252
 
@@ -38,7 +38,7 @@ class TestLinearityPatterns:
             q := QReg("q", 3),
             c := CReg("c", 3),
             PrepareGHZ(q),
-            Measure(q) > c,
+            MeasureZ(q) > c,
             Return(c),
         )
         assert_ast_guppy_compiles(prog)
@@ -63,7 +63,7 @@ class TestLinearityPatterns:
             c := CReg("c", 2),
             ApplyH(q),
             ApplyCNOT(q),
-            Measure(q) > c,
+            MeasureZ(q) > c,
             Return(c),
         )
         assert_ast_guppy_compiles(prog)
@@ -77,8 +77,8 @@ class TestLinearityPatterns:
                 self.q = q
                 self.c = c
                 self.ops = [
-                    Measure(q[0]) > c[0],
-                    Measure(q[1]) > c[1],
+                    MeasureZ(q[0]) > c[0],
+                    MeasureZ(q[1]) > c[1],
                 ]
 
         prog = Main(
@@ -86,8 +86,8 @@ class TestLinearityPatterns:
             partial := CReg("partial", 2),
             rest := CReg("rest", 2),
             MeasureHalf(q, partial),
-            Measure(q[2]) > rest[0],
-            Measure(q[3]) > rest[1],
+            MeasureZ(q[2]) > rest[0],
+            MeasureZ(q[3]) > rest[1],
             Return(partial, rest),
         )
         assert_ast_guppy_compiles(prog)
@@ -114,7 +114,7 @@ class TestLinearityPatterns:
                 self.q = q
                 self.c = c
                 self.ops = [
-                    Measure(q[0]) > c[0],
+                    MeasureZ(q[0]) > c[0],
                 ]
 
         class Outer(Block):
@@ -131,7 +131,7 @@ class TestLinearityPatterns:
             q := QReg("q", 2),
             c := CReg("c", 2),
             Outer(q, c),
-            Measure(q[1]) > c[1],
+            MeasureZ(q[1]) > c[1],
             Return(c),
         )
         assert_ast_guppy_compiles(prog)
@@ -151,7 +151,7 @@ class TestResourceManagement:
                 self.result = result
                 self.ops = [
                     qubit.CX(data[0], ancilla[0]),
-                    Measure(ancilla[0]) > result[0],
+                    MeasureZ(ancilla[0]) > result[0],
                 ]
 
         prog = Main(
@@ -160,7 +160,7 @@ class TestResourceManagement:
             result := CReg("result", 1),
             final := CReg("final", 1),
             UseAncilla(data, ancilla, result),
-            Measure(data[0]) > final[0],
+            MeasureZ(data[0]) > final[0],
             Return(result, final),
         )
         assert_ast_guppy_compiles(prog)

@@ -32,6 +32,7 @@ from pecos._phir_exports import (
     decode_export,
     flatten_measure_args,
 )
+from pecos._phir_normalization import canonicalize_measurement_qops
 from pecos.reps.pyphir import block_types as blk
 from pecos.reps.pyphir import data_types as d
 from pecos.reps.pyphir import op_types as op
@@ -336,6 +337,7 @@ class PyPHIR:
         name_resolver: Callable[[QOp], str] | None = None,
     ) -> PyPHIR:
         """Takes a PHIR dictionary and converts it into a PyPHIR object."""
+        phir = canonicalize_measurement_qops(phir)
         p = PyPHIR(
             metadata=dict(
                 phir.get("metadata", {}),

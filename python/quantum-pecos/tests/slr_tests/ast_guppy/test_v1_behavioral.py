@@ -32,7 +32,7 @@ from typing import ClassVar
 import pytest
 from pecos.slr import Block, Comment, CReg, For, If, Main, Permute, QReg, Qubit, Repeat, Return, rad
 from pecos.slr.qeclib import qubit as qb
-from pecos.slr.qeclib.qubit.measures import Measure
+from pecos.slr.qeclib.qubit.measures import MeasureZ
 from pecos.slr.qeclib.steane.steane_class import Steane
 
 from ._selene_harness import run_ast_guppy_via_selene  # noqa: TID252
@@ -49,7 +49,7 @@ class TestDeterministic:
             q := QReg("q", 1),
             c := CReg("c", 1),
             qb.X(q[0]),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             Return(c),
         )
         records = run_ast_guppy_via_selene(prog, shots=10)
@@ -60,7 +60,7 @@ class TestDeterministic:
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             Return(c),
         )
         records = run_ast_guppy_via_selene(prog, shots=10)
@@ -73,7 +73,7 @@ class TestDeterministic:
             c := CReg("c", 1),
             qb.X(q[0]),
             qb.X(q[0]),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             Return(c),
         )
         records = run_ast_guppy_via_selene(prog, shots=10)
@@ -85,9 +85,9 @@ class TestDeterministic:
             q := QReg("q", 1),
             c := CReg("c", 2),
             qb.X(q[0]),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             qb.PZ(q[0]),
-            Measure(q[0]) > c[1],
+            MeasureZ(q[0]) > c[1],
             Return(c),
         )
         records = run_ast_guppy_via_selene(prog, shots=10)
@@ -100,10 +100,10 @@ class TestDeterministic:
             q := QReg("q", 1),
             c := CReg("c", 2),
             qb.X(q[0]),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             qb.PZ(q[0]),
             qb.X(q[0]),
-            Measure(q[0]) > c[1],
+            MeasureZ(q[0]) > c[1],
             Return(c),
         )
         records = run_ast_guppy_via_selene(prog, shots=10)
@@ -118,7 +118,7 @@ class TestDeterministic:
             qb.H(q[0]),
             qb.Z(q[0]),
             qb.H(q[0]),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             Return(c),
         )
         records = run_ast_guppy_via_selene(prog, shots=10)
@@ -131,8 +131,8 @@ class TestDeterministic:
             c := CReg("c", 2),
             qb.X(q[0]),
             Permute([q[0], q[1]], [q[1], q[0]]),
-            Measure(q[0]) > c[0],
-            Measure(q[1]) > c[1],
+            MeasureZ(q[0]) > c[0],
+            MeasureZ(q[1]) > c[1],
             Return(c),
         )
         records = run_ast_guppy_via_selene(prog, shots=10)
@@ -151,9 +151,9 @@ class TestDeterministic:
             c := CReg("c", 3),
             qb.X(q[0]),
             Permute([q[0], q[1], q[2]], [q[2], q[0], q[1]]),
-            Measure(q[0]) > c[0],
-            Measure(q[1]) > c[1],
-            Measure(q[2]) > c[2],
+            MeasureZ(q[0]) > c[0],
+            MeasureZ(q[1]) > c[1],
+            MeasureZ(q[2]) > c[2],
             Return(c),
         )
         records = run_ast_guppy_via_selene(prog, shots=10)
@@ -170,10 +170,10 @@ class TestDeterministic:
             qb.X(a[0]),
             qb.X(b[1]),
             Permute([a[0], a[1], b[0], b[1]], [b[1], b[0], a[1], a[0]]),
-            Measure(a[0]) > c[0],
-            Measure(a[1]) > c[1],
-            Measure(b[0]) > c[2],
-            Measure(b[1]) > c[3],
+            MeasureZ(a[0]) > c[0],
+            MeasureZ(a[1]) > c[1],
+            MeasureZ(b[0]) > c[2],
+            MeasureZ(b[1]) > c[3],
             Return(c),
         )
         records = run_ast_guppy_via_selene(prog, shots=10)
@@ -196,7 +196,7 @@ class TestBellGHZ:
             c := CReg("c", 2),
             qb.H(q[0]),
             qb.CX(q[0], q[1]),
-            Measure(q) > c,
+            MeasureZ(q) > c,
             Return(c),
         )
         records = run_ast_guppy_via_selene(prog, shots=100)
@@ -210,7 +210,7 @@ class TestBellGHZ:
             qb.H(q[0]),
             qb.CX(q[0], q[1]),
             qb.CX(q[1], q[2]),
-            Measure(q) > c,
+            MeasureZ(q) > c,
             Return(c),
         )
         records = run_ast_guppy_via_selene(prog, shots=100)
@@ -231,7 +231,7 @@ class TestMarginalFrequency:
             c := CReg("c", 2),
             qb.H(q[0]),
             qb.CX(q[0], q[1]),
-            Measure(q) > c,
+            MeasureZ(q) > c,
             Return(c),
         )
         records = run_ast_guppy_via_selene(prog, shots=1000, seed=42)
@@ -259,9 +259,9 @@ class TestConditionalCorrectness:
         prog_zero = Main(
             q := QReg("q", 2),
             c := CReg("c", 2),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             If(c[0]).Then(qb.X(q[1])),
-            Measure(q[1]) > c[1],
+            MeasureZ(q[1]) > c[1],
             Return(c),
         )
         records = run_ast_guppy_via_selene(prog_zero, shots=10)
@@ -273,9 +273,9 @@ class TestConditionalCorrectness:
             q := QReg("q", 2),
             c := CReg("c", 2),
             qb.X(q[0]),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             If(c[0]).Then(qb.X(q[1])),
-            Measure(q[1]) > c[1],
+            MeasureZ(q[1]) > c[1],
             Return(c),
         )
         records = run_ast_guppy_via_selene(prog_one, shots=10)
@@ -291,7 +291,7 @@ class TestConditionalCorrectness:
             flag[0].set(1),
             flag[1].set(0),
             If(flag[1]).Then(qb.X(q[0])),
-            Measure(q[0]) > out[0],
+            MeasureZ(q[0]) > out[0],
             Return(out),
         )
         records = run_ast_guppy_via_selene(prog_without_permute, shots=10)
@@ -305,7 +305,7 @@ class TestConditionalCorrectness:
             flag[1].set(0),
             Permute([flag[0], flag[1]], [flag[1], flag[0]]),
             If(flag[1]).Then(qb.X(q[0])),
-            Measure(q[0]) > out[0],
+            MeasureZ(q[0]) > out[0],
             Return(out),
         )
         records = run_ast_guppy_via_selene(prog_with_permute, shots=10)
@@ -338,7 +338,7 @@ class TestS5SteanePzBehavioral:
             c := Steane("c"),
             c.pz(),
             m := CReg("m", 7),
-            Measure(c.d) > m,
+            MeasureZ(c.d) > m,
             Return(m),
         )
         records = run_ast_guppy_via_selene(prog, shots=4, seed=42)
@@ -364,8 +364,8 @@ class TestHarnessInternalMeasurementMapping:
             internal := CReg("internal", 1),
             out := CReg("out", 1),
             qb.X(q[0]),
-            Measure(q[0]) > internal[0],
-            Measure(q[1]) > out[0],
+            MeasureZ(q[0]) > internal[0],
+            MeasureZ(q[1]) > out[0],
             Return(out),
         )
         records = run_ast_guppy_via_selene(prog, shots=10)
@@ -390,7 +390,7 @@ class TestNativeGuppyGates:
             c := CReg("c", 1),
             qb.SX(q[0]),
             qb.SX(q[0]),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             Return(c),
         )
         records = run_ast_guppy_via_selene(prog, shots=20)
@@ -408,7 +408,7 @@ class TestNativeGuppyGates:
             qb.SX(q[0]),
             qb.SZ(q[0]),
             qb.H(q[0]),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             Return(c),
         )
         records = run_ast_guppy_via_selene(prog, shots=20)
@@ -422,7 +422,7 @@ class TestNativeGuppyGates:
             qb.SXdg(q[0]),
             qb.SZ(q[0]),
             qb.H(q[0]),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             Return(c),
         )
         records = run_ast_guppy_via_selene(prog, shots=20)
@@ -433,7 +433,7 @@ class TestNativeGuppyGates:
             c := CReg("c", 1),
             qb.SX(q[0]),
             qb.SXdg(q[0]),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             Return(c),
         )
         recs2 = run_ast_guppy_via_selene(inverse, shots=20)
@@ -445,7 +445,7 @@ class TestNativeGuppyGates:
             q := QReg("q", 1),
             c := CReg("c", 1),
             qb.RX(rad(math.pi), q[0]),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             Return(c),
         )
         records = run_ast_guppy_via_selene(prog, shots=20)
@@ -457,7 +457,7 @@ class TestNativeGuppyGates:
             c := CReg("c", 1),
             qb.RX(rad(math.pi / 2), q[0]),
             qb.RX(rad(math.pi / 2), q[0]),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             Return(c),
         )
         recs2 = run_ast_guppy_via_selene(halves, shots=20)
@@ -469,7 +469,7 @@ class TestNativeGuppyGates:
             q := QReg("q", 1),
             c := CReg("c", 1),
             qb.RY(rad(math.pi), q[0]),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             Return(c),
         )
         records = run_ast_guppy_via_selene(prog, shots=20)
@@ -486,7 +486,7 @@ class TestNativeGuppyGates:
             qb.H(q[0]),
             qb.RZ(rad(math.pi), q[0]),
             qb.H(q[0]),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             Return(c),
         )
         records = run_ast_guppy_via_selene(prog, shots=20)
@@ -505,7 +505,7 @@ class TestNativeGuppyGates:
             qb.H(q[1]),
             qb.CRZ(math.pi, q[0], q[1]),
             qb.H(q[1]),
-            Measure(q[1]) > c[0],
+            MeasureZ(q[1]) > c[0],
             Return(c),
         )
         records = run_ast_guppy_via_selene(prog, shots=20)
@@ -530,21 +530,21 @@ class TestDecomposedGuppyGates:
     # ---- single-qubit Cliffords (SY/SYdg, F-family) ----
 
     def test_sy_squares_to_y_and_handedness(self) -> None:
-        sq = Main(q := QReg("q", 1), c := CReg("c", 1), qb.SY(q[0]), qb.SY(q[0]), Measure(q[0]) > c[0], Return(c))
+        sq = Main(q := QReg("q", 1), c := CReg("c", 1), qb.SY(q[0]), qb.SY(q[0]), MeasureZ(q[0]) > c[0], Return(c))
         assert all(r["measurement_0"] == 1 for r in self._bits(sq)), "SY;SY must be Y -> 1"
         # Handedness: SY;H -> 0 (SYdg;H -> 1; no-op -> 50/50).
-        hd = Main(q := QReg("q", 1), c := CReg("c", 1), qb.SY(q[0]), qb.H(q[0]), Measure(q[0]) > c[0], Return(c))
+        hd = Main(q := QReg("q", 1), c := CReg("c", 1), qb.SY(q[0]), qb.H(q[0]), MeasureZ(q[0]) > c[0], Return(c))
         assert all(r["measurement_0"] == 0 for r in self._bits(hd)), "SY;H must be 0 (handedness)"
 
     def test_sydg_handedness_and_inverse(self) -> None:
-        hd = Main(q := QReg("q", 1), c := CReg("c", 1), qb.SYdg(q[0]), qb.H(q[0]), Measure(q[0]) > c[0], Return(c))
+        hd = Main(q := QReg("q", 1), c := CReg("c", 1), qb.SYdg(q[0]), qb.H(q[0]), MeasureZ(q[0]) > c[0], Return(c))
         assert all(r["measurement_0"] == 1 for r in self._bits(hd)), "SYdg;H must be 1"
-        inv = Main(q := QReg("q", 1), c := CReg("c", 1), qb.SY(q[0]), qb.SYdg(q[0]), Measure(q[0]) > c[0], Return(c))
+        inv = Main(q := QReg("q", 1), c := CReg("c", 1), qb.SY(q[0]), qb.SYdg(q[0]), MeasureZ(q[0]) > c[0], Return(c))
         assert all(r["measurement_0"] == 0 for r in self._bits(inv)), "SY;SYdg must be I -> 0"
 
     def test_f_family(self) -> None:
         # F;H -> 0 (distinguishes F from F4 (50/50) and no-op).
-        f = Main(q := QReg("q", 1), c := CReg("c", 1), qb.F(q[0]), qb.H(q[0]), Measure(q[0]) > c[0], Return(c))
+        f = Main(q := QReg("q", 1), c := CReg("c", 1), qb.F(q[0]), qb.H(q[0]), MeasureZ(q[0]) > c[0], Return(c))
         assert all(r["measurement_0"] == 0 for r in self._bits(f)), "F;H must be 0"
         # Fdg;Sdg;H -> 0; and F;Fdg = I.
         fdg = Main(
@@ -553,11 +553,11 @@ class TestDecomposedGuppyGates:
             qb.Fdg(q[0]),
             qb.SZdg(q[0]),
             qb.H(q[0]),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             Return(c),
         )
         assert all(r["measurement_0"] == 0 for r in self._bits(fdg)), "Fdg;Sdg;H must be 0"
-        finv = Main(q := QReg("q", 1), c := CReg("c", 1), qb.F(q[0]), qb.Fdg(q[0]), Measure(q[0]) > c[0], Return(c))
+        finv = Main(q := QReg("q", 1), c := CReg("c", 1), qb.F(q[0]), qb.Fdg(q[0]), MeasureZ(q[0]) > c[0], Return(c))
         assert all(r["measurement_0"] == 0 for r in self._bits(finv)), "F;Fdg must be I -> 0"
 
     def test_f4_family(self) -> None:
@@ -568,14 +568,14 @@ class TestDecomposedGuppyGates:
             qb.F4(q[0]),
             qb.SZ(q[0]),
             qb.H(q[0]),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             Return(c),
         )
         assert all(r["measurement_0"] == 0 for r in self._bits(f4)), "F4;S;H must be 0"
         # F4dg;H -> 0; and F4;F4dg = I.
-        f4dg = Main(q := QReg("q", 1), c := CReg("c", 1), qb.F4dg(q[0]), qb.H(q[0]), Measure(q[0]) > c[0], Return(c))
+        f4dg = Main(q := QReg("q", 1), c := CReg("c", 1), qb.F4dg(q[0]), qb.H(q[0]), MeasureZ(q[0]) > c[0], Return(c))
         assert all(r["measurement_0"] == 0 for r in self._bits(f4dg)), "F4dg;H must be 0"
-        f4inv = Main(q := QReg("q", 1), c := CReg("c", 1), qb.F4(q[0]), qb.F4dg(q[0]), Measure(q[0]) > c[0], Return(c))
+        f4inv = Main(q := QReg("q", 1), c := CReg("c", 1), qb.F4(q[0]), qb.F4dg(q[0]), MeasureZ(q[0]) > c[0], Return(c))
         assert all(r["measurement_0"] == 0 for r in self._bits(f4inv)), "F4;F4dg must be I -> 0"
 
     # ---- two-qubit sqrt-Paulis via native zz_phase ----
@@ -590,8 +590,8 @@ class TestDecomposedGuppyGates:
             qb.RZZ(rad(math.pi), q[0], q[1]),
             qb.H(q[0]),
             qb.H(q[1]),
-            Measure(q[0]) > c[0],
-            Measure(q[1]) > c[1],
+            MeasureZ(q[0]) > c[0],
+            MeasureZ(q[1]) > c[1],
             Return(c),
         )
         recs = self._bits(prog)
@@ -606,7 +606,7 @@ class TestDecomposedGuppyGates:
             qb.SZZ(q[0], q[1]),
             qb.SZZ(q[0], q[1]),
             qb.H(q[0]),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             Return(c),
         )
         assert all(r["measurement_0"] == 1 for r in self._bits(sq)), "H;SZZ;SZZ;H must be X on q0 -> 1"
@@ -616,8 +616,8 @@ class TestDecomposedGuppyGates:
             c := CReg("c", 2),
             qb.SZZ(q[0], q[1]),
             qb.SZZdg(q[0], q[1]),
-            Measure(q[0]) > c[0],
-            Measure(q[1]) > c[1],
+            MeasureZ(q[0]) > c[0],
+            MeasureZ(q[1]) > c[1],
             Return(c),
         )
         assert all(r["measurement_0"] == 0 and r["measurement_1"] == 0 for r in self._bits(inv)), "SZZ;SZZdg = I"
@@ -629,8 +629,8 @@ class TestDecomposedGuppyGates:
                 c := CReg("c", 2),
                 g(q[0], q[1]),
                 gdg(q[0], q[1]),
-                Measure(q[0]) > c[0],
-                Measure(q[1]) > c[1],
+                MeasureZ(q[0]) > c[0],
+                MeasureZ(q[1]) > c[1],
                 Return(c),
             )
             recs = self._bits(prog)
@@ -648,7 +648,7 @@ class TestDecomposedGuppyGates:
             qb.H(q[1]),
             qb.CRX(math.pi, q[0], q[1]),
             qb.H(q[1]),
-            Measure(q[1]) > c[0],
+            MeasureZ(q[1]) > c[0],
             Return(c),
         )
         assert all(r["measurement_0"] == 0 for r in self._bits(crx)), "X q0; H q1; CRX(pi); H q1 -> 0"
@@ -659,7 +659,7 @@ class TestDecomposedGuppyGates:
             qb.H(q[1]),
             qb.CRY(math.pi, q[0], q[1]),
             qb.H(q[1]),
-            Measure(q[1]) > c[0],
+            MeasureZ(q[1]) > c[0],
             Return(c),
         )
         assert all(r["measurement_0"] == 1 for r in self._bits(cry)), "X q0; H q1; CRY(pi); H q1 -> 1"
@@ -695,7 +695,7 @@ def test_conditional_permute_block_call_rebinds_returned_qubits() -> None:
             q, c, flag = QReg("q", 2), CReg("c", 2), CReg("flag", 1)
             swap = SwapSlots(q)
             conditional = If(flag[0]).Then(swap) if branch == "then" else If(flag[0]).Then().Else(swap)
-            program = Main(q, c, flag, qb.X(q[0]), flag[0].set(flag_value), conditional, Measure(q) > c, Return(c))
+            program = Main(q, c, flag, qb.X(q[0]), flag[0].set(flag_value), conditional, MeasureZ(q) > c, Return(c))
             swapped = (flag_value == 1) == (branch == "then")
             records = run_ast_guppy_via_selene(program, shots=4)
             assert all(record["measurement_0"] == int(not swapped) for record in records)
@@ -708,7 +708,7 @@ def test_qubit_permute_in_both_branches_rebinds_after_the_if() -> None:
         q, c, flag = QReg("q", 2), CReg("c", 2), CReg("flag", 1)
         swap = Permute([q[0], q[1]], [q[1], q[0]])
         conditional = If(flag[0]).Then(swap, qb.X(q[0])).Else(swap)
-        program = Main(q, c, flag, qb.X(q[0]), flag[0].set(flag_value), conditional, Measure(q) > c, Return(c))
+        program = Main(q, c, flag, qb.X(q[0]), flag[0].set(flag_value), conditional, MeasureZ(q) > c, Return(c))
         records = run_ast_guppy_via_selene(program, shots=4)
         assert all(record["measurement_0"] == flag_value for record in records)
         assert all(record["measurement_1"] == 1 for record in records)
@@ -721,7 +721,7 @@ def test_slot_preserving_loop_body_permute_executes_every_iteration() -> None:
         swap = Permute([q[0], q[1]], [q[1], q[0]])
         body = (swap, qb.X(q[0]), swap)
         region = Repeat(3).block(*body) if loop == "Repeat" else For("i", 0, 3).Do(*body)
-        records = run_ast_guppy_via_selene(Main(q, c, region, Measure(q) > c, Return(c)), shots=4)
+        records = run_ast_guppy_via_selene(Main(q, c, region, MeasureZ(q) > c, Return(c)), shots=4)
         assert all(record["measurement_0"] == 0 for record in records), loop
         assert all(record["measurement_1"] == 1 for record in records), loop
 
@@ -737,7 +737,7 @@ def test_comment_only_bodies_emit_valid_guppy() -> None:
         qb.X(q[0]),
         If(flag[0]).Then(Comment("note only")),
         Repeat(2).block(swap, swap),
-        Measure(q) > c,
+        MeasureZ(q) > c,
         Return(c),
     )
     records = run_ast_guppy_via_selene(program, shots=4)
@@ -761,21 +761,21 @@ def _slot_rebinding_after_permute(case: str) -> tuple[Main, tuple[int, ...]]:
     q, c = QReg("q", 2), CReg("c", 2)
     swap = Permute([q[0], q[1]], [q[1], q[0]])
     if case == "prepare":
-        body = (Measure(q[0]) > c[0], qb.PZ(q[0]))
-        return Main(q, c, qb.X(q[0]), swap, *body, Measure(q) > c, Return(c)), (0, 1)
+        body = (MeasureZ(q[0]) > c[0], qb.PZ(q[0]))
+        return Main(q, c, qb.X(q[0]), swap, *body, MeasureZ(q) > c, Return(c)), (0, 1)
     if case == "prepare_across_two_permutes":
         # The first refill must hand its old local to the other consumed slot,
         # or the second refill would reuse the local the swap made live.
-        body = (Measure(q) > c, qb.PZ(q[0]), qb.X(q[0]), swap, qb.PZ(q[0]))
-        return Main(q, c, swap, *body, Measure(q) > c, Return(c)), (0, 1)
+        body = (MeasureZ(q) > c, qb.PZ(q[0]), qb.X(q[0]), swap, qb.PZ(q[0]))
+        return Main(q, c, swap, *body, MeasureZ(q) > c, Return(c)), (0, 1)
     if case == "single_qubit_call":
-        return Main(q, c, qb.X(q[0]), swap, _FlipFirst(q[0]), Measure(q) > c, Return(c)), (1, 1)
+        return Main(q, c, qb.X(q[0]), swap, _FlipFirst(q[0]), MeasureZ(q) > c, Return(c)), (1, 1)
     if case == "one_slot_bundle_call":
-        return Main(q, c, qb.X(q[0]), swap, _FlipFirst([q[0]]), Measure(q) > c, Return(c)), (1, 1)
+        return Main(q, c, qb.X(q[0]), swap, _FlipFirst([q[0]]), MeasureZ(q) > c, Return(c)), (1, 1)
     # Whole-register call after a Permute across two registers.
     a, b, d = QReg("a", 2), QReg("b", 1), CReg("d", 1)
     cross = Permute([a[0], b[0]], [b[0], a[0]])
-    program = Main(a, b, c, d, qb.X(a[0]), cross, _FlipFirst(a), Measure(a) > c, Measure(b) > d, Return(c, d))
+    program = Main(a, b, c, d, qb.X(a[0]), cross, _FlipFirst(a), MeasureZ(a) > c, MeasureZ(b) > d, Return(c, d))
     return program, (1, 0, 1)
 
 
@@ -795,13 +795,13 @@ def _region_that_permutes_and_refills(case: str) -> tuple[Main, tuple[int, ...]]
     q, c, d = QReg("q", 2), CReg("c", 2), CReg("d", 2)
     swap = Permute([q[0], q[1]], [q[1], q[0]])
     if case == "if_then":
-        region = If(c[0] == 0).Then(swap, Measure(q[0]) > d[0], Measure(q[1]) > d[1], qb.PZ(q))
-        return Main(q, c, d, qb.X(q[1]), region, Measure(q) > c, Return(c, d)), (0, 0, 1, 0)
+        region = If(c[0] == 0).Then(swap, MeasureZ(q[0]) > d[0], MeasureZ(q[1]) > d[1], qb.PZ(q))
+        return Main(q, c, d, qb.X(q[1]), region, MeasureZ(q) > c, Return(c, d)), (0, 0, 1, 0)
     if case == "if_else":
-        region = If(c[0] == 0).Then(swap, Measure(q) > d, qb.PZ(q)).Else(Measure(q) > d, qb.PZ(q))
-        return Main(q, c, d, qb.X(q[0]), region, Measure(q) > c, Return(c, d)), (0, 0, 0, 1)
+        region = If(c[0] == 0).Then(swap, MeasureZ(q) > d, qb.PZ(q)).Else(MeasureZ(q) > d, qb.PZ(q))
+        return Main(q, c, d, qb.X(q[0]), region, MeasureZ(q) > c, Return(c, d)), (0, 0, 0, 1)
     # The first iteration measures the swapped pair, the second the fresh one.
-    return Main(q, c, d, qb.X(q[0]), Repeat(2).block(swap, Measure(q) > c, qb.PZ(q)), Return(c, d)), (0, 0, 0, 0)
+    return Main(q, c, d, qb.X(q[0]), Repeat(2).block(swap, MeasureZ(q) > c, qb.PZ(q)), Return(c, d)), (0, 0, 0, 0)
 
 
 @pytest.mark.parametrize("case", ["if_then", "if_else", "repeat"])
@@ -819,14 +819,14 @@ def test_region_that_refills_and_reconsumes_a_slot_rejoins(region: str) -> None:
     The skipped If runs the code after the join under the names the untaken branch left.
     """
     q, c, d = QReg("q", 2), CReg("c", 2), CReg("d", 1)
-    prefix = (qb.X(q[0]), Permute([q[0], q[1]], [q[1], q[0]]), Measure(q) > c)
-    body = (qb.PZ(q[0]), qb.X(q[0]), Measure(q[0]) > d[0])
+    prefix = (qb.X(q[0]), Permute([q[0], q[1]], [q[1], q[0]]), MeasureZ(q) > c)
+    body = (qb.PZ(q[0]), qb.X(q[0]), MeasureZ(q[0]) > d[0])
     block = {
         "If taken": lambda: If(c[1] == 1).Then(*body),
         "If skipped": lambda: If(c[1] == 0).Then(*body),
         "Repeat": lambda: Repeat(2).block(*body),
     }[region]()
-    program = Main(q, c, d, *prefix, block, qb.PZ(q), qb.X(q[1]), Measure(q) > c, Return(c, d))
+    program = Main(q, c, d, *prefix, block, qb.PZ(q), qb.X(q[1]), MeasureZ(q) > c, Return(c, d))
     expected = (0, 1, 0 if region == "If skipped" else 1)
     records = run_ast_guppy_via_selene(program, shots=4)
     assert all(tuple(record.values()) == expected for record in records), records
@@ -835,6 +835,6 @@ def test_region_that_refills_and_reconsumes_a_slot_rejoins(region: str) -> None:
 def test_block_call_return_does_not_shadow_a_register_named_like_a_slot() -> None:
     """The returned qubit goes to the disambiguated slot local, not over CReg `q_0`."""
     q, q_0 = QReg("q", 2), CReg("q_0", 1)
-    program = Main(q, q_0, qb.X(q[0]), _FlipFirst(q[0]), Measure(q[0]) > q_0[0], Return(q_0))
+    program = Main(q, q_0, qb.X(q[0]), _FlipFirst(q[0]), MeasureZ(q[0]) > q_0[0], Return(q_0))
     records = run_ast_guppy_via_selene(program, shots=4)
     assert all(record["measurement_0"] == 0 for record in records)

@@ -726,7 +726,7 @@ class SlrToAst:
         if gate_name in _PREP_BASIS:
             return self._convert_prep(gate, basis=_PREP_BASIS[gate_name])
 
-        if gate_name == "Measure":
+        if gate_name == "MeasureZ":
             return self._convert_measure(gate)
 
         # Regular gate
@@ -788,7 +788,7 @@ class SlrToAst:
         return PrepareOp(allocator=allocator, slots=slots, basis=basis)
 
     def _convert_measure(self, gate: Any) -> MeasureOp:
-        """Convert an SLR Measure gate to an AST MeasureOp."""
+        """Convert an SLR MeasureZ gate to an AST MeasureOp."""
         # Expand full registers into individual qubits
         expanded_qargs = expand_qubit_args(gate.qargs, gate.sym)
         targets = tuple(self._convert_qubit_ref(q) for q in expanded_qargs)
@@ -1278,7 +1278,7 @@ def _validate_scratch_input(
         )
         raise ValueError(msg)
     if not events:
-        msg = f"{where}: declared SCRATCH but never used in the block body (expected PZ(...) then Measure(...))"
+        msg = f"{where}: declared SCRATCH but never used in the block body (expected PZ(...) then MeasureZ(...))"
         raise ValueError(msg)
     if events[0] != "PREP":
         msg = (

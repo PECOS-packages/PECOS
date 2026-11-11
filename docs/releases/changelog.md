@@ -6,6 +6,27 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Deprecated:** Core `GateType::MeasureLeaked` is now `GateType::MeasureZLeaked`
+  (wire value 105 is unchanged); its deprecated associated-const alias works in
+  values and patterns but cannot be `use`-imported. The builders
+  `Gate::measure_leaked` and `ByteMessageBuilder::measure_leakages` are now
+  `measure_z_leaked`, with deprecated forwarding aliases. SLR's qubit `Measure`
+  is now `MeasureZ`; `Measure` remains a warning-emitting function alias, so
+  `isinstance(..., Measure)`, subclassing `Measure`, and class-attribute access
+  such as `Measure.csize` no longer work. Pickles referencing the old
+  `pecos.slr.qeclib.qubit.measures.Measure` class no longer load. The Steane
+  logical `Measure` block is unchanged.
+- **Changed:** Serialized trace `gate_type` strings and core gate Display/Debug
+  output now say `"MeasureZLeaked"`. Trace readers accept both `"MeasureLeaked"`
+  and `"MeasureZLeaked"` for compatibility with saved traces. Gate-symbol-based
+  SLR diagnostics (`QGate.sym`) now say `MeasureZ`, and the Print-ordering and
+  unused-SCRATCH call-syntax hints now say `MeasureZ(...)`.
+- PHIR JSON parsers accept `"MeasureZ"` and canonicalize it to `"Measure"`;
+  emitted PHIR and all other generated circuit formats remain unchanged.
+  GateType parsers also accept `MeasureZ` for `MZ`, and Python exposes
+  `GateType.MeasureZ` alongside `GateType.Measure`. QuantumCircuit gate symbols
+  are unchanged.
+
 - Added Python Relay-BP explicit gamma rows and sampling interval setters, plus
   GIL-releasing flat-byte batch decoding for native Relay-BP and min-sum BP.
 - Relay-BP and min-sum decoders built from a DEM merge mechanisms with identical
@@ -256,7 +277,7 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   (`measurement_N` and `m`) have been removed.
 
 - **Breaking:** `QuantumCircuit.to_phir_json()` handles a measurement with no
-  destination (#1497), such as SLR `qb.Measure(q[1])` with no `> c`. It used to
+  destination (#1497), such as SLR `qb.MeasureZ(q[1])` with no `> c`. It used to
   emit a PHIR `Measure` without `returns`. PHIR validation and `HybridEngine`
   rejected that, and the native PHIR-JSON engine accepted it but reported the
   result under an internal `measurement_N` name, or wrote it into a user register
@@ -763,7 +784,7 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   carry the reset's hidden random outcome, so a Bell partner measured later is
   random rather than reported deterministic. `symbolic_measurement_history`,
   `InfluenceBuilder`, the DEM builders and the samplers built on them give
-  correct determinism and detectors for such circuits. `MeasureLeaked` is now
+  correct determinism and detectors for such circuits. `MeasureZLeaked` is now
   supported in these record-aligned replays: its outcome stays hidden until a
   recorded measurement observes it. Breaking:
   `MeasurementHistoryError::LeakedMeasurementNotRepresentable` is removed, and

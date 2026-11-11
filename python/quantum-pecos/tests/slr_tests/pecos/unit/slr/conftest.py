@@ -122,8 +122,8 @@ def individual_measurement_program() -> tuple:
         qubit.H(a[0]),
         qubit.CX(a[0], b[0]),
         # Add individual measurements
-        qubit.Measure(a[0]) > m[0],
-        qubit.Measure(a[1]) > m[1],
+        qubit.MeasureZ(a[0]) > m[0],
+        qubit.MeasureZ(a[1]) > m[1],
         Return(m, n),
     )
 
@@ -156,7 +156,7 @@ def register_measurement_program() -> tuple:
         qubit.H(a[0]),
         qubit.CX(a[0], b[0]),
         # Add register-wide measurement
-        qubit.Measure(a) > m,
+        qubit.MeasureZ(a) > m,
         Return(m, n),
     )
 

@@ -149,7 +149,7 @@ class TestAstToQirPrepMeasure:
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
-            qb.Measure(q[0]) > c[0],
+            qb.MeasureZ(q[0]) > c[0],
         )
         ast = slr_to_ast(prog)
 
@@ -228,7 +228,7 @@ class TestAstToQirClassicalRegisters:
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
-            qb.Measure(q[0]) > c[0],
+            qb.MeasureZ(q[0]) > c[0],
         )
         ast = slr_to_ast(prog)
 
@@ -249,7 +249,7 @@ class TestAstToQirQEC:
             c := CReg("c", 1),
             qb.CX(data[0], ancilla[0]),
             qb.CX(data[1], ancilla[0]),
-            qb.Measure(ancilla[0]) > c[0],
+            qb.MeasureZ(ancilla[0]) > c[0],
         )
         ast = slr_to_ast(prog)
 
@@ -306,9 +306,9 @@ class TestAstToQirGenerator:
         prog = Main(
             q := QReg("q", 3),
             c := CReg("c", 3),
-            qb.Measure(q[0]) > c[0],
-            qb.Measure(q[1]) > c[1],
-            qb.Measure(q[2]) > c[2],
+            qb.MeasureZ(q[0]) > c[0],
+            qb.MeasureZ(q[1]) > c[1],
+            qb.MeasureZ(q[2]) > c[2],
         )
         ast = slr_to_ast(prog)
 
@@ -362,8 +362,8 @@ class TestAstToQirFullPipeline:
             c := CReg("c", 2),
             qb.H(q[0]),
             qb.CX(q[0], q[1]),
-            qb.Measure(q[0]) > c[0],
-            qb.Measure(q[1]) > c[1],
+            qb.MeasureZ(q[0]) > c[0],
+            qb.MeasureZ(q[1]) > c[1],
         )
 
         ast = slr_to_ast(prog)

@@ -24,14 +24,44 @@ fn deserialize_program_operations<'de, D: serde::Deserializer<'de>>(
     Ok(ops)
 }
 
+/// Normalize measurement names at a raw JSON program boundary, without
+/// interpreting strings in metadata or classical expressions as operations.
+pub fn canonicalize_measurement_qops(program: &mut serde_json::Value) {
+    fn visit(ops: &mut [serde_json::Value]) {
+        for op in ops {
+            if let Some(serde_json::Value::String(qop)) = op.get_mut("qop") {
+                *qop = canonical_qop(qop).to_owned();
+            }
+            if op.get("block").is_some() {
+                for field in ["ops", "true_branch", "false_branch"] {
+                    if let Some(serde_json::Value::Array(children)) = op.get_mut(field) {
+                        visit(children);
+                    }
+                }
+            }
+        }
+    }
+    if let Some(serde_json::Value::Array(ops)) = program.get_mut("ops") {
+        visit(ops);
+    }
+}
+
+fn canonical_qop(name: &str) -> &str {
+    match name {
+        "MeasureZ" => "Measure",
+        name => name,
+    }
+}
+
 impl PHIRProgram {
     /// Decode a program after shared validation of classical JSON inputs.
     ///
     /// # Errors
     /// Rejects invalid JSON, Result references, and declaration sizes.
     pub fn from_json(json: &str) -> Result<Self, PecosError> {
-        let value: serde_json::Value = serde_json::from_str(json)
+        let mut value: serde_json::Value = serde_json::from_str(json)
             .map_err(|error| PecosError::Input(format!("Failed to parse PHIR JSON: {error}")))?;
+        canonicalize_measurement_qops(&mut value);
         super::classical_validation::validate_classical_inputs(&value)?;
         serde_json::from_value(value)
             .map_err(|error| PecosError::Input(format!("Failed to parse PHIR JSON: {error}")))
@@ -223,8 +253,10 @@ impl<'de> Deserialize<'de> for Operation {
             // QuantumOp
             let qop = qop_val
                 .as_str()
-                .ok_or_else(|| D::Error::custom("qop must be a string"))?
-                .to_string();
+                .ok_or_else(|| D::Error::custom("qop must be a string"))?;
+            // Accept the Z-basis spelling at the JSON boundary; downstream PHIR
+            // and re-emission retain the upstream specification's name.
+            let qop = canonical_qop(qop).to_string();
             if qop == "Measure" {
                 super::classical_validation::validate_measure_json(&val)
                     .map_err(D::Error::custom)?;

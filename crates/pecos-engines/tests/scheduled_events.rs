@@ -37,7 +37,7 @@ fn batch(index: u64, operations: Vec<ScheduledEventOp>) -> ScheduledEventBatch {
             ScheduledEventOp::Gate(g)
                 if matches!(
                     g.gate_type,
-                    pecos_engines::GateType::MZ | pecos_engines::GateType::MeasureLeaked
+                    pecos_engines::GateType::MZ | pecos_engines::GateType::MeasureZLeaked
                 ) =>
             {
                 Some(ScheduledResult {
@@ -634,7 +634,7 @@ fn changed_measurement_target_or_kind_rejects_and_poisons() {
             out.push(self.0.clone())
         }
     }
-    for replacement in [Gate::mz(&[1]), Gate::measure_leaked(&[0])] {
+    for replacement in [Gate::mz(&[1]), Gate::measure_z_leaked(&[0])] {
         let mut q = QuantumSystem::new(
             ScheduledEventIdleZ::new(ScheduledIdleZ::new(2, 0.0, 0.0, 0.0).unwrap(), move |_| {
                 Ok(Box::new(Rewrite(replacement.clone())))

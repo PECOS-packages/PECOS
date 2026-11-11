@@ -757,7 +757,7 @@ impl QASMEngine {
             | GateType::U => self.process_parameterized_gate(gate.gate_type, &qubits, &gate.angles),
             GateType::MX
             | GateType::MZ
-            | GateType::MeasureLeaked
+            | GateType::MeasureZLeaked
             | GateType::MeasureFree
             | GateType::MPZ => Err(PecosError::Processing(
                 "measurement gates should be handled by MeasureWithMapping operation".to_string(),

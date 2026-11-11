@@ -27,7 +27,7 @@ def test_large_register_codegen_scales_linearly() -> None:
     timings = []
     for size in (16_000, 64_000):
         q, c = QReg("q", size), CReg("c", size)
-        program = Main(q, c, qb.Measure(q) > c)
+        program = Main(q, c, qb.MeasureZ(q) > c)
         timer = Timer(lambda program=program: SlrConverter(program).guppy(), timer=process_time)
         timings.append(min(timer.repeat(repeat=3, number=1)))
     ratio = timings[1] / timings[0]

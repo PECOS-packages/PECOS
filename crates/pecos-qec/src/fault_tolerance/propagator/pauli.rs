@@ -210,7 +210,7 @@ impl PauliComponents for pecos_simulators::BitmaskPauliProp {
 /// Cross a measurement site with a propagating Pauli.
 ///
 /// Clearing follows whether the gate *discards* the qubit, not whether it
-/// measures. A non-destructive Z-collapse (`MZ`, `MeasureLeaked` -- executed
+/// measures. A non-destructive Z-collapse (`MZ`, `MeasureZLeaked` -- executed
 /// as a plain `MZ` with no reset):
 ///
 /// - Forward: `(x, z) -> (x, 0)`. The X component survives -- the faulty and
@@ -234,7 +234,7 @@ pub fn cross_measurement<P: PauliComponents>(
     direction: Direction,
 ) {
     match gate_type {
-        GateType::MZ | GateType::MeasureLeaked => match direction {
+        GateType::MZ | GateType::MeasureZLeaked => match direction {
             Direction::Forward => {
                 if prop.contains_z(qubit) {
                     prop.toggle_z(qubit);
@@ -277,7 +277,7 @@ fn apply_named_gate(
         GateType::MX
         | GateType::MZ
         | GateType::MeasureFree
-        | GateType::MeasureLeaked
+        | GateType::MeasureZLeaked
         | GateType::MPZ => {
             for qid in qubits {
                 cross_measurement(prop, qid.index(), gate_type, direction);
@@ -833,7 +833,7 @@ mod collapse_tests {
     /// and Stim's `M`.
     #[test]
     fn forward_nondestructive_keeps_x_drops_z() {
-        for gate_type in [GateType::MZ, GateType::MeasureLeaked] {
+        for gate_type in [GateType::MZ, GateType::MeasureZLeaked] {
             let mut prop = PauliProp::new();
             prop.track_y(&[0]);
             cross_measurement(&mut prop, 0, gate_type, Direction::Forward);
@@ -847,7 +847,7 @@ mod collapse_tests {
     /// gains no deterministic dependence on anything before the collapse).
     #[test]
     fn backward_nondestructive_keeps_z_drops_x() {
-        for gate_type in [GateType::MZ, GateType::MeasureLeaked] {
+        for gate_type in [GateType::MZ, GateType::MeasureZLeaked] {
             let mut prop = PauliProp::new();
             prop.track_y(&[0]);
             cross_measurement(&mut prop, 0, gate_type, Direction::Backward);

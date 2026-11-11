@@ -67,7 +67,7 @@ from pecos.slr.qeclib import qubit as qb
 from pecos.slr.qeclib.generic.check import Check
 from pecos.slr.qeclib.generic.check_1flag import Check1Flag
 from pecos.slr.qeclib.generic.transversal import transversal_tq
-from pecos.slr.qeclib.qubit.measures import Measure
+from pecos.slr.qeclib.qubit.measures import MeasureZ
 from pecos.slr.qeclib.steane.gates_sq import hadamards as steane_h
 from pecos.slr.qeclib.steane.gates_sq import paulis as steane_paulis
 from pecos.slr.qeclib.steane.gates_tq import transversal_tq as steane_tq
@@ -179,8 +179,8 @@ class TestQeclibTransversalCX:
             qb.X(a[0]),
             qb.X(a[2]),
             transversal_tq(qb.CX, a, b),
-            Measure(a) > c[0:3],
-            Measure(b) > c[3:6],
+            MeasureZ(a) > c[0:3],
+            MeasureZ(b) > c[3:6],
             Return(c),
         )
         raw = _run_via_selene(prog, shots=4, seed=42, qubits=6)
@@ -202,8 +202,8 @@ class TestQeclibTransversalCX:
             b := QReg("b", 3),
             c := CReg("c", 6),
             transversal_tq(qb.CX, a, b),
-            Measure(a) > c[0:3],
-            Measure(b) > c[3:6],
+            MeasureZ(a) > c[0:3],
+            MeasureZ(b) > c[3:6],
             Return(c),
         )
         raw = _run_via_selene(prog, shots=4, seed=42, qubits=6)
@@ -235,8 +235,8 @@ class TestQeclibSteaneTransversalCX:
             qb.X(a[5]),
             qb.X(a[6]),
             gate_class(a, b),
-            Measure(a) > c[0:7],
-            Measure(b) > c[7:14],
+            MeasureZ(a) > c[0:7],
+            MeasureZ(b) > c[7:14],
             Return(c),
         )
 
@@ -275,7 +275,7 @@ class TestQeclibSteaneLogicalPaulis:
             q := QReg("q", 7),
             c := CReg("c", 7),
             gate_class(q),
-            Measure(q) > c,
+            MeasureZ(q) > c,
             Return(c),
         )
 

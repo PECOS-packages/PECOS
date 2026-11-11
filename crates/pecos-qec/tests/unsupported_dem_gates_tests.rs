@@ -508,7 +508,7 @@ fn leaked_measurement_builds_a_record_aligned_dem() {
     circuit.pz(&[0, 1]);
     circuit.h(&[0]);
     circuit.cx(&[(0, 1)]);
-    circuit.add_gate_auto_wire(Gate::measure_leaked(&[0]));
+    circuit.add_gate_auto_wire(Gate::measure_z_leaked(&[0]));
     circuit.mz(&[1]);
     circuit.mz(&[0]);
     let map = InfluenceBuilder::new(&circuit).unwrap().build().unwrap();

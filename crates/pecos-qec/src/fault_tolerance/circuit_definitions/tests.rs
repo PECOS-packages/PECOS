@@ -580,7 +580,7 @@ fn with_ids(mut gate: Gate, ids: &[usize]) -> Gate {
 
 #[test]
 fn only_record_consuming_measurements_take_positions() {
-    // MZ, MPZ and MeasureFree each consume a record; MeasureLeaked does not,
+    // MZ, MPZ and MeasureFree each consume a record; MeasureZLeaked does not,
     // even when it carries a supplied id. Hand-derived emission: ids 10, 12, 13.
     let mut circuit = TickCircuit::new();
     circuit
@@ -589,7 +589,7 @@ fn only_record_consuming_measurements_take_positions() {
         .unwrap();
     circuit
         .tick()
-        .try_add_gate(with_ids(Gate::measure_leaked(&[1]), &[11]))
+        .try_add_gate(with_ids(Gate::measure_z_leaked(&[1]), &[11]))
         .unwrap();
     circuit
         .tick()

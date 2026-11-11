@@ -252,7 +252,7 @@ impl<'a> BlockIterativeExecutor<'a> {
                     self.buffer.push(op);
 
                     // If this is a measurement operation, process the buffer
-                    if qop.contains("Measure") {
+                    if qop == "Measure" {
                         debug!(
                             "Processing buffer around measurement with {} operations",
                             self.buffer.len()
@@ -555,6 +555,30 @@ mod tests {
         let z_value = env.get_raw("z");
         println!("z value: {z_value:?}");
         assert_eq!(z_value, Some(100));
+    }
+
+    #[test]
+    fn test_measure_substring_does_not_flush_buffer() {
+        let program = crate::v0_1::ast::PHIRProgram::from_json(
+            r#"{"format":"PHIR/JSON","version":"0.1.0","ops":[
+                {"qop":"MeasureZed","args":[["q",0]]}
+            ]}"#,
+        )
+        .expect("unknown gate names are checked during execution");
+        let mut executor = BlockExecutor::new();
+        executor.add_quantum_variable("q", 1).unwrap();
+        let mut iterative_executor = BlockIterativeExecutor::new(&mut executor);
+
+        iterative_executor
+            .process_operation(&program.ops[0])
+            .expect("a non-measurement qop stays buffered");
+        assert_eq!(iterative_executor.buffer.len(), 1);
+        let error = iterative_executor.process().unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("Unsupported quantum gate \"MeasureZed\"")
+        );
     }
 
     #[test]

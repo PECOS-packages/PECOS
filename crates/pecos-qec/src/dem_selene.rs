@@ -226,7 +226,7 @@ fn replay(
     for trace in shot.iter().flat_map(|chunk| &chunk.lowered_quantum_ops) {
         // Same gate set as the Python replay chain in pecos/_qis_trace_replay.py.
         let kind: GateType = match trace.gate_type.as_str() {
-            "MeasureLeaked" => GateType::MZ,
+            "MeasureLeaked" | "MeasureZLeaked" => GateType::MZ,
             name @ ("H"
             | "X"
             | "Y"
@@ -1293,6 +1293,24 @@ mod tests {
                 error.contains(name) && error.contains("unsupported lowered traced gate"),
                 "{error}"
             );
+        }
+    }
+
+    #[test]
+    fn replay_accepts_saved_and_current_leakage_measurement_names() {
+        for name in ["MeasureLeaked", "MeasureZLeaked"] {
+            let mut shot = trace();
+            shot[0].operations = vec![QuantumOp::MeasureLeaked(0, 7).into()];
+            shot[0].lowered_quantum_ops[0].gate_type = name.into();
+            let circuit = replay(&shot, 1, &[7]).unwrap();
+            let gates: Vec<_> = circuit.iter_gate_batches().collect();
+            assert_eq!(gates.len(), 1);
+            assert_eq!(gates[0].as_gate().gate_type, GateType::MZ);
+            assert_eq!(
+                gates[0].as_gate().meas_ids.as_slice(),
+                [MeasId::from_raw(7)]
+            );
+            assert_eq!(physical_row(&shot, &[7]).unwrap(), [1]);
         }
     }
 

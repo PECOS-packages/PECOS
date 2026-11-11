@@ -58,7 +58,7 @@ def _reproducer(case: str, label: str):
     elif case == "h-inside":
         operations = [loop.Do(qb.H(q[0]))]
     elif case == "qubit":
-        operations = [qb.Measure(q) > c, loop.Do(), qb.PZ(q[0])]
+        operations = [qb.MeasureZ(q) > c, loop.Do(), qb.PZ(q[0])]
     elif case == "array":
         operations = [loop.Do(), Return(q, c)]
     else:
@@ -126,7 +126,7 @@ def test_implicit_measurement_register_name_is_reserved() -> None:
         GuppyCodegenError,
         match=r"Classical register 'h'.*generated Guppy name 'h'.*Rename the register",
     ):
-        SlrConverter(Main(q, qb.H(q[0]), qb.Measure(q) > c)).guppy()
+        SlrConverter(Main(q, qb.H(q[0]), qb.MeasureZ(q) > c)).guppy()
 
 
 @pytest.mark.parametrize("kind", ["bit", "qubit"])
@@ -277,7 +277,7 @@ def test_invalid_user_binding_names_are_codegen_errors(name: str, binding: str) 
         "quantum": QReg(name, 1),
         "allocator": QAlloc(1, name=name),
         "loop": For(name, 0, 1).Do(),
-        "implicit-measurement": qb.Measure(q) > CReg(name, 1),
+        "implicit-measurement": qb.MeasureZ(q) > CReg(name, 1),
     }
     message = f"{name!r} must be a valid identifier that is not a Python keyword. Rename the"
     with pytest.raises(GuppyCodegenError, match=re.escape(message)):
@@ -416,7 +416,7 @@ def test_python_special_binding_names_are_rejected(name: str, binding: str) -> N
         "quantum": QReg(name, 1),
         "allocator": QAlloc(1, name=name),
         "loop": For(name, 0, 1).Do(),
-        "implicit-measurement": qb.Measure(q) > CReg(name, 1),
+        "implicit-measurement": qb.MeasureZ(q) > CReg(name, 1),
     }
     reason = "is reserved by Python" if name == "__debug__" else "must be NFKC-normalized (Python reads it as 'h')"
     message = f"{name!r} {reason}. Rename the"

@@ -3847,8 +3847,8 @@ impl From<&DagCircuit> for TickCircuit {
                 let mut gate = gate.clone();
                 // Which gates get a record is `consumes_measurement_record`
                 // and nowhere else. Spelling the types out here let this site
-                // mint for `MeasureLeaked` while `DagCircuit` did not, so an
-                // id-less `MeasureLeaked` took the id a real measurement
+                // mint for `MeasureZLeaked` while `DagCircuit` did not, so an
+                // id-less `MeasureZLeaked` took the id a real measurement
                 // already held.
                 if gate.gate_type.consumes_measurement_record() {
                     if gate.meas_ids.is_empty() {
@@ -4114,15 +4114,15 @@ mod tests {
         );
     }
 
-    /// `MeasureLeaked` must not be minted a `MeasId` on the way to a
+    /// `MeasureZLeaked` must not be minted a `MeasId` on the way to a
     /// `TickCircuit` when `DagCircuit` does not mint one on the way in. It was,
-    /// so an id-less `MeasureLeaked` took the id a real measurement already
+    /// so an id-less `MeasureZLeaked` took the id a real measurement already
     /// held, and converting back reported two measurements sharing an id.
     #[test]
     fn measure_leaked_survives_a_dag_tick_dag_round_trip() {
         let mut dag = DagCircuit::new();
         dag.pz(&[0, 1]);
-        dag.add_gate_auto_wire(Gate::measure_leaked(&[0usize]));
+        dag.add_gate_auto_wire(Gate::measure_z_leaked(&[0usize]));
         let measured = dag.add_gate_auto_wire(Gate::mz(&[1usize]));
         assert_eq!(dag.gate(measured).unwrap().meas_ids[0], MeasId::from_raw(0));
 

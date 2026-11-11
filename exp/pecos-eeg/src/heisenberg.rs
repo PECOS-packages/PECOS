@@ -566,7 +566,7 @@ fn conjugate_operands(
         | GateType::QFree
         | GateType::MZ
         | GateType::MeasureFree
-        | GateType::MeasureLeaked
+        | GateType::MeasureZLeaked
         | GateType::I
         | GateType::Idle => None,
         // Meta gates (`GateType::is_meta`) do not affect the state.

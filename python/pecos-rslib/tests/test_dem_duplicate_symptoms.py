@@ -1,10 +1,12 @@
 # Copyright 2026 The PECOS Developers
 # Licensed under the Apache License, Version 2.0
 
-"""Red/green and compatibility contracts for Relay/min-sum DEM merging."""
+"""Red/green and compatibility contracts for DEM duplicate-symptom merging."""
 
 import pytest
 from pecos_rslib.decoders import (
+    BpLsdDecoder,
+    BpOsdDecoder,
     DemAwareDecoder,
     MinSumBpBuilder,
     MinSumBpDecoder,
@@ -13,7 +15,15 @@ from pecos_rslib.decoders import (
 )
 
 
-@pytest.mark.parametrize("family", ["min_sum_bp", "relay_bp"])
+CONVENIENCE = {
+    "bp_lsd": BpLsdDecoder,
+    "bp_osd": BpOsdDecoder,
+    "min_sum_bp": MinSumBpDecoder,
+    "relay_bp": RelayBpDecoder,
+}
+
+
+@pytest.mark.parametrize("family", sorted(CONVENIENCE))
 @pytest.mark.parametrize("convenience", [False, True])
 def test_duplicate_dem_observables_preserve_original_mechanism_count(family, convenience):
     """Red/green: merged decoding preserves observables and the original mechanism count."""
@@ -26,8 +36,7 @@ def test_duplicate_dem_observables_preserve_original_mechanism_count(family, con
         ]
     )
     if convenience:
-        cls = MinSumBpDecoder if family == "min_sum_bp" else RelayBpDecoder
-        decoder = cls.from_dem(dem)
+        decoder = CONVENIENCE[family].from_dem(dem)
     else:
         decoder = DemAwareDecoder.from_dem(dem, family)
     assert decoder.num_mechanisms == 4
@@ -65,3 +74,16 @@ def test_unique_dem_matches_original_raw_matrix_path(family, error_rate):
             correction[0] ^ correction[2],
             correction[1] ^ correction[2],
         ]
+
+
+@pytest.mark.parametrize("family", sorted(CONVENIENCE))
+@pytest.mark.parametrize("error_rate", [float("nan"), -0.1, 1.5])
+@pytest.mark.parametrize("convenience", [False, True])
+def test_merged_families_reject_invalid_error_rate(family, error_rate, convenience):
+    """Red/green: an override that is not a probability is rejected before merging."""
+    dem = "error(0.1) D0 L0\nerror(0.1) D0 L0"
+    with pytest.raises(ValueError, match="error_rate must be finite and in"):
+        if convenience:
+            CONVENIENCE[family].from_dem(dem, error_rate=error_rate)
+        else:
+            DemAwareDecoder.from_dem(dem, family, error_rate=error_rate)

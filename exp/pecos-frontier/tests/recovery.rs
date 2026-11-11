@@ -100,7 +100,7 @@ fn successful_retry_stops_and_matches_independent_rung() {
             .decode(&[0, 0, 1])
             .unwrap();
         assert_eq!(result.predicted, direct.predicted);
-        assert_eq!(result.log_evidence, direct.log_evidence);
+        assert_eq!(result.log_evidence.to_bits(), direct.log_evidence.to_bits());
         assert!(result.predicted.get(70));
     }
 }

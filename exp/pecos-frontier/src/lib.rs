@@ -26,10 +26,10 @@ pub mod recovery;
 use pecos_decoder_core::ObservableDecoder;
 pub use pecos_trellis::factor::{Factor, FactorModel, Outcome};
 pub use pecos_trellis::{
-    DecoderError, MetricMode, ObsMask, SparseDem, StreamingMode, TrellisOrdering,
-    TrellisStreamingDecoder, backward_deadline_column_order,
-    backward_deadline_column_order_for_factors, deadline_column_order,
-    deadline_column_order_for_factors,
+    DecoderError, MetricMode, ObsMask, SparseDem, StreamingMode, TrellisBoundedProgress,
+    TrellisOrdering, TrellisResumableDecoder, TrellisStreamingDecoder,
+    backward_deadline_column_order, backward_deadline_column_order_for_factors,
+    deadline_column_order, deadline_column_order_for_factors,
 };
 use std::cmp::Ordering;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
@@ -122,6 +122,51 @@ pub struct FrontierCommittee {
     build_seconds: f64,
 }
 
+/// Phase of an exact window committee split across bounded invocations.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FrontierBoundedProgress {
+    /// The configured-order leg is pending; a ready leg needs one more step to
+    /// construct its result and prepare the backward leg, without column work.
+    Forward(TrellisBoundedProgress),
+    /// The reversed-order leg is pending; a ready leg needs one more step to
+    /// construct its result, without column work.
+    Backward(TrellisBoundedProgress),
+    /// Both structured attempts are ready for the unchanged committee resolver.
+    Ready,
+}
+
+/// Exact full-input committee decoding resumed across bounded calls.
+///
+/// Every begin starts the same independent forward/backward window attempts as
+/// [`FrontierCommittee::decode`]. No beam is carried between windows. Both legs
+/// always run, including after a first-leg failure, and the existing structured
+/// resolver alone decides fallback, error precedence, ranking and direction.
+///
+/// A step does at most one leg's column budget, or a phase transition that
+/// constructs one terminal result and prepares the next leg. Begin, transitions
+/// and finish must also be timed: column budgets do not bound wall-clock time.
+pub struct FrontierResumableCommittee {
+    forward: TrellisResumableDecoder,
+    backward: TrellisResumableDecoder,
+    build_seconds: f64,
+    attempt: Option<BoundedCommitteeAttempt>,
+}
+
+struct BoundedCommitteeAttempt {
+    syndrome: Vec<u8>,
+    without_dropped_mass: bool,
+    phase: BoundedCommitteePhase,
+    forward: Option<FrontierDecodeAttempt>,
+    backward: Option<FrontierDecodeAttempt>,
+}
+
+#[derive(Clone, Copy)]
+enum BoundedCommitteePhase {
+    Forward,
+    Backward,
+    Ready,
+}
+
 impl FrontierCommittee {
     /// Construct a forward/backward committee from a sparse DEM.
     ///
@@ -191,6 +236,29 @@ impl FrontierCommittee {
         self.build_seconds
     }
 
+    /// Consume this committee into an owning exact resumable wrapper.
+    ///
+    /// Infallible: every committee is built from a sparse DEM (binary kernel)
+    /// and its constructor rejects the integer metric.
+    ///
+    /// # Panics
+    /// Panics if a committee leg is not a binary float kernel, which the
+    /// committee constructor rules out.
+    #[must_use]
+    pub fn into_resumable(self) -> FrontierResumableCommittee {
+        let resumable = |leg: FrontierDecoder| {
+            leg.into_resumable().unwrap_or_else(|(error, _)| {
+                panic!("committee constructor guarantees binary float legs: {error}")
+            })
+        };
+        FrontierResumableCommittee {
+            forward: resumable(self.forward),
+            backward: resumable(self.backward),
+            build_seconds: self.build_seconds,
+            attempt: None,
+        }
+    }
+
     /// Parse a Stim-format detector error model and construct a committee.
     ///
     /// # Errors
@@ -249,6 +317,35 @@ impl FrontierCommittee {
         resolve_committee_attempts(forward_attempt, backward_attempt)
     }
 
+    /// Decode with full retained class masses and confidence, without the
+    /// discarded-prefix-mass diagnostic.
+    ///
+    /// This explicit opt-in uses the same configured pruning parameters,
+    /// retained states, floating-point reduction order, and committee arbitration
+    /// as [`Self::decode`]. It preserves the predicted class, complete retained
+    /// logical-mass vector, retained log evidence, class gap, directions, statuses,
+    /// transition counts, and dropped-state counts. The selected result's
+    /// [`FrontierResult::dropped_log_mass`] is unavailable and is set to `NaN`.
+    ///
+    /// Skipping that diagnostic avoids sorting discarded states and summing their
+    /// masses at every pruning step. Discarded mass is not used to score, prune,
+    /// merge, normalize the retained class masses, or select a committee leg.
+    /// Call [`Self::decode`] when the discarded-mass diagnostic is required;
+    /// its behavior and default remain unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors, including genuine no-path and non-no-path engine
+    /// failures, as [`Self::decode`]. This does not enable retries or recovery.
+    pub fn decode_without_dropped_mass(
+        &mut self,
+        syndrome: &[u8],
+    ) -> Result<FrontierCommitteeResult, DecoderError> {
+        let forward_attempt = self.forward.decode_attempt_without_dropped_mass(syndrome);
+        let backward_attempt = self.backward.decode_attempt_without_dropped_mass(syndrome);
+        resolve_committee_attempts(forward_attempt, backward_attempt)
+    }
+
     /// Decode like [`Self::decode`], running the backward leg on a second thread.
     ///
     /// The legs share no state, so the result is identical to [`Self::decode`];
@@ -278,6 +375,182 @@ impl FrontierCommittee {
             Ok::<_, DecoderError>((forward_attempt, backward_attempt))
         })?;
         resolve_committee_attempts(forward_attempt, backward_attempt)
+    }
+}
+
+impl FrontierResumableCommittee {
+    /// Begin the configured-order leg of a new full-syndrome window.
+    ///
+    /// Preparation errors remain structured until both legs reach the resolver.
+    /// This performs no DP columns or terminal class aggregation.
+    ///
+    /// # Errors
+    /// Returns `InvalidConfiguration` while another window is pending.
+    pub fn begin(&mut self, syndrome: &[u8]) -> Result<FrontierBoundedProgress, DecoderError> {
+        self.begin_with_mode(syndrome, false)
+    }
+
+    /// Begin the same exact committee without discarded-mass bookkeeping.
+    ///
+    /// All retained outputs and counts are preserved. Only the selected result's
+    /// `dropped_log_mass` is unavailable (NaN), as in the unbounded opt-in API.
+    ///
+    /// # Errors
+    /// Returns the same protocol error as [`Self::begin`].
+    pub fn begin_without_dropped_mass(
+        &mut self,
+        syndrome: &[u8],
+    ) -> Result<FrontierBoundedProgress, DecoderError> {
+        self.begin_with_mode(syndrome, true)
+    }
+
+    fn begin_with_mode(
+        &mut self,
+        syndrome: &[u8],
+        without_dropped_mass: bool,
+    ) -> Result<FrontierBoundedProgress, DecoderError> {
+        if self.attempt.is_some() {
+            return Err(DecoderError::InvalidConfiguration(
+                "finish or cancel the pending resumable committee before beginning another".into(),
+            ));
+        }
+        let progress = if without_dropped_mass {
+            self.forward.begin_without_dropped_mass(syndrome)?
+        } else {
+            self.forward.begin(syndrome)?
+        };
+        self.attempt = Some(BoundedCommitteeAttempt {
+            syndrome: syndrome.to_vec(),
+            without_dropped_mass,
+            phase: BoundedCommitteePhase::Forward,
+            forward: None,
+            backward: None,
+        });
+        Ok(FrontierBoundedProgress::Forward(progress))
+    }
+
+    /// Advance one leg by at most `max_columns`, or perform one phase boundary.
+    ///
+    /// A phase-boundary call performs no column work. It constructs a ready
+    /// leg's original result and, after forward, prepares backward on the same
+    /// stored input. Both legs run even when forward produced `NoPath` or `Error`.
+    /// Positive-budget steps on a ready committee are idempotent.
+    ///
+    /// # Errors
+    /// Returns `InvalidConfiguration` for zero budget or a missing begin.
+    ///
+    /// # Panics
+    /// Panics if the private phase and its owned leg attempt disagree,
+    /// indicating an internal coordinator invariant violation.
+    pub fn step(&mut self, max_columns: usize) -> Result<FrontierBoundedProgress, DecoderError> {
+        if max_columns == 0 {
+            return Err(DecoderError::InvalidConfiguration(
+                "resumable committees require a positive column budget".into(),
+            ));
+        }
+        let state = self.attempt.as_mut().ok_or_else(|| {
+            DecoderError::InvalidConfiguration("begin a resumable committee before stepping".into())
+        })?;
+        match state.phase {
+            BoundedCommitteePhase::Forward => {
+                if !self
+                    .forward
+                    .progress()
+                    .expect("coordinator owns the forward attempt")
+                    .ready_to_finish
+                {
+                    return self
+                        .forward
+                        .step(max_columns)
+                        .map(FrontierBoundedProgress::Forward);
+                }
+                state.forward = Some(self.forward.finish()?);
+                let progress = if state.without_dropped_mass {
+                    self.backward.begin_without_dropped_mass(&state.syndrome)?
+                } else {
+                    self.backward.begin(&state.syndrome)?
+                };
+                state.phase = BoundedCommitteePhase::Backward;
+                Ok(FrontierBoundedProgress::Backward(progress))
+            }
+            BoundedCommitteePhase::Backward => {
+                if !self
+                    .backward
+                    .progress()
+                    .expect("coordinator owns the backward attempt")
+                    .ready_to_finish
+                {
+                    return self
+                        .backward
+                        .step(max_columns)
+                        .map(FrontierBoundedProgress::Backward);
+                }
+                state.backward = Some(self.backward.finish()?);
+                state.phase = BoundedCommitteePhase::Ready;
+                Ok(FrontierBoundedProgress::Ready)
+            }
+            BoundedCommitteePhase::Ready => Ok(FrontierBoundedProgress::Ready),
+        }
+    }
+
+    /// Inspect the pending phase without doing DP or terminal work.
+    ///
+    /// # Panics
+    /// Panics if a pending private phase lacks its owned leg attempt,
+    /// indicating an internal coordinator invariant violation.
+    #[must_use]
+    pub fn progress(&self) -> Option<FrontierBoundedProgress> {
+        self.attempt.as_ref().map(|state| match state.phase {
+            BoundedCommitteePhase::Forward => FrontierBoundedProgress::Forward(
+                self.forward
+                    .progress()
+                    .expect("coordinator owns the forward attempt"),
+            ),
+            BoundedCommitteePhase::Backward => FrontierBoundedProgress::Backward(
+                self.backward
+                    .progress()
+                    .expect("coordinator owns the backward attempt"),
+            ),
+            BoundedCommitteePhase::Ready => FrontierBoundedProgress::Ready,
+        })
+    }
+
+    /// Consume both ready attempts with the unchanged committee resolver.
+    ///
+    /// This does no DP or terminal class construction. Protocol failures leave
+    /// the pending window intact; an engine error consumes the completed window.
+    ///
+    /// # Errors
+    /// Returns `InvalidConfiguration` before both legs are ready; otherwise
+    /// returns exactly the structured resolver's engine error, if any.
+    ///
+    /// # Panics
+    /// Panics if the checked ready phase lacks its stored leg attempts,
+    /// indicating an internal coordinator invariant violation.
+    pub fn finish(&mut self) -> Result<FrontierCommitteeResult, DecoderError> {
+        if !matches!(self.progress(), Some(FrontierBoundedProgress::Ready)) {
+            return Err(DecoderError::InvalidConfiguration(
+                "drain both resumable committee legs before finishing".into(),
+            ));
+        }
+        let state = self.attempt.take().expect("checked pending committee");
+        resolve_committee_attempts(
+            state.forward.expect("ready forward attempt"),
+            state.backward.expect("ready backward attempt"),
+        )
+    }
+
+    /// Cancel both pending legs. The next begin prepares a fresh window.
+    pub fn cancel(&mut self) {
+        self.forward.cancel();
+        self.backward.cancel();
+        self.attempt = None;
+    }
+
+    /// The original committee's model-construction cost.
+    #[must_use]
+    pub fn build_seconds(&self) -> f64 {
+        self.build_seconds
     }
 }
 
@@ -407,11 +680,140 @@ fn committee_rank(result: Option<&FrontierResult>, is_forward: bool) -> [f64; 6]
 mod tests {
     use super::{
         CommitteeStatus, DecoderError, FrontierCommittee, FrontierConfig, FrontierDecodeAttempt,
-        FrontierLogicalMass, FrontierResult, FrontierStatus, MetricMode, SparseDem, committee_rank,
-        resolve_committee_attempts,
+        FrontierDecoder, FrontierLogicalMass, FrontierResult, FrontierStatus, MetricMode,
+        SparseDem, committee_rank, resolve_committee_attempts,
     };
     use pecos_decoder_core::obs_mask::ObsMask;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn resumable_committee_preserves_both_complete_leg_attempts() {
+        fn fingerprint(attempt: &FrontierDecodeAttempt) -> String {
+            match attempt {
+                FrontierDecodeAttempt::Success(result) => {
+                    let mut result = result.clone();
+                    assert!(result.bp_seconds.is_finite() && result.bp_seconds >= 0.0);
+                    result.bp_seconds = 0.0;
+                    format!("{result:?}")
+                }
+                FrontierDecodeAttempt::NoPath {
+                    error,
+                    transitions,
+                    dropped_states,
+                    bp_seconds,
+                } => {
+                    assert!(bp_seconds.is_finite() && *bp_seconds >= 0.0);
+                    format!("{error:?}/{transitions}/{dropped_states}")
+                }
+                FrontierDecodeAttempt::Error(error) => format!("Error({error:?})"),
+            }
+        }
+        let dem = SparseDem {
+            mechanisms: vec![
+                (0.15, vec![0], vec![]),
+                (0.15, vec![0, 1], vec![130]),
+                (0.08, vec![1], vec![]),
+                (0.21, vec![0], vec![0]),
+            ],
+            detector_coords: BTreeMap::new(),
+            num_detectors: 2,
+            num_observables: 131,
+        };
+        for bp_score_iterations in [0, 2] {
+            let base = FrontierCommittee::from_sparse_dem(
+                &dem,
+                FrontierConfig {
+                    k: 1,
+                    bp_score_iterations,
+                    merge_indistinguishable: false,
+                    ..FrontierConfig::default()
+                },
+            )
+            .unwrap();
+            let mut batch = base.clone();
+            let mut bounded = base.into_resumable();
+            for budget in [1, 2, 7, 64] {
+                for shot in [&[0, 0][..], &[1, 0][..], &[0, 1][..], &[1, 1][..], &[0][..]] {
+                    let forward = batch.forward.decode_attempt(shot);
+                    let backward = batch.backward.decode_attempt(shot);
+                    bounded.begin(shot).unwrap();
+                    while bounded.progress() != Some(super::FrontierBoundedProgress::Ready) {
+                        bounded.step(budget).unwrap();
+                    }
+                    let state = bounded.attempt.as_ref().unwrap();
+                    assert_eq!(
+                        fingerprint(&forward),
+                        fingerprint(state.forward.as_ref().unwrap())
+                    );
+                    assert_eq!(
+                        fingerprint(&backward),
+                        fingerprint(state.backward.as_ref().unwrap())
+                    );
+                    assert_eq!(batch.forward.bp_refreshes(), bounded.forward.bp_refreshes());
+                    assert_eq!(
+                        batch.backward.bp_refreshes(),
+                        bounded.backward.bp_refreshes()
+                    );
+                    let _ = bounded.finish();
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn resumable_committee_runs_both_legs_through_one_sided_engine_faults() {
+        // Legs expecting different detector counts make exactly one leg fail
+        // with an engine error on the same input, in either phase.
+        let config = FrontierConfig::default();
+        let two =
+            FrontierDecoder::from_dem_str("error(0.2) D0 L0\nerror(0.1) D0 D1", config.clone())
+                .unwrap();
+        let three = FrontierDecoder::from_dem_str(
+            "error(0.2) D0 L0\nerror(0.1) D0 D1\ndetector D2",
+            config,
+        )
+        .unwrap();
+        for (forward, backward) in [(two.clone(), three.clone()), (three, two)] {
+            let mut batch_forward = forward.clone();
+            let mut batch_backward = backward.clone();
+            let mut bounded = super::FrontierResumableCommittee {
+                forward: forward.into_resumable().unwrap(),
+                backward: backward.into_resumable().unwrap(),
+                build_seconds: 0.0,
+                attempt: None,
+            };
+            for shot in [&[1, 0][..], &[1, 0, 0][..]] {
+                let expected = resolve_committee_attempts(
+                    batch_forward.decode_attempt(shot),
+                    batch_backward.decode_attempt(shot),
+                );
+                bounded.begin(shot).unwrap();
+                while bounded.progress() != Some(super::FrontierBoundedProgress::Ready) {
+                    bounded.step(1).unwrap();
+                }
+                let state = bounded.attempt.as_ref().unwrap();
+                let legs = [state.forward.as_ref(), state.backward.as_ref()];
+                assert_eq!(
+                    legs.iter()
+                        .filter(|leg| matches!(leg, Some(FrontierDecodeAttempt::Error(_))))
+                        .count(),
+                    1,
+                    "exactly one leg faults"
+                );
+                assert!(
+                    legs.iter()
+                        .any(|leg| matches!(leg, Some(FrontierDecodeAttempt::Success(_)))),
+                    "the other leg still runs to completion"
+                );
+                let actual = bounded.finish();
+                assert!(matches!(
+                    actual,
+                    Err(DecoderError::InvalidDimensions { .. })
+                ));
+                assert_eq!(format!("{expected:?}"), format!("{actual:?}"));
+            }
+        }
+    }
 
     #[test]
     fn committee_batch_matches_sequential() {

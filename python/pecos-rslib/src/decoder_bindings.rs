@@ -3309,7 +3309,7 @@ impl PyDemAwareDecoder {
     }
 
     fn from_dem_check_matrix_with_config(
-        dcm: DemCheckMatrix,
+        mut dcm: DemCheckMatrix,
         config: DemDecoderConfig,
     ) -> PyResult<Self> {
         // These BP families merge identical (detector, observable) symptoms.
@@ -3320,11 +3320,8 @@ impl PyDemAwareDecoder {
                 | DemDecoderConfig::BpOsd(_)
                 | DemDecoderConfig::BpLsd(_)
         );
-        if merges_duplicates {
-            validate_dem_error_rate(config.error_rate())?;
-        }
+        validate_dem_error_rate(config.error_rate())?;
         let original_num_mechanisms = dcm.num_mechanisms;
-        let mut dcm = dcm;
         // A uniform override applies to every original mechanism, before XOR merging.
         if let Some(rate) = config.error_rate() {
             dcm.error_priors.fill(rate);

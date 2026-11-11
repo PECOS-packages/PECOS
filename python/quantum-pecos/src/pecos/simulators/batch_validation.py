@@ -15,12 +15,82 @@ Bindings still decide which gates a wrapper supports. Overriding a known
 spelling retains its arity; a different-arity override must update GATE_ARITIES.
 """
 
-from collections.abc import Iterable, Iterator, Mapping, Sized
+from __future__ import annotations
+
+from collections.abc import Iterator, Mapping, Sized
+from collections.abc import Set as AbstractSet
+from dataclasses import dataclass
 from operator import index
+from typing import TYPE_CHECKING, Any
 
 from pecos_rslib import _gate_bindings_symbols
 
 from pecos.simulators.gate_syms import alt_symbols
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
+    from pecos.circuits import LogicalCircuit, QuantumCircuit
+    from pecos.circuits.quantum_circuit import Location
+    from pecos.protocols import SimulatorProtocol
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class PreparedTick:
+    """One decoded tick, retaining its original objects for consumers."""
+
+    tick: Any
+    time: int | tuple[int, int, int]
+    params: dict[str, Any]
+    items: tuple[tuple[str, AbstractSet[Location], dict[str, Any]], ...]
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class PreparedCircuit:
+    """Immutable circuit container; construct via :func:`prepare_circuit`.
+
+    Gate locations and parameters are shared, mutable leaves.
+    """
+
+    source: QuantumCircuit | LogicalCircuit
+    ticks: tuple[PreparedTick, ...]
+    state_type: type
+    gate_capacity: int | None
+
+
+def prepare_circuit(state: SimulatorProtocol, circuit: QuantumCircuit | LogicalCircuit) -> PreparedCircuit:
+    """Decode and validate all circuit items without executing gates or drawing RNG.
+
+    A prepared circuit is valid for states of the same type and gate capacity,
+    as of the call. Re-prepare after changing the circuit, its registry or the
+    state's bindings. Its gate locations and parameters are shared across runs;
+    do not mutate them.
+
+    Malformed gates are rejected even under skip or false conditions.
+    """
+    if not hasattr(circuit, "iter_ticks"):
+        msg = (
+            "prepare_circuit needs a circuit with iter_ticks() (QuantumCircuit or LogicalCircuit), "
+            f"got {type(circuit).__name__}"
+        )
+        raise TypeError(msg)
+    ticks = []
+    for tick, time, params in circuit.iter_ticks():
+        items = tuple(tick.items())
+        for symbol, locations, item_params in items:
+            if not isinstance(locations, AbstractSet):
+                msg = f"Gate {symbol}: prepared circuits need set locations, got {type(locations).__name__}"
+                raise TypeError(msg)
+            if isinstance(locations, Sized) and len(locations) == 0:
+                continue
+            validator = getattr(state, "validate_gate_batch", None)
+            if validator is not None:
+                validator(symbol, locations, **item_params)
+            else:
+                validate_batch(symbol, locations, getattr(state, "gate_capacity", None))
+        ticks.append(PreparedTick(tick, time, params, items))
+    return PreparedCircuit(circuit, tuple(ticks), type(state), getattr(state, "gate_capacity", None))
+
 
 # Native tuple layout: (spelling, is_measurement, parameter_mode, qubit_count).
 GATE_ARITIES = {symbol: arity for symbol, _measurement, _parameters, arity in _gate_bindings_symbols()}

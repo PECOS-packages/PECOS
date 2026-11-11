@@ -17,14 +17,17 @@ def sz_program():
     from pecos.qec.surface import SurfacePatch, gadgets
 
     def build(distance, count, num_rounds=2, *, correction="physical"):
-        if not isinstance(correction, str) or correction not in ("physical", "record"):
-            msg = "correction must be physical or record"
+        if not isinstance(correction, str) or correction not in ("physical", "frame", "record"):
+            msg = "correction must be physical, frame, or record"
             raise ValueError(msg)
         patch = SurfacePatch.create(distance)
         source = render_surface_protocol_module(patch)
         round_gadget = gadgets.syndrome_round_gadget(patch, gadgets.default_allocation(patch), round_index=0)
         source += "\n\n" + "\n".join(render_gadget_function(round_gadget, tag_scope="second"))
         body = ["@guppy", "def experiment() -> None:", "    data = prep_x_basis()"]
+
+        if correction == "frame":
+            body.append("    frame = PauliFrame(False, False)")
 
         def rounds(scopes):
             for scope in scopes:
@@ -65,7 +68,11 @@ def sz_program():
                     ),
                 ],
             )
+            if correction == "frame":
+                body.append("    frame_sz_teleportation(frame, sz_teleportation_decision(first, final))")
             if count == 1:
+                if correction == "frame":
+                    body.append("    frame_s(frame)")
                 body.extend(
                     [
                         "    syn = syndrome_extraction_fold_szdg_data(data)",
@@ -76,7 +83,10 @@ def sz_program():
                 )
             for _ in range(num_rounds):
                 rounds(("data",))
-        body.extend(["    final = measure_x_basis(data)", '    output("final_data", final)'])
+        body.append("    final = measure_x_basis(data)")
+        if correction == "frame":
+            body.append("    frame_correct_x_readout(frame, final)")
+        body.append('    output("final_data", final)')
         module = load_cached_guppy_source("sz_program_test", source + "\n\n" + "\n".join(body) + "\n")
         return module["experiment"], patch
 

@@ -406,8 +406,10 @@ fn pending_operations_import_distinguishes_poison_from_empty() {
     }
     let ctx = Context::new();
     let empty = pecos_get_pending_operations();
-    assert!(!empty.is_null());
-    assert_eq!(unsafe { &*empty }.operations, []);
+    // SAFETY: The import returns null or a live Box allocation, owned here
+    // until pecos_free_operations below.
+    let collector = unsafe { empty.as_ref() }.expect("pecos_get_pending_operations returned null");
+    assert_eq!(collector.operations, []);
     unsafe { pecos_free_operations(empty) };
     let address = ctx.0 as usize;
     std::thread::spawn(move || {

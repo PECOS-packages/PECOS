@@ -1700,14 +1700,22 @@ mod tests {
                 pecos_get_pending_operations_with_context(ctx, &raw mut ops),
                 0
             );
-            assert_eq!((*ops).operations, [Operation::AllocateQubit { id: 3 }]);
+            // SAFETY: A successful import returns a live Box allocation, owned
+            // here until pecos_free_operations below. Check null explicitly so
+            // a broken output contract panics before any dereference.
+            let collector = ops
+                .as_ref()
+                .expect("successful pending import returned null");
+            assert_eq!(collector.operations, [Operation::AllocateQubit { id: 3 }]);
             pecos_free_operations(ops);
             assert_eq!(
                 pecos_get_pending_operations_with_context(ctx, &raw mut ops),
                 0
             );
-            assert!(!ops.is_null());
-            assert_eq!((*ops).operations, []);
+            let collector = ops
+                .as_ref()
+                .expect("successful pending import returned null");
+            assert_eq!(collector.operations, []);
             pecos_free_operations(ops);
             owned
                 .named_results
@@ -2109,8 +2117,11 @@ mod tests {
 
         // Second read should be empty because the handoff drains pending ops.
         let ptr = pecos_get_pending_operations();
-        assert!(!ptr.is_null());
-        assert_eq!(unsafe { &*ptr }.operations, []);
+        // SAFETY: The import returns null or a live Box allocation, owned here
+        // until pecos_free_operations below.
+        let collector =
+            unsafe { ptr.as_ref() }.expect("pecos_get_pending_operations returned null");
+        assert_eq!(collector.operations, []);
         unsafe { pecos_free_operations(ptr) };
 
         teardown_context(ctx);
@@ -2125,8 +2136,11 @@ mod tests {
 
         // Successful empty imports are distinct from unavailable imports.
         let ptr = pecos_get_pending_operations();
-        assert!(!ptr.is_null());
-        assert_eq!(unsafe { &*ptr }.operations, []);
+        // SAFETY: The import returns null or a live Box allocation, owned here
+        // until pecos_free_operations below.
+        let collector =
+            unsafe { ptr.as_ref() }.expect("pecos_get_pending_operations returned null");
+        assert_eq!(collector.operations, []);
         unsafe { pecos_free_operations(ptr) };
 
         teardown_context(ctx);

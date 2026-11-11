@@ -147,6 +147,9 @@ impl BpSchedule {
 /// BP+OSD construction options.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BpOsdConfig {
+    /// Uniform probability per original DEM error line, before duplicate merging.
+    /// A group of k identical symptoms receives the k-fold independent XOR of
+    /// this rate. `None` uses the original DEM probabilities before merging.
     pub error_rate: Option<f64>,
     pub max_iter: usize,
     pub bp_schedule: BpSchedule,
@@ -171,6 +174,9 @@ impl Default for BpOsdConfig {
 /// BP+LSD construction options.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BpLsdConfig {
+    /// Uniform probability per original DEM error line, before duplicate merging.
+    /// A group of k identical symptoms receives the k-fold independent XOR of
+    /// this rate. `None` uses the original DEM probabilities before merging.
     pub error_rate: Option<f64>,
     pub max_iter: usize,
     pub bp_schedule: BpSchedule,

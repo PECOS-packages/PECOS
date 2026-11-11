@@ -2,21 +2,21 @@
 // Licensed under the Apache License, Version 2.0.
 
 //! Fault-count reference for arXiv:2510.07269, Table II.
+//! Both codes take an explicit hook-safe or coloring schedule; C27 also accepts paper.
 
 use pecos_phase_poly::tricycle_ccz_noisy::{ExtractionSchedule, PAPER_C27_SCHEDULE};
 use pecos_phase_poly::tricycle_ccz_reference::{estimate, paper_catalog};
 use pecos_qec::BivariateTricycleCode;
 use std::{error::Error, time::Instant};
 
-const USAGE: &str = "usage: tricycle_ccz_reference 27 <coloring|paper> <p> <k_exact> <k_max> <samples_per_stratum> <seed> <output.json>\n       tricycle_ccz_reference 81 <p> <k_exact> <k_max> <samples_per_stratum> <seed> <output.json> (edge coloring only; no recorded paper schedule)";
+const USAGE: &str = "usage: tricycle_ccz_reference 27 <hook-safe|coloring|paper> <p> <k_exact> <k_max> <samples_per_stratum> <seed> <output.json>\n       tricycle_ccz_reference 81 <hook-safe|coloring> <p> <k_exact> <k_max> <samples_per_stratum> <seed> <output.json>";
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
-    let (mode, offset) = match args.first().map(String::as_str) {
-        Some("27") if args.len() == 8 => (args[1].as_str(), 1),
-        Some("81") if args.len() == 7 => ("coloring", 0),
-        _ => return Err(USAGE.into()),
-    };
+    if args.len() != 8 {
+        return Err(USAGE.into());
+    }
+    let mode = args[1].as_str();
     let started = Instant::now();
     let code = match args[0].as_str() {
         "27" => BivariateTricycleCode::new(
@@ -35,12 +35,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         )?,
         _ => return Err(USAGE.into()),
     };
-    let p = args[1 + offset].parse()?;
-    let k_exact = args[2 + offset].parse()?;
-    let k_max = args[3 + offset].parse()?;
-    let samples = args[4 + offset].parse()?;
-    let seed = args[5 + offset].parse()?;
+    let p = args[2].parse()?;
+    let k_exact = args[3].parse()?;
+    let k_max = args[4].parse()?;
+    let samples = args[5].parse()?;
+    let seed = args[6].parse()?;
     let schedule = match mode {
+        "hook-safe" => ExtractionSchedule::hook_safe(&code)?,
         "coloring" => ExtractionSchedule::edge_coloring(&code)?,
         "paper" if args[0] == "27" => {
             ExtractionSchedule::from_layers(&code, PAPER_C27_SCHEDULE.map(Vec::from).into())?
@@ -68,7 +69,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         "build_s": build_s, "estimate_s": estimate_s, "wall_s": started.elapsed().as_secs_f64(),
     });
     std::fs::write(
-        &args[6 + offset],
+        &args[7],
         format!("{}\n", serde_json::to_string_pretty(&output)?),
     )?;
     println!("{output}");

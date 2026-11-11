@@ -21,6 +21,12 @@
 //! noise accounts for most of the difference. `NoiseModel::Paper` selects the
 //! Table II channels while retaining the repair and readout machinery below.
 //!
+//! The extraction schedule is explicit. `ExtractionSchedule::hook_safe` searches
+//! translation-invariant depth-four schedules that preserve the block Z distance.
+//! Edge coloring gives extraction fault distances 2 for C27 and 3 for C81;
+//! hook-safe schedules reach their block Z distances 3 and 5. The recorded C27
+//! schedule also reaches 3.
+//!
 //! X-check detectors plus inverse-target readout use the selected readout channel,
 //! ideal inverse encoding, X-check pivot detectors, and logical-pivot observables. In exact
 //! mode the logical CCZ tensor is undone before scoring the target. This is an
@@ -66,7 +72,8 @@ use std::time::{Duration, Instant};
 use ndarray::{Array1, Array2};
 use pecos_core::{ChannelExpr, QubitId, channel, unitary_rep};
 use pecos_num::graph::bipartite_edge_coloring;
-use pecos_qec::BivariateTricycleCode;
+use pecos_qec::fault_tolerance::fault_sampler::{FaultCatalog, StochasticNoiseParams};
+use pecos_qec::{BivariateTricycleCode, ParityCheckMatrix, connected_cluster_code_distance};
 use pecos_quantum::{F2Matrix, TickCircuit};
 use pecos_random::PecosRng;
 use pecos_relay_bp::{RelayBpDecoder, StoppingCriterion};
@@ -213,7 +220,7 @@ pub struct ExtractionSchedule {
 }
 
 impl ExtractionSchedule {
-    /// Construct the edge coloring used by `NoisyCcz`, preserving edge order.
+    /// Construct a Tanner-graph edge coloring, preserving edge order.
     ///
     /// # Errors
     /// Returns coloring or schedule-validation errors.
@@ -231,6 +238,116 @@ impl ExtractionSchedule {
             })
             .collect();
         Self::from_layers(code, layers)
+    }
+
+    /// Find the first hook-safe translation-invariant depth-four schedule.
+    ///
+    /// An ancilla Z fault propagates to data in its later CXs. The search requires the
+    /// single-block extraction fault distance to equal the block Z distance.
+    /// This depends only on the Z-check round: data |+> and ancilla |0> prep,
+    /// the CX layers with two-qubit Pauli faults, ancilla Z measurement, and
+    /// data X readout. Every preparation and measurement can fail. Only Z spread
+    /// from ancilla to data is screened: X faults within the round change the Z
+    /// syndrome, which the repair step handles.
+    ///
+    /// The 384 candidates use two layers of each group-to-sector matching
+    /// M1 = [0, 2, 1] and M2 = [1, 0, 2], with groups [(0,1), (0,2), (1,2)].
+    /// M1's layer positions are enumerated lexicographically, then masks 0..64
+    /// choose the first term for each incidence. Bit 2*g selects the smaller
+    /// sector of group g, bit 2*g+1 the larger; the second visit uses the other
+    /// term. Terms retain input order. No other schedule families are searched.
+    ///
+    /// # Errors
+    /// Returns circuit or distance errors, or reports the best distance found
+    /// if no candidate reaches the block Z distance.
+    pub fn hook_safe(code: &BivariateTricycleCode) -> Result<Self, String> {
+        let target = block_z_distance(code)?;
+        let mut best = 0;
+        for candidate in Self::translation_invariant(code) {
+            let schedule = candidate?;
+            let distance = schedule.fault_distance_through(code, target)?;
+            if distance == target {
+                return Ok(schedule);
+            }
+            best = best.max(distance);
+        }
+        Err(format!(
+            "no hook-safe schedule in the 384 candidates: best fault distance {best}, block Z distance {target}"
+        ))
+    }
+
+    /// Single-block extraction fault distance under the noise in [`Self::hook_safe`].
+    ///
+    /// Searches up to the block Z distance: data readout faults alone realize
+    /// that distance, so no extraction schedule can exceed it. Each distinct
+    /// nonempty detector/observable signature of a positive-probability fault
+    /// alternative is one unit-weight mechanism.
+    ///
+    /// # Errors
+    /// Rejects a schedule for a different code, invalid circuits or catalogs,
+    /// or a distance search without a logical witness.
+    pub fn fault_distance(&self, code: &BivariateTricycleCode) -> Result<usize, String> {
+        self.fault_distance_through(code, block_z_distance(code)?)
+    }
+
+    fn fault_distance_through(
+        &self,
+        code: &BivariateTricycleCode,
+        target: usize,
+    ) -> Result<usize, String> {
+        let circuit = extraction_circuit(code, self, 1)?;
+        let mut catalog = FaultCatalog::from_circuit(&circuit).map_err(|e| e.to_string())?;
+        // Only positivity matters for distance, not the particular noise rate.
+        catalog.with_noise(&StochasticNoiseParams {
+            p1: 0.0,
+            p2: 0.001,
+            p_meas: 0.001,
+            p_prep: 0.001,
+        });
+        catalog_fault_distance(
+            &catalog,
+            code.hx().num_checks(),
+            code.logical_x().num_checks(),
+            target,
+        )
+    }
+
+    fn translation_invariant(
+        code: &BivariateTricycleCode,
+    ) -> impl Iterator<Item = Result<Self, String>> + '_ {
+        (0..4).flat_map(move |first| {
+            (first + 1..4).flat_map(move |second| {
+                (0..64).map(move |mask| {
+                    let groups = [(0, 1), (0, 2), (1, 2)];
+                    let matchings = [[0, 2, 1], [1, 0, 2]];
+                    let (l, m) = code.dimensions();
+                    let size = l * m;
+                    let polynomials = [code.a_terms(), code.b_terms(), code.c_terms()];
+                    let mut seen = [0; 6];
+                    let layers = (0..4)
+                        .map(|layer| {
+                            let matching = usize::from(layer != first && layer != second);
+                            let mut pairs = Vec::with_capacity(3 * size);
+                            for (group, &(i, j)) in groups.iter().enumerate() {
+                                let sector = matchings[matching][group];
+                                let incidence = 2 * group + usize::from(sector != i);
+                                let term = seen[incidence] ^ ((mask >> incidence) & 1);
+                                seen[incidence] += 1;
+                                let polynomial = if sector == i { j } else { i };
+                                let (tx, ty) = polynomials[polynomial][term];
+                                for row in 0..size {
+                                    let column =
+                                        ((row / m + l - tx) % l) * m + (row % m + m - ty) % m;
+                                    pairs.push((sector * size + column, group * size + row));
+                                }
+                            }
+                            pairs
+                        })
+                        .collect();
+                    Self::from_layers(code, layers)
+                })
+            })
+        })
     }
 
     /// Validate caller-supplied layers against every edge of `H_Z`.
@@ -298,20 +415,118 @@ impl ExtractionSchedule {
         Ok(())
     }
 
-    pub(crate) fn three_blocks(&self) -> impl Iterator<Item = Vec<(usize, usize)>> + '_ {
+    fn blocks(&self, blocks: usize) -> impl Iterator<Item = Vec<(usize, usize)>> + '_ {
         self.layers.iter().map(move |pairs| {
-            (0..3)
+            (0..blocks)
                 .flat_map(|block| {
                     pairs.iter().map(move |&(data, check)| {
                         (
                             block * self.n + data,
-                            3 * self.n + block * self.checks + check,
+                            blocks * self.n + block * self.checks + check,
                         )
                     })
                 })
                 .collect()
         })
     }
+}
+
+pub(crate) fn extraction_circuit(
+    code: &BivariateTricycleCode,
+    schedule: &ExtractionSchedule,
+    blocks: usize,
+) -> Result<TickCircuit, String> {
+    schedule.validate(code)?;
+    let n = code.num_qubits();
+    let total = n
+        .checked_add(code.hz().num_checks())
+        .and_then(|v| v.checked_mul(blocks))
+        .ok_or("extraction circuit size overflows usize")?;
+    let mut circuit = TickCircuit::new();
+    circuit.tick().px(&(0..blocks * n).collect::<Vec<_>>());
+    circuit
+        .tick_at(0)
+        .pz(&(blocks * n..total).collect::<Vec<_>>());
+    for pairs in schedule.blocks(blocks) {
+        circuit.tick().cx(&pairs);
+    }
+    circuit.tick().mz(&(blocks * n..total).collect::<Vec<_>>());
+    let measurements = circuit.tick().mx(&(0..blocks * n).collect::<Vec<_>>());
+    for block in 0..blocks {
+        for row in code.hx().rows() {
+            let records = row
+                .iter()
+                .enumerate()
+                .filter_map(|(q, &b)| (b != 0).then_some(measurements[block * n + q]))
+                .collect::<Vec<_>>();
+            circuit.detector(&records).map_err(|e| e.to_string())?;
+        }
+        for row in code.logical_x().rows() {
+            let records = row
+                .iter()
+                .enumerate()
+                .filter_map(|(q, &b)| (b != 0).then_some(measurements[block * n + q]))
+                .collect::<Vec<_>>();
+            circuit.observable(&records).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(circuit)
+}
+
+fn block_z_distance(code: &BivariateTricycleCode) -> Result<usize, String> {
+    connected_cluster_code_distance(code.hx(), code.logical_x(), code.num_qubits())
+        .map(|result| result.distance)
+        .ok_or_else(|| "block Z distance search found no logical witness".into())
+}
+
+/// Minimum number of fault alternatives with no detector and a logical effect,
+/// searched through `max_weight`; one column per distinct nonempty signature.
+///
+/// Exact only when each location's alternatives are closed under products, as
+/// for depolarizing locations and single-alternative locations. Otherwise two
+/// mutually exclusive alternatives at one location may be combined, and the
+/// result is only a lower bound.
+pub(crate) fn catalog_fault_distance(
+    catalog: &FaultCatalog,
+    detectors: usize,
+    observables: usize,
+    max_weight: usize,
+) -> Result<usize, String> {
+    let signatures = catalog
+        .locations
+        .iter()
+        .flat_map(|location| &location.faults)
+        .filter(|alternative| alternative.absolute_probability > 0.0)
+        .filter(|alternative| {
+            !alternative.affected_detectors.is_empty()
+                || !alternative.affected_observables.is_empty()
+        })
+        .map(|alternative| {
+            (
+                alternative.affected_detectors.clone(),
+                alternative.affected_observables.clone(),
+            )
+        })
+        .collect::<BTreeSet<_>>();
+    let mut h = vec![vec![0; signatures.len()]; detectors];
+    let mut l = vec![vec![0; signatures.len()]; observables];
+    for (column, (dets, obs)) in signatures.iter().enumerate() {
+        for &row in dets {
+            h[row][column] = 1;
+        }
+        for &row in obs {
+            l[row][column] = 1;
+        }
+    }
+    let h = ParityCheckMatrix::from_dense(h).map_err(|e| e.to_string())?;
+    let l = ParityCheckMatrix::from_dense(l).map_err(|e| e.to_string())?;
+    connected_cluster_code_distance(&h, &l, max_weight)
+        .map(|result| result.distance)
+        .ok_or_else(|| {
+            format!(
+                "extraction fault distance search found no logical witness through {max_weight}"
+            )
+        })
 }
 
 /// Physical CCZ or the paper's Pauli approximation.
@@ -424,10 +639,11 @@ impl NoisyCcz {
     /// No idle noise is included. Each data and ancilla qubit is prepared once.
     ///
     /// # Errors
-    /// Rejects invalid p, size overflow, edge-coloring errors, or invalid
+    /// Rejects invalid p, size overflow, invalid schedules, or invalid
     /// generated circuits.
     pub fn new(
         code: &BivariateTricycleCode,
+        schedule: &ExtractionSchedule,
         p: f64,
         model: CczModel,
         noise_model: NoiseModel,
@@ -435,6 +651,7 @@ impl NoisyCcz {
     ) -> Result<Self, String> {
         Self::build(
             code,
+            schedule,
             p,
             model,
             noise_model,
@@ -446,6 +663,7 @@ impl NoisyCcz {
 
     fn build(
         code: &BivariateTricycleCode,
+        schedule: &ExtractionSchedule,
         p: f64,
         model: CczModel,
         noise_model: NoiseModel,
@@ -460,7 +678,7 @@ impl NoisyCcz {
             .checked_add(m_z)
             .and_then(|v| v.checked_mul(3))
             .ok_or("three-block circuit size overflows usize")?;
-        let mut prefix = preparation(code, p, total, noise_model)?;
+        let mut prefix = preparation(code, schedule, p, total, noise_model)?;
         #[cfg(test)]
         append_faults(
             &mut prefix,
@@ -729,10 +947,12 @@ impl SyndromeSolver {
 
 fn preparation(
     code: &BivariateTricycleCode,
+    schedule: &ExtractionSchedule,
     p: f64,
     total: usize,
     noise_model: NoiseModel,
 ) -> Result<TickCircuit, String> {
+    schedule.validate(code)?;
     let n = code.num_qubits();
     let mut circuit = TickCircuit::new();
     circuit.tick().px(&(0..3 * n).collect::<Vec<_>>());
@@ -749,7 +969,7 @@ fn preparation(
             NoiseModel::Paper => channel::Depolarizing(p, q),
         });
     }
-    for pairs in ExtractionSchedule::edge_coloring(code)?.three_blocks() {
+    for pairs in schedule.blocks(3) {
         circuit.tick().cx(&pairs);
         let mut noise = circuit.tick();
         for (data, ancilla) in pairs {

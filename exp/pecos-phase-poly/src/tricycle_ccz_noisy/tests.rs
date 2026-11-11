@@ -20,8 +20,15 @@ fn noiseless(model: CczModel) {
         // [kill: skip the X correction] Diagnostics must also remain zero.
         // [kill: use H_Z^T or M_Z^T] Orientation is essential to repair and correction.
         for code in codes() {
-            let protocol =
-                NoisyCcz::new(&code, 0.0, model, NoiseModel::CircuitLevel, meta_checks).unwrap();
+            let protocol = NoisyCcz::new(
+                &code,
+                &ExtractionSchedule::edge_coloring(&code).unwrap(),
+                0.0,
+                model,
+                NoiseModel::CircuitLevel,
+                meta_checks,
+            )
+            .unwrap();
             let result = protocol.run(16, 8108).unwrap();
             let residual = result
                 .outcomes
@@ -100,6 +107,7 @@ fn forced_measurement_and_data_faults() {
                     }];
                     let result = NoisyCcz::build(
                         &code,
+                        &ExtractionSchedule::edge_coloring(&code).unwrap(),
                         0.0,
                         model,
                         NoiseModel::CircuitLevel,
@@ -128,6 +136,7 @@ fn forced_measurement_and_data_faults() {
                 }];
                 let result = NoisyCcz::build(
                     &code,
+                    &ExtractionSchedule::edge_coloring(&code).unwrap(),
                     0.0,
                     model,
                     NoiseModel::CircuitLevel,
@@ -177,6 +186,7 @@ fn image_check_even_for_zero_meta_syndrome() {
         for model in [CczModel::Exact, CczModel::PaperSurrogate] {
             let result = NoisyCcz::build(
                 &code,
+                &ExtractionSchedule::edge_coloring(&code).unwrap(),
                 0.0,
                 model,
                 NoiseModel::CircuitLevel,
@@ -222,6 +232,7 @@ fn supports_and_probabilities() {
             assert_eq!(
                 NoisyCcz::new(
                     code,
+                    &ExtractionSchedule::edge_coloring(code).unwrap(),
                     p,
                     CczModel::Exact,
                     NoiseModel::CircuitLevel,
@@ -235,6 +246,7 @@ fn supports_and_probabilities() {
         assert!(
             NoisyCcz::new(
                 code,
+                &ExtractionSchedule::edge_coloring(code).unwrap(),
                 1.0,
                 CczModel::Exact,
                 NoiseModel::CircuitLevel,
@@ -251,8 +263,15 @@ fn reproducibility_and_statistical_smoke() {
         let code = &codes()[0];
         for model in [CczModel::Exact, CczModel::PaperSurrogate] {
             // [contract] Decoder state and all RNG streams restart on each run.
-            let protocol =
-                NoisyCcz::new(code, 0.01, model, NoiseModel::CircuitLevel, meta_checks).unwrap();
+            let protocol = NoisyCcz::new(
+                code,
+                &ExtractionSchedule::edge_coloring(code).unwrap(),
+                0.01,
+                model,
+                NoiseModel::CircuitLevel,
+                meta_checks,
+            )
+            .unwrap();
             assert_eq!(
                 protocol.run(32, 2026).unwrap(),
                 protocol.run(32, 2026).unwrap()
@@ -264,10 +283,17 @@ fn reproducibility_and_statistical_smoke() {
             );
             assert_eq!(protocol.run_counts(0, 2026).unwrap(), Counts::default());
             // [contract] Nontrivial acceptance and internally consistent counts.
-            let result = NoisyCcz::new(code, 0.001, model, NoiseModel::CircuitLevel, meta_checks)
-                .unwrap()
-                .run(256, 2027)
-                .unwrap();
+            let result = NoisyCcz::new(
+                code,
+                &ExtractionSchedule::edge_coloring(code).unwrap(),
+                0.001,
+                model,
+                NoiseModel::CircuitLevel,
+                meta_checks,
+            )
+            .unwrap()
+            .run(256, 2027)
+            .unwrap();
             let counts = &result.counts;
             assert_eq!(counts.attempted, 256);
             assert!(counts.accepted > 0 && counts.accepted < counts.attempted);
@@ -423,6 +449,7 @@ fn residual_x_is_diagnostic_only() {
         }];
         let result = NoisyCcz::build(
             code,
+            &ExtractionSchedule::edge_coloring(code).unwrap(),
             0.0,
             CczModel::PaperSurrogate,
             NoiseModel::CircuitLevel,
@@ -453,6 +480,7 @@ fn exact_logical_pivot_x_is_not_z_clean() {
         }];
         let result = NoisyCcz::build(
             code,
+            &ExtractionSchedule::edge_coloring(code).unwrap(),
             0.0,
             CczModel::Exact,
             NoiseModel::CircuitLevel,
@@ -496,7 +524,14 @@ fn preparation_schedule_and_noise() {
         let n = code.num_qubits();
         let m_z = code.hz().num_checks();
         let total = 3 * (n + m_z);
-        let circuit = preparation(&code, 0.01, total, NoiseModel::CircuitLevel).unwrap();
+        let circuit = preparation(
+            &code,
+            &ExtractionSchedule::edge_coloring(&code).unwrap(),
+            0.01,
+            total,
+            NoiseModel::CircuitLevel,
+        )
+        .unwrap();
         let mut prepared = vec![0; total];
         let mut pairs = BTreeSet::new();
         let mut cx_ticks = BTreeSet::new();
@@ -639,7 +674,14 @@ fn prefix_noise_content_and_placement() {
             let n = code.num_qubits();
             let m_z = code.hz().num_checks();
             let total = 3 * (n + m_z);
-            let mut circuit = preparation(&code, p, total, noise_model).unwrap();
+            let mut circuit = preparation(
+                &code,
+                &ExtractionSchedule::edge_coloring(&code).unwrap(),
+                p,
+                total,
+                noise_model,
+            )
+            .unwrap();
             circuit.tick().mz(&(3 * n..total).collect::<Vec<_>>());
             let prep = gates_at(&circuit, 0);
             assert_eq!(prep.len(), 2);
@@ -780,6 +822,7 @@ fn complete_meta_checks_span_left_kernel() {
     for code in codes() {
         let protocol = NoisyCcz::new(
             &code,
+            &ExtractionSchedule::edge_coloring(&code).unwrap(),
             0.0,
             CczModel::Exact,
             NoiseModel::CircuitLevel,
@@ -820,6 +863,7 @@ fn complete_meta_checks_detect_kernel_but_not_image_error() {
         for meta_checks in [MetaChecks::Paper, MetaChecks::Complete] {
             let protocol = NoisyCcz::new(
                 &code,
+                &ExtractionSchedule::edge_coloring(&code).unwrap(),
                 0.0,
                 CczModel::Exact,
                 NoiseModel::CircuitLevel,
@@ -835,4 +879,146 @@ fn complete_meta_checks_detect_kernel_but_not_image_error() {
             );
         }
     }
+}
+
+#[test]
+fn extraction_fault_distances_c27() {
+    let code = &codes()[0];
+    assert_eq!(block_z_distance(code).unwrap(), 3);
+    assert_eq!(
+        ExtractionSchedule::edge_coloring(code)
+            .unwrap()
+            .fault_distance(code)
+            .unwrap(),
+        2
+    );
+    let paper =
+        ExtractionSchedule::from_layers(code, PAPER_C27_SCHEDULE.map(Vec::from).into()).unwrap();
+    assert_eq!(paper.fault_distance(code).unwrap(), 3);
+}
+
+#[test]
+fn extraction_fault_distance_c81() {
+    let code = &codes()[2];
+    assert_eq!(block_z_distance(code).unwrap(), 5);
+    assert_eq!(
+        ExtractionSchedule::edge_coloring(code)
+            .unwrap()
+            .fault_distance(code)
+            .unwrap(),
+        3
+    );
+}
+
+#[test]
+fn hook_safe_distance_c27() {
+    let code = &codes()[0];
+    let schedule = ExtractionSchedule::hook_safe(code).unwrap();
+    assert_eq!(schedule.fault_distance(code).unwrap(), 3);
+    assert_eq!(
+        schedule.layers(),
+        ExtractionSchedule::translation_invariant(code)
+            .next()
+            .unwrap()
+            .unwrap()
+            .layers()
+    );
+}
+
+#[test]
+fn hook_safe_distance_c81() {
+    let code = &codes()[2];
+    let schedule = ExtractionSchedule::hook_safe(code).unwrap();
+    assert_eq!(schedule.fault_distance(code).unwrap(), 5);
+    assert_eq!(
+        schedule.layers(),
+        ExtractionSchedule::translation_invariant(code)
+            .next()
+            .unwrap()
+            .unwrap()
+            .layers()
+    );
+}
+
+#[test]
+fn translation_invariant_schedules_are_distinct_and_valid() {
+    let code = &codes()[0];
+    let schedules = ExtractionSchedule::translation_invariant(code)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(schedules.len(), 384);
+    let mut distinct = BTreeSet::new();
+    for schedule in schedules {
+        schedule.validate(code).unwrap();
+        assert_eq!(schedule.layers().len(), 4);
+        let mut layers = schedule.layers().to_vec();
+        for layer in &mut layers {
+            assert_eq!(layer.len(), code.num_qubits());
+            layer.sort_unstable();
+        }
+        assert!(distinct.insert(layers));
+    }
+}
+
+#[test]
+fn explicit_schedule_is_used_and_bound_to_code() {
+    let code = &codes()[0];
+    let schedule =
+        ExtractionSchedule::from_layers(code, PAPER_C27_SCHEDULE.map(Vec::from).into()).unwrap();
+    let total = 3 * (code.num_qubits() + code.hz().num_checks());
+    let circuit = preparation(code, &schedule, 0.01, total, NoiseModel::CircuitLevel).unwrap();
+    for (layer, expected) in PAPER_C27_SCHEDULE.iter().enumerate() {
+        let gates = gates_at(&circuit, 2 + 2 * layer);
+        let actual = gates
+            .iter()
+            .flat_map(|g| g.qubits.as_chunks::<2>().0)
+            .map(|qs| (qs[0].0, qs[1].0))
+            .collect::<Vec<_>>();
+        let expected = (0..3)
+            .flat_map(|block| {
+                expected
+                    .iter()
+                    .map(move |&(data, check)| (block * 27 + data, 81 + block * 27 + check))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected);
+    }
+    let protocol = NoisyCcz::new(
+        code,
+        &schedule,
+        0.0,
+        CczModel::Exact,
+        NoiseModel::CircuitLevel,
+        MetaChecks::Complete,
+    )
+    .unwrap();
+    assert_eq!(protocol.run_counts(4, 73).unwrap().accepted, 4);
+    let different_graph =
+        BivariateTricycleCode::new(3, 3, &[(0, 0), (1, 0)], code.b_terms(), code.c_terms())
+            .unwrap();
+    for other in [&different_graph, &codes()[2]] {
+        assert!(
+            NoisyCcz::new(
+                other,
+                &schedule,
+                0.0,
+                CczModel::Exact,
+                NoiseModel::CircuitLevel,
+                MetaChecks::Complete
+            )
+            .is_err()
+        );
+        assert!(schedule.fault_distance(other).is_err());
+    }
+}
+
+#[test]
+fn hook_safe_reports_best_distance_when_family_fails() {
+    let terms = [(0, 0), (0, 1)];
+    let code = BivariateTricycleCode::new(1, 2, &terms, &terms, &terms).unwrap();
+    assert_eq!(block_z_distance(&code).unwrap(), 2);
+    assert_eq!(
+        ExtractionSchedule::hook_safe(&code).unwrap_err(),
+        "no hook-safe schedule in the 384 candidates: best fault distance 1, block Z distance 2"
+    );
 }

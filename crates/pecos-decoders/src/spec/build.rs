@@ -1508,7 +1508,9 @@ mod tests {
     #[cfg(feature = "ldpc")]
     #[test]
     fn unique_dem_bp_osd_lsd_compatibility() {
-        let dem = "error(0.1) D0 L0\nerror(0.2) D0 D1 L1\nerror(0.3) D1 L0 L1";
+        // On [1, 1] the DEM priors favour columns 0 + 2 (observables 0 and 1) and a
+        // uniform 0.15 favours column 1 (observable 1), so a dropped override shows.
+        let dem = "error(0.4) D0 L0\nerror(0.01) D0 D1 L1\nerror(0.4) D1 L1";
         for error_rate in [None, Some(0.15)] {
             let matrix = pecos_decoder_core::DemCheckMatrix::from_dem_str(dem).unwrap();
             let priors =
@@ -1574,6 +1576,8 @@ mod tests {
                         original.decode_obs(&syndrome).unwrap().to_u64()
                     );
                 }
+                let expected = if error_rate.is_some() { 2 } else { 3 };
+                assert_eq!(merged.decode_obs(&[1, 1]).unwrap().to_u64(), Some(expected));
             }
         }
     }
@@ -2268,21 +2272,35 @@ mod tests {
                 error_rate: Some(1.1),
                 ..Default::default()
             }),
-            #[cfg(feature = "ldpc")]
-            DecoderSpec::BpOsd(BpOsdConfig {
-                error_rate: Some(f64::NAN),
-                ..Default::default()
-            }),
-            #[cfg(feature = "ldpc")]
-            DecoderSpec::BpLsd(BpLsdConfig {
-                error_rate: Some(1.5),
-                ..Default::default()
-            }),
         ] {
             assert!(matches!(
                 spec.build(&model),
                 Err(DecoderError::MatrixError(_))
             ));
+        }
+    }
+
+    // Red/green: the DEM helper rejects a non-probability override before merging.
+    #[cfg(feature = "ldpc")]
+    #[test]
+    fn bp_osd_lsd_reject_invalid_error_rate() {
+        let model = DecodeModel::SingleDem(DEM.to_string());
+        for rate in [f64::NAN, -0.1, 1.5] {
+            for spec in [
+                DecoderSpec::BpOsd(BpOsdConfig {
+                    error_rate: Some(rate),
+                    ..Default::default()
+                }),
+                DecoderSpec::BpLsd(BpLsdConfig {
+                    error_rate: Some(rate),
+                    ..Default::default()
+                }),
+            ] {
+                assert!(matches!(
+                    spec.build(&model),
+                    Err(DecoderError::MatrixError(message)) if message.contains("error_rate")
+                ));
+            }
         }
     }
 

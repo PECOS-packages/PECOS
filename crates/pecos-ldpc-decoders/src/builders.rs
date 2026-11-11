@@ -695,6 +695,7 @@ pub trait DecoderBuilder<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::LdpcError;
     use ndarray::arr2;
 
     fn test_pcm() -> SparseMatrix {
@@ -728,6 +729,52 @@ mod tests {
             .build();
 
         assert!(decoder.is_ok());
+    }
+
+    // Red/green: every prior-taking builder rejects a non-probability, rate or channel.
+    #[test]
+    fn test_builders_reject_invalid_priors() {
+        let pcm = test_pcm();
+        for bad in [f64::NAN, f64::INFINITY, -0.1, 1.5] {
+            let channel = vec![0.01, 0.01, bad, 0.01];
+            let results = [
+                BpOsdBuilder::new(&pcm).error_rate(bad).build().map(|_| ()),
+                BpOsdBuilder::new(&pcm)
+                    .error_channel(channel.clone())
+                    .build()
+                    .map(|_| ()),
+                BpLsdBuilder::new(&pcm).error_rate(bad).build().map(|_| ()),
+                BpLsdBuilder::new(&pcm)
+                    .error_channel(channel.clone())
+                    .build()
+                    .map(|_| ()),
+                SoftInfoBpBuilder::new(&pcm)
+                    .error_rate(bad)
+                    .build()
+                    .map(|_| ()),
+                SoftInfoBpBuilder::new(&pcm)
+                    .error_channel(channel.clone())
+                    .build()
+                    .map(|_| ()),
+                BeliefFindBuilder::new(&pcm)
+                    .error_rate(bad)
+                    .build()
+                    .map(|_| ()),
+                BeliefFindBuilder::new(&pcm)
+                    .error_channel(channel)
+                    .build()
+                    .map(|_| ()),
+            ];
+            for result in results {
+                assert!(
+                    matches!(&result, Err(LdpcError::InvalidInput(message)) if message.contains("must be finite and in [0, 1]")),
+                    "{bad}: {result:?}"
+                );
+            }
+        }
+        for edge in [0.0, 1.0] {
+            assert!(BpOsdBuilder::new(&pcm).error_rate(edge).build().is_ok());
+        }
     }
 
     #[test]

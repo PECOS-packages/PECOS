@@ -22,9 +22,13 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   This improves decoding of repeated symptoms, such as stim's flattened multi-round
   DEMs; BP-OSD and BP-LSD results change on such DEMs, and their `max_iter=0`
   ("one iteration per column") counts merged columns. `error_rate` applies to each
-  original line before merging, and BP-OSD/BP-LSD now reject a non-finite or
-  out-of-range `error_rate` with `ValueError`, as Relay-BP and min-sum already did.
-  Union-find and other decoders are unchanged.
+  original line before merging. Union-find and other decoders are unchanged.
+- BP-OSD, BP-LSD, soft-information BP and BeliefFind reject a non-finite or
+  out-of-[0, 1] error rate or channel probability: Python DEM constructors raise
+  `ValueError` naming `error_rate`, Rust `DecoderSpec` builds return
+  `DecoderError::MatrixError`, and the raw LDPC builders return
+  `LdpcError::InvalidInput` naming the column (`RuntimeError` from the Python
+  `BpOsdBuilder` / `BpLsdBuilder`). They previously decoded with meaningless priors.
 - **Breaking:** Relay-BP and min-sum decoders now use PECOS's native kernel;
   results change. Relay-BP is deterministic per `(seed, syndrome)`, independent
   of decode order, batch splitting and worker count, enabling parallel batches.

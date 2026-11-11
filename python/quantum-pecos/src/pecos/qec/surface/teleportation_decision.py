@@ -177,6 +177,14 @@ class TeleportationDecisionModel:
         if len(positions) != len(emitted) or not set(mapping.values()) <= positions.keys():
             msg = "Decision result ids must name unique emitted measurements"
             raise ValueError(msg)
+        source_classes = json.loads(self.circuit.get_meta("measurement_classes"))
+        classes = [None] * len(emitted)
+        # The decision map covers syndrome and resource readout records. Data
+        # readout is filtered out of decision detectors; extra trace records
+        # (including injection measurements) remain unclassed.
+        for ordinal, mid in mapping.items():
+            classes[positions[mid]] = source_classes[ordinal]
+        traced.set_meta("measurement_classes", json.dumps(classes))
         for name in ("detectors", "observables"):
             entries = json.loads(self.circuit.get_meta(name))
             for entry in entries:
@@ -373,4 +381,6 @@ def t_teleportation_decision_model(patch: SurfacePatch, rounds_before: int = 0) 
     observables[0]["id"] = 0
     circuit.set_meta("detectors", json.dumps(detectors))
     circuit.set_meta("observables", json.dumps(observables))
+    # Filtering definitions does not change the circuit's measurement space,
+    # so its measurement classes remain valid without a remap.
     return TeleportationDecisionModel(patch, rounds_before, circuit)

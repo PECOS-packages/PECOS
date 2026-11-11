@@ -162,6 +162,7 @@ def test_builder_reports_missing_required_setters(
         ("with_observables", [Observable(rec[-1])]),
         ("with_detectors_json", _DETECTORS_JSON),
         ("with_observables_json", _OBSERVABLES_JSON),
+        ("with_measurement_classes_json", "[null, null]"),
         ("with_num_measurements", 2),
         ("with_noise", NoiseParameters()),
         ("with_idle_after_2q", 1.0),

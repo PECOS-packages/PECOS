@@ -35,7 +35,7 @@ from pecos.qec.surface.gadgets import (
 from pecos.qec.surface.schedule import compute_cnot_schedule
 
 GOLDENS = Path(__file__).parent / "goldens" / "gadget_parity"
-META_KEYS = ("detectors", "observables", "num_measurements", "num_detectors", "basis")
+META_KEYS = ("detectors", "observables", "num_measurements", "num_detectors", "basis", "measurement_classes")
 PHASE_KEYS = ("phase", "syndrome_round", "cx_round")
 
 OPS_NAMES = (

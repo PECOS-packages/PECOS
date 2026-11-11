@@ -65,12 +65,12 @@ def test_logical_fault_sectors_follow_code_family(shape):
         ordinal: ({"X": "Z", "Z": "X"}[family] if segment_swaps[patch, segment] else family)
         for patch, family, _, segment, _, ordinal in keys
     }
-    detectors = json.loads(circuit.get_meta("detectors"))
+    detectors = circuit.circuit_definitions()["detectors"]
     for detector in detectors:
         # Map the latest syndrome record back through its own measurement frame.
-        current = max(record for record in detector["meas_ids"] if record in by_record)
+        current = max(record for record in detector["measurements"] if record in by_record)
         expected = by_record[current]
-        if shape == "d3_h_zero_final" and any(record not in by_record for record in detector["meas_ids"]):
+        if shape == "d3_h_zero_final" and any(record not in by_record for record in detector["measurements"]):
             # The final X data readout after H reads the code's Z family.
             expected = "Z"
         assert detector["fault_sector"] == expected
@@ -90,9 +90,9 @@ def test_fold_involved_fault_sectors_unknown(shape):
             segment += 1
     fold_records = {ordinal for patch, _, _, seg, _, ordinal in keys if (patch, seg) in fold_segments}
     assert fold_records
-    detectors = json.loads(circuit.get_meta("detectors"))
+    detectors = circuit.circuit_definitions()["detectors"]
     for detector in detectors:
-        if fold_records.intersection(detector["meas_ids"]):
+        if fold_records.intersection(detector["measurements"]):
             assert detector["fault_sector"] is None
         else:
             assert detector["fault_sector"] in {"X", "Z"}
@@ -106,7 +106,7 @@ def test_surface_spec_fault_sector_survival():
 
 def test_teleportation_filter_fault_sector_survival():
     model = t_teleportation_decision_model(SurfacePatch.create(distance=3), rounds_before=1)
-    detectors = json.loads(model.circuit.get_meta("detectors"))
+    detectors = model.circuit.circuit_definitions()["detectors"]
     assert detectors
     assert all(d["fault_sector"] in {"X", "Z"} for d in detectors)
 
@@ -143,9 +143,9 @@ def test_physical_sz_boundary_fault_sectors_unknown(dagger, final_rounds):
     affected = {ordinal for _, _, _, segment, rnd, ordinal in keys["stabilizer"] if segment == 1 and rnd == 0}
     if final_rounds == 0:
         affected.update(ordinal for _, _, ordinal in keys["data"])
-    detectors = json.loads(circuit.get_meta("detectors"))
+    detectors = circuit.circuit_definitions()["detectors"]
     for detector in detectors:
-        if affected.intersection(detector["meas_ids"]):
+        if affected.intersection(detector["measurements"]):
             assert detector["fault_sector"] is None
         else:
             assert detector["fault_sector"] in {"X", "Z"}
@@ -174,8 +174,8 @@ def test_physical_sz_phase_uncertainty_follows_transversal_cx():
     affected_b = {
         entry[5] for entry in keys["stabilizer"] if entry[0] == "B" and entry[3] == last_segment and entry[4] == 0
     }
-    detectors = json.loads(circuit.get_meta("detectors"))
-    touching_b = [d for d in detectors if affected_b.intersection(d["meas_ids"])]
+    detectors = circuit.circuit_definitions()["detectors"]
+    touching_b = [d for d in detectors if affected_b.intersection(d["measurements"])]
     assert touching_b
     assert all(d["fault_sector"] is None for d in touching_b)
 
@@ -193,7 +193,7 @@ def test_clifford_deformed_surface_keeps_undeformed_family_sectors(policy, basis
             interaction_basis="szz",
             clifford_frame_policy=clifford_frame_policy,
         )
-        return [d["fault_sector"] for d in json.loads(circuit.get_meta("detectors"))]
+        return [d["fault_sector"] for d in circuit.circuit_definitions()["detectors"]]
 
     deformed = sectors(policy)
     assert deformed == sectors(None)
@@ -211,7 +211,7 @@ def _h_memory_builder():
 
 def test_logical_fault_sectors_constant_across_h():
     circuit = _h_memory_builder().to_tick_circuit()
-    detectors = json.loads(circuit.get_meta("detectors"))
+    detectors = circuit.circuit_definitions()["detectors"]
     before = {tuple(d["coords"][:2]): d["fault_sector"] for d in detectors if d["coords"][2] == 2}
     after = {tuple(d["coords"][:2]): d["fault_sector"] for d in detectors if d["coords"][2] == 3}
     assert len(before) == len(after) == 8

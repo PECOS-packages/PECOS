@@ -1089,7 +1089,8 @@ class LogicalCircuitBuilder:
 
         Args:
             patch: The surface code patch.
-            label: Unique label for this patch.
+            label: Unique, non-empty label for this patch. It names the
+                patch's measurement-class block.
             qubit_offset: Offset added to all qubit indices for this patch.
                 Use this when multiple patches share a qubit index space.
             coord_offset: (dx, dy) spatial offset for this patch's
@@ -1097,6 +1098,9 @@ class LogicalCircuitBuilder:
                 automatically based on patch index (patches are spaced
                 apart so coordinates don't overlap).
         """
+        if not isinstance(label, str) or not label:
+            msg = "Patch label must be a non-empty string"
+            raise ValueError(msg)
         if label in self._patches:
             msg = f"Patch '{label}' already registered"
             raise ValueError(msg)
@@ -2757,6 +2761,7 @@ class _CircuitGenerator:
         self._current_tick = None
         self._allocated: set[int] = set()
         self.meas_count = 0
+        self.measurement_classes: list[dict | None] = []
 
         self.stab_meas: dict[tuple[str, str, int, int, int], int] = {}
         self._stab_meas_by_round: dict[tuple[str, int, int], list[tuple[str, str, int, int, int]]] = {}
@@ -2861,7 +2866,6 @@ class _CircuitGenerator:
                 "coords": d["coords"],
                 "records": [idx - total for idx in d["abs_records"]],
                 "meas_ids": d["abs_records"],
-                "fault_sector": d["fault_sector"],
             }
             for d in self._det_json
         ]
@@ -2911,6 +2915,7 @@ class _CircuitGenerator:
         ]
 
         self.tc.set_meta("detectors", json.dumps(det_out))
+        self.tc.set_meta("measurement_classes", json.dumps(self.measurement_classes))
         self.tc.set_meta("observables", json.dumps(obs_out))
         for descriptor, observable in zip(self._observable_descriptors, obs_out, strict=True):
             descriptor["records"] = observable["records"]
@@ -2958,7 +2963,20 @@ class _CircuitGenerator:
         self._tick().mz(qubits)
         indices = list(range(self.meas_count, self.meas_count + len(qubits)))
         self.meas_count += len(qubits)
+        self.measurement_classes.extend([None] * len(qubits))
         return indices
+
+    def _classify_measurement(self, index: int, patch_label: str, family: str) -> None:
+        """Record provenance before the emission epoch advances."""
+        epoch = int(self.round_time)
+        if float(epoch) != self.round_time:
+            msg = f"Measurement class round must be integral, got {self.round_time}"
+            raise ValueError(msg)
+        self.measurement_classes[index] = {
+            "block": patch_label,
+            "family": None if index in self._untyped_measurements else family,
+            "round": epoch,
+        }
 
     def _allocation(self, patch_label: str) -> QubitAllocation:
         ps = self.patches[patch_label]
@@ -3124,6 +3142,9 @@ class _CircuitGenerator:
                 else:
                     msg = f"Measured qubit {qubit} is not an ancilla of patch '{label}'"
                     raise ValueError(msg)
+                # Register base family survives H; fold and pending-phase
+                # bookkeeping above determines whether this record is untyped.
+                self._classify_measurement(index, label, family)
                 if self.patches[label].x_z_swapped:
                     family = "Z" if family == "X" else "X"
                 key = (label, family, register.index(qubit), self.segment_idx, rnd)
@@ -3311,7 +3332,6 @@ class _CircuitGenerator:
         stab_index: int,
         meas_indices: list[int],
     ) -> None:
-        base_family = self.patches[patch_label].code_family(stab_type)
         anc_x, anc_y = self._ancilla_spatial_coords(patch_label, stab_type, stab_index)
         # Store absolute indices; convert to relative offsets in generate()
         self._det_json.append(
@@ -3319,12 +3339,6 @@ class _CircuitGenerator:
                 "id": len(self._det_json),
                 "coords": [anc_x, anc_y, self.round_time],
                 "abs_records": list(meas_indices),
-                # Labels follow the code family: transversal H conjugates both
-                # the error and the check, leaving the code-frame family invariant.
-                # Fold rounds introduce Z-partner terms via _fold_maps. Their
-                # fault sectors are unverified, including comparisons across a fold.
-                # The first measurements after physical SZ/SZdg are also untyped.
-                "fault_sector": None if self._untyped_measurements.intersection(meas_indices) else base_family,
             },
         )
 
@@ -3390,7 +3404,11 @@ class _CircuitGenerator:
             self._untyped_measurements.update(measured.values())
             self._pending_phase_patches.remove(patch_label)
         for q in range(ps.patch.geometry.num_data):
-            self.data_meas[patch_label, q] = measured[0, ps.qubit_offset + q]
+            index = measured[0, ps.qubit_offset + q]
+            self.data_meas[patch_label, q] = index
+            # Terminal and consumed teleportation-resource readouts measure
+            # the code family of the physical readout basis, including after H.
+            self._classify_measurement(index, patch_label, ps.code_family(self._last_memory_basis(patch_label)))
 
     def _emit_final_detectors_and_observables(self, patch_label: str) -> None:
         ps = self.patches[patch_label]

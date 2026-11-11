@@ -698,6 +698,12 @@ The base family identifies the stabilizer register before logical frame changes:
 after a transversal H the register keeps its family although its physical
 measurement basis flips. Block and round are currently validated only.
 
+The surface memory and logical circuit builders export these classes instead of
+writing detector `fault_sector` labels. Surface memory uses block `"memory"`;
+logical circuits use patch labels and a global round epoch across segments.
+Fold and pending-phase measurements in logical circuits have a null family.
+Read effective detector labels through `circuit.circuit_definitions()` or the DEM.
+
 With classes present, `circuit_definitions()` and DEM construction resolve each
 detector's references to absolute records, cancel even multiplicities, and derive
 the common family of the remaining records. Empty support, an unclassed or
@@ -724,6 +730,10 @@ fails during definition resolution. A caller passing only
 `with_detectors_json(circuit.get_meta("detectors"))` for a circuit whose labels
 come from classes gets a DEM with no labels and no error. Pass the circuit metadata
 instead, or supply the classes separately in the influence map's record order.
+For `DetectorErrorModel.from_guppy`, pass
+`measurement_classes_json=circuit.get_meta("measurement_classes")` along with
+the detector JSON, with both indexed in the Guppy trace's measurement emission
+order.
 
 The default `irreducible="refuse"` rejects faults that cannot be decomposed and
 reports their count and input indices. To remove those faults from the decoder's

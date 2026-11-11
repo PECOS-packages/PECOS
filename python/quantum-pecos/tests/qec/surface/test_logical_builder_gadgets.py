@@ -353,7 +353,17 @@ def golden_outputs(builder: LogicalCircuitBuilder) -> dict[str, str]:
         "stim": builder.to_stim(),
         "noisy.stim": builder.to_stim(p1=0.001, p2=0.01, p_meas=0.005, p_prep=0.002),
         "tickmeta.json": json.dumps(
-            {k: tc.get_meta(k) for k in ("detectors", "observables", "num_measurements", "num_detectors", "basis")}
+            {
+                k: tc.get_meta(k)
+                for k in (
+                    "detectors",
+                    "observables",
+                    "num_measurements",
+                    "num_detectors",
+                    "basis",
+                    "measurement_classes",
+                )
+            }
             | {"num_ticks": tc.num_ticks()},
             indent=1,
         ),

@@ -154,6 +154,7 @@ def test_dem_builder_accepts_public_surface_descriptor_json() -> None:
         builder.with_noise(noise.p1, noise.p2, noise.p_meas, noise.p_prep)
         builder.with_num_measurements(int(tc.get_meta("num_measurements") or "0"))
         builder.with_detectors_json(detectors_json)
+        builder.with_measurement_classes_json(tc.get_meta("measurement_classes"))
         if observables_json:
             builder.with_observables_json(observables_json)
         return builder.build_with_source_tracking()

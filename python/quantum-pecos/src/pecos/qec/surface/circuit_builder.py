@@ -2190,6 +2190,8 @@ class TickCircuitRenderer(CircuitRenderer):
 
         # Track measurements for detector annotations
         meas_count = 0
+        measurement_classes: list[dict | None] = []
+        readout_family = "Z" if basis.upper() == "Z" else "X"
         stab_meas_record: dict[tuple[str, int, int], int] = {}
         stab_meas_refs: dict[tuple[str, int, int], list] = {}
         final_meas_refs_by_qubit: dict[int, list] = {}
@@ -2586,6 +2588,15 @@ class TickCircuitRenderer(CircuitRenderer):
                         final_meas_start = meas_count
                     # Geometry and typed annotation supports use register indices.
                     final_meas_refs_by_qubit[allocation.data_qubits.index(q)] = meas_refs
+                if op.label.startswith(("sx", "sz")):
+                    # Check registers keep their base family through frame changes.
+                    measurement_classes.append(
+                        {"block": "memory", "family": op.label[1].upper(), "round": current_round},
+                    )
+                elif op.label.startswith("final"):
+                    measurement_classes.append({"block": "memory", "family": readout_family, "round": num_rounds})
+                else:
+                    measurement_classes.append(None)
                 meas_count += 1
 
             elif op.op_type == OpType.TICK:
@@ -2653,7 +2664,6 @@ class TickCircuitRenderer(CircuitRenderer):
                             detectors.append(
                                 {
                                     "id": detector_id,
-                                    "fault_sector": "X",
                                     "coords": [s.index, 0, rnd],
                                     "records": [-curr_offset, -init_offset],
                                 },
@@ -2663,7 +2673,6 @@ class TickCircuitRenderer(CircuitRenderer):
                             detectors.append(
                                 {
                                     "id": detector_id,
-                                    "fault_sector": "X",
                                     "coords": [s.index, 0, rnd],
                                     "records": [-curr_offset],
                                 },
@@ -2675,7 +2684,6 @@ class TickCircuitRenderer(CircuitRenderer):
                         detectors.append(
                             {
                                 "id": detector_id,
-                                "fault_sector": "X",
                                 "coords": [s.index, 0, rnd],
                                 "records": [-curr_offset, -prev_offset],
                             },
@@ -2698,7 +2706,6 @@ class TickCircuitRenderer(CircuitRenderer):
                             detectors.append(
                                 {
                                     "id": detector_id,
-                                    "fault_sector": "Z",
                                     "coords": [det_x, 1, rnd],
                                     "records": [-curr_offset, -init_offset],
                                 },
@@ -2708,7 +2715,6 @@ class TickCircuitRenderer(CircuitRenderer):
                             detectors.append(
                                 {
                                     "id": detector_id,
-                                    "fault_sector": "Z",
                                     "coords": [det_x, 1, rnd],
                                     "records": [-curr_offset],
                                 },
@@ -2720,7 +2726,6 @@ class TickCircuitRenderer(CircuitRenderer):
                         detectors.append(
                             {
                                 "id": detector_id,
-                                "fault_sector": "Z",
                                 "coords": [det_x, 1, rnd],
                                 "records": [-curr_offset, -prev_offset],
                             },
@@ -2728,13 +2733,12 @@ class TickCircuitRenderer(CircuitRenderer):
                         detector_id += 1
 
             # Final detectors
-            if basis.upper() == "Z":
+            stab_type = readout_family
+            if stab_type == "Z":
                 stabilizers = geom.z_stabilizers
-                stab_type = "Z"
                 logical_qubits = list(geom.logical_z.data_qubits) if geom.logical_z else []
             else:
                 stabilizers = geom.x_stabilizers
-                stab_type = "X"
                 logical_qubits = list(geom.logical_x.data_qubits) if geom.logical_x else []
 
             for s in stabilizers:
@@ -2748,7 +2752,6 @@ class TickCircuitRenderer(CircuitRenderer):
                 detectors.append(
                     {
                         "id": detector_id,
-                        "fault_sector": stab_type,
                         "coords": [det_x, det_y, num_rounds],
                         "records": records,
                     },
@@ -2771,6 +2774,7 @@ class TickCircuitRenderer(CircuitRenderer):
             circuit.set_meta("observables", json.dumps(observables))
             circuit.set_meta("num_measurements", str(meas_count))
             circuit.set_meta("num_detectors", str(len(detectors)))
+            circuit.set_meta("measurement_classes", json.dumps(measurement_classes))
 
             # Also add typed PauliAnnotation annotations (new path) when the
             # caller wants direct Pauli annotations in addition to legacy

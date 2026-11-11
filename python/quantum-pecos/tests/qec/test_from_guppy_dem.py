@@ -1619,6 +1619,46 @@ def test_raw_replay_rejects_use_after_release() -> None:
         )
 
 
+@pytest.mark.parametrize("basis", ["X", "Z"])
+def test_from_guppy_preserves_generator_fault_sectors(basis: str) -> None:
+    patch = SurfacePatch.create(distance=3)
+    circuit = generate_tick_circuit_from_patch(patch, 3, basis)
+    dem = DetectorErrorModel.from_guppy(
+        make_surface_code(distance=3, num_rounds=3, basis=basis),
+        num_qubits=get_num_qubits(3),
+        detectors_json=circuit.get_meta("detectors"),
+        measurement_classes_json=circuit.get_meta("measurement_classes"),
+        observables_json=circuit.get_meta("observables"),
+        noise=NoiseParameters(p2=0.001),
+    )
+    expected = [detector["fault_sector"] for detector in circuit.circuit_definitions()["detectors"]]
+    assert set(expected) == {"X", "Z"}
+    assert [family for _, family in dem.detector_fault_sectors()] == expected
+
+
+@pytest.mark.parametrize("typed", [False, True])
+def test_guppy_builder_classes_reach_schema_fingerprint(typed: bool) -> None:
+    builds = []
+    for family in ("X", "Z"):
+        classes = json.dumps([{"block": "memory", "family": family, "round": 0}])
+        builder = (
+            DetectorErrorModel.builder()
+            .with_program(_single_measurement)
+            .with_qubits(1)
+            .with_measurement_classes_json(classes)
+            .with_noise(NoiseParameters())
+        )
+        if typed:
+            builder.with_detectors([Detector(rec[-1])])
+        else:
+            builder.with_detectors_json('[{"id": 0, "records": [-1]}]')
+        build = builder.build()
+        assert build.circuit.get_meta("measurement_classes") == classes
+        assert build.dem.detector_fault_sectors() == [(0, family)]
+        builds.append(build)
+    assert builds[0].schema_fingerprint != builds[1].schema_fingerprint
+
+
 def test_from_guppy_surface_code_is_byte_identical_to_reference() -> None:
     """Regression: from_guppy(make_surface_code(...)) must work and match the
     traced_qis reference DEM. A reverted dynamic-control guard had broken this
@@ -1642,6 +1682,7 @@ def test_from_guppy_surface_code_is_byte_identical_to_reference() -> None:
             make_surface_code(distance=3, num_rounds=3, basis=basis),
             num_qubits=get_num_qubits(3),
             detectors_json=ref.get_meta("detectors"),
+            measurement_classes_json=ref.get_meta("measurement_classes"),
             observables_json=ref.get_meta("observables"),
             num_measurements=int(ref.get_meta("num_measurements")),
             **p,
@@ -1682,6 +1723,7 @@ def test_from_guppy_szz_surface_code_is_byte_identical_to_reference(distance: in
             ),
             num_qubits=get_num_qubits(distance, interaction_basis="szz"),
             detectors_json=ref.get_meta("detectors"),
+            measurement_classes_json=ref.get_meta("measurement_classes"),
             observables_json=ref.get_meta("observables"),
             num_measurements=int(ref.get_meta("num_measurements")),
             **p,
@@ -1769,6 +1811,7 @@ def _constrained_surface_via_guppy(*, d, basis, rounds, budget, noise, check_pla
         ),
         num_qubits=get_num_qubits(d, ancilla_budget=budget, check_plan=check_plan),
         detectors_json=ref.get_meta("detectors"),
+        measurement_classes_json=ref.get_meta("measurement_classes"),
         observables_json=ref.get_meta("observables"),
         num_measurements=int(ref.get_meta("num_measurements")),
         **noise,
@@ -2065,6 +2108,7 @@ def test_constrained_from_guppy_dem_is_consumable_by_pecos_native_decoder() -> N
         make_surface_code(distance=3, num_rounds=2, basis="Z", ancilla_budget=2),
         num_qubits=get_num_qubits(3, ancilla_budget=2),
         detectors_json=abstract_tc.get_meta("detectors"),
+        measurement_classes_json=abstract_tc.get_meta("measurement_classes"),
         observables_json=abstract_tc.get_meta("observables"),
         num_measurements=int(abstract_tc.get_meta("num_measurements")),
         **p,
@@ -2128,6 +2172,7 @@ def test_constrained_from_guppy_fails_loud_on_mismatched_num_measurements() -> N
             make_surface_code(distance=3, num_rounds=2, basis="Z", ancilla_budget=2),
             num_qubits=get_num_qubits(3, ancilla_budget=2),
             detectors_json=abstract_tc.get_meta("detectors"),
+            measurement_classes_json=abstract_tc.get_meta("measurement_classes"),
             observables_json=abstract_tc.get_meta("observables"),
             num_measurements=wrong,
             **p,
@@ -2242,6 +2287,7 @@ def test_surface_metadata_records_bind_to_runtime_meas_ids(kind) -> None:
         == expected
     )
     target = TickCircuit()
+    target.tick().mz_with_ids(list(range(29)), list(remap.values()))
     _copy_surface_tick_circuit_metadata(source, target, measurement_index_remap=remap)
     assert json.loads(target.get_meta(kind)) == expected
     assert json.loads(target.get_meta(descriptor_key)) == [

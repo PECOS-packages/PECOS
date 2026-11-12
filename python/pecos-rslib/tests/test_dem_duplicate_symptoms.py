@@ -3,6 +3,8 @@
 
 """Red/green and compatibility contracts for DEM duplicate-symptom merging."""
 
+import functools
+
 import pytest
 from pecos_rslib.decoders import (
     BpLsdDecoder,
@@ -13,7 +15,6 @@ from pecos_rslib.decoders import (
     RelayBpBuilder,
     RelayBpDecoder,
 )
-
 
 CONVENIENCE = {
     "bp_lsd": BpLsdDecoder,
@@ -82,8 +83,9 @@ def test_unique_dem_matches_original_raw_matrix_path(family, error_rate):
 def test_merged_families_reject_invalid_error_rate(family, error_rate, convenience):
     """Red/green: an override that is not a probability is rejected before merging."""
     dem = "error(0.1) D0 L0\nerror(0.1) D0 L0"
+    if convenience:
+        build = functools.partial(CONVENIENCE[family].from_dem, dem, error_rate=error_rate)
+    else:
+        build = functools.partial(DemAwareDecoder.from_dem, dem, family, error_rate=error_rate)
     with pytest.raises(ValueError, match="error_rate must be finite and in"):
-        if convenience:
-            CONVENIENCE[family].from_dem(dem, error_rate=error_rate)
-        else:
-            DemAwareDecoder.from_dem(dem, family, error_rate=error_rate)
+        build()

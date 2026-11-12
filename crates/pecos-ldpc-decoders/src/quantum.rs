@@ -72,6 +72,18 @@ impl MbpDecoder {
             ));
         }
 
+        // The C++ core builds error_rate * bias channel probabilities unchecked.
+        if !(0.0..=1.0).contains(&error_rate) {
+            return Err(LdpcError::InvalidInput(format!(
+                "error_rate must be finite and in [0, 1], got {error_rate}"
+            )));
+        }
+        if let Some(bias) = xyz_bias.iter().find(|b| !b.is_finite() || **b < 0.0) {
+            return Err(LdpcError::InvalidInput(format!(
+                "XYZ bias values must be finite and non-negative, got {bias}"
+            )));
+        }
+
         // Normalize XYZ bias
         let bias_sum = xyz_bias[0] + xyz_bias[1] + xyz_bias[2];
         if bias_sum <= 0.0 {
@@ -305,6 +317,39 @@ mod tests {
 
         let gf4_pcm = css.to_gf4_pcm();
         assert_eq!(gf4_pcm.shape(), &[4, 3]);
+    }
+
+    // Red/green: MBP rejects a non-probability rate and invalid bias components.
+    #[test]
+    fn test_mbp_rejects_invalid_rate_and_bias() {
+        let hx = SparseMatrix::from_coo(1, 3, vec![0, 0, 0], vec![0, 1, 2]).unwrap();
+        let hz = SparseMatrix::from_coo(2, 3, vec![0, 0, 1, 1], vec![0, 1, 1, 2]).unwrap();
+        let build = |rate: f64, bias: [f64; 3]| {
+            MbpDecoder::new(
+                &hx,
+                &hz,
+                rate,
+                bias,
+                10,
+                crate::BpMethod::MinimumSum,
+                0.625,
+                None,
+            )
+        };
+        for (rate, bias, expected) in [
+            (f64::NAN, [1.0, 1.0, 1.0], "error_rate"),
+            (-0.1, [1.0, 1.0, 1.0], "error_rate"),
+            (1.5, [1.0, 1.0, 1.0], "error_rate"),
+            (0.1, [f64::NAN, 1.0, 1.0], "XYZ bias"),
+            (0.1, [-1.0, 1.0, 1.0], "XYZ bias"),
+            (0.1, [f64::INFINITY, 1.0, 1.0], "XYZ bias"),
+        ] {
+            assert!(
+                matches!(&build(rate, bias), Err(LdpcError::InvalidInput(message)) if message.contains(expected)),
+                "{rate} {bias:?}"
+            );
+        }
+        assert!(build(0.1, [1.0, 0.0, 1.0]).is_ok());
     }
 
     #[test]

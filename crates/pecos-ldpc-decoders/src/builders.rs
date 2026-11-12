@@ -164,6 +164,7 @@ impl<'a> BpOsdBuilder<'a> {
     /// Returns `LdpcError` if:
     /// - Neither `error_rate` nor `error_channel` was set
     /// - `error_channel` length doesn't match matrix columns
+    /// - `error_rate` or an `error_channel` entry is not a probability in [0, 1]
     /// - OSD is enabled but input type is not Syndrome
     pub fn build(self) -> Result<crate::BpOsdDecoder> {
         crate::BpOsdDecoder::new(

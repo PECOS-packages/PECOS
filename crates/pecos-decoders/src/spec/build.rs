@@ -2275,7 +2275,8 @@ mod tests {
         ] {
             assert!(matches!(
                 spec.build(&model),
-                Err(DecoderError::MatrixError(_))
+                Err(DecoderError::MatrixError(message))
+                    if message.contains("error_rate must be finite and in [0, 1]")
             ));
         }
     }
@@ -2298,7 +2299,8 @@ mod tests {
             ] {
                 assert!(matches!(
                     spec.build(&model),
-                    Err(DecoderError::MatrixError(message)) if message.contains("error_rate")
+                    Err(DecoderError::MatrixError(message))
+                        if message.contains("error_rate must be finite and in [0, 1]")
                 ));
             }
         }

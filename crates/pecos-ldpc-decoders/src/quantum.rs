@@ -10,6 +10,41 @@ use crate::{BpMethod, LdpcError};
 use cxx::UniquePtr;
 use ndarray::{Array1, Array2, ArrayView1};
 
+/// Validates MBP's error rate and XYZ weights and normalizes the weights to sum to 1.
+///
+/// The C++ core builds `error_rate * bias` channel probabilities unchecked, so only a
+/// probability and finite non-negative weights may pass.
+fn mbp_channel(error_rate: f64, xyz_bias: [f64; 3]) -> Result<(f64, [f64; 3]), LdpcError> {
+    if !(0.0..=1.0).contains(&error_rate) {
+        return Err(LdpcError::InvalidInput(format!(
+            "error_rate must be finite and in [0, 1], got {error_rate}"
+        )));
+    }
+    if let Some((index, bias)) = xyz_bias
+        .iter()
+        .enumerate()
+        .find(|(_, bias)| !bias.is_finite() || **bias < 0.0)
+    {
+        return Err(LdpcError::InvalidInput(format!(
+            "xyz_bias[{index}] must be finite and non-negative, got {bias}"
+        )));
+    }
+
+    // Normalize the relative weights to sum to 1. Dividing by the largest weight first keeps
+    // the sum finite for any finite weights; `+ 0.0` turns -0.0 into +0.0 so the core's
+    // log-likelihoods never see -0.0.
+    let bias_max = xyz_bias.iter().copied().fold(0.0, f64::max);
+    if bias_max <= 0.0 {
+        return Err(LdpcError::InvalidInput(format!(
+            "xyz_bias must have a positive entry, got {xyz_bias:?}"
+        )));
+    }
+    let scaled_bias = xyz_bias.map(|bias| bias / bias_max);
+    let scaled_sum: f64 = scaled_bias.iter().sum();
+    let normalized_bias = scaled_bias.map(|bias| bias / scaled_sum + 0.0);
+    Ok((error_rate + 0.0, normalized_bias))
+}
+
 /// Pauli error types for quantum codes
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PauliError {
@@ -72,31 +107,7 @@ impl MbpDecoder {
             ));
         }
 
-        // The C++ core builds error_rate * bias channel probabilities unchecked.
-        if !(0.0..=1.0).contains(&error_rate) {
-            return Err(LdpcError::InvalidInput(format!(
-                "error_rate must be finite and in [0, 1], got {error_rate}"
-            )));
-        }
-        if let Some(bias) = xyz_bias.iter().find(|b| !b.is_finite() || **b < 0.0) {
-            return Err(LdpcError::InvalidInput(format!(
-                "XYZ bias values must be finite and non-negative, got {bias}"
-            )));
-        }
-
-        // Normalize XYZ bias
-        let bias_sum = xyz_bias[0] + xyz_bias[1] + xyz_bias[2];
-        if bias_sum <= 0.0 || !bias_sum.is_finite() {
-            return Err(LdpcError::InvalidInput(format!(
-                "XYZ bias values must sum to a positive finite number, got {bias_sum}"
-            )));
-        }
-        // `+ 0.0` turns -0.0 into +0.0 so the core's log-likelihoods never see -0.0.
-        let normalized_bias = [
-            xyz_bias[0] / bias_sum + 0.0,
-            xyz_bias[1] / bias_sum + 0.0,
-            xyz_bias[2] / bias_sum + 0.0,
-        ];
+        let (error_rate, normalized_bias) = mbp_channel(error_rate, xyz_bias)?;
 
         // Create sparse matrix representations
         let hx_repr = hx.to_ffi_repr();
@@ -105,7 +116,7 @@ impl MbpDecoder {
         let inner = ffi::create_mbp_decoder(
             &hx_repr,
             &hz_matrix_repr,
-            error_rate + 0.0,
+            error_rate,
             &normalized_bias,
             i32::try_from(max_iter).unwrap_or(i32::MAX),
             bp_method.to_ffi(),
@@ -338,13 +349,14 @@ mod tests {
             )
         };
         for (rate, bias, expected) in [
-            (f64::NAN, [1.0, 1.0, 1.0], "error_rate"),
-            (-0.1, [1.0, 1.0, 1.0], "error_rate"),
-            (1.5, [1.0, 1.0, 1.0], "error_rate"),
-            (0.1, [f64::NAN, 1.0, 1.0], "XYZ bias"),
-            (0.1, [-1.0, 1.0, 1.0], "XYZ bias"),
-            (0.1, [f64::INFINITY, 1.0, 1.0], "XYZ bias"),
-            (0.1, [1e308, 1e308, 1e308], "XYZ bias"),
+            (f64::NAN, [1.0, 1.0, 1.0], "error_rate must"),
+            (f64::INFINITY, [1.0, 1.0, 1.0], "error_rate must"),
+            (-0.1, [1.0, 1.0, 1.0], "error_rate must"),
+            (1.5, [1.0, 1.0, 1.0], "error_rate must"),
+            (0.1, [1.0, f64::NAN, 1.0], "xyz_bias[1] must"),
+            (0.1, [1.0, 1.0, -1.0], "xyz_bias[2] must"),
+            (0.1, [f64::INFINITY, 1.0, 1.0], "xyz_bias[0] must"),
+            (0.1, [0.0, -0.0, 0.0], "xyz_bias must have a positive entry"),
         ] {
             assert!(
                 matches!(&build(rate, bias), Err(LdpcError::InvalidInput(message)) if message.contains(expected)),
@@ -352,7 +364,24 @@ mod tests {
             );
         }
         assert!(build(0.1, [1.0, 0.0, 1.0]).is_ok());
-        assert!(build(-0.0, [1.0, -0.0, 1.0]).is_ok());
+
+        // The normalized channel is exact for equivalent weights: weights that would overflow
+        // a plain sum mean the same as their ratio, and -0.0 (whose log-likelihood would be
+        // NaN) reaches the core as +0.0.
+        let channel = |rate: f64, bias: [f64; 3]| mbp_channel(rate, bias).unwrap();
+        let third = 1.0 / 3.0;
+        assert_eq!(channel(0.1, [1e308; 3]), (0.1, [third; 3]));
+        assert_eq!(
+            channel(0.1, [f64::MAX, 0.0, f64::MAX]),
+            (0.1, [0.5, 0.0, 0.5])
+        );
+        assert_eq!(channel(0.1, [2.0, 1.0, 1.0]), (0.1, [0.5, 0.25, 0.25]));
+        let (rate, bias) = channel(-0.0, [1.0, -0.0, 1.0]);
+        assert!(rate.is_sign_positive(), "{rate}");
+        assert!(
+            bias.iter().all(|weight| weight.is_sign_positive()),
+            "{bias:?}"
+        );
     }
 
     #[test]

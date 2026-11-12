@@ -3,6 +3,14 @@
 use crate::ffi::*;
 use crate::*;
 
+fn assert_uninstrumented_traces(traces: &[NamedResultTrace]) {
+    for trace in traces {
+        assert!(trace.provenance.is_none(), "{trace:?}");
+        assert!(trace.control_dependent.is_none(), "{trace:?}");
+        assert!(trace.result_ids.is_empty(), "{trace:?}");
+    }
+}
+
 struct RegisteredContext(*mut ExecutionContext);
 
 impl RegisteredContext {
@@ -58,15 +66,15 @@ macro_rules! test_exports {
                 mask: std::ptr::null(),
             };
             unsafe {
-                ctx.record_result_read(1);
+                ctx.stash_result_source(Some(1));
                 $scalar(tket_label.as_ptr(), len, $a);
-                ctx.record_result_read(2);
+                ctx.stash_result_source(Some(2));
                 $selene_scalar(label.as_ptr(), len, $b);
-                ctx.record_result_read(3);
-                ctx.record_result_read(4);
+                ctx.stash_result_source(Some(3));
+                ctx.stash_result_source(Some(4));
                 $array(tket_array_label.as_ptr(), array_len, &dense);
-                ctx.record_result_read(5);
-                ctx.record_result_read(6);
+                ctx.stash_result_source(Some(5));
+                ctx.stash_result_source(Some(6));
                 $selene_array(array_label.as_ptr(), array_len, values.as_ptr(), 2);
             }
             if let NamedResult::Bool(values) = NamedResult::$variant(vec![$a, $b]) {
@@ -74,22 +82,30 @@ macro_rules! test_exports {
                     NamedResultTrace {
                         name: "value".to_string(),
                         values: vec![values[0]],
-                        result_ids: vec![1],
+                        result_ids: vec![],
+                        provenance: None,
+                        control_dependent: None,
                     },
                     NamedResultTrace {
                         name: "value".to_string(),
                         values: vec![values[1]],
-                        result_ids: vec![2],
+                        result_ids: vec![],
+                        provenance: None,
+                        control_dependent: None,
                     },
                     NamedResultTrace {
                         name: "array".to_string(),
                         values: values.clone(),
-                        result_ids: vec![3, 4],
+                        result_ids: vec![],
+                        provenance: None,
+                        control_dependent: None,
                     },
                     NamedResultTrace {
                         name: "array".to_string(),
                         values,
-                        result_ids: vec![5, 6],
+                        result_ids: vec![],
+                        provenance: None,
+                        control_dependent: None,
                     },
                 ];
                 assert_eq!(
@@ -98,10 +114,7 @@ macro_rules! test_exports {
                 );
             } else {
                 assert!(ctx.get_named_result_traces().is_empty());
-                assert_eq!(
-                    *ctx.pending_result_reads.lock().expect("reads"),
-                    vec![1, 2, 3, 4, 5, 6]
-                );
+                assert_uninstrumented_traces(&ctx.get_named_result_traces());
             }
             let expected = BTreeMap::from([
                 ("value".to_string(), NamedResult::$variant(vec![$a, $b])),
@@ -121,7 +134,7 @@ macro_rules! test_exports {
                 mask: std::ptr::null(),
             };
             let traces_before = ctx.get_named_result_traces();
-            let reads_before = ctx.pending_result_reads.lock().expect("reads").clone();
+
             unsafe {
                 $array(b"\x05empty".as_ptr(), 5, &empty);
                 $selene_array(b"empty".as_ptr(), 5, std::ptr::null(), 0);
@@ -137,14 +150,13 @@ macro_rules! test_exports {
                         name: "empty".to_string(),
                         values: vec![],
                         result_ids: vec![],
+                        provenance: None,
+                        control_dependent: None,
                     });
                 }
             }
             assert_eq!(ctx.get_named_result_traces(), expected_traces);
-            assert_eq!(
-                *ctx.pending_result_reads.lock().expect("reads"),
-                reads_before
-            );
+            assert_uninstrumented_traces(&ctx.get_named_result_traces());
         }
     };
 }
@@ -225,7 +237,7 @@ fn mixed_type_error_is_sticky() {
 }
 
 #[test]
-fn numeric_output_preserves_measurement_provenance_for_detector() {
+fn uninstrumented_numeric_output_does_not_bind_later_bool() {
     let registered = RegisteredContext::new();
     let ctx = registered.context();
     // m = measure(q).read(); result("v", int(m) + 5); result("det", m)
@@ -238,12 +250,15 @@ fn numeric_output_preserves_measurement_provenance_for_detector() {
         print_float_selene(b"f".as_ptr(), 1, 2.5);
     }
     assert_eq!(ctx.get_named_result_traces(), []);
-    assert_eq!(*ctx.pending_result_reads.lock().expect("reads"), vec![0]);
+    assert_uninstrumented_traces(&ctx.get_named_result_traces());
     unsafe { print_bool(b"\x03det".as_ptr(), 3, m) };
     let json = serde_json::to_string(&ctx.get_named_result_traces()).expect("trace JSON");
-    assert_eq!(json, r#"[{"name":"det","values":[true],"result_ids":[0]}]"#);
+    assert_eq!(
+        json,
+        r#"[{"name":"det","values":[true],"result_ids":[],"provenance":null,"control_dependent":null}]"#
+    );
     println!("{json}");
-    assert!(ctx.pending_result_reads.lock().expect("reads").is_empty());
+    assert_uninstrumented_traces(&ctx.get_named_result_traces());
 }
 
 macro_rules! integer_detector_trace_test {
@@ -256,7 +271,7 @@ macro_rules! integer_detector_trace_test {
                 let ctx = registered.context();
                 let label = if selene { &b"i"[..] } else { &b"\x01i"[..] };
                 let scalar = if selene { $selene_scalar } else { $scalar };
-                ctx.record_result_read(10);
+                ctx.stash_result_source(Some(10));
                 unsafe { scalar(label.as_ptr(), 1, 0) };
                 assert_eq!(
                     ctx.get_named_result_traces(),
@@ -264,6 +279,8 @@ macro_rules! integer_detector_trace_test {
                         name: "i".to_string(),
                         values: vec![false],
                         result_ids: vec![],
+                        provenance: None,
+                        control_dependent: None,
                     }]
                 );
                 let values: [$ty; 2] = [0, 1];
@@ -273,7 +290,7 @@ macro_rules! integer_detector_trace_test {
                     data: values.as_ptr(),
                     mask: std::ptr::null(),
                 };
-                assert_eq!(*ctx.pending_result_reads.lock().expect("reads"), vec![10]);
+                assert_uninstrumented_traces(&ctx.get_named_result_traces());
                 unsafe {
                     if selene {
                         $selene_array(label.as_ptr(), 1, values.as_ptr(), 2);
@@ -281,20 +298,20 @@ macro_rules! integer_detector_trace_test {
                         $array(label.as_ptr(), 1, &dense);
                     }
                 }
-                // Integer arrays never add a trace or consume pending reads.
+                // Integer arrays never add a trace or bind provenance.
                 assert_eq!(ctx.get_named_result_traces().len(), 1);
-                assert_eq!(*ctx.pending_result_reads.lock().expect("reads"), vec![10]);
+                assert_uninstrumented_traces(&ctx.get_named_result_traces());
                 // Bool output appends to the declared integer storage under the same tag.
                 unsafe { print_bool_selene(b"i".as_ptr(), 1, true) };
                 assert_eq!(json_results()["i"], NamedResult::$variant(vec![0, 0, 1, 1]));
                 assert!(ctx.program_error.lock().expect("error").is_none());
-                assert!(ctx.pending_result_reads.lock().expect("reads").is_empty());
+                assert_uninstrumented_traces(&ctx.get_named_result_traces());
 
                 ctx.reset();
-                ctx.record_result_read(13);
+                ctx.stash_result_source(Some(13));
                 unsafe { scalar(label.as_ptr(), 1, 7) };
                 assert!(ctx.get_named_result_traces().is_empty());
-                assert_eq!(*ctx.pending_result_reads.lock().expect("reads"), vec![13]);
+                assert_uninstrumented_traces(&ctx.get_named_result_traces());
                 let mixed: [$ty; 2] = [0, 7];
                 let dense = $dense {
                     x: 2,
@@ -311,18 +328,18 @@ macro_rules! integer_detector_trace_test {
                 }
                 assert_eq!(json_results()["i"], NamedResult::$variant(vec![7, 0, 7]));
                 assert!(ctx.get_named_result_traces().is_empty());
-                assert_eq!(*ctx.pending_result_reads.lock().expect("reads"), vec![13]);
-                // An integer detector trace leaves the pending read for a real bool.
+                assert_uninstrumented_traces(&ctx.get_named_result_traces());
+                // Integer detector traces carry unavailable provenance.
                 unsafe { scalar(label.as_ptr(), 1, 1) };
                 assert!(ctx.program_error.lock().expect("error").is_none());
                 assert_eq!(json_results()["i"], NamedResult::$variant(vec![7, 0, 7, 1]));
                 assert!(ctx.get_named_result_traces()[0].result_ids.is_empty());
-                assert_eq!(*ctx.pending_result_reads.lock().expect("reads"), vec![13]);
+                assert_uninstrumented_traces(&ctx.get_named_result_traces());
 
                 ctx.reset();
-                ctx.record_result_read(17);
+                ctx.stash_result_source(Some(17));
                 unsafe { print_bool_selene(b"i".as_ptr(), 1, true) };
-                ctx.record_result_read(18);
+                ctx.stash_result_source(Some(18));
                 unsafe { scalar(label.as_ptr(), 1, 0) };
                 assert_eq!(json_results()["i"], NamedResult::$variant(vec![1, 0]));
                 assert_eq!(
@@ -331,19 +348,23 @@ macro_rules! integer_detector_trace_test {
                         NamedResultTrace {
                             name: "i".to_string(),
                             values: vec![true],
-                            result_ids: vec![17]
+                            result_ids: vec![],
+                            provenance: None,
+                            control_dependent: None,
                         },
                         NamedResultTrace {
                             name: "i".to_string(),
                             values: vec![false],
-                            result_ids: vec![]
+                            result_ids: vec![],
+                            provenance: None,
+                            control_dependent: None,
                         },
                     ]
                 );
 
                 for values in [&[0][..], &[1][..], &[0, 1][..], &[0, 2][..]] {
                     ctx.reset();
-                    ctx.record_result_read(19);
+                    ctx.stash_result_source(Some(19));
                     let values: Vec<$ty> = values.to_vec();
                     let dense = $dense {
                         x: i32::try_from(values.len()).expect("array length"),
@@ -359,7 +380,7 @@ macro_rules! integer_detector_trace_test {
                         }
                     }
                     assert!(ctx.get_named_result_traces().is_empty());
-                    assert_eq!(*ctx.pending_result_reads.lock().expect("reads"), vec![19]);
+                    assert_uninstrumented_traces(&ctx.get_named_result_traces());
                     assert_eq!(json_results()["i"], NamedResult::$variant(values));
                 }
 
@@ -370,7 +391,7 @@ macro_rules! integer_detector_trace_test {
                     data: std::ptr::null(),
                     mask: std::ptr::null(),
                 };
-                ctx.record_result_read(19);
+                ctx.stash_result_source(Some(19));
                 unsafe {
                     if selene {
                         $selene_array(label.as_ptr(), 1, std::ptr::null(), 0);
@@ -380,11 +401,10 @@ macro_rules! integer_detector_trace_test {
                 }
                 assert_eq!(json_results()["i"], NamedResult::$variant(vec![]));
                 assert!(ctx.get_named_result_traces().is_empty());
-                assert_eq!(*ctx.pending_result_reads.lock().expect("reads"), vec![19]);
+                assert_uninstrumented_traces(&ctx.get_named_result_traces());
                 unsafe { print_bool_selene(b"i".as_ptr(), 1, true) };
                 assert_eq!(json_results()["i"], NamedResult::$variant(vec![1]));
-                assert_eq!(ctx.get_named_result_traces()[0].result_ids, vec![19]);
-                assert!(ctx.pending_result_reads.lock().expect("reads").is_empty());
+                assert_uninstrumented_traces(&ctx.get_named_result_traces());
             }
         }
     };
@@ -424,7 +444,7 @@ fn float_zero_and_one_never_produce_detector_traces() {
     };
     for selene in [false, true] {
         ctx.reset();
-        ctx.record_result_read(1);
+        ctx.stash_result_source(Some(1));
         unsafe {
             if selene {
                 print_float_selene(b"f".as_ptr(), 1, 0.0);
@@ -433,9 +453,9 @@ fn float_zero_and_one_never_produce_detector_traces() {
             }
         }
         assert_eq!(ctx.get_named_result_traces(), []);
-        assert_eq!(ctx.pending_result_reads.lock().expect("reads").len(), 1);
-        ctx.record_result_read(2);
-        ctx.record_result_read(3);
+        assert_uninstrumented_traces(&ctx.get_named_result_traces());
+        ctx.stash_result_source(Some(2));
+        ctx.stash_result_source(Some(3));
         unsafe {
             if selene {
                 print_float_arr_selene(b"f".as_ptr(), 1, values.as_ptr(), 2);
@@ -444,10 +464,7 @@ fn float_zero_and_one_never_produce_detector_traces() {
             }
         }
         assert_eq!(ctx.get_named_result_traces(), []);
-        assert_eq!(
-            *ctx.pending_result_reads.lock().expect("reads"),
-            vec![1, 2, 3]
-        );
+        assert_uninstrumented_traces(&ctx.get_named_result_traces());
     }
 }
 
@@ -602,11 +619,11 @@ fn collection_reset_clears_reads_and_preserves_operation_reset_semantics() {
     let ctx = registered.context();
     for _ in 0..3 {
         unsafe { pecos_qis_reset_interface() };
-        assert!(ctx.pending_result_reads.lock().expect("reads").is_empty());
+        assert_uninstrumented_traces(&ctx.get_named_result_traces());
         assert!(with_interface(|interface| interface.operations.is_empty()));
         with_interface(|interface| interface.store_result(0, true));
         assert!(unsafe { ___read_future_bool(0) });
-        assert_eq!(*ctx.pending_result_reads.lock().expect("reads"), vec![0]);
+        assert_uninstrumented_traces(&ctx.get_named_result_traces());
         unsafe { __quantum__rt__qubit_allocate() };
         assert!(!with_interface(|interface| interface.operations.is_empty()));
     }
@@ -705,7 +722,7 @@ fn declared_types_widen_only_between_bool_and_integers() {
 }
 
 #[test]
-fn integer_diagnostic_preserves_bool_provenance() {
+fn uninstrumented_integer_and_bool_provenance_is_unavailable() {
     for selene in [false, true] {
         for unsigned in [false, true] {
             let registered = RegisteredContext::new();
@@ -725,7 +742,7 @@ fn integer_diagnostic_preserves_bool_provenance() {
                 .expect("trace JSON");
             assert_eq!(
                 json,
-                r#"[{"name":"diag","values":[true],"result_ids":[]},{"name":"a","values":[true],"result_ids":[0]}]"#
+                r#"[{"name":"diag","values":[true],"result_ids":[],"provenance":null,"control_dependent":null},{"name":"a","values":[true],"result_ids":[],"provenance":null,"control_dependent":null}]"#
             );
             println!("{json}");
         }
@@ -813,4 +830,145 @@ fn invalid_inputs_without_handler_record_and_return() {
             .to_string()
             .contains("__quantum__qis__h__body")
     );
+}
+
+#[test]
+fn instrumented_scalar_bool_exports_bind_measurement() {
+    use pecos_qis_ffi_types::ValueProvenance::Measurement;
+    let registered = RegisteredContext::new();
+    let context = registered.context();
+    for selene in [false, true] {
+        context.reset_outputs();
+        unsafe { crate::provenance::pecos_prov_begin_v1() };
+        context.stash_result_source(Some(17));
+        let handle = unsafe { crate::provenance::pecos_prov_take_seed_v1() };
+        unsafe {
+            crate::provenance::pecos_prov_bind_v1(handle);
+            if selene {
+                print_bool_selene(b"m".as_ptr(), 1, true);
+            } else {
+                print_bool(b"\x01m".as_ptr(), 1, true);
+            }
+        }
+        let traces = context.get_named_result_traces();
+        assert_eq!(traces.len(), 1);
+        assert_eq!(traces[0].provenance, Some(vec![Measurement { id: 17 }]));
+        assert_eq!(traces[0].result_ids, [17]);
+        assert_eq!(traces[0].control_dependent, Some(false));
+    }
+}
+
+#[test]
+fn instrumented_bool_array_exports_bind_measurements() {
+    use pecos_qis_ffi_types::ValueProvenance::Measurement;
+    let registered = RegisteredContext::new();
+    let context = registered.context();
+    let values = [false, true];
+    let dense = Dense1DArrayBool {
+        x: 2,
+        y: 100,
+        data: values.as_ptr(),
+        mask: std::ptr::null(),
+    };
+    for selene in [false, true] {
+        context.reset_outputs();
+        unsafe { crate::provenance::pecos_prov_begin_v1() };
+        {
+            let mut shadows = context.shadows.lock().unwrap();
+            shadows
+                .memory
+                .insert(values.as_ptr() as usize, Measurement { id: 8 });
+            shadows
+                .memory
+                .insert(values.as_ptr() as usize + 1, Measurement { id: 3 });
+        }
+        unsafe {
+            crate::provenance::pecos_prov_bind_v1(pecos_qis_ffi_types::provenance::CONSTANT);
+            if selene {
+                print_bool_arr_selene(b"m".as_ptr(), 1, values.as_ptr(), 2);
+            } else {
+                print_bool_arr(b"\x01m".as_ptr(), 1, &raw const dense);
+            }
+        }
+        let traces = context.get_named_result_traces();
+        assert_eq!(traces.len(), 1);
+        assert_eq!(
+            traces[0].provenance,
+            Some(vec![Measurement { id: 8 }, Measurement { id: 3 }])
+        );
+        assert_eq!(traces[0].result_ids, [8, 3]);
+        assert_eq!(traces[0].control_dependent, Some(false));
+    }
+}
+
+#[test]
+fn invalid_output_inputs_consume_bindings() {
+    use pecos_qis_ffi_types::provenance::CONSTANT;
+    let registered = RegisteredContext::new();
+    let context = registered.context();
+    for invalid in 0..6 {
+        context.reset_outputs();
+        unsafe {
+            crate::provenance::pecos_prov_begin_v1();
+            crate::provenance::pecos_prov_bind_v1(CONSTANT);
+            match invalid {
+                0 => print_bool_selene(std::ptr::null(), 1, true),
+                1 => print_bool_selene(b"m".as_ptr(), -1, true),
+                2 => print_bool_selene(b"\xff".as_ptr(), 1, true),
+                3 => print_bool_arr(b"\x01m".as_ptr(), 1, std::ptr::null()),
+                4 => print_bool_arr_selene(b"m".as_ptr(), 1, std::ptr::null(), 1),
+                _ => {
+                    let dense = Dense1DArrayBool {
+                        x: -1,
+                        y: 0,
+                        data: std::ptr::null(),
+                        mask: std::ptr::null(),
+                    };
+                    print_bool_arr(b"\x01m".as_ptr(), 1, &raw const dense);
+                }
+            }
+        }
+        let error = context.program_error.lock().unwrap().clone().unwrap();
+        assert!(
+            context.shadows.lock().unwrap().binding.is_none(),
+            "invalid case {invalid}"
+        );
+        unsafe {
+            crate::provenance::pecos_prov_bind_v1(CONSTANT);
+            print_bool_selene(b"later".as_ptr(), 5, false);
+        }
+        assert!(context.shadows.lock().unwrap().binding.is_none());
+        assert_eq!(*context.program_error.lock().unwrap(), Some(error));
+    }
+}
+
+#[test]
+fn invalid_numeric_outputs_preserve_pending_binding() {
+    use pecos_qis_ffi_types::provenance::CONSTANT;
+    let registered = RegisteredContext::new();
+    let context = registered.context();
+    for invalid in 0..9 {
+        context.reset_outputs();
+        unsafe {
+            crate::provenance::pecos_prov_begin_v1();
+            crate::provenance::pecos_prov_bind_v1(CONSTANT);
+            match invalid {
+                0 => print_int_selene(std::ptr::null(), 1, 1),
+                1 => print_uint_selene(std::ptr::null(), 1, 1),
+                2 => print_float_selene(std::ptr::null(), 1, 1.0),
+                3 => print_int_arr(b"\x01m".as_ptr(), 1, std::ptr::null()),
+                4 => print_uint_arr(b"\x01m".as_ptr(), 1, std::ptr::null()),
+                5 => print_float_arr(b"\x01m".as_ptr(), 1, std::ptr::null()),
+                6 => print_int_arr_selene(b"m".as_ptr(), 1, std::ptr::null(), 1),
+                7 => print_uint_arr_selene(b"m".as_ptr(), 1, std::ptr::null(), 1),
+                _ => print_float_arr_selene(b"m".as_ptr(), 1, std::ptr::null(), 1),
+            }
+        }
+        assert!(context.program_error.lock().unwrap().is_some());
+        assert_eq!(
+            context.shadows.lock().unwrap().binding,
+            Some(pecos_qis_ffi_types::ValueProvenance::Constant),
+            "invalid case {invalid}"
+        );
+    }
 }

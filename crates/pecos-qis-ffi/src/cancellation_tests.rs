@@ -365,7 +365,7 @@ fn cancelled_native_requests_do_not_publish_work_or_provenance() {
             Some(ProgramError::Cancelled)
         );
         assert_eq!(*ctx.get().runtime_response.lock().unwrap(), Some(987));
-        assert!(ctx.get().pending_result_reads.lock().unwrap().is_empty());
+        assert!(ctx.get().shadows.lock().unwrap().seed.is_none());
         assert!(ctx.get().native_future_sources.lock().unwrap().is_empty());
         assert_eq!(
             ctx.get().measurement_identities.lock().unwrap().next_source,

@@ -1785,16 +1785,6 @@ impl QisEngine {
         } else {
             (Vec::new(), BTreeMap::new())
         };
-        if named_result_traces.iter().any(|trace| {
-            trace
-                .result_ids
-                .iter()
-                .any(|id| *id >= pecos_qis_ffi_types::RUNTIME_REQUEST_RESULT_ID)
-        }) {
-            return Err(self.latch_terminal_error(
-                "named output has unknown native future provenance after an opaque custom call; cannot certify an operation trace".into()
-            ));
-        }
         self.trace_named_result_traces_chunk(&named_result_traces, named_results);
         Ok(())
     }

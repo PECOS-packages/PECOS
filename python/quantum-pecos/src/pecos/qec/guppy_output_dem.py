@@ -224,7 +224,15 @@ def infer_guppy_dem_annotations(
     for item in source_result_traces:
         if item.get("name") == raw_tag:
             width = len(item["values"])
-            bound_traces.append({**item, "result_ids": raw_ids[offset : offset + width]})
+            # The binding may be direct or empirical; discard stale shadow metadata.
+            bound_traces.append(
+                {
+                    **item,
+                    "result_ids": raw_ids[offset : offset + width],
+                    "provenance": None,
+                    "control_dependent": None,
+                },
+            )
             offset += width
 
     return InferredGuppyDemAnnotations(

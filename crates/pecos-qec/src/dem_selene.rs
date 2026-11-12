@@ -127,6 +127,22 @@ fn capture(
 }
 
 fn validate_shot(shot: &[OperationTraceChunk]) -> Result<(), DemBuildError> {
+    // Validate every output, including explicit requests and later probe shots.
+    let mut occurrences = BTreeMap::<&str, usize>::new();
+    for record in shot.iter().flat_map(|chunk| &chunk.named_result_traces) {
+        let occurrence = occurrences.entry(&record.name).or_default();
+        if let Some(provenance) = &record.provenance
+            && let Some(element) = provenance
+                .iter()
+                .position(|value| matches!(value, pecos_qis_ffi_types::ValueProvenance::Unknown))
+        {
+            return Err(preparation(format!(
+                "result tag {:?} occurrence {} has unknown provenance at element {element}",
+                record.name, occurrence
+            )));
+        }
+        *occurrence += 1;
+    }
     let Some(first) = shot.first() else {
         return Err(preparation("empty runtime trace"));
     };
@@ -671,12 +687,6 @@ fn analyze_baseline<'a>(
                 settings.raw_tag
             )));
         }
-        if ids != source {
-            return Err(preparation(format!(
-                "result tag {:?} must expose physical measurements in certified source order; {context}",
-                settings.raw_tag
-            )));
-        }
     }
     let detector_outputs = selectors(
         &baseline_rows,
@@ -942,6 +952,8 @@ mod tests {
             name: "raw measurements".into(),
             values: bits.to_vec(),
             result_ids: if direct { vec![7, 9] } else { vec![] },
+            provenance: None,
+            control_dependent: None,
         });
         shot[1].measurement_results =
             BTreeMap::from([(7, u32::from(bits[0])), (9, u32::from(bits[1]))]);
@@ -982,7 +994,7 @@ mod tests {
             .collect()
     }
 
-    fn analysis_error(result: Result<SeleneDemEvidence, DemBuildError>, expected: &str) {
+    fn analysis_error<T>(result: Result<T, DemBuildError>, expected: &str) {
         match result {
             Err(error) => assert!(error.to_string().contains(expected), "{error}"),
             Ok(_) => panic!("analysis accepted corrupt evidence; expected {expected}"),
@@ -990,22 +1002,91 @@ mod tests {
     }
 
     #[test]
-    fn analysis_rejects_permuted_direct_ids_in_baseline() {
-        let mut baseline = inference_trace(true, [true, false]);
-        baseline[0].named_result_traces[0].result_ids = vec![9, 7];
+    fn analysis_rejects_unknown_provenance_in_baseline_and_probes() {
+        use pecos_qis_ffi_types::ValueProvenance::{Constant, Unknown};
+        let add_unknown = |shot: &mut TraceShot| {
+            let record = NamedResultTrace {
+                name: "unused".into(),
+                values: vec![false, false],
+                result_ids: vec![],
+                provenance: Some(vec![Constant, Constant]),
+                control_dependent: Some(false),
+            };
+            shot[0].named_result_traces.push(record.clone());
+            shot[0].named_result_traces.push(NamedResultTrace {
+                provenance: Some(vec![Constant, Unknown]),
+                ..record
+            });
+        };
+        let expected = "result tag \"unused\" occurrence 1 has unknown provenance at element 1";
+        for required in [false, true] {
+            let settings = analysis_settings().with_require_raw_provenance(required);
+            let request = analysis_request(&settings);
+            let mut baseline = inference_trace(true, [false, true]);
+            add_unknown(&mut baseline);
+            analysis_error(analyze_baseline(baseline, &request, 32), expected);
+            let analysis =
+                analyze_baseline(inference_trace(true, [false, true]), &request, 32).unwrap();
+            let mut probes = inference_probes(true);
+            add_unknown(&mut probes[0]);
+            analysis_error(analyze_probes(analysis, &probes), expected);
+        }
+    }
+
+    #[test]
+    fn analysis_accepts_permuted_direct_ids_and_checks_physical_columns() {
+        let permute = |mut shot: TraceShot| {
+            let record = &mut shot[0].named_result_traces[0];
+            record.result_ids.reverse();
+            record.values.reverse();
+            let NamedResult::Bool(values) =
+                shot[0].named_results.get_mut("raw measurements").unwrap()
+            else {
+                panic!("raw measurement fixture must contain bools");
+            };
+            values.reverse();
+            shot
+        };
+        let baseline = permute(inference_trace(true, [true, false]));
+        let mut probes: Vec<_> = (0..64)
+            .map(|i| permute(inference_trace(true, [i % 2 == 0, i % 2 == 1])))
+            .collect();
+        let settings = analysis_settings().with_probe_shots(64);
+        let request = analysis_request(&settings);
+        let analysis = analyze_baseline(baseline.clone(), &request, 32).unwrap();
+        let evidence = analyze_probes(analysis, &probes).unwrap();
+        assert_eq!(evidence.binding, Some("runtime_result_ids"));
+        assert_eq!(evidence.correlation_shots, 0);
+        let data = evidence.probes.unwrap();
+        assert_eq!(data.raw_measurement_ids, [9, 7]);
+        for (row, shot) in data.raw_rows.iter().zip(&probes) {
+            assert_eq!(*row, physical_row(shot, &[9, 7]).unwrap());
+        }
+        probes[63][1].measurement_results.insert(9, 0);
+        let analysis = analyze_baseline(baseline, &request, 32).unwrap();
         analysis_error(
-            analyze_test_shots(baseline, &inference_probes(true)),
-            "certified source order; tag ids=[9, 7], source ids=[7, 9]",
+            analyze_probes(analysis, &probes),
+            "raw measurement binding changed",
         );
     }
 
     #[test]
-    fn analysis_rejects_incomplete_direct_ids_in_baseline() {
+    fn analysis_rejects_duplicate_direct_ids_in_baseline() {
         let mut baseline = inference_trace(true, [true, false]);
         baseline[0].named_result_traces[0].result_ids = vec![7, 7];
         analysis_error(
             analyze_test_shots(baseline, &inference_probes(true)),
             "exactly once; tag ids=[7, 7], source ids=[7, 9]",
+        );
+    }
+
+    #[test]
+    fn analysis_rejects_missing_source_id_in_baseline() {
+        let mut baseline = inference_trace(true, [true, false]);
+        baseline[0].named_result_traces[0].result_ids = vec![7, 42];
+        analysis_error(
+            analyze_test_shots(baseline, &inference_probes(true)),
+            "exactly once; tag ids=[7, 42], source ids=[7, 9]",
         );
     }
 
@@ -1271,6 +1352,8 @@ mod tests {
                 name: "raw".into(),
                 values: vec![true],
                 result_ids: vec![7],
+                provenance: None,
+                control_dependent: None,
             });
         let error = raw_row(&shot, &named_rows(&shot), "raw")
             .unwrap_err()

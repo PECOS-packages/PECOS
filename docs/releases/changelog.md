@@ -40,6 +40,15 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 - Added Python Relay-BP explicit gamma rows and sampling interval setters, plus
   GIL-releasing flat-byte batch decoding for native Relay-BP and min-sum BP.
+
+- **Breaking:** Named-result measurement identity now comes from a compile-time
+  shadow pass instead of read adjacency, so reordered reads and copied arrays
+  retain exact measurement IDs. `NamedResultTrace` gains `provenance` and
+  `control_dependent`. QIS FFI ABI advances from 7 to 8; rebuild both the host
+  and QIS FFI artifacts. DEM consumers reject outputs with unknown provenance,
+  and the native DEM builder accepts exact ID permutations while retaining
+  bijection and physical-outcome checks. Fixes SZZ final readout binding (#498).
+
 - Relay-BP and min-sum decoders built from a DEM merge mechanisms with identical
   detector and observable sets using independent-XOR probabilities. This improves
   decoding of repeated symptoms, such as stim's flattened multi-round DEMs.
@@ -88,6 +97,11 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   and samples random gammas from one per-shot RNG stream in leg order, changing
   seeded outcomes. `BpGraph::from_dense_check_matrix` validates dense binary
   matrices and per-mechanism error probabilities.
+
+- Fixed generator-certified Guppy DEM builds binding measurements from layout
+  order when provenance was missing. Every layout slot now requires independent
+  runtime provenance or compiled scalar analysis, with agreement required when
+  both are available.
 
 - **Breaking:** Guppy code generation rejects `For` labels that shadow a register,
   allocator, block input or generated temporary. Loop labels, registers,

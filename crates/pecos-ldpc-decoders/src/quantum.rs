@@ -10,7 +10,7 @@ use crate::{BpMethod, LdpcError};
 use cxx::UniquePtr;
 use ndarray::{Array1, Array2, ArrayView1};
 
-/// Validates MBP's error rate and XYZ weights and normalizes the weights to sum to 1.
+/// Validates MBP's error rate and XYZ weights and divides the weights by their sum.
 ///
 /// The C++ core builds `error_rate * bias` channel probabilities unchecked, so only a
 /// probability and finite non-negative weights may pass.
@@ -30,18 +30,21 @@ fn mbp_channel(error_rate: f64, xyz_bias: [f64; 3]) -> Result<(f64, [f64; 3]), L
         )));
     }
 
-    // Normalize the relative weights to sum to 1. Dividing by the largest weight first keeps
-    // the sum finite for any finite weights; `+ 0.0` turns -0.0 into +0.0 so the core's
-    // log-likelihoods never see -0.0.
-    let bias_max = xyz_bias.iter().copied().fold(0.0, f64::max);
-    if bias_max <= 0.0 {
+    // Normalize the relative weights by their sum. Only when that sum overflows are the
+    // weights first quartered: a power-of-two scale leaves every representable ratio
+    // unchanged, and a quarter of three finite weights cannot overflow. `+ 0.0` turns -0.0
+    // into +0.0 so the core's log-likelihoods never see -0.0.
+    let mut weights = xyz_bias;
+    if weights.iter().sum::<f64>().is_infinite() {
+        weights = weights.map(|weight| weight * 0.25);
+    }
+    let weight_sum: f64 = weights.iter().sum();
+    if weight_sum <= 0.0 {
         return Err(LdpcError::InvalidInput(format!(
             "xyz_bias must have a positive entry, got {xyz_bias:?}"
         )));
     }
-    let scaled_bias = xyz_bias.map(|bias| bias / bias_max);
-    let scaled_sum: f64 = scaled_bias.iter().sum();
-    let normalized_bias = scaled_bias.map(|bias| bias / scaled_sum + 0.0);
+    let normalized_bias = weights.map(|weight| weight / weight_sum + 0.0);
     Ok((error_rate + 0.0, normalized_bias))
 }
 
@@ -365,17 +368,24 @@ mod tests {
         }
         assert!(build(0.1, [1.0, 0.0, 1.0]).is_ok());
 
-        // The normalized channel is exact for equivalent weights: weights that would overflow
-        // a plain sum mean the same as their ratio, and -0.0 (whose log-likelihood would be
-        // NaN) reaches the core as +0.0.
+        // Weights whose sum fits are divided by that plain sum; weights whose sum overflows
+        // keep their meaning; -0.0 (whose log-likelihood would be NaN) reaches the core as
+        // +0.0.
         let channel = |rate: f64, bias: [f64; 3]| mbp_channel(rate, bias).unwrap();
+        let weights = [0.1, 0.2, 0.3];
+        let sum = weights[0] + weights[1] + weights[2];
+        assert_eq!(
+            channel(0.1, weights),
+            (0.1, weights.map(|weight| weight / sum))
+        );
+        assert_eq!(channel(0.1, [0.0, 1.0, 3.0]), (0.1, [0.0, 0.25, 0.75]));
+        assert_eq!(channel(0.1, [5e-324, 5e-324, 0.0]), (0.1, [0.5, 0.5, 0.0]));
         let third = 1.0 / 3.0;
         assert_eq!(channel(0.1, [1e308; 3]), (0.1, [third; 3]));
         assert_eq!(
-            channel(0.1, [f64::MAX, 0.0, f64::MAX]),
-            (0.1, [0.5, 0.0, 0.5])
+            channel(0.1, [0.0, f64::MAX, f64::MAX]),
+            (0.1, [0.0, 0.5, 0.5])
         );
-        assert_eq!(channel(0.1, [2.0, 1.0, 1.0]), (0.1, [0.5, 0.25, 0.25]));
         let (rate, bias) = channel(-0.0, [1.0, -0.0, 1.0]);
         assert!(rate.is_sign_positive(), "{rate}");
         assert!(

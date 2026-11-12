@@ -62,6 +62,17 @@ impl FaultFlipper {
         }
     }
 
+    /// Draws the next random f64 from the seeded flipper's RNG.
+    pub fn next_f64(&mut self) -> f64 {
+        let rng = match self {
+            Self::BasicSingle(flipper) => &mut flipper.rng,
+            Self::WeightedSingle(flipper) => &mut flipper.rng,
+            Self::BasicSubregion(flipper) => &mut flipper.rng,
+            Self::WeightedSubregion(flipper) => &mut flipper.rng,
+        };
+        rng.as_mut().expect("Flipper must be seeded").next_f64()
+    }
+
     pub fn random_flip_and_ratio(&mut self, history: &FaultHistory) -> (FaultHistory, f64) {
         match self {
             Self::BasicSingle(flipper) => flipper.random_flip_and_ratio(history),

@@ -238,12 +238,16 @@ pecos-uf-decoder = { version = "0.2.0-dev.0", path = "crates/pecos-uf-decoder" }
 pecos-wasm = { version = "0.2.0-dev.0", path = "crates/pecos-wasm" }
 pecos-zx = { version = "0.2.0-dev.0", path = "exp/pecos-zx" }
 
-# Faster linking on supported platforms (everything else is cargo's default)
+# split-debuginfo: faster linking on supported platforms.
+# debug = "line-tables-only": backtraces keep file:line, but debuggers cannot
+# inspect variables. Smaller target dirs and faster builds than full debuginfo.
 [profile.dev]
 split-debuginfo = "unpacked"
+debug = "line-tables-only"
 
 [profile.test]
 split-debuginfo = "unpacked"
+debug = "line-tables-only"
 
 # The release profile
 [profile.release]

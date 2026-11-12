@@ -59,6 +59,7 @@ from pecos._traced_circuit import (
     measurement_ids_in_execution_order,
     normalize_traced_tick_circuit,
 )
+from pecos._value_provenance import known_provenance_traces
 from pecos.programs import Guppy
 from pecos.qec import _qis_result_tags
 from pecos.qec._idle_noise import _translate_structured_idle_noise
@@ -842,7 +843,7 @@ def _compiler_certified_result_traces(
     required = set(required_tags)
     runtime_arities: dict[tuple[str, int], int] = {}
     runtime_occurrences: dict[str, int] = {}
-    for trace in runtime_result_traces:
+    for trace in known_provenance_traces(runtime_result_traces):
         tag = trace.get("name")
         if not isinstance(tag, str):
             continue
@@ -877,6 +878,8 @@ def _compiler_certified_result_traces(
                         "occurrence": occurrence,
                         "values": [False] * arity,
                         "result_ids": [],
+                        "provenance": None,
+                        "control_dependent": None,
                     },
                 )
                 continue
@@ -929,7 +932,7 @@ def _generator_certified_result_traces(
         raise ValueError(msg)
 
     runtime_value_count: dict[str, int] = {}
-    for trace in runtime_result_traces:
+    for trace in known_provenance_traces(runtime_result_traces):
         tag = trace.get("name")
         values = trace.get("values")
         if isinstance(tag, str) and isinstance(values, list):
@@ -963,7 +966,7 @@ def _generator_certified_result_traces(
     # the binding.
     runtime_ids_by_slot: dict[tuple[str, int], int] = {}
     runtime_offsets: dict[str, int] = {}
-    for trace in runtime_result_traces:
+    for trace in known_provenance_traces(runtime_result_traces):
         tag = trace.get("name")
         values = trace.get("values")
         result_ids = trace.get("result_ids")

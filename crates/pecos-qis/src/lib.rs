@@ -78,6 +78,7 @@ pub mod prelude;
 
 pub mod control_provenance;
 pub mod decoder_batches;
+pub mod measurement_provenance;
 pub mod qis_interface;
 pub mod runtime;
 pub mod runtime_decoder;

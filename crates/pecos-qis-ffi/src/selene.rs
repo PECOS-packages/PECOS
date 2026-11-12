@@ -758,12 +758,7 @@ fn record_native_read(future: u64) -> Result<(), String> {
     if source.is_none() {
         ctx.native_provenance_unknown.store(true, Ordering::SeqCst);
     }
-    // A custom-created future is readable, but has no observed source
-    // measurement. Audited DEM binding rejects this reserved provenance ID.
-    ctx.pending_result_reads
-        .lock()
-        .map_err(|_| "poisoned result provenance")?
-        .push(source.unwrap_or(RUNTIME_REQUEST_RESULT_ID));
+    ctx.stash_result_source(source);
     Ok(())
 }
 
@@ -1596,7 +1591,7 @@ mod tests {
         assert!(ctx.0.measurement_results.lock().unwrap().is_empty());
         queue_runtime_request(Ok(RuntimeRequest::GlobalBarrier { sleep_ns: 0 })).unwrap();
         assert_eq!(*ctx.0.runtime_response.lock().unwrap(), None);
-        assert_eq!(ctx.0.pending_result_reads.lock().unwrap().len(), 0);
+        assert!(ctx.0.shadows.lock().unwrap().seed.is_none());
     }
 
     #[test]

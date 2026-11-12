@@ -391,13 +391,12 @@ impl ClassicalControlEngineBuilder for QisEngineBuilder {
                 "Creating dynamic interface from program source ({} bytes)",
                 program_source.len()
             );
-            let (compiled_source, manifest) = if self.decoder_control_capture {
-                let (source, manifest) = crate::control_provenance::instrument(program_source)
-                    .map_err(|error| PecosError::Input(error.to_string()))?;
-                (source, Some(manifest))
-            } else {
-                (program_source.clone(), None)
-            };
+            let (compiled_source, manifest) = prepare_program(
+                program_source,
+                self.decoder_control_capture,
+                self.operation_trace_collector.is_some() || self.operation_trace_dir.is_some(),
+            )
+            .map_err(|error| PecosError::Input(error.to_string()))?;
             let qis_prog = pecos_programs::Qis::from_string(&compiled_source);
             let dynamic_interface = builder.create_dynamic_interface_from_qis(qis_prog)?;
             log::debug!("Dynamic interface created successfully");
@@ -468,6 +467,25 @@ impl ClassicalControlEngineBuilder for QisEngineBuilder {
                 .to_string(),
         ))
     }
+}
+
+pub(crate) fn prepare_program(
+    original: &str,
+    control: bool,
+    trace: bool,
+) -> Result<(String, Option<crate::control_provenance::ControlManifest>), crate::InterfaceError> {
+    let (source, manifest) = if control {
+        let (source, manifest) = crate::control_provenance::instrument(original)?;
+        (source, Some(manifest))
+    } else {
+        (original.to_string(), None)
+    };
+    let source = if trace {
+        crate::measurement_provenance::instrument(&source)?
+    } else {
+        source
+    };
+    Ok((source, manifest))
 }
 
 /// Convenience function to create a `QisEngineBuilder`

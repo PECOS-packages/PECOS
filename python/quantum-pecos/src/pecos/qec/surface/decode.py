@@ -71,6 +71,7 @@ from pecos._traced_circuit import (
     measurement_ids_in_execution_order,
     normalize_traced_tick_circuit,
 )
+from pecos._value_provenance import known_provenance_traces
 from pecos.qec._idle_noise import _translate_structured_idle_noise
 from pecos.qec.measurement_layout import abstract_result_refs
 from pecos.qec.surface._check_plan import require_current_surface_check_plan_renderer, resolve_surface_check_plan
@@ -1063,7 +1064,7 @@ def _validate_surface_array_slot_provenance(
 ) -> None:
     """Compare collected-array IDs against any emitted per-element evidence."""
     unbound_final_slots: set[int] = set()
-    for trace in result_traces:
+    for trace in known_provenance_traces(result_traces):
         name = trace.get("name")
         values = trace.get("values")
         result_ids = trace.get("result_ids")
@@ -1110,7 +1111,7 @@ def _index_surface_result_trace_ids(
     """Index runtime named-result provenance by tag name."""
     scalar_trace_ids: dict[str, list[int]] = {}
     array_trace_ids: dict[str, list[list[int]]] = {}
-    for trace in result_traces:
+    for trace in known_provenance_traces(result_traces):
         name = trace.get("name")
         values = trace.get("values")
         result_ids = trace.get("result_ids")
@@ -1123,9 +1124,8 @@ def _index_surface_result_trace_ids(
                 # The aggregate tag below is validated against source order.
                 continue
             if not result_ids and name in {"init_synx", "init_synz", "synx", "synz"}:
-                # Per-measurement scalar tags are the authoritative syndrome
-                # provenance. The aggregate array is intentionally unbound
-                # when those scalar reads have already been consumed.
+                # Legacy traces may omit aggregate syndrome IDs. Their
+                # per-measurement scalar sidebands still supply the binding.
                 continue
             msg = (
                 f"runtime result tag {name!r} has {len(values)} value(s) but "

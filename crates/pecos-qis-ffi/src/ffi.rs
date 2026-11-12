@@ -424,10 +424,10 @@ pub unsafe extern "C-unwind" fn __quantum__rt__result_allocate() -> i64 {
 
 // --- Result Retrieval ---
 
-fn record_result_read(result_id: usize) {
+fn stash_result_source(result_id: usize) {
     if let Some(ctx) = crate::get_execution_context() {
         // SAFETY: Context is valid for duration of execution.
-        unsafe { &*ctx }.record_result_read(result_id);
+        unsafe { &*ctx }.stash_result_source(Some(result_id));
     }
 }
 
@@ -451,7 +451,7 @@ unsafe fn dynamic_read(result_id: usize, boolean: bool) -> u64 {
         return 0;
     };
     checkpoint!(0);
-    record_result_read(result_id);
+    stash_result_source(result_id);
     outcome
 }
 
@@ -480,7 +480,7 @@ pub unsafe extern "C-unwind" fn __quantum__rt__result_get_one(result: i64) -> i3
     let existing_result = with_interface(|interface| interface.get_result(result_id));
 
     if let Some(value) = existing_result {
-        record_result_read(result_id);
+        stash_result_source(result_id);
         return i32::from(value);
     }
 
@@ -500,7 +500,7 @@ pub unsafe extern "C-unwind" fn __quantum__rt__result_get_one(result: i64) -> i3
                     0
                 },
                 |value| {
-                    record_result_read(result_id);
+                    stash_result_source(result_id);
                     i32::from(value)
                 },
             )
@@ -1051,7 +1051,7 @@ pub unsafe extern "C-unwind" fn ___read_future_bool(future_id: i64) -> bool {
         return unsafe { dynamic_read(result_id, true) } == 1;
     }
     if let Some(result) = with_interface(|interface| interface.get_result(result_id)) {
-        record_result_read(result_id);
+        stash_result_source(result_id);
         return result;
     }
 
@@ -1418,6 +1418,16 @@ pub type Dense1DArrayInt = Dense1DArray<i64>;
 pub type Dense1DArrayUint = Dense1DArray<u64>;
 pub type Dense1DArrayFloat = Dense1DArray<f64>;
 
+// Validation can fail before shared storage receives the output. Bool callers
+// consume their binding before transfer, with no context mutex held at transfer.
+unsafe fn fatal_named_output_input(entry: &str, detail: String, is_bool_call: bool) {
+    if is_bool_call && let Some(context) = crate::get_execution_context() {
+        // SAFETY: The registered context lives for the duration of execution.
+        let _ = unsafe { &*context }.take_output_binding();
+    }
+    unsafe { fatal_ffi_input(entry, detail) };
+}
+
 /// Both string ABIs converge here after the direct form skips its length byte.
 unsafe fn record_named_output(
     label_ptr: *const u8,
@@ -1426,29 +1436,38 @@ unsafe fn record_named_output(
     scalar_prefix: &str,
     array_prefix: &str,
     entry: &str,
-    is_scalar: bool,
+    array: Option<usize>,
 ) {
+    let is_bool_call = matches!(&values, crate::NamedResult::Bool(_));
     let Ok(len) = usize::try_from(label_len) else {
         drop(values);
         unsafe {
-            fatal_ffi_input(
+            fatal_named_output_input(
                 entry,
                 format!("label length={label_len} does not fit usize"),
+                is_bool_call,
             );
         };
         return;
     };
     if label_ptr.is_null() {
         drop(values);
-        unsafe { fatal_ffi_input(entry, format!("label pointer=null, length={label_len}")) };
+        unsafe {
+            fatal_named_output_input(
+                entry,
+                format!("label pointer=null, length={label_len}"),
+                is_bool_call,
+            );
+        };
         return;
     }
     if len > isize::MAX as usize {
         drop(values);
         unsafe {
-            fatal_ffi_input(
+            fatal_named_output_input(
                 entry,
                 format!("label length={label_len} exceeds isize::MAX"),
+                is_bool_call,
             );
         };
         return;
@@ -1457,7 +1476,13 @@ unsafe fn record_named_output(
     let bytes = unsafe { std::slice::from_raw_parts(label_ptr, len) };
     let Ok(label) = std::str::from_utf8(bytes) else {
         drop(values);
-        unsafe { fatal_ffi_input(entry, format!("invalid UTF-8 label={bytes:?}")) };
+        unsafe {
+            fatal_named_output_input(
+                entry,
+                format!("invalid UTF-8 label={bytes:?}"),
+                is_bool_call,
+            );
+        };
         return;
     };
     let name = label
@@ -1466,7 +1491,10 @@ unsafe fn record_named_output(
         .unwrap_or(label);
     if let Some(ctx) = crate::get_execution_context() {
         // SAFETY: The registered context lives for the duration of execution.
-        unsafe { &*ctx }.store_named_result(name, values, is_scalar);
+        let location = array.map_or(crate::OutputLocation::Scalar, |address| {
+            crate::OutputLocation::Array { address }
+        });
+        unsafe { &*ctx }.store_named_result_with_address(name, values, location);
     } else {
         log::error!("Cannot record named result '{name}': no execution context registered");
     }
@@ -1476,8 +1504,9 @@ unsafe fn result_array<'a, T>(ptr: *const T, len: u64) -> Result<&'a [T], String
     let len = checked_slice_len::<T>(len)?;
     if len == 0 {
         // Compatibility exception: the parent rejected null data even at zero
-        // length. Accepting it now records an empty Bool result and empty trace.
-        // This is the sole exception to bool byte-compatibility; it drains nothing.
+        // length. The bool caller records an empty result and trace, and consumes
+        // its binding downstream. This is the sole exception to bool
+        // byte-compatibility.
         return Ok(&[]);
     }
     if ptr.is_null() || !ptr.is_aligned() {
@@ -1524,16 +1553,23 @@ macro_rules! named_result_exports {
         ) {
             if arr.is_null() || !arr.is_aligned() {
                 unsafe {
-                    fatal_ffi_input(
+                    fatal_named_output_input(
                         stringify!($array),
                         format!("array pointer={arr:?} is null or misaligned"),
+                        std::any::TypeId::of::<$ty>() == std::any::TypeId::of::<bool>(),
                     )
                 };
                 return;
             }
             let arr = unsafe { &*arr };
             let Ok(len) = u64::try_from(arr.x) else {
-                unsafe { fatal_ffi_input(stringify!($array), format!("array length={}", arr.x)) };
+                unsafe {
+                    fatal_named_output_input(
+                        stringify!($array),
+                        format!("array length={}", arr.x),
+                        std::any::TypeId::of::<$ty>() == std::any::TypeId::of::<bool>(),
+                    )
+                };
                 return;
             };
             let data = if label_ptr.is_null() {
@@ -1562,7 +1598,7 @@ macro_rules! named_result_exports {
                     concat!("USER:", $prefix, ":"),
                     concat!("USER:", $prefix, "ARR:"),
                     stringify!($selene_scalar),
-                    true,
+                    None,
                 )
             };
         }
@@ -1589,11 +1625,17 @@ macro_rules! named_result_exports {
                             concat!("USER:", $prefix, ":"),
                             concat!("USER:", $prefix, "ARR:"),
                             stringify!($selene_array),
-                            false,
+                            Some(arr_ptr as usize),
                         )
                     };
                 }
-                Err(detail) => unsafe { fatal_ffi_input(stringify!($selene_array), detail) },
+                Err(detail) => unsafe {
+                    fatal_named_output_input(
+                        stringify!($selene_array),
+                        detail,
+                        std::any::TypeId::of::<$ty>() == std::any::TypeId::of::<bool>(),
+                    )
+                },
             }
         }
     };
@@ -1755,7 +1797,12 @@ fn allocate_program_memory(size: u64) -> Result<*mut u8, String> {
     if ptr.is_null() {
         return Err(format!("size={size}: malloc returned null"));
     }
-    allocations.insert(ptr as usize);
+    allocations.insert(ptr as usize, size_t);
+    drop(allocations);
+    ctx.shadows
+        .lock()
+        .map_err(|_| "poisoned heap shadow")?
+        .clear_memory(ptr as usize, size_t);
     crate::LIVE_PROGRAM_ALLOCATIONS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     crate::TOTAL_PROGRAM_ALLOCATIONS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     Ok(ptr)
@@ -1784,11 +1831,12 @@ fn free_program_memory(ptr: *mut u8) -> Result<(), String> {
         .lock()
         .map_err(|e| format!("pointer={ptr:?}: allocation lock error: {e}"))?
         .remove(&(ptr as usize));
-    if !removed {
-        return Err(format!(
-            "pointer={ptr:?} is not a live allocation owned by this context"
-        ));
-    }
+    let size = removed
+        .ok_or_else(|| format!("pointer={ptr:?} is not a live allocation owned by this context"))?;
+    ctx.shadows
+        .lock()
+        .map_err(|_| "poisoned heap shadow")?
+        .clear_memory(ptr as usize, size);
     unsafe { ctx.free_program_allocation(ptr.cast()) };
     Ok(())
 }
@@ -2552,45 +2600,39 @@ mod tests {
     }
 
     #[test]
-    fn test_named_result_trace_consumes_recorded_result_reads() {
+    fn test_named_trace_uses_binding_and_array_memory() {
+        use pecos_qis_ffi_types::ValueProvenance::Measurement;
         let ctx = crate::ExecutionContext::new();
-
-        ctx.record_result_read(7);
+        let values = [false, true];
+        {
+            let mut s = ctx.shadows.lock().unwrap();
+            s.instrumented = true;
+            s.binding = Some(Measurement { id: 7 });
+            s.memory
+                .insert(values.as_ptr() as usize, Measurement { id: 8 });
+            s.memory
+                .insert(values.as_ptr() as usize + 1, Measurement { id: 9 });
+        }
+        // Unrelated reads cannot change the explicit binding or memory shadows.
+        ctx.stash_result_source(Some(99));
         ctx.store_named_bool("m", true);
-        ctx.record_result_read(8);
-        ctx.record_result_read(9);
-        ctx.store_named_array("arr", &[false, true]);
-
+        ctx.shadows.lock().unwrap().binding = Some(pecos_qis_ffi_types::ValueProvenance::Constant);
+        ctx.store_named_array("arr", &values);
         let traces = ctx.get_named_result_traces();
-        assert_eq!(traces.len(), 2);
-        assert_eq!(traces[0].name, "m");
-        assert_eq!(traces[0].values, vec![true]);
         assert_eq!(traces[0].result_ids, vec![7]);
-        assert_eq!(traces[1].name, "arr");
-        assert_eq!(traces[1].values, vec![false, true]);
         assert_eq!(traces[1].result_ids, vec![8, 9]);
+        assert_eq!(traces[0].provenance, Some(vec![Measurement { id: 7 }]));
     }
 
     #[test]
-    fn test_named_result_trace_rejects_ambiguous_recorded_reads() {
+    fn test_uninstrumented_reads_never_bind_outputs() {
         let ctx = crate::ExecutionContext::new();
-
-        ctx.record_result_read(7);
-        ctx.record_result_read(8);
-        ctx.store_named_bool("computed", true);
-
-        let traces = ctx.get_named_result_traces();
-        assert_eq!(traces.len(), 1);
-        let result_ids = &traces[0].result_ids;
-        assert!(
-            result_ids.is_empty(),
-            "expected no result IDs, got {result_ids:?}"
-        );
-
-        ctx.record_result_read(9);
-        ctx.store_named_bool("next", false);
-        let traces = ctx.get_named_result_traces();
-        assert_eq!(traces[1].result_ids, vec![9]);
+        ctx.stash_result_source(Some(7));
+        ctx.store_named_bool("m", true);
+        let trace = &ctx.get_named_result_traces()[0];
+        assert_eq!(trace.result_ids, [] as [usize; 0]);
+        assert!(trace.provenance.is_none());
+        assert!(trace.control_dependent.is_none());
     }
 
     #[test]

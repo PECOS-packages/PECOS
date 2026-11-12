@@ -428,8 +428,8 @@ keys, wrong JSON types and invalid distributions are errors. For example:
 }
 ```
 
-Python uses the identical parser through `general_noise().with_loss(loss_dict)` or
-`with_config_json(json.dumps({"loss": loss_dict}))`:
+In Python, `general_noise().with_loss(loss_dict)` converts the dict strictly to JSON, then
+uses the same parser as `with_config_json(json.dumps({"loss": loss_dict}))`:
 
 ```python
 from pecos_rslib import general_noise
@@ -531,7 +531,7 @@ An events outer probability scales with overall times the site's single-/two-qub
 Conditional event weights, recovery detection rates, and **both** `lost_partner` entries
 are unscaled. In particular, `scaling.overall` does not reach partner loss or its Pauli model.
 All probabilities must be finite in `[0, 1]`, both before and after scaling; conditional
-weights must sum to one within `1e-5`. Every new loss probability exactly zero after scaling
+weights must sum to one within `1e-5`. Every loss probability exactly zero after scaling
 makes no draw; every positive probability (including one) draws once. This includes FN/FP
 and spreading. Categorical draws and the fallback lost-readout flip are exceptions: they
 always draw when reached. Recovery's fair coin always draws.

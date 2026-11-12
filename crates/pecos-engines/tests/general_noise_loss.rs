@@ -1564,15 +1564,19 @@ fn loss_unknown_keys_preserve_literal_names() {
     for (value, expected) in [
         (
             json!({"enabled":true,"":0}),
-            "Input error: loss. = 0: remove this unknown key",
+            r#"Input error: loss."" = 0: remove this unknown key"#,
         ),
         (
             json!({"enabled":true,"lost_partner":{"":0}}),
-            "Input error: loss.lost_partner. = 0: remove this unknown key",
+            r#"Input error: loss.lost_partner."" = 0: remove this unknown key"#,
         ),
         (
             json!({"enabled":true,"typo.":0}),
             "Input error: loss.typo. = 0: remove this unknown key",
+        ),
+        (
+            json!({"enabled":false,"":0}),
+            r#"Input error: loss."" is set but loss.enabled is false"#,
         ),
     ] {
         assert_eq!(

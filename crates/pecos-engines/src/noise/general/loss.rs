@@ -334,6 +334,11 @@ impl QubitLossBuilder {
     }
 }
 
+// An empty key would otherwise render as a bare trailing separator.
+fn key_name(key: &str) -> &str {
+    if key.is_empty() { "\"\"" } else { key }
+}
+
 // Object prefixes end in a separator; literal unknown keys must retain theirs.
 fn invalid_object(field: &str, value: &Value) -> PecosError {
     let path = format!("loss.{field}");
@@ -354,7 +359,7 @@ fn object<'a>(
     for (key, value) in obj {
         if !keys.contains(&key.as_str()) {
             return Err(invalid(
-                &format!("{field}{key}"),
+                &format!("{field}{}", key_name(key)),
                 value,
                 "remove this unknown key",
             ));
@@ -415,7 +420,8 @@ impl QubitLoss {
         if !boolean("enabled", required(obj, "enabled", "")?)? {
             if let Some(key) = obj.keys().find(|k| *k != "enabled") {
                 return Err(PecosError::Input(format!(
-                    "loss.{key} is set but loss.enabled is false"
+                    "loss.{} is set but loss.enabled is false",
+                    key_name(key)
                 )));
             }
             return Ok(None);

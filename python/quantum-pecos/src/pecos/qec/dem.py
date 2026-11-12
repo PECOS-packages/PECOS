@@ -636,7 +636,8 @@ class _DetectorErrorModelMixin:
             ``if measure(q): x(other)``) is rejected before tracing. Generic
             branching and looping HUGR control flow is conservatively rejected
             because one sampled branch cannot certify a static circuit. Built-in
-            generators may carry a trusted static measurement-layout certificate.
+            generators may carry a measurement-layout certificate that admits their
+            static schedule; its layout is checked against independent evidence.
 
             Every measurement is anchored to a stable MeasId automatically:
             ``measure()`` itself allocates the result slot in the trace (a
@@ -791,7 +792,7 @@ def _preflight_guppy_static_schedule(
     if has_nontrivial_control_flow(analysis.hugr):
         msg = (
             "GuppyDemBuilder requires a statically straight-line Guppy program unless it carries "
-            "a trusted generator-owned measurement layout; branching or looping control flow cannot be "
+            "a generator-owned measurement-layout certificate; branching or looping control flow cannot be "
             "certified from one runtime trace"
         )
         raise ValueError(msg)
@@ -814,6 +815,14 @@ def _check_measurement_count(static_count: int, source_ids: Sequence[int]) -> No
         raise _CertificationError(msg)
 
 
+def _compiler_measurement_id(ordinal: int, source_measurement_ids: Sequence[int]) -> int:
+    """Map a compiled measurement ordinal into the validated source ID stream."""
+    if not 0 <= ordinal < len(source_measurement_ids):
+        msg = f"compiler measurement ordinal {ordinal} is outside the traced source measurement stream"
+        raise ValueError(msg)
+    return int(source_measurement_ids[ordinal])
+
+
 def _compiler_certified_result_traces(
     generator_layout: Sequence[Any] | None,
     analysis: _GuppyProgramAnalysis,
@@ -826,6 +835,7 @@ def _compiler_certified_result_traces(
     if generator_layout is not None:
         return _generator_certified_result_traces(
             generator_layout,
+            analysis,
             circuit,
             runtime_result_traces,
             required_tags=required_tags,
@@ -883,15 +893,12 @@ def _compiler_certified_result_traces(
                     },
                 )
                 continue
-            if ordinal >= len(source_measurement_ids):
-                msg = f"compiler measurement ordinal {ordinal} is outside the traced source measurement stream"
-                raise ValueError(msg)
             certified.append(
                 {
                     "name": tag,
                     "occurrence": occurrence,
                     "values": [False],
-                    "result_ids": [int(source_measurement_ids[ordinal])],
+                    "result_ids": [_compiler_measurement_id(ordinal, source_measurement_ids)],
                 },
             )
     return certified
@@ -899,6 +906,7 @@ def _compiler_certified_result_traces(
 
 def _generator_certified_result_traces(
     layout: Any,
+    analysis: _GuppyProgramAnalysis,
     circuit: Any,
     runtime_result_traces: Sequence[Mapping[str, Any]],
     *,
@@ -957,19 +965,27 @@ def _generator_certified_result_traces(
         msg = f"result_ref tag(s) are absent from the generator-certified layout: {missing_required}"
         raise ValueError(msg)
 
-    # The program-bound generator certificate is the authoritative binding.
-    # Guppy 1 may omit scalar IDs for collected output arrays, so absent IDs
-    # are not an error. When the runtime does provide scalar or array IDs,
-    # however, they are independent evidence and must agree slot-for-slot
-    # with the generator-certified layout. In particular, this catches a
-    # reversed array provenance record without trusting it as the source of
-    # the binding.
+    # A generator layout is a claim, never a source of measurement identity.
+    # Resolve every slot eagerly from runtime provenance or compiled scalar
+    # analysis; both must agree when available, then agree with the layout.
+    # Only an uncertifiable schedule makes static evidence unavailable. A
+    # resolved measurement-count mismatch remains a hard error.
+    try:
+        tag_occurrences, static_measurement_count = analysis.result_tags
+    except _CertificationError:
+        tag_occurrences = {}
+    else:
+        _check_measurement_count(static_measurement_count, source_measurement_ids)
+
     runtime_ids_by_slot: dict[tuple[str, int], int] = {}
     runtime_offsets: dict[str, int] = {}
+    nonscalar_tags: set[str] = set()
     for trace in known_provenance_traces(runtime_result_traces):
         tag = trace.get("name")
         values = trace.get("values")
         result_ids = trace.get("result_ids")
+        if isinstance(tag, str) and (not isinstance(values, list) or len(values) != 1):
+            nonscalar_tags.add(tag)
         if not isinstance(tag, str) or not isinstance(values, list):
             continue
         offset = runtime_offsets.get(tag, 0)
@@ -982,6 +998,7 @@ def _generator_certified_result_traces(
                 raise ValueError(msg)
             runtime_ids_by_slot[(tag, offset + element)] = result_id
 
+    certified: list[dict[str, Any]] = []
     for source_index, slot in enumerate(entries):
         runtime_result_id = runtime_ids_by_slot.get(slot)
         if runtime_result_id is None:
@@ -992,6 +1009,25 @@ def _generator_certified_result_traces(
             base_tag, separator, element_text = tag.rpartition(":meas:")
             if separator and element_text.isdecimal() and value_index == 0:
                 runtime_result_id = runtime_ids_by_slot.get((base_tag, int(element_text)))
+        static_result_id = None
+        occurrences = tag_occurrences.get(slot[0], [])
+        if slot[0] not in nonscalar_tags and slot[1] < len(occurrences):
+            ordinal = occurrences[slot[1]]
+            if ordinal is not None:
+                static_result_id = _compiler_measurement_id(ordinal, source_measurement_ids)
+        if runtime_result_id is not None and static_result_id is not None and runtime_result_id != static_result_id:
+            msg = (
+                f"runtime result trace {slot[0]!r}[{slot[1]}] has measurement id {runtime_result_id}, "
+                f"but compiled analysis identifies measurement id {static_result_id}"
+            )
+            raise ValueError(msg)
+        result_id = runtime_result_id if runtime_result_id is not None else static_result_id
+        if result_id is None:
+            msg = (
+                f"cannot bind generator layout slot {slot[0]!r}[{slot[1]}]: "
+                "neither runtime provenance nor compiled analysis identifies its measurement"
+            )
+            raise ValueError(msg)
         expected_result_id = source_measurement_ids[source_index]
         if runtime_result_id is not None and runtime_result_id != expected_result_id:
             msg = (
@@ -999,16 +1035,16 @@ def _generator_certified_result_traces(
                 f"but the generator-certified layout requires {expected_result_id}"
             )
             raise ValueError(msg)
-
-    return [
-        {
-            "name": tag,
-            "occurrence": value_index,
-            "values": [False],
-            "result_ids": [int(source_measurement_ids[source_index])],
-        }
-        for source_index, (tag, value_index) in enumerate(entries)
-    ]
+        if result_id != expected_result_id:
+            msg = (
+                f"compiled analysis {slot[0]!r}[{slot[1]}] has measurement id {result_id}, "
+                f"but the generator-certified layout requires {expected_result_id}"
+            )
+            raise ValueError(msg)
+        certified.append(
+            {"name": slot[0], "occurrence": slot[1], "values": [False], "result_ids": [result_id]},
+        )
+    return certified
 
 
 def _check_certified_raw_binding(

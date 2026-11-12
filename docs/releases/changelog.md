@@ -66,6 +66,11 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   seeded outcomes. `BpGraph::from_dense_check_matrix` validates dense binary
   matrices and per-mechanism error probabilities.
 
+- Fixed generator-certified Guppy DEM builds binding measurements from layout
+  order when provenance was missing. Every layout slot now requires independent
+  runtime provenance or compiled scalar analysis, with agreement required when
+  both are available.
+
 - **Breaking:** Guppy code generation rejects `For` labels that shadow a register,
   allocator, block input or generated temporary. Loop labels, registers,
   allocators and block inputs are also rejected when the same generated function

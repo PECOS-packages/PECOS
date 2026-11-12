@@ -20,38 +20,41 @@ fn prepare_channel_probs(
     error_rate: Option<f64>,
     error_channel: Option<&[f64]>,
 ) -> Result<Vec<f64>, LdpcError> {
-    let probs = match (error_rate, error_channel) {
-        (Some(rate), None) => vec![rate; pcm_cols],
+    // The C++ core takes log((1 - p) / p) unchecked, so only probabilities may pass.
+    // The range check also rejects NaN and infinities.
+    match (error_rate, error_channel) {
+        (Some(rate), None) => {
+            if !(0.0..=1.0).contains(&rate) {
+                return Err(LdpcError::InvalidInput(format!(
+                    "error_rate must be finite and in [0, 1], got {rate}"
+                )));
+            }
+            Ok(vec![rate; pcm_cols])
+        }
         (None, Some(probs)) => {
             if probs.len() != pcm_cols {
                 return Err(LdpcError::InvalidInput(
                     "Error channel length must match number of columns".to_string(),
                 ));
             }
-            probs.to_vec()
+            if let Some((column, p)) = probs
+                .iter()
+                .enumerate()
+                .find(|(_, p)| !(0.0..=1.0).contains(*p))
+            {
+                return Err(LdpcError::InvalidInput(format!(
+                    "error_channel[{column}] must be finite and in [0, 1], got {p}"
+                )));
+            }
+            Ok(probs.to_vec())
         }
-        (None, None) => {
-            return Err(LdpcError::InvalidInput(
-                "Either error_rate or error_channel must be provided".to_string(),
-            ));
-        }
-        (Some(_), Some(_)) => {
-            return Err(LdpcError::InvalidInput(
-                "Cannot specify both error_rate and error_channel".to_string(),
-            ));
-        }
-    };
-    // The C++ core takes log((1 - p) / p) unchecked, so reject non-probabilities here.
-    if let Some((column, p)) = probs
-        .iter()
-        .enumerate()
-        .find(|(_, p)| !p.is_finite() || !(0.0..=1.0).contains(*p))
-    {
-        return Err(LdpcError::InvalidInput(format!(
-            "error probability for column {column} must be finite and in [0, 1], got {p}"
-        )));
+        (None, None) => Err(LdpcError::InvalidInput(
+            "Either error_rate or error_channel must be provided".to_string(),
+        )),
+        (Some(_), Some(_)) => Err(LdpcError::InvalidInput(
+            "Cannot specify both error_rate and error_channel".to_string(),
+        )),
     }
-    Ok(probs)
 }
 
 fn validate_bp_tuning(

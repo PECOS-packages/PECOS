@@ -331,6 +331,18 @@ class TestBpOsdDecoder:
         with pytest.raises(RuntimeError, match="length must match"):
             BpOsdBuilder(H, error_rate=[0.01, 0.02]).build()
 
+    @pytest.mark.parametrize("bad", [float("nan"), -0.1, 1.5])
+    def test_non_probability_prior_rejected(self, bad: float) -> None:
+        """A rate or channel entry outside [0, 1] fails at build, naming the argument."""
+        from pecos_rslib.decoders import BpLsdBuilder, BpOsdBuilder, SparseMatrix
+
+        H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
+        for builder in (BpOsdBuilder, BpLsdBuilder):
+            with pytest.raises(RuntimeError, match=r"error_rate must be finite and in \[0, 1\]"):
+                builder(H, error_rate=bad).build()
+            with pytest.raises(RuntimeError, match=r"error_channel\[2\] must be finite"):
+                builder(H, error_rate=[0.01, 0.01, bad, 0.01]).build()
+
 
 class TestBpLsdDecoder:
     """Tests for BpLsdDecoder via BpLsdBuilder."""

@@ -139,6 +139,7 @@ impl Default for GeneralNoiseModel {
             p_prep_crosstalk: 0.0,
             noiseless_gates: BTreeSet::new(),
             readout: BTreeMap::new(),
+            loss: None,
             p_meas_max: p_meas_0.max(p_meas_1),
             leakage_scale: 1.0,
             results_builder: ByteMessage::outcomes_builder(),

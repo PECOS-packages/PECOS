@@ -79,7 +79,10 @@ mod builder;
 mod config;
 pub use self::config::GeneralNoiseConfig;
 mod default;
+mod loss;
 mod readout;
+use self::loss::MeasurementState;
+pub use self::loss::{LossSite, QubitLoss, QubitLossBuilder};
 pub use self::readout::ReadoutMatrix;
 
 pub use self::builder::{GeneralNoiseModelBuilder, PauliWithAngleScaling};
@@ -103,11 +106,31 @@ use pecos_random::PecosRng;
 use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet};
 
+#[derive(Clone, Copy)]
+struct IdleRates {
+    linear: f64,
+    sine: f64,
+    coherent: f64,
+    loss: Option<f64>,
+}
+
+fn is_tracked_measurement(gate: GateType) -> bool {
+    matches!(
+        gate,
+        GateType::MZ
+            | GateType::MPZ
+            | GateType::MeasureZLeaked
+            | GateType::MeasureZLost
+            | GateType::MeasureZLeakedLost
+    )
+}
+
 // Indices refer to the existing compiled family samplers; one order spans both families.
 #[derive(Clone, Copy, Debug)]
 enum HookChannel {
     Transition(usize),
     PauliLeakage(usize),
+    Loss(usize),
 }
 
 #[derive(Clone, Debug)]
@@ -166,6 +189,9 @@ pub struct GeneralNoiseModel {
 
     /// Explicit conditional readout rows, indexed by measurement flavor.
     readout: BTreeMap<GateType, ReadoutMatrix>,
+
+    /// Independent loss configuration and shot-local state.
+    loss: Option<QubitLoss>,
 
     /// Scale leakage events to be completely depolarizing events instead.
     ///
@@ -416,10 +442,10 @@ pub struct GeneralNoiseModel {
     /// Using a `BTreeSet` because we will iterate over the qubits and we want determinism.
     prepared_qubits: BTreeSet<usize>,
 
-    /// Qubit, gate kind and leakage at each emitted measurement's position.
+    /// Qubit, gate kind and physical state at each emitted measurement's position.
     /// Keep these together for both user and injected crosstalk measurements:
     /// later resets, faults and continuation effects cannot rewrite past readout.
-    measured_qubits: Vec<(usize, GateType, bool)>,
+    measured_qubits: Vec<(usize, GateType, MeasurementState)>,
 
     // Preserve scheduled admission/recovery even for a gate-only batch.
     scheduled_batch_active: bool,
@@ -651,10 +677,13 @@ impl GeneralNoiseModel {
         Self::validate_idle_products(
             duration,
             "idle gate duration",
-            self.p_idle_linear_rate,
-            self.p_idle_sin_squared_rate,
+            IdleRates {
+                linear: self.p_idle_linear_rate,
+                sine: self.p_idle_sin_squared_rate,
+                coherent: self.p_idle_coherent_rate,
+                loss: self.loss.as_ref().map(|loss| loss.idle_rate),
+            },
             &self.p_idle_sin_squared_model,
-            self.p_idle_coherent_rate,
             &self.p_idle_coherent_model,
         )
         .map_err(PecosError::Input)
@@ -664,10 +693,8 @@ impl GeneralNoiseModel {
     fn validate_idle_products(
         duration: f64,
         duration_source: &str,
-        linear_rate: f64,
-        sine_rate: f64,
+        rates: IdleRates,
         sine_model: &BTreeMap<String, f64>,
-        coherent_rate: f64,
         coherent_model: &BTreeMap<String, f64>,
     ) -> Result<(), String> {
         let check = |family: &str, rate: f64, axis: &str, multiplier: f64| {
@@ -679,12 +706,15 @@ impl GeneralNoiseModel {
             }
             Ok(())
         };
-        check("p_idle_linear", linear_rate, "total", 1.0)?;
+        if let Some(rate) = rates.loss {
+            check("loss.idle_rate", rate, "total", 1.0)?;
+        }
+        check("p_idle_linear", rates.linear, "total", 1.0)?;
         for (axis, multiplier) in sine_model {
-            check("p_idle_sin_squared", sine_rate, axis, *multiplier)?;
+            check("p_idle_sin_squared", rates.sine, axis, *multiplier)?;
         }
         for (axis, multiplier) in coherent_model {
-            check("p_idle_coherent", coherent_rate, axis, *multiplier)?;
+            check("p_idle_coherent", rates.coherent, axis, *multiplier)?;
         }
         Ok(())
     }
@@ -829,22 +859,20 @@ impl GeneralNoiseModel {
         let mut err = None;
         while let Some(gate) = gates.next() {
             let measurements_before = self.measured_qubits.len();
-            // Track which qubits are being measured for leakage handling
-            if matches!(
-                gate.gate_type,
-                GateType::MZ
-                    | GateType::MeasureZLeaked
-                    | GateType::MeasureZLost
-                    | GateType::MeasureZLeakedLost
-                    | GateType::MPZ
-            ) {
-                self.measured_qubits.extend(gate.qubits.iter().map(|q| {
-                    (
-                        usize::from(*q),
-                        gate.gate_type,
-                        self.leaked_qubits.contains(&usize::from(*q)),
-                    )
-                }));
+            // Capture physical state before measurement loss or preparation.
+            if is_tracked_measurement(gate.gate_type) {
+                let recorded = gate
+                    .qubits
+                    .iter()
+                    .map(|q| {
+                        (
+                            usize::from(*q),
+                            gate.gate_type,
+                            self.measurement_state(usize::from(*q)),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                self.measured_qubits.extend(recorded);
             }
 
             // Skip noise application for noiseless gates.
@@ -858,13 +886,16 @@ impl GeneralNoiseModel {
                 if matches!(gate.gate_type, GateType::PZ | GateType::MPZ) {
                     for &qubit in &gate.qubits {
                         let qubit = usize::from(qubit);
+                        self.reload(qubit);
                         if self.is_leaked(qubit) {
                             self.mark_as_unleaked(qubit);
                             trace!("Qubit {qubit} unleaked due to noiseless preparation");
                         }
                     }
                 }
-                builder.add_gate_command(&gate);
+                if let Some(filtered) = self.filter_lost_gate(&gate) {
+                    builder.add_gate_command(&filtered);
+                }
                 trace!("Skipping noise for noiseless gate: {:?}", gate.gate_type);
                 if let Some(ends) = boundaries.as_deref_mut() {
                     ends.push(builder.message_count());
@@ -879,11 +910,12 @@ impl GeneralNoiseModel {
                     self.apply_idle_faults(&gate, self.p_idle_linear_rate, builder)?;
                 }
                 GateType::PZ => {
-                    for &q in &gate.qubits {
-                        self.prepared_qubits.insert(usize::from(q));
+                    if let Some(gate) = self.apply_prep_faults_and_filter(&gate, builder) {
+                        for &q in &gate.qubits {
+                            self.prepared_qubits.insert(usize::from(q));
+                        }
+                        self.apply_simple_crosstalk_faults(&gate, self.p_prep_crosstalk, builder);
                     }
-                    self.apply_prep_faults(&gate, builder);
-                    self.apply_simple_crosstalk_faults(&gate, self.p_prep_crosstalk, builder);
                 }
                 GateType::MZ
                 | GateType::MeasureZLeaked
@@ -892,17 +924,26 @@ impl GeneralNoiseModel {
                     // Measurement noise is handled in apply_noise_on_continue_processing
                     // We still need to add the original gate here
                     builder.add_gate_command(&gate);
+                    if let Some(loss) = &self.loss {
+                        self.loss_source(&gate.qubits, loss.measurement, builder);
+                    }
                 }
                 GateType::MPZ => {
-                    // Measurement noise is applied post-engine like MZ; the
-                    // built-in preparation clears leakage after its readout
-                    // was recorded above. Like other noise paths, it draws no
-                    // preparation fault.
-                    for &q in &gate.qubits {
-                        self.prepared_qubits.insert(usize::from(q));
-                        self.mark_as_unleaked(usize::from(q));
-                    }
                     builder.add_gate_command(&gate);
+                    if let Some(loss) = &self.loss {
+                        self.loss_source(&gate.qubits, loss.measurement, builder);
+                    }
+                    for &q in &gate.qubits {
+                        let q = usize::from(q);
+                        self.reload(q);
+                        if !self.is_lost(q) {
+                            self.prepared_qubits.insert(q);
+                            self.mark_as_unleaked(q);
+                        }
+                    }
+                    if let Some(loss) = &self.loss {
+                        self.loss_source(&gate.qubits, loss.prep, builder);
+                    }
                 }
                 GateType::MeasCrosstalkGlobalPayload => {
                     // Global crosstalk applies to all qubits that are *not* in the payload
@@ -1097,7 +1138,8 @@ impl GeneralNoiseModel {
         }
 
         for (idx, outcome) in measurement_outcomes.into_iter().enumerate() {
-            let (qubit, gate_type, leaked_at_measurement) = self.measured_qubits[idx];
+            let (qubit, gate_type, state) = self.measured_qubits[idx];
+            let leaked_at_measurement = state == MeasurementState::Leaked;
             if let Some(&(batch, leg)) = self.transition_measurements.get(&idx) {
                 self.pending_transition_batches[batch].states[leg] = Some(if outcome == 0 {
                     QubitTransitionState::Zero
@@ -1106,12 +1148,21 @@ impl GeneralNoiseModel {
                 });
                 continue;
             }
+            if state == MeasurementState::Lost && is_tracked_measurement(gate_type) {
+                let flavor = if gate_type == GateType::MPZ {
+                    GateType::MZ
+                } else {
+                    gate_type
+                };
+                outcomes.push(self.lost_readout(flavor, outcome));
+                continue;
+            }
             match gate_type {
                 GateType::MeasCrosstalkGlobalPayload | GateType::MeasCrosstalkLocalPayload => {
                     // It is not a measurement destined for the user, but one we
                     // injected in order to model crosstalk. Use the measurement result
-                    // to determine any transitions to apply. The recorded leakage
-                    // flag is unused for injected measurements: their raw outcome
+                    // to determine any transitions to apply. The recorded physical
+                    // state is unused for injected measurements: their raw outcome
                     // selects the transition rather than a user readout value.
                     let transition =
                         self.p_meas_crosstalk_model
@@ -1126,8 +1177,7 @@ impl GeneralNoiseModel {
                 }
                 GateType::MeasureZLeaked | GateType::MeasureZLeakedLost => {
                     if !self.noiseless_gates.contains(&gate_type)
-                        && let Some(value) =
-                            self.configured_readout(gate_type, outcome, leaked_at_measurement)
+                        && let Some(value) = self.configured_readout(gate_type, outcome, state)
                     {
                         outcomes.push(value);
                         continue;
@@ -1159,8 +1209,7 @@ impl GeneralNoiseModel {
                         gate_type
                     };
                     if !self.noiseless_gates.contains(&readout_gate)
-                        && let Some(value) =
-                            self.configured_readout(readout_gate, outcome, leaked_at_measurement)
+                        && let Some(value) = self.configured_readout(readout_gate, outcome, state)
                     {
                         outcomes.push(value);
                         continue;
@@ -1233,6 +1282,11 @@ impl GeneralNoiseModel {
         qubits: &[usize],
         builder: &mut ByteMessageBuilder,
     ) {
+        if let Some(loss) = &self.loss {
+            let probability = (loss.idle_rate * duration).clamp(0.0, 1.0);
+            let ids: Vec<_> = qubits.iter().copied().map(QubitId).collect();
+            self.loss_source(&ids, probability, builder);
+        }
         if linear_rate > f64::EPSILON {
             self.apply_idle_linear_stochastic_noise(linear_rate, duration, qubits, builder);
         }
@@ -1260,7 +1314,7 @@ impl GeneralNoiseModel {
         // explicit and keeps debug and release builds semantically identical.
         let prob = (rate * duration).clamp(0.0, 1.0);
         for qubit in qubits {
-            if !self.is_leaked(*qubit) && self.rng.occurs(prob) {
+            if !self.is_lost(*qubit) && !self.is_leaked(*qubit) && self.rng.occurs(prob) {
                 let result = self.p_idle_linear_model.sample_gates(&mut self.rng, *qubit);
 
                 if result.has_leakage() {
@@ -1294,7 +1348,9 @@ impl GeneralNoiseModel {
             let affected = qubits
                 .iter()
                 .copied()
-                .filter(|qubit| !self.is_leaked(*qubit) && self.rng.occurs(probability))
+                .filter(|qubit| {
+                    !self.is_lost(*qubit) && !self.is_leaked(*qubit) && self.rng.occurs(probability)
+                })
                 .collect::<Vec<_>>();
             if affected.is_empty() {
                 continue;
@@ -1336,7 +1392,7 @@ impl GeneralNoiseModel {
         let affected = qubits
             .iter()
             .copied()
-            .filter(|qubit| !self.is_leaked(*qubit))
+            .filter(|qubit| !self.is_lost(*qubit) && !self.is_leaked(*qubit))
             .collect::<Vec<_>>();
         if affected.is_empty() {
             return;
@@ -1383,6 +1439,16 @@ impl GeneralNoiseModel {
     /// In ion trap systems, this models imperfect optical pumping or errors in the initial
     /// state preparation process that fails to correctly initialize the qubit.
     pub fn apply_prep_faults(&mut self, gate: &Gate, builder: &mut ByteMessageBuilder) {
+        let _ = self.apply_prep_faults_and_filter(gate, builder);
+    }
+
+    // Return the actual preparation operands for tracking and subsequent crosstalk.
+    fn apply_prep_faults_and_filter<'a>(
+        &mut self,
+        gate: &'a Gate,
+        builder: &mut ByteMessageBuilder,
+    ) -> Option<std::borrow::Cow<'a, Gate>> {
+        let gate = self.loss_preparation(gate)?;
         // unleaking qubits - preparation resets leaked qubits to the zero state
         for &qubit in &gate.qubits {
             let qubit_usize = usize::from(qubit);
@@ -1393,15 +1459,13 @@ impl GeneralNoiseModel {
         }
 
         // Unlike SQ and TQ gates, state prep always occurs even if the qubit leaked
-        builder.add_gate_command(gate);
+        builder.add_gate_command(&gate);
 
-        // Skip if probability is zero
-        if self.p_prep <= 0.0 {
-            return;
-        }
-
-        // Apply state prep faults
+        // Apply state prep faults before the independent prep-loss source.
         for &qubit in &gate.qubits {
+            if self.p_prep <= 0.0 {
+                break;
+            }
             // Apply bit-flip error with probability p_prep
             if self.rng.occurs(self.p_prep) {
                 // Determine if this error should cause leakage
@@ -1416,6 +1480,10 @@ impl GeneralNoiseModel {
                 }
             }
         }
+        if let Some(loss) = &self.loss {
+            self.loss_source(&gate.qubits, loss.prep, builder);
+        }
+        Some(gate)
     }
 
     /// Apply simple crosstalk noise
@@ -1438,7 +1506,7 @@ impl GeneralNoiseModel {
         let gate_qubits: Vec<usize> = gate.qubits.iter().map(|q| usize::from(*q)).collect();
 
         for q in self.prepared_qubits.clone() {
-            if !gate_qubits.contains(&q) && self.rng.occurs(probability) {
+            if !self.is_lost(q) && !gate_qubits.contains(&q) && self.rng.occurs(probability) {
                 affected_qubits.push(q);
                 trace!("Qubit {q} affected by crosstalk error");
             }
@@ -1451,7 +1519,8 @@ impl GeneralNoiseModel {
         self.measured_qubits.extend(
             affected_qubits
                 .iter()
-                .map(|&q| (q, gate.gate_type, self.leaked_qubits.contains(&q))),
+                .map(|&q| (q, gate.gate_type, self.measurement_state(q)))
+                .collect::<Vec<_>>(),
         );
     }
 
@@ -1475,7 +1544,7 @@ impl GeneralNoiseModel {
 
         for q in qubits {
             // TODO: We should include a seepage component to crosstalk in the future.
-            if self.prepared_qubits.contains(&q)
+            if !self.is_lost(q) && self.prepared_qubits.contains(&q)
                 && !self.is_leaked(q) // If q is already leaked, we currently skip
                 && self.rng.occurs(probability)
             {
@@ -1491,7 +1560,8 @@ impl GeneralNoiseModel {
         self.measured_qubits.extend(
             affected_qubits
                 .iter()
-                .map(|&q| (q, gate_type, self.leaked_qubits.contains(&q))),
+                .map(|&q| (q, gate_type, self.measurement_state(q)))
+                .collect::<Vec<_>>(),
         );
         // NOTE: Crosstalk transitions are carried out by apply_noise_on_continue_processing
     }
@@ -1535,7 +1605,14 @@ impl GeneralNoiseModel {
         let mut removed_gates = false;
         let mut original_gate_qubits: Vec<usize> = Vec::new();
 
+        let custom_lost = gate.gate_type == GateType::Custom
+            && gate.qubits.iter().any(|q| self.is_lost(usize::from(*q)));
         for &qubit in &gate.qubits {
+            if custom_lost || self.is_lost(usize::from(qubit)) {
+                self.suppress_for_loss(&[qubit]);
+                removed_gates = true;
+                continue;
+            }
             // Track whether to add the original gate
             let mut add_original_gate = true;
             let has_leakage = self.is_leaked(usize::from(qubit));
@@ -1614,6 +1691,8 @@ impl GeneralNoiseModel {
 
         if self.apply_hook(gate, TransitionSite::AfterP1, 0, builder) {
             self.pending_gate_continuation = Some(PendingGateContinuation::P1Complete);
+        } else {
+            self.clear_loss_command();
         }
     }
 
@@ -1663,6 +1742,11 @@ impl GeneralNoiseModel {
         let mut original_gate_qubits: Vec<usize> = Vec::new();
 
         for qubits in gate.qubits.as_chunks::<2>().0 {
+            if qubits.iter().any(|q| self.is_lost(usize::from(*q))) {
+                removed_gates = true;
+                self.spread_loss(qubits, &mut noise);
+                continue;
+            }
             let mut add_original_gate = true;
 
             // Check whether this pair acts on a leaked qubit.
@@ -1778,6 +1862,7 @@ impl GeneralNoiseModel {
                 builder,
             );
         }
+        self.clear_loss_command();
     }
 
     fn hook_order(&self, site: TransitionSite) -> &[HookChannel] {
@@ -1799,6 +1884,10 @@ impl GeneralNoiseModel {
         for position in start..self.hook_order(site).len() {
             let entry = self.hook_order(site)[position];
             let deferred = match (site, entry) {
+                (_, HookChannel::Loss(index)) => {
+                    self.loss_hook(index, gate, builder);
+                    false
+                }
                 (
                     TransitionSite::BeforeP1 | TransitionSite::AfterP1,
                     HookChannel::Transition(index),
@@ -1843,6 +1932,9 @@ impl GeneralNoiseModel {
     ) {
         for &qubit in &gate.qubits {
             let qubit = usize::from(qubit);
+            if self.skip_loss_hook(gate, &[qubit], site) {
+                continue;
+            }
             let channel = match site {
                 TransitionSite::BeforeP1 => &self.p1_pauli_leakage_channels_before_gate[index],
                 TransitionSite::AfterP1 => &self.p1_pauli_leakage_channels_after_gate[index],
@@ -1863,6 +1955,9 @@ impl GeneralNoiseModel {
     ) {
         for pair in gate.qubits.as_chunks::<2>().0 {
             let qubits = [usize::from(pair[0]), usize::from(pair[1])];
+            if self.skip_loss_hook(gate, &qubits, site) {
+                continue;
+            }
             let step = match site {
                 TransitionSite::BeforeP2 => &self.p2_pauli_leakage_steps_before_gate[index],
                 TransitionSite::AfterP2 => &self.p2_pauli_leakage_steps_after_gate[index],
@@ -1913,6 +2008,9 @@ impl GeneralNoiseModel {
 
         for &qubit in &gate.qubits {
             let qubit = usize::from(qubit);
+            if self.skip_loss_hook(gate, &[qubit], site) {
+                continue;
+            }
             let channel = match site {
                 TransitionSite::BeforeP1 => &self.p1_transition_channels_before_gate[index],
                 TransitionSite::AfterP1 => &self.p1_transition_channels_after_gate[index],
@@ -1953,6 +2051,9 @@ impl GeneralNoiseModel {
 
         for pair in gate.qubits.as_chunks::<2>().0 {
             let qubits = [usize::from(pair[0]), usize::from(pair[1])];
+            if self.skip_loss_hook(gate, &qubits, site) {
+                continue;
+            }
             let step = match site {
                 TransitionSite::BeforeP2 => &self.p2_transition_steps_before_gate[index],
                 TransitionSite::AfterP2 => &self.p2_transition_steps_after_gate[index],
@@ -1997,7 +2098,8 @@ impl GeneralNoiseModel {
             if needed {
                 let measurement_index = self.measured_qubits.len();
                 builder.mz(&[qubit]);
-                self.measured_qubits.push((qubit, GateType::MZ, false));
+                self.measured_qubits
+                    .push((qubit, GateType::MZ, self.measurement_state(qubit)));
                 self.transition_measurements
                     .insert(measurement_index, (batch_index, leg));
             }
@@ -2050,6 +2152,9 @@ impl GeneralNoiseModel {
     // An explicit L destination always enters the tracked leakage sector. The legacy
     // leak() helper separately retains its leakage-to-depolarization approximation.
     fn apply_channel_leakage(&mut self, qubit: usize, builder: &mut ByteMessageBuilder) {
+        if self.is_lost(qubit) {
+            return;
+        }
         if !self.is_leaked(qubit) {
             self.mark_as_leaked(qubit);
             builder.add_gate_command(&Gate::pz(&[qubit]));
@@ -2100,7 +2205,7 @@ impl GeneralNoiseModel {
                 PendingGateContinuation::P1AfterBefore(gate) => {
                     self.apply_sq_faults_after_before(&gate, builder);
                 }
-                PendingGateContinuation::P1Complete => {}
+                PendingGateContinuation::P1Complete => self.clear_loss_command(),
                 PendingGateContinuation::P2AfterBefore { gate, probability } => {
                     self.apply_tq_faults_after_before(&gate, probability, builder);
                 }
@@ -2119,6 +2224,9 @@ impl GeneralNoiseModel {
     /// `self.leakage_scale` acts like the probability to apply leakage instead of completely
     /// depolarizing noise.
     fn leak(&mut self, qubit: usize) -> Option<Gate> {
+        if self.is_lost(qubit) {
+            return None;
+        }
         if self.leakage_scale >= 1.0 || self.rng.occurs(self.leakage_scale) {
             // Mark qubit as leaked
             trace!("Marking qubit {qubit} as leaked");
@@ -2171,6 +2279,9 @@ impl GeneralNoiseModel {
     /// // This affects how noise operations are applied during simulation
     /// ```
     pub fn mark_as_leaked(&mut self, qubit: usize) {
+        if self.is_lost(qubit) {
+            return;
+        }
         // TODO: see if some of the mark_as_leaked needs to move to self.leak()
         trace!("Marking qubit {qubit} as leaked");
         self.leaked_qubits.insert(qubit);
@@ -2219,6 +2330,9 @@ impl GeneralNoiseModel {
         self.results_builder.reset();
         // Clear leaked qubits
         self.leaked_qubits.clear();
+        if let Some(loss) = &mut self.loss {
+            loss.reset();
+        }
         // Clear measured qubits
         self.measured_qubits.clear();
         self.pending_transition_batches.clear();

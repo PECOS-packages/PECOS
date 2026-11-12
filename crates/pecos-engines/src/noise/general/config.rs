@@ -365,6 +365,8 @@ struct ScalingConfig {
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct GeneralNoiseConfig {
+    #[serde(deserialize_with = "present_loss")]
+    loss: Option<Value>,
     preparation: PreparationConfig,
     measurement: MeasurementConfig,
     single_qubit: GateConfig,
@@ -372,6 +374,13 @@ pub struct GeneralNoiseConfig {
     idle: IdleConfig,
     scaling: ScalingConfig,
     noiseless_gates: Vec<String>,
+}
+
+// Preserve a present JSON null so the shared loss parser reports its type error.
+fn present_loss<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Value>, D::Error> {
+    Value::deserialize(deserializer).map(Some)
 }
 
 impl GeneralNoiseConfig {
@@ -395,6 +404,13 @@ impl GeneralNoiseConfig {
     ) -> Result<GeneralNoiseModelBuilder, PecosError> {
         if let Some(message) = builder.setter_error() {
             return Err(input_error(message));
+        }
+
+        if let Some(value) = &self.loss {
+            builder = match super::QubitLoss::from_json_value(value)? {
+                Some(loss) => builder.with_loss(loss),
+                None => builder.without_loss(),
+            };
         }
 
         if let Some(value) = self.scaling.overall {

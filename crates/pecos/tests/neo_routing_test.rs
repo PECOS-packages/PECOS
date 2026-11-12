@@ -459,3 +459,21 @@ fn neo_stack_rejects_readout_matrices() {
         "{error}"
     );
 }
+
+#[test]
+fn t20_neo_stack_rejects_qubit_loss() {
+    use pecos_engines::noise::{GeneralNoiseModel, QubitLoss};
+    let noise = GeneralNoiseModel::builder().with_loss(QubitLoss::builder().build().unwrap());
+    let error = sim(deterministic_conditional_qasm())
+        .stack(SimStack::Neo)
+        .noise(noise)
+        .shots(1)
+        .run()
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(
+        error.contains("beyond the simple probability subset") && error.contains("qubit loss"),
+        "{error}"
+    );
+}

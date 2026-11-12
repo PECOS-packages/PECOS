@@ -906,7 +906,7 @@ fn merged_dem_matrix(
 ) -> Result<pecos_decoder_core::DemCheckMatrix, DecoderError> {
     let mut matrix = pecos_decoder_core::DemCheckMatrix::from_dem_str(dem)?;
     if let Some(rate) = error_rate {
-        if !rate.is_finite() || !(0.0..=1.0).contains(&rate) {
+        if !(0.0..=1.0).contains(&rate) {
             return Err(DecoderError::MatrixError(format!(
                 "error_rate must be finite and in [0, 1], got {rate}"
             )));

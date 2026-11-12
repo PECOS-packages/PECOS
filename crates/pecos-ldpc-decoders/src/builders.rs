@@ -738,6 +738,24 @@ mod tests {
         let pcm = test_pcm();
         for bad in [f64::NAN, f64::INFINITY, -0.1, 1.5] {
             let channel = vec![0.01, 0.01, bad, 0.01];
+            for (result, expected) in [
+                (
+                    BpOsdBuilder::new(&pcm).error_rate(bad).build().map(|_| ()),
+                    "error_rate must",
+                ),
+                (
+                    BpOsdBuilder::new(&pcm)
+                        .error_channel(channel.clone())
+                        .build()
+                        .map(|_| ()),
+                    "error_channel[2] must",
+                ),
+            ] {
+                assert!(
+                    matches!(&result, Err(LdpcError::InvalidInput(message)) if message.contains(expected)),
+                    "{bad}: {result:?}"
+                );
+            }
             let results = [
                 BpOsdBuilder::new(&pcm).error_rate(bad).build().map(|_| ()),
                 BpOsdBuilder::new(&pcm)
@@ -773,9 +791,17 @@ mod tests {
                 );
             }
         }
-        for edge in [0.0, 1.0] {
+        for edge in [0.0, -0.0, 1.0] {
             assert!(BpOsdBuilder::new(&pcm).error_rate(edge).build().is_ok());
         }
+        // Red/green: -0.0 reaches the core as +0.0 (its log-likelihood would be NaN).
+        let rate = BpOsdBuilder::new(&pcm).error_rate(-0.0).build().unwrap();
+        let channel = BpOsdBuilder::new(&pcm)
+            .error_channel(vec![0.01, -0.0, 0.01, 0.01])
+            .build()
+            .unwrap();
+        assert!(rate.channel_probs().iter().all(|p| p.is_sign_positive()));
+        assert!(channel.channel_probs().iter().all(|p| p.is_sign_positive()));
     }
 
     #[test]

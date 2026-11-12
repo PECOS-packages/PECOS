@@ -4114,34 +4114,40 @@ mod tests {
         );
     }
 
-    /// `MeasureZLeaked` must not be minted a `MeasId` on the way to a
-    /// `TickCircuit` when `DagCircuit` does not mint one on the way in. It was,
-    /// so an id-less `MeasureZLeaked` took the id a real measurement already
+    /// No Z herald may be minted a `MeasId` on the way to a `TickCircuit`
+    /// when `DagCircuit` does not mint one on the way in. Previously, an
+    /// id-less `MeasureZLeaked` took the id a real measurement already
     /// held, and converting back reported two measurements sharing an id.
     #[test]
     fn measure_leaked_survives_a_dag_tick_dag_round_trip() {
-        let mut dag = DagCircuit::new();
-        dag.pz(&[0, 1]);
-        dag.add_gate_auto_wire(Gate::measure_z_leaked(&[0usize]));
-        let measured = dag.add_gate_auto_wire(Gate::mz(&[1usize]));
-        assert_eq!(dag.gate(measured).unwrap().meas_ids[0], MeasId::from_raw(0));
+        for flavor in [
+            GateType::MeasureZLeaked,
+            GateType::MeasureZLost,
+            GateType::MeasureZLeakedLost,
+        ] {
+            let mut dag = DagCircuit::new();
+            dag.pz(&[0, 1]);
+            dag.add_gate_auto_wire(Gate::simple(flavor, vec![0.into()]));
+            let measured = dag.add_gate_auto_wire(Gate::mz(&[1usize]));
+            assert_eq!(dag.gate(measured).unwrap().meas_ids[0], MeasId::from_raw(0));
 
-        let tc = TickCircuit::from(&dag);
-        let ids: Vec<usize> = tc
-            .iter_gate_batches()
-            .flat_map(|batch| {
-                batch
-                    .as_gate()
-                    .meas_ids
-                    .iter()
-                    .map(|id| id.index())
-                    .collect::<Vec<_>>()
-            })
-            .collect();
-        assert_eq!(ids, vec![0], "only the MZ carries an id");
+            let tc = TickCircuit::from(&dag);
+            let ids: Vec<usize> = tc
+                .iter_gate_batches()
+                .flat_map(|batch| {
+                    batch
+                        .as_gate()
+                        .meas_ids
+                        .iter()
+                        .map(|id| id.index())
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+            assert_eq!(ids, vec![0], "only the MZ carries an id");
 
-        let round_tripped = DagCircuit::try_from(&tc).expect("valid circuit");
-        assert_eq!(round_tripped.num_measurement_ids(), 1);
+            let round_tripped = DagCircuit::try_from(&tc).expect("valid circuit");
+            assert_eq!(round_tripped.num_measurement_ids(), 1);
+        }
     }
 
     #[test]

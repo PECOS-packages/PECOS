@@ -565,7 +565,12 @@ pub(crate) fn fields(g: &Gate) -> Result<(u64, u64, u64, u64, u64), PecosError> 
         GateType::PZ => (5, 1, 0),
         GateType::MZ => (6, 1, 0),
         GateType::MeasureZLeaked => (7, 1, 0),
-        _ => return Err(error("unsupported scheduled gate")),
+        _ => {
+            return Err(error(&format!(
+                "unsupported scheduled gate: {}",
+                g.gate_type
+            )));
+        }
     };
     if g.qubits.len() != n
         || g.angles.len() != angles

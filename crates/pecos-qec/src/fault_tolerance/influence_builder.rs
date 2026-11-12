@@ -519,7 +519,9 @@ impl<'a> InfluenceBuilder<'a> {
                         meas_idx += 1;
                     }
                     // A record-less collapse preserves the node-to-record map.
-                    pecos_quantum::GateType::MeasureZLeaked => sim.mz_unrecorded(&qubits),
+                    pecos_quantum::GateType::MeasureZLeaked
+                    | pecos_quantum::GateType::MeasureZLost
+                    | pecos_quantum::GateType::MeasureZLeakedLost => sim.mz_unrecorded(&qubits),
                     // Resets project onto |0>. Skipping them treated a reused
                     // qubit as still carrying its pre-reset correlations.
                     gate_type if is_supported_prep_gate(gate_type) => {
@@ -1714,20 +1716,26 @@ mod tests {
     /// and the MZ deterministic.
     #[test]
     fn a_leaked_measurement_keeps_records_aligned_without_phantom_detectors() {
-        let mut dag = DagCircuit::new();
-        dag.pz(&[0]);
-        dag.h(&[0]);
-        dag.add_gate_auto_wire(pecos_quantum::Gate::measure_z_leaked(&[0usize]));
-        dag.h(&[0]);
-        dag.mz(&[0]);
+        for flavor in [
+            pecos_core::gate_type::GateType::MeasureZLeaked,
+            pecos_core::gate_type::GateType::MeasureZLost,
+            pecos_core::gate_type::GateType::MeasureZLeakedLost,
+        ] {
+            let mut dag = DagCircuit::new();
+            dag.pz(&[0]);
+            dag.h(&[0]);
+            dag.add_gate_auto_wire(pecos_quantum::Gate::simple(flavor, vec![0.into()]));
+            dag.h(&[0]);
+            dag.mz(&[0]);
 
-        let builder = InfluenceBuilder::new(&dag).unwrap();
-        let info = builder.run_symbolic_simulation().unwrap();
-        assert_eq!(info.history.len(), 1);
-        assert!(!info.history.get(0).unwrap().is_deterministic);
-        let map = builder.build().unwrap();
-        assert_eq!(map.measurements.len(), 1);
-        assert_eq!(map.detectors.as_slice(), []);
+            let builder = InfluenceBuilder::new(&dag).unwrap();
+            let info = builder.run_symbolic_simulation().unwrap();
+            assert_eq!(info.history.len(), 1);
+            assert!(!info.history.get(0).unwrap().is_deterministic);
+            let map = builder.build().unwrap();
+            assert_eq!(map.measurements.len(), 1);
+            assert_eq!(map.detectors.as_slice(), []);
+        }
     }
 
     /// A mid-circuit reset must reach the simulator: skipping it treated a

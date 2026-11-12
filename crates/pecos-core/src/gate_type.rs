@@ -102,6 +102,10 @@ pub enum GateType {
     MZ = 104,
     // MnZ = 105
     MeasureZLeaked = 105,
+    /// Measure Z with alphabet {0, 1, 3}, where 3 means lost.
+    MeasureZLost = 108,
+    /// Measure Z with alphabet {0, 1, 2, 3}, where 2 means leaked and 3 means lost.
+    MeasureZLeakedLost = 109,
     /// Measure and free the qubit (destructive measurement)
     MeasureFree = 106,
     /// Measure +Z, then prepare |0> (measure-and-prepare; the MP* family)
@@ -480,6 +484,8 @@ impl TryFrom<u8> for GateType {
             105 => GateType::MeasureZLeaked,
             106 => GateType::MeasureFree,
             107 => GateType::MPZ,
+            108 => GateType::MeasureZLost,
+            109 => GateType::MeasureZLeakedLost,
             130 => GateType::PX,
             134 => GateType::PZ,
             135 => GateType::QAlloc,
@@ -593,8 +599,8 @@ impl GateType {
     /// end up sharing a record. Use this predicate rather than spelling the gate
     /// types out, so there is one place to change.
     ///
-    /// `MeasureZLeaked` is a measurement to `Gate::validate` and collapses the
-    /// qubit, but it produces no classical result and so consumes no record.
+    /// `MeasureZLeaked`, `MeasureZLost`, and `MeasureZLeakedLost` are measurements
+    /// to `Gate::validate` and collapse the qubit, but consume no classical record.
     /// Record-producing gates and their bases are defined by [`Self::measured_pauli`].
     #[must_use]
     pub const fn consumes_measurement_record(self) -> bool {
@@ -602,7 +608,8 @@ impl GateType {
     }
 
     /// Returns the Pauli basis of a gate that produces a measurement record.
-    /// Record-less gates, including `MeasureZLeaked`, return `None`.
+    /// Record-less gates, including `MeasureZLeaked`, `MeasureZLost`, and
+    /// `MeasureZLeakedLost`, return `None`.
     #[must_use]
     pub const fn measured_pauli(self) -> Option<crate::Pauli> {
         match self {
@@ -654,6 +661,8 @@ impl GateType {
             | GateType::MX
             | GateType::MZ
             | GateType::MeasureZLeaked
+            | GateType::MeasureZLost
+            | GateType::MeasureZLeakedLost
             | GateType::MeasureFree
             | GateType::MPZ
             | GateType::MeasCrosstalkGlobalPayload
@@ -720,6 +729,8 @@ impl GateType {
             | GateType::MX
             | GateType::MZ
             | GateType::MeasureZLeaked
+            | GateType::MeasureZLost
+            | GateType::MeasureZLeakedLost
             | GateType::MeasureFree
             | GateType::MPZ
             | GateType::PX
@@ -882,6 +893,8 @@ impl fmt::Display for GateType {
             GateType::MX => write!(f, "MX"),
             GateType::MZ => write!(f, "MZ"),
             GateType::MeasureZLeaked => write!(f, "MeasureZLeaked"),
+            GateType::MeasureZLost => write!(f, "MeasureZLost"),
+            GateType::MeasureZLeakedLost => write!(f, "MeasureZLeakedLost"),
             GateType::MeasureFree => write!(f, "MeasureFree"),
             GateType::MPZ => write!(f, "MPZ"),
             GateType::PX => write!(f, "PX"),
@@ -959,6 +972,8 @@ impl std::str::FromStr for GateType {
             "MEASURE" | "MEASUREZ" | "MZ" | "MEASURE Z" => Ok(GateType::MZ),
             "MEASUREFREE" | "MZFREE" => Ok(GateType::MeasureFree),
             "MEASUREZLEAKED" | "MEASURELEAKED" => Ok(GateType::MeasureZLeaked),
+            "MEASUREZLOST" => Ok(GateType::MeasureZLost),
+            "MEASUREZLEAKEDLOST" => Ok(GateType::MeasureZLeakedLost),
             "MPZ" => Ok(GateType::MPZ),
             "PX" | "INIT |+>" => Ok(GateType::PX),
             "PREP" | "PZ" | "INIT" | "INIT |0>" | "RESET" => Ok(GateType::PZ),

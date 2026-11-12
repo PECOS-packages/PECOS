@@ -636,6 +636,28 @@ impl ByteMessageBuilder {
         self
     }
 
+    /// Add `MeasureZLost` operations for multiple qubits.
+    ///
+    /// # Panics
+    /// Panics if any qubit ID is too large to fit in a u32.
+    pub fn measure_z_lost(&mut self, qubit_ids: &[usize]) -> &mut Self {
+        for &qubit in qubit_ids {
+            self.add_single_qubit_gate_parts(GateType::MeasureZLost, qubit, &[], &[]);
+        }
+        self
+    }
+
+    /// Add `MeasureZLeakedLost` operations for multiple qubits.
+    ///
+    /// # Panics
+    /// Panics if any qubit ID is too large to fit in a u32.
+    pub fn measure_z_leaked_lost(&mut self, qubit_ids: &[usize]) -> &mut Self {
+        for &qubit in qubit_ids {
+            self.add_single_qubit_gate_parts(GateType::MeasureZLeakedLost, qubit, &[], &[]);
+        }
+        self
+    }
+
     /// Deprecated spelling of [`ByteMessageBuilder::measure_z_leaked`].
     ///
     /// # Panics
@@ -1133,6 +1155,8 @@ mod tests {
         builder.szzdg(&[(0, 1)]);
         builder.mz(&[0]);
         builder.measure_z_leaked(&[0]);
+        builder.measure_z_lost(&[0]);
+        builder.measure_z_leaked_lost(&[0]);
         builder.mpz(&[0]);
         builder.meas_crosstalk_global_payload(&[0]);
         builder.meas_crosstalk_local_payload(&[0]);
@@ -1165,6 +1189,8 @@ mod tests {
                 Gate::szzdg(&[(0, 1)]),
                 Gate::mz(&[0]),
                 Gate::measure_z_leaked(&[0]),
+                Gate::measure_z_lost(&[0]),
+                Gate::measure_z_leaked_lost(&[0]),
                 Gate::mpz(&[0]),
                 Gate::meas_crosstalk_global_payload(&[0]),
                 Gate::meas_crosstalk_local_payload(&[0]),

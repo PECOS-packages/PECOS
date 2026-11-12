@@ -210,7 +210,11 @@ fn apply_gate_to_density_matrix(
             sim.pz(qubits);
             Ok(Vec::new())
         }
-        GateType::MZ | GateType::MeasureFree | GateType::MeasureZLeaked => Ok(sim
+        GateType::MZ
+        | GateType::MeasureFree
+        | GateType::MeasureZLeaked
+        | GateType::MeasureZLost
+        | GateType::MeasureZLeakedLost => Ok(sim
             .mz(qubits)
             .into_iter()
             .map(|r| u8::from(r.outcome))
@@ -442,7 +446,11 @@ fn apply_gate_to_stabilizer_with_pauli_channels(
             sim.pz(qubits);
             Ok(Vec::new())
         }
-        GateType::MZ | GateType::MeasureFree | GateType::MeasureZLeaked => Ok(sim
+        GateType::MZ
+        | GateType::MeasureFree
+        | GateType::MeasureZLeaked
+        | GateType::MeasureZLost
+        | GateType::MeasureZLeakedLost => Ok(sim
             .mz(qubits)
             .into_iter()
             .map(|r| u8::from(r.outcome))
@@ -543,6 +551,37 @@ fn apply_gate_to_stabilizer_with_pauli_channels(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inline_backends_measure_new_heralds() {
+        for gate_type in [GateType::MeasureZLost, GateType::MeasureZLeakedLost] {
+            let gate = Gate::simple(gate_type, vec![0.into()]);
+            let mut density = DensityMatrix::with_seed(1, 42);
+            assert_eq!(
+                apply_gate_to_density_matrix(&mut density, &gate).unwrap(),
+                [0]
+            );
+            let mut stabilizer = SparseStab::with_seed(1, 42);
+            let mut rng = PecosRng::seed_from_u64(42);
+            assert_eq!(
+                apply_gate_to_stabilizer_with_pauli_channels(&mut stabilizer, &gate, &mut rng)
+                    .unwrap(),
+                [0]
+            );
+            apply_gate_to_density_matrix(&mut density, &Gate::x(&[0])).unwrap();
+            apply_gate_to_stabilizer_with_pauli_channels(&mut stabilizer, &Gate::x(&[0]), &mut rng)
+                .unwrap();
+            assert_eq!(
+                apply_gate_to_density_matrix(&mut density, &gate).unwrap(),
+                [1]
+            );
+            assert_eq!(
+                apply_gate_to_stabilizer_with_pauli_channels(&mut stabilizer, &gate, &mut rng)
+                    .unwrap(),
+                [1]
+            );
+        }
+    }
 
     #[test]
     fn inline_sampling_rejects_nonfinite_probability_with_value_and_fix() {

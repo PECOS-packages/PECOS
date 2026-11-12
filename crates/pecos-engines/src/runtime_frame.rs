@@ -99,7 +99,7 @@ fn opcode(g: &Gate) -> Result<u32, PecosError> {
         GateType::MeasureZLeaked => Ok(6),
         GateType::Idle => Ok(7),
         GateType::MeasCrosstalkLocalPayload => Ok(8),
-        _ => Err(error("unsupported frame gate")),
+        _ => Err(error(&format!("unsupported frame gate: {}", g.gate_type))),
     }
 }
 
@@ -295,6 +295,11 @@ impl RuntimeNoise {
         }
         let physical = inner.runtime_frame_supports_physical_events();
         let inner = inner.build();
+        if inner.has_configured_readout() {
+            return Err(error(
+                "runtime frames do not support readout matrices; remove measurement.readout",
+            ));
+        }
         inner.validate_runtime_configuration()?;
         Ok(Self {
             inner,

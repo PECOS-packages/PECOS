@@ -1873,6 +1873,39 @@ impl PyGeneralNoiseModelBuilder {
         Self::from_setter(self.inner.clone().with_p_meas_0(p0).with_p_meas_1(p1))
     }
 
+    /// Configure conditional readout rows for one Z-measurement flavor.
+    fn with_readout(&self, gate_name: &str, rows: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let gate_type = gate_name.parse::<GateType>().map_err(|_| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid gate type: {gate_name}"))
+        })?;
+        let rows = rows.extract::<BTreeMap<String, BTreeMap<String, Bound<'_, PyAny>>>>().map_err(|error| {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "readout {gate_name}: rows and outcomes must have str keys and numeric probabilities: {error}"
+            ))
+        })?;
+        let mut probabilities = BTreeMap::new();
+        for (row, columns) in rows {
+            let mut weights = BTreeMap::new();
+            for (column, value) in columns {
+                if value.is_instance_of::<PyBool>() {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "readout {gate_name} row {row:?}: invalid value column {column:?} = {value}; use a numeric probability, not bool"
+                    )));
+                }
+                let probability = value.extract::<f64>().map_err(|error| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "readout {gate_name} row {row:?}: invalid value column {column:?} = {value}; use a numeric probability: {error}"
+                    ))
+                })?;
+                weights.insert(column, probability);
+            }
+            probabilities.insert(row, weights);
+        }
+        let matrix = pecos_engines::noise::ReadoutMatrix::new(gate_type, &probabilities)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        Self::from_setter(self.inner.clone().with_readout(matrix))
+    }
+
     /// Add a noiseless gate
     fn with_noiseless_gate(&self, gate_name: &str) -> PyResult<Self> {
         // Share canonical names and aliases with the Selene general-noise adapter.

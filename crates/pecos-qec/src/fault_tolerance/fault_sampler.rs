@@ -124,6 +124,8 @@ fn is_supported_measurement_gate(gate_type: GateType) -> bool {
             | GateType::MZ
             | GateType::MeasureFree
             | GateType::MeasureZLeaked
+            | GateType::MeasureZLost
+            | GateType::MeasureZLeakedLost
             | GateType::MPZ
     )
 }
@@ -192,7 +194,7 @@ pub(crate) enum PauliType {
 /// - Two-qubit Clifford: `CX`, `CY`, `CZ`, `SXX`, `SXXdg`, `SYY`, `SYYdg`,
 ///   `SZZ`, `SZZdg`, `SWAP` → `p=p2`, 15 alternatives
 /// - State preparation: `PZ`, `QAlloc` → mechanism with `p=p_prep`, 1 alternative (`X`)
-/// - Measurement: `MZ`, `MeasureFree`, `MeasureZLeaked` → mechanism with
+/// - Measurement: `MZ`, `MeasureFree`, and the Z heralds → mechanism with
 ///   `p=p_meas`, 1 alternative (flip)
 ///
 /// Each mechanism fires at most once per shot (Bernoulli with total probability p).
@@ -204,7 +206,7 @@ pub(crate) enum PauliType {
 /// - All single-qubit Cliffords: Clifford conjugation via direct Pauli-basis updates
 /// - All two-qubit Cliffords: Clifford conjugation via direct Pauli-basis updates
 /// - `PZ`, `QAlloc`: absorbs all Pauli components on the reset qubit
-/// - `MZ`, `MeasureZLeaked`: records `X`-component flip, then absorbs the Z
+/// - `MZ` and the Z heralds: records `X`-component flip, then absorbs the Z
 ///   component only -- collapse projects, it does not reset, so the X keeps
 ///   propagating. `MeasureFree` absorbs everything: the qubit is discarded.
 ///
@@ -541,6 +543,8 @@ pub(crate) fn propagate_forward(
             | GateType::MZ
             | GateType::MeasureFree
             | GateType::MeasureZLeaked
+            | GateType::MeasureZLost
+            | GateType::MeasureZLeakedLost
             | GateType::MPZ
                 if !loc.qubits.is_empty() =>
             {
@@ -1331,6 +1335,8 @@ fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, Faul
             | GateType::MZ
             | GateType::MeasureFree
             | GateType::MeasureZLeaked
+            | GateType::MeasureZLost
+            | GateType::MeasureZLeakedLost
             | GateType::MPZ => {
                 if let Some(&meas_idx) = meas_positions.get(&loc_idx) {
                     let affected = vec![meas_idx];
@@ -1555,7 +1561,7 @@ impl From<UnsupportedGateError> for MeasurementHistoryError {
 /// Iterates tick-by-tick to match the `TickCircuit`'s measurement numbering
 /// (which detector/DEM-output record indices reference).
 ///
-/// One column per measurement *record*. `MeasureZLeaked` collapses its qubit but
+/// One column per measurement *record*. Each Z herald collapses its qubit but
 /// consumes no record. Its random outcome stays hidden until a recorded
 /// measurement observes it, so simulator indices equal record columns.
 ///
@@ -1633,7 +1639,9 @@ pub(crate) fn replay_measurement_history(
                 }
                 // Collapse without advancing record indices; later observations
                 // re-root any hidden outcome onto a recorded measurement.
-                GateType::MeasureZLeaked => sim.mz_unrecorded(&qs),
+                GateType::MeasureZLeaked
+                | GateType::MeasureZLost
+                | GateType::MeasureZLeakedLost => sim.mz_unrecorded(&qs),
                 GateType::MX | GateType::MZ | GateType::MeasureFree | GateType::MPZ => {
                     if gate.gate_type == GateType::MX {
                         sim.h(&qs);
@@ -2530,73 +2538,92 @@ mod tests {
         assert_eq!(err.qubits, vec![0], "full original qubit list");
     }
 
-    /// The fault catalogue numbers measurements by record, so a `MeasureZLeaked`
-    /// must not take a position. It used to, which put every later measurement's
+    /// The fault catalogue numbers measurements by record, so no Z herald
+    /// may take a position. `MeasureZLeaked` used to, putting later measurements'
     /// faults one column off from the detector metadata.
     #[test]
     fn flatten_gives_no_record_position_to_measure_leaked() {
-        let mut tc = TickCircuit::new();
-        tc.tick().pz(&[0, 1]);
-        tc.tick()
-            .try_add_gate(pecos_core::Gate::measure_z_leaked(&[0usize]))
-            .expect("gate is valid");
-        tc.tick().mz(&[1]);
+        for flavor in [
+            pecos_core::gate_type::GateType::MeasureZLeaked,
+            pecos_core::gate_type::GateType::MeasureZLost,
+            pecos_core::gate_type::GateType::MeasureZLeakedLost,
+        ] {
+            let mut tc = TickCircuit::new();
+            tc.tick().pz(&[0, 1]);
+            tc.tick()
+                .try_add_gate(pecos_core::Gate::simple(flavor, vec![0.into()]))
+                .expect("gate is valid");
+            tc.tick().mz(&[1]);
 
-        let (gates, meas_positions) = flatten_tick_circuit(&tc);
+            let (gates, meas_positions) = flatten_tick_circuit(&tc);
 
-        assert_eq!(
-            meas_positions.len(),
-            1,
-            "only the MZ consumes a record position"
-        );
-        let (&loc_idx, &record) = meas_positions.iter().next().expect("one entry");
-        assert_eq!(record, 0, "the MZ holds record 0, not record 1");
-        assert_eq!(
-            gates[loc_idx].gate_type,
-            pecos_core::gate_type::GateType::MZ,
-            "the recorded position must belong to the MZ, not the leaked measurement"
-        );
+            assert_eq!(
+                meas_positions.len(),
+                1,
+                "only the MZ consumes a record position"
+            );
+            let (&loc_idx, &record) = meas_positions.iter().next().expect("one entry");
+            assert_eq!(record, 0, "the MZ holds record 0, not record 1");
+            assert_eq!(
+                gates[loc_idx].gate_type,
+                pecos_core::gate_type::GateType::MZ,
+                "the recorded position must belong to the MZ, not the Z herald"
+            );
+        }
     }
 
-    /// A leaked measurement holds no record, so recorded measurements keep
+    /// A Z herald holds no record, so recorded measurements keep
     /// contiguous columns.
     #[test]
     fn a_leaked_measurement_keeps_record_columns_contiguous() {
-        let mut tc = TickCircuit::new();
-        tc.tick().pz(&[0, 1]);
-        tc.tick()
-            .try_add_gate(pecos_core::Gate::measure_z_leaked(&[0usize]))
-            .expect("gate is valid");
-        tc.tick().mz(&[1]);
+        for flavor in [
+            pecos_core::gate_type::GateType::MeasureZLeaked,
+            pecos_core::gate_type::GateType::MeasureZLost,
+            pecos_core::gate_type::GateType::MeasureZLeakedLost,
+        ] {
+            let mut tc = TickCircuit::new();
+            tc.tick().pz(&[0, 1]);
+            tc.tick()
+                .try_add_gate(pecos_core::Gate::simple(flavor, vec![0.into()]))
+                .expect("gate is valid");
+            tc.tick().mz(&[1]);
 
-        let history = symbolic_measurement_history(&tc)
-            .expect("nothing records a dependency on the leaked result");
-        assert_eq!(history.len(), 1, "only the MZ holds a record");
-        assert_eq!(
-            history.get(0).expect("one column").index,
-            0,
-            "the recorded measurement takes simulator index and record column 0"
-        );
+            let history = symbolic_measurement_history(&tc)
+                .expect("nothing records a dependency on the herald result");
+            assert_eq!(history.len(), 1, "only the MZ holds a record");
+            assert_eq!(
+                history.get(0).expect("one column").index,
+                0,
+                "the recorded measurement takes simulator index and record column 0"
+            );
+        }
     }
 
-    /// The first recorded observation of a leaked outcome is random.
+    /// The first recorded observation of a hidden herald outcome is random.
     #[test]
     fn a_recorded_outcome_depending_on_a_leaked_result_is_random() {
-        let mut tc = TickCircuit::new();
-        tc.tick().pz(&[0, 1]);
-        tc.tick().h(&[0]);
-        tc.tick().cx(&[(0, 1)]);
-        tc.tick()
-            .try_add_gate(pecos_core::Gate::measure_z_leaked(&[0usize]))
-            .expect("gate is valid");
-        tc.tick().mz(&[1]);
+        for flavor in [
+            pecos_core::gate_type::GateType::MeasureZLeaked,
+            pecos_core::gate_type::GateType::MeasureZLost,
+            pecos_core::gate_type::GateType::MeasureZLeakedLost,
+        ] {
+            let mut tc = TickCircuit::new();
+            tc.tick().pz(&[0, 1]);
+            tc.tick().h(&[0]);
+            tc.tick().cx(&[(0, 1)]);
+            tc.tick()
+                .try_add_gate(pecos_core::Gate::simple(flavor, vec![0.into()]))
+                .expect("gate is valid");
+            tc.tick().mz(&[1]);
 
-        let history = symbolic_measurement_history(&tc).expect("hidden outcomes are representable");
-        assert_eq!(history.len(), 1);
-        let result = history.get(0).expect("the MZ holds record 0");
-        assert!(!result.is_deterministic);
-        assert_eq!(result.outcome, pecos_core::BitSet::single(0));
-        assert!(!result.flip);
+            let history =
+                symbolic_measurement_history(&tc).expect("hidden outcomes are representable");
+            assert_eq!(history.len(), 1);
+            let result = history.get(0).expect("the MZ holds record 0");
+            assert!(!result.is_deterministic);
+            assert_eq!(result.outcome, pecos_core::BitSet::single(0));
+            assert!(!result.flip);
+        }
     }
 
     /// `MeasureFree` consumes a record, so it keeps a column of its own. Nothing

@@ -1536,7 +1536,7 @@ impl QisEngine {
                         .iter()
                         .map(|q| usize::from(*q))
                         .collect::<Vec<_>>();
-                    let measurement_result_ids = if matches!(gate.gate_type, GateType::MZ | GateType::MeasureZLeaked) {
+                    let measurement_result_ids = if matches!(gate.gate_type, GateType::MZ | GateType::MeasureZLeaked | GateType::MeasureZLost | GateType::MeasureZLeakedLost) {
                         let end = measurement_cursor + qubits.len();
                         if end > measurement_mapping.len() {
                             return Err(
@@ -4158,6 +4158,23 @@ mod tests {
         let in_memory = collector.lock().expect("collector lock");
         assert_eq!(in_memory[1].stage, "trace_complete");
         assert_eq!(in_memory[1].measurement_results, BTreeMap::from([(7, 1)]));
+    }
+
+    #[test]
+    fn new_herald_trace_keeps_measurement_result_ids() {
+        for gate_type in [GateType::MeasureZLost, GateType::MeasureZLeakedLost] {
+            let mut commands = ByteMessage::quantum_operations_builder();
+            commands.add_gate_command(&pecos_core::Gate::simple(gate_type, vec![0.into()]));
+            let traces = QisEngine::lowered_quantum_ops_trace(
+                &commands.build(),
+                &[17],
+                &[TraceMetadata::new()],
+            )
+            .unwrap();
+            assert_eq!(traces.len(), 1);
+            assert_eq!(traces[0].measurement_result_ids, [17]);
+            assert_eq!(traces[0].gate_type, gate_type.to_string());
+        }
     }
 
     #[test]

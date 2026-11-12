@@ -929,7 +929,11 @@ fn backward_conjugate_bm(prop: &mut Bm, gate: &Gate) {
         // Measurement: kill X on measured qubit (Z-basis measurement
         // is insensitive to Z errors, but X errors flip the result).
         // For backward propagation, we don't propagate X past MZ.
-        GateType::MZ | GateType::MeasureFree | GateType::MeasureZLeaked => {
+        GateType::MZ
+        | GateType::MeasureFree
+        | GateType::MeasureZLeaked
+        | GateType::MeasureZLost
+        | GateType::MeasureZLeakedLost => {
             for q in &gate.qubits {
                 let qi = q.index();
                 if prop.has_x(qi) {
@@ -950,4 +954,26 @@ fn backward_conjugate_bm(prop: &mut Bm, gate: &Gate) {
     // Sign is tracked in the Heisenberg walk's coefficients;
     // for the Bm-level classification we only need the Pauli structure.
     *prop = sp.to_bm();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pecos_core::gate_type::GateType;
+
+    #[test]
+    fn all_z_heralds_remove_x_in_backward_conjugation() {
+        for flavor in [
+            GateType::MeasureZLeaked,
+            GateType::MeasureZLost,
+            GateType::MeasureZLeakedLost,
+        ] {
+            let mut label = Bm::x(0);
+            label.z_bits.set_bit(0);
+            label.x_bits.set_bit(1);
+            backward_conjugate_bm(&mut label, &Gate::simple(flavor, vec![0.into()]));
+            assert!(!label.has_x(0), "{flavor}");
+            assert!(label.has_z(0) && label.has_x(1), "{flavor}");
+        }
+    }
 }

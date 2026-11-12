@@ -6,6 +6,12 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Added:** Core `MeasureZLost` and `MeasureZLeakedLost` herald gates, with alphabets
+  `{0, 1, 3}` and `{0, 1, 2, 3}`, and per-flavor general-noise readout matrices
+  configurable from Rust, JSON, and Python. Qubit-loss state is not introduced.
+- **Changed:** Unsupported runtime-frame and scheduled gate errors now name the gate
+  after their existing error prefix.
+
 - **Deprecated:** Core `GateType::MeasureLeaked` is now `GateType::MeasureZLeaked`
   (wire value 105 is unchanged); its deprecated associated-const alias works in
   values and patterns but cannot be `use`-imported. The builders

@@ -1007,9 +1007,12 @@ impl<'a> GadgetChecker<'a> {
         let qubits: Vec<usize> = gate.qubits.iter().map(pecos_core::QubitId::index).collect();
         let (z_flips, x_flips) = match gate.gate_type {
             GateType::MX => get_syndrome_flips(prop, &[], &qubits),
-            GateType::MZ | GateType::MeasureFree | GateType::MPZ | GateType::MeasureZLeaked => {
-                get_syndrome_flips(prop, &qubits, &[])
-            }
+            GateType::MZ
+            | GateType::MeasureFree
+            | GateType::MPZ
+            | GateType::MeasureZLeaked
+            | GateType::MeasureZLost
+            | GateType::MeasureZLeakedLost => get_syndrome_flips(prop, &qubits, &[]),
             _ => return,
         };
 
@@ -1856,6 +1859,25 @@ mod tests {
         circuit.tick().cx(&[(1, 3), (2, 4)]);
         circuit.tick().mz(&[0, 1, 2, 3, 4]); // Measure everything
         circuit
+    }
+
+    #[test]
+    fn all_z_heralds_record_their_anticommuting_flip() {
+        for flavor in [
+            GateType::MeasureZLeaked,
+            GateType::MeasureZLost,
+            GateType::MeasureZLeakedLost,
+        ] {
+            let mut circuit = TickCircuit::new();
+            circuit
+                .tick()
+                .try_add_gate(pecos_core::Gate::simple(flavor, vec![0.into()]))
+                .unwrap();
+            let checker = GadgetChecker::new(&circuit, GadgetConfig::new()).unwrap();
+            let (prop, flips) = checker.propagate(&[(0, 1)], &FaultConfiguration::new());
+            assert!(prop.contains_x(0), "{flavor} discarded its flip");
+            assert_eq!(flips, MeasurementFlips::from([(0, 0)]), "{flavor}");
+        }
     }
 
     #[test]

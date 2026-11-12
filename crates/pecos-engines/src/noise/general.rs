@@ -79,6 +79,8 @@ mod builder;
 mod config;
 pub use self::config::GeneralNoiseConfig;
 mod default;
+mod readout;
+pub use self::readout::ReadoutMatrix;
 
 pub use self::builder::{GeneralNoiseModelBuilder, PauliWithAngleScaling};
 
@@ -161,6 +163,9 @@ pub struct GeneralNoiseModel {
     /// Gates in this set may be those that are implemented in software rather than
     /// with physical operations, so no noise should be applied to them.
     noiseless_gates: BTreeSet<GateType>,
+
+    /// Explicit conditional readout rows, indexed by measurement flavor.
+    readout: BTreeMap<GateType, ReadoutMatrix>,
 
     /// Scale leakage events to be completely depolarizing events instead.
     ///
@@ -827,7 +832,11 @@ impl GeneralNoiseModel {
             // Track which qubits are being measured for leakage handling
             if matches!(
                 gate.gate_type,
-                GateType::MZ | GateType::MeasureZLeaked | GateType::MPZ
+                GateType::MZ
+                    | GateType::MeasureZLeaked
+                    | GateType::MeasureZLost
+                    | GateType::MeasureZLeakedLost
+                    | GateType::MPZ
             ) {
                 self.measured_qubits.extend(gate.qubits.iter().map(|q| {
                     (
@@ -876,7 +885,10 @@ impl GeneralNoiseModel {
                     self.apply_prep_faults(&gate, builder);
                     self.apply_simple_crosstalk_faults(&gate, self.p_prep_crosstalk, builder);
                 }
-                GateType::MZ | GateType::MeasureZLeaked => {
+                GateType::MZ
+                | GateType::MeasureZLeaked
+                | GateType::MeasureZLost
+                | GateType::MeasureZLeakedLost => {
                     // Measurement noise is handled in apply_noise_on_continue_processing
                     // We still need to add the original gate here
                     builder.add_gate_command(&gate);
@@ -1112,13 +1124,20 @@ impl GeneralNoiseModel {
                         ops_builder.add_gate_command(&gate);
                     }
                 }
-                GateType::MeasureZLeaked => {
+                GateType::MeasureZLeaked | GateType::MeasureZLeakedLost => {
+                    if !self.noiseless_gates.contains(&gate_type)
+                        && let Some(value) =
+                            self.configured_readout(gate_type, outcome, leaked_at_measurement)
+                    {
+                        outcomes.push(value);
+                        continue;
+                    }
                     let mut val = outcome as usize;
                     if leaked_at_measurement {
-                        trace!("Qubit {qubit} is leaked, MeasureLeaked returns 2");
-                        // For MeasureZLeaked, return 2 for leaked qubits
+                        trace!("Qubit {qubit} is leaked, {gate_type} returns 2");
+                        // Heralds whose alphabet includes leakage return 2 for leaked qubits.
                         val = 2;
-                    } else if !self.noiseless_gates.contains(&GateType::MeasureZLeaked) {
+                    } else if !self.noiseless_gates.contains(&gate_type) {
                         // For non-leaked qubits, apply measurement noise below
                         // Apply asymmetric measurement noise to each outcome
                         if val == 1 {
@@ -1133,7 +1152,19 @@ impl GeneralNoiseModel {
                     }
                     outcomes.push(val);
                 }
-                GateType::MZ | GateType::MPZ => {
+                GateType::MZ | GateType::MPZ | GateType::MeasureZLost => {
+                    let readout_gate = if gate_type == GateType::MPZ {
+                        GateType::MZ
+                    } else {
+                        gate_type
+                    };
+                    if !self.noiseless_gates.contains(&readout_gate)
+                        && let Some(value) =
+                            self.configured_readout(readout_gate, outcome, leaked_at_measurement)
+                    {
+                        outcomes.push(value);
+                        continue;
+                    }
                     // Apply biased measurement noise to each outcome
                     // Check if we have leaked qubits that were measured
                     let mut val = outcome as usize;
@@ -1144,7 +1175,7 @@ impl GeneralNoiseModel {
                     }
                     // NOTE: we still apply bit-flip noise to the outcome 1 of leaked
                     // qubits that measure as 1. This has been the approach since H1/H2.
-                    if !self.noiseless_gates.contains(&GateType::MZ) {
+                    if !self.noiseless_gates.contains(&readout_gate) {
                         if val == 1 {
                             if self.rng.occurs(self.p_meas_1) {
                                 trace!("Flipped measurement outcome 1->0");
@@ -2107,8 +2138,10 @@ impl GeneralNoiseModel {
     ///
     /// # Behavior of Leaked Qubits
     ///
-    /// - Regular `Measure` operations on leaked qubits always return 1
-    /// - `MeasureZLeaked` operations on leaked qubits return 2
+    /// - Without configured readout or measurement flips, `MZ`, `MPZ`, and
+    ///   `MeasureZLost` operations on leaked qubits return 1
+    /// - Without configured readout, `MeasureZLeaked` and `MeasureZLeakedLost`
+    ///   operations on leaked qubits return 2
     /// - Preparation, seepage, and recovery channels can return leaked qubits to the computational subspace
     /// - Gates applied to leaked qubits have no effect on the quantum state
     ///

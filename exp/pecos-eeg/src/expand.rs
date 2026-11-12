@@ -201,8 +201,11 @@ pub fn expand_circuit(gates: &[Gate]) -> Result<ExpandedCircuit, EegBuildError> 
         // `MeasureFree` is record-bearing and lowers to `MZ` below -- the
         // "free" is resource bookkeeping with no stabilizer effect, and a
         // reused qubit reappears behind an explicit prep the expansion keeps.
-        // MeasureZLeaked has no record and cannot be represented here.
-        if gate.gate_type == GateType::MeasureZLeaked {
+        // Z heralds have no record and cannot be represented here.
+        if matches!(
+            gate.gate_type,
+            GateType::MeasureZLeaked | GateType::MeasureZLost | GateType::MeasureZLeakedLost
+        ) {
             return Err(EegBuildError::UnsupportedMeasurement {
                 gate_type: gate.gate_type,
             });
@@ -596,6 +599,21 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn recordless_heralds_are_refused_by_name() {
+        for gate_type in [
+            GateType::MeasureZLeaked,
+            GateType::MeasureZLost,
+            GateType::MeasureZLeakedLost,
+        ] {
+            let error = expand_circuit(&[make_gate(gate_type, &[0])]).err().unwrap();
+            assert!(
+                matches!(error, EegBuildError::UnsupportedMeasurement { gate_type: rejected } if rejected == gate_type)
+            );
+            assert!(error.to_string().contains(&gate_type.to_string()));
+        }
+    }
 
     fn gate(gt: GateType, qubits: &[usize]) -> Gate {
         make_gate(gt, qubits)

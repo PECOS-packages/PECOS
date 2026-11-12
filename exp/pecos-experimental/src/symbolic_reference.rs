@@ -167,6 +167,8 @@ pub(crate) fn reference_distribution(gates: &[Gate]) -> Vec<f64> {
                 | GateType::MPZ
                 | GateType::MeasureFree
                 | GateType::MeasureZLeaked
+                | GateType::MeasureZLost
+                | GateType::MeasureZLeakedLost
         );
         let prepared = matches!(
             gate.gate_type,
@@ -314,5 +316,27 @@ fn mx_back_action_matches_exact_reference() {
             &reference_distribution(&gates),
             &gates,
         );
+    }
+}
+
+#[test]
+fn all_z_heralds_project_in_the_dense_reference() {
+    for flavor in [
+        GateType::MeasureZLeaked,
+        GateType::MeasureZLost,
+        GateType::MeasureZLeakedLost,
+    ] {
+        let distribution = reference_distribution(&[
+            Gate::h(&[0]),
+            Gate::simple(flavor, vec![0.into()]),
+            Gate::mz(&[0]),
+        ]);
+        assert_eq!(distribution.len(), 4);
+        for (actual, expected) in distribution.iter().zip([0.5, 0.0, 0.0, 0.5]) {
+            assert!(
+                (actual - expected).abs() < 1e-12,
+                "{flavor}: {distribution:?}"
+            );
+        }
     }
 }

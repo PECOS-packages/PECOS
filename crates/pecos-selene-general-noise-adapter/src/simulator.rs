@@ -153,7 +153,10 @@ impl SeleneSimulator {
                         theta: -PI / 4.0,
                     }));
                 }
-                GateType::MZ | GateType::MeasureZLeaked => {
+                GateType::MZ
+                | GateType::MeasureZLeaked
+                | GateType::MeasureZLost
+                | GateType::MeasureZLeakedLost => {
                     for qubit_id in qubits {
                         let result_id = u64::try_from(measurement_count)
                             .map_err(|error| Self::error("measurement ID conversion", error))?;

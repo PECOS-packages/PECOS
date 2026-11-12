@@ -78,7 +78,7 @@ def test_unique_dem_matches_original_raw_matrix_path(family, error_rate):
 
 
 @pytest.mark.parametrize("family", sorted(CONVENIENCE))
-@pytest.mark.parametrize("error_rate", [float("nan"), -0.1, 1.5])
+@pytest.mark.parametrize("error_rate", [float("nan"), float("inf"), -0.1, 1.5])
 @pytest.mark.parametrize("convenience", [False, True])
 def test_merged_families_reject_invalid_error_rate(family, error_rate, convenience):
     """Red/green: an override that is not a probability is rejected before merging."""

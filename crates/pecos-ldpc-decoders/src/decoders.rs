@@ -22,7 +22,9 @@ fn prepare_channel_probs(
 ) -> Result<Vec<f64>, LdpcError> {
     // The C++ core takes log((1 - p) / p) unchecked, so only probabilities may pass.
     // The range check also rejects NaN and infinities; `+ 0.0` turns -0.0 into
-    // +0.0, whose log-likelihood is +inf rather than NaN.
+    // +0.0, whose log-likelihood is +inf rather than NaN. The endpoints 0 and 1 stay
+    // legal, but a syndrome that such priors make impossible still yields NaN
+    // log-likelihoods in product-sum BP.
     match (error_rate, error_channel) {
         (Some(rate), None) => {
             if !(0.0..=1.0).contains(&rate) {

@@ -2285,7 +2285,7 @@ mod tests {
     #[test]
     fn bp_osd_lsd_reject_invalid_error_rate() {
         let model = DecodeModel::SingleDem(DEM.to_string());
-        for rate in [f64::NAN, -0.1, 1.5] {
+        for rate in [f64::NAN, f64::INFINITY, -0.1, 1.5] {
             for spec in [
                 DecoderSpec::BpOsd(BpOsdConfig {
                     error_rate: Some(rate),

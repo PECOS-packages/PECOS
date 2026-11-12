@@ -738,55 +738,63 @@ mod tests {
         let pcm = test_pcm();
         for bad in [f64::NAN, f64::INFINITY, -0.1, 1.5] {
             let channel = vec![0.01, 0.01, bad, 0.01];
-            for (result, expected) in [
+            let rate_message = "error_rate must be finite and in [0, 1]";
+            let channel_message = "error_channel[2] must be finite and in [0, 1]";
+            let results = [
                 (
                     BpOsdBuilder::new(&pcm).error_rate(bad).build().map(|_| ()),
-                    "error_rate must",
+                    rate_message,
                 ),
                 (
                     BpOsdBuilder::new(&pcm)
                         .error_channel(channel.clone())
                         .build()
                         .map(|_| ()),
-                    "error_channel[2] must",
+                    channel_message,
                 ),
-            ] {
+                (
+                    BpLsdBuilder::new(&pcm).error_rate(bad).build().map(|_| ()),
+                    rate_message,
+                ),
+                (
+                    BpLsdBuilder::new(&pcm)
+                        .error_channel(channel.clone())
+                        .build()
+                        .map(|_| ()),
+                    channel_message,
+                ),
+                (
+                    SoftInfoBpBuilder::new(&pcm)
+                        .error_rate(bad)
+                        .build()
+                        .map(|_| ()),
+                    rate_message,
+                ),
+                (
+                    SoftInfoBpBuilder::new(&pcm)
+                        .error_channel(channel.clone())
+                        .build()
+                        .map(|_| ()),
+                    channel_message,
+                ),
+                (
+                    BeliefFindBuilder::new(&pcm)
+                        .error_rate(bad)
+                        .build()
+                        .map(|_| ()),
+                    rate_message,
+                ),
+                (
+                    BeliefFindBuilder::new(&pcm)
+                        .error_channel(channel)
+                        .build()
+                        .map(|_| ()),
+                    channel_message,
+                ),
+            ];
+            for (result, expected) in results {
                 assert!(
                     matches!(&result, Err(LdpcError::InvalidInput(message)) if message.contains(expected)),
-                    "{bad}: {result:?}"
-                );
-            }
-            let results = [
-                BpOsdBuilder::new(&pcm).error_rate(bad).build().map(|_| ()),
-                BpOsdBuilder::new(&pcm)
-                    .error_channel(channel.clone())
-                    .build()
-                    .map(|_| ()),
-                BpLsdBuilder::new(&pcm).error_rate(bad).build().map(|_| ()),
-                BpLsdBuilder::new(&pcm)
-                    .error_channel(channel.clone())
-                    .build()
-                    .map(|_| ()),
-                SoftInfoBpBuilder::new(&pcm)
-                    .error_rate(bad)
-                    .build()
-                    .map(|_| ()),
-                SoftInfoBpBuilder::new(&pcm)
-                    .error_channel(channel.clone())
-                    .build()
-                    .map(|_| ()),
-                BeliefFindBuilder::new(&pcm)
-                    .error_rate(bad)
-                    .build()
-                    .map(|_| ()),
-                BeliefFindBuilder::new(&pcm)
-                    .error_channel(channel)
-                    .build()
-                    .map(|_| ()),
-            ];
-            for result in results {
-                assert!(
-                    matches!(&result, Err(LdpcError::InvalidInput(message)) if message.contains("must be finite and in [0, 1]")),
                     "{bad}: {result:?}"
                 );
             }

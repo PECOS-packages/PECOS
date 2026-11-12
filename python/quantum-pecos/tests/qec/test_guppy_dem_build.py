@@ -5,15 +5,19 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pecos
+import pecos.tracing as tracing
 import pytest
 from guppylang import guppy
 from guppylang.std.builtins import array, result
 from guppylang.std.quantum import cx, h, measure, qubit, x
+from pecos._compilation import guppy_to_hugr
 from pecos._qis_trace_replay import (
     _replay_qis_trace_chunks_into_tick_circuit,
     _validate_audited_trace_stream,
@@ -31,7 +35,7 @@ from pecos.qec import (
     surface_memory_dem_spec,
 )
 from pecos.qec._qis_result_tags import _CertificationError
-from pecos.qec.dem import _generator_certified_result_traces
+from pecos.qec.dem import _generator_certified_result_traces, _GuppyProgramAnalysis
 from pecos.qec.dem_spec import GuppyDemBuild, RecordRef, ResultRef, _resolve_dem_specs
 from pecos_rslib.quantum import TickCircuit
 
@@ -95,9 +99,14 @@ def _unexpected_program_analysis(*_args: object) -> None:
 
 @pytest.mark.parametrize("wrapped", [False, True])
 def test_certified_build_does_not_load_hugr(monkeypatch: pytest.MonkeyPatch, *, wrapped: bool) -> None:
-    """Regression: packet A must not parse or analyze generator-certified builds."""
+    """Certified builds skip the HUGR load and analyze the lowered text exactly once.
+
+    The layout is a claim checked against independent evidence, so the static
+    analysis now runs; the control-flow admission still needs no HUGR load.
+    """
     monkeypatch.setattr(_hugr_preflight, "load_hugr_from_bytes", _unexpected_program_analysis)
-    monkeypatch.setattr(_qis_result_tags, "extract_result_tag_measurements", _unexpected_program_analysis)
+    extractor = Mock(wraps=_qis_result_tags.extract_result_tag_measurements)
+    monkeypatch.setattr(_qis_result_tags, "extract_result_tag_measurements", extractor)
     program = make_surface_code(3, 1, "Z")
     detectors, observables = surface_memory_dem_spec(3, 1, "Z")
     build = build_dem_from_guppy(
@@ -109,6 +118,7 @@ def test_certified_build_does_not_load_hugr(monkeypatch: pytest.MonkeyPatch, *, 
     )
     assert build.audit["named_result_binding"] == "generator_layout_v2_program_bound"
     assert build.dem.num_detectors == len(detectors)
+    extractor.assert_called_once()
 
 
 @pytest.mark.parametrize("references", ["typed", "json"])
@@ -831,6 +841,211 @@ def test_generated_surface_named_results_evaluate_without_private_adapter() -> N
     assert evaluated == [([0] * build.dem.num_detectors, 0)] * 3
 
 
+class _UnavailableResultAnalysis:
+    @property
+    def result_tags(self) -> tuple[dict[str, list[int | None]], int]:
+        msg = "test schedule has no static evidence"
+        raise _CertificationError(msg)
+
+
+@pytest.fixture
+def strip_runtime_result_ids(monkeypatch: pytest.MonkeyPatch) -> None:
+    original = tracing.named_result_traces_from_operation_trace
+
+    def stripped(chunks: list[dict]) -> list[dict]:
+        return [{**trace, "result_ids": []} for trace in original(chunks)]
+
+    monkeypatch.setattr(tracing, "named_result_traces_from_operation_trace", stripped)
+
+
+@pytest.mark.usefixtures("strip_runtime_result_ids")
+@pytest.mark.parametrize("tampered", [False, True])
+def test_generator_layout_uses_compiled_evidence_without_runtime_ids(*, tampered: bool) -> None:
+    @guppy
+    def program() -> None:
+        qa = qubit()
+        qb = qubit()
+        qc = qubit()
+        x(qb)
+        a = measure(qa).read()
+        b = measure(qb).read()
+        c = measure(qc).read()
+        result("a", a)
+        result("b", b)
+        result("c", c)
+
+    hugr_bytes = guppy_to_hugr(program)
+    occurrences, static_count = _qis_result_tags.extract_result_tag_measurements(_GuppyProgramAnalysis(hugr_bytes).qis)
+    assert occurrences == {"a": [0], "b": [1], "c": [2]}
+    assert static_count == 3
+    right = build_dem_from_guppy(program, num_qubits=3, detectors=[Detector(rec[-2])])
+    wrong = build_dem_from_guppy(program, num_qubits=3, detectors=[Detector(rec[-1])])
+    # Default p1 makes the extra X on b distinguish the physical noise sites.
+    assert right.dem.to_string() != wrong.dem.to_string()
+    source_ids = json.loads(right.circuit.get_meta("qis_source_measurement_ids"))
+    expected_ids = {tag: source_ids[ordinals[0]] for tag, ordinals in occurrences.items()}
+    layout = (("a", 0), ("c", 0), ("b", 0)) if tampered else (("a", 0), ("b", 0), ("c", 0))
+    layout_json = json.dumps(layout, separators=(",", ":"))
+    digest = hashlib.sha256(hugr_bytes + b"\0" + layout_json.encode()).hexdigest()
+    object.__setattr__(program, "__pecos_named_measurement_layout_v2__", (digest, layout))
+    if tampered:
+        error = (
+            rf"compiled analysis 'c'\[0\] has measurement id {expected_ids['c']}, "
+            rf"but the generator-certified layout requires {expected_ids['b']}"
+        )
+        with pytest.raises(ValueError, match=error):
+            build_dem_from_guppy(program, num_qubits=3, detectors=[Detector(result_ref("b"))])
+    else:
+        built = build_dem_from_guppy(program, num_qubits=3, detectors=[Detector(result_ref("b"))])
+        assert json.loads(built.detectors_json) == [{"id": 0, "meas_ids": [expected_ids["b"]]}]
+        assert built.dem.to_string() == right.dem.to_string()
+        assert built.dem.to_string() != wrong.dem.to_string()
+        for tag, identity in expected_ids.items():
+            assert built.evaluate_results({tag: 1, **dict.fromkeys(expected_ids.keys() - {tag}, 0)}) == (
+                [int(identity == expected_ids["b"])],
+                0,
+            )
+
+
+@pytest.mark.usefixtures("strip_runtime_result_ids")
+def test_generator_surface_without_any_evidence_rejects_build() -> None:
+    program = make_surface_code(3, 1, "Z")
+    analysis = _GuppyProgramAnalysis(guppy_to_hugr(program))
+    with pytest.raises(_CertificationError, match="CFG cycle"):
+        _qis_result_tags.extract_result_tag_measurements(analysis.qis)
+    first_tag, first_index = program.__pecos_named_measurement_layout_v2__[1][0]
+    error = (
+        rf"{first_tag!r}\[{first_index}\]: "
+        "neither runtime provenance nor compiled analysis identifies its measurement"
+    )
+    with pytest.raises(ValueError, match=error):
+        build_dem_from_guppy(program, num_qubits=get_num_qubits(3), detectors=[Detector(result_ref("final:meas:0"))])
+
+
+@pytest.mark.parametrize("evidence", ["runtime", "static", "both"])
+def test_generator_scalar_evidence_preserves_flattened_layout_order(evidence: str) -> None:
+    circuit = TickCircuit()
+    circuit.tick().mz_with_ids([0, 1, 2], [4, 9, 12])
+    circuit.set_meta("qis_source_measurement_ids", "[4,9,12]")
+    layout = (("same", 1), ("other", 0), ("same", 0))
+    analysis = (
+        _UnavailableResultAnalysis()
+        if evidence == "runtime"
+        else SimpleNamespace(result_tags=({"same": [2, 0], "other": [1]}, 3))
+    )
+    traces = [
+        {"name": tag, "values": [False], "result_ids": [] if evidence == "static" else [identity]}
+        for tag, identity in [("same", 12), ("other", 9), ("same", 4)]
+    ]
+    assert _generator_certified_result_traces(layout, analysis, circuit, traces, required_tags=["same"]) == [
+        {"name": tag, "occurrence": index, "values": [False], "result_ids": [identity]}
+        for (tag, index), identity in zip(layout, [4, 9, 12], strict=True)
+    ]
+
+
+@pytest.mark.parametrize("runtime_id", [4, 9])
+def test_generator_runtime_and_static_must_agree_before_layout_check(runtime_id: int) -> None:
+    circuit = TickCircuit()
+    circuit.tick().mz_with_ids([0, 1], [4, 9])
+    circuit.set_meta("qis_source_measurement_ids", "[4,9]")
+    analysis = SimpleNamespace(result_tags=({"a": [int(runtime_id == 4)], "b": [1]}, 2))
+    traces = [
+        {"name": "a", "values": [False], "result_ids": [runtime_id]},
+        {"name": "b", "values": [False], "result_ids": [9]},
+    ]
+    other_id = 9 if runtime_id == 4 else 4
+    with pytest.raises(
+        ValueError,
+        match=rf"runtime result trace 'a'\[0\] has measurement id {runtime_id}, "
+        rf"but compiled analysis identifies measurement id {other_id}",
+    ):
+        _generator_certified_result_traces((("a", 0), ("b", 0)), analysis, circuit, traces, required_tags=[])
+
+
+@pytest.mark.parametrize("case", ["none", "absent", "short", "array", "mixed", "base_array"])
+def test_generator_static_evidence_requires_own_scalar_occurrence(case: str) -> None:
+    circuit = TickCircuit()
+    circuit.tick().mz_with_ids([0, 1], [4, 9])
+    circuit.set_meta("qis_source_measurement_ids", "[4,9]")
+    tag = "physical:meas:0" if case == "base_array" else "physical"
+    layout = ((tag, 0), (tag, 1))
+    occurrences = {tag: [0, 1]}
+    traces = [
+        {"name": tag, "values": [False], "result_ids": []},
+        {"name": tag, "values": [True], "result_ids": []},
+    ]
+    if case == "none":
+        occurrences[tag][1] = None
+    elif case == "absent":
+        occurrences = {}
+    elif case == "short":
+        occurrences[tag] = [0]
+    elif case == "array":
+        traces = [{"name": tag, "values": [False, True], "result_ids": []}]
+    elif case == "mixed":
+        # Even an empty non-scalar call invalidates static occurrence matching.
+        traces.append({"name": tag, "values": [], "result_ids": []})
+    else:
+        occurrences = {"physical": [0, 1]}
+    index = 1 if case in {"none", "short"} else 0
+    with pytest.raises(ValueError, match=rf"{tag!r}\[{index}\]: neither runtime provenance nor compiled analysis"):
+        _generator_certified_result_traces(
+            layout,
+            SimpleNamespace(result_tags=(occurrences, 2)),
+            circuit,
+            traces,
+            required_tags=[],
+        )
+
+
+def test_generator_static_count_mismatch_is_hard_error() -> None:
+    circuit = TickCircuit()
+    circuit.tick().mz_with_ids([0], [4])
+    circuit.set_meta("qis_source_measurement_ids", "[4]")
+    with pytest.raises(_CertificationError, match=r"has 2 measurement\(s\).*emitted 1"):
+        _generator_certified_result_traces(
+            (("a", 0),),
+            SimpleNamespace(result_tags=({"a": [0]}, 2)),
+            circuit,
+            [{"name": "a", "values": [False], "result_ids": [4]}],
+            required_tags=[],
+        )
+
+
+def test_generator_unexpected_analysis_error_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
+    circuit = TickCircuit()
+    circuit.tick().mz_with_ids([0], [4])
+    circuit.set_meta("qis_source_measurement_ids", "[4]")
+    error = RuntimeError("analysis failure")
+    monkeypatch.setattr(_qis_result_tags, "extract_result_tag_measurements", Mock(side_effect=error))
+    analysis = _GuppyProgramAnalysis(b"")
+    analysis.qis = "unused"
+    with pytest.raises(RuntimeError, match="analysis failure") as caught:
+        _generator_certified_result_traces(
+            (("a", 0),),
+            analysis,
+            circuit,
+            [{"name": "a", "values": [False], "result_ids": [4]}],
+            required_tags=[],
+        )
+    assert caught.value is error
+
+
+@pytest.mark.parametrize("ordinal", [-1, 1])
+def test_generator_static_ordinal_bounds(ordinal: int) -> None:
+    circuit = TickCircuit()
+    circuit.tick().mz_with_ids([0], [4])
+    circuit.set_meta("qis_source_measurement_ids", "[4]")
+    with pytest.raises(ValueError, match=f"compiler measurement ordinal {ordinal} is outside"):
+        _generator_certified_result_traces(
+            (("a", 0),),
+            SimpleNamespace(result_tags=({"a": [ordinal]}, 1)),
+            circuit,
+            [{"name": "a", "values": [False], "result_ids": []}],
+            required_tags=[],
+        )
+
+
 def test_generator_layout_rejects_source_runtime_identity_mismatch() -> None:
     circuit = TickCircuit()
     circuit.tick().mz_with_ids([0, 1], [4, 9])
@@ -843,6 +1058,7 @@ def test_generator_layout_rejects_source_runtime_identity_mismatch() -> None:
     with pytest.raises(ValueError, match="source and runtime measurement identities"):
         _generator_certified_result_traces(
             (("first", 0), ("second", 0)),
+            _UnavailableResultAnalysis(),
             circuit,
             traces,
             required_tags=["first"],
@@ -857,25 +1073,29 @@ def test_generator_layout_rejects_permuted_array_runtime_result_ids() -> None:
     with pytest.raises(ValueError, match="generator-certified layout requires 4"):
         _generator_certified_result_traces(
             (("physical", 0), ("physical", 1)),
+            _UnavailableResultAnalysis(),
             circuit,
             [{"name": "physical", "values": [False, True], "result_ids": [9, 4]}],
             required_tags=["physical"],
         )
 
 
-def test_generator_layout_allows_guppy_v1_array_without_scalar_ids() -> None:
+def test_generator_layout_rejects_array_without_evidence() -> None:
     circuit = TickCircuit()
     circuit.tick().mz_with_ids([0, 1], [4, 9])
     circuit.set_meta("guppy_source_measurement_ids", "[4,9]")
 
-    traces = _generator_certified_result_traces(
-        (("physical", 0), ("physical", 1)),
-        circuit,
-        [{"name": "physical", "values": [False, True], "result_ids": []}],
-        required_tags=["physical"],
-    )
-
-    assert [trace["result_ids"] for trace in traces] == [[4], [9]]
+    with pytest.raises(
+        ValueError,
+        match=r"'physical'\[0\]: neither runtime provenance nor compiled analysis identifies its measurement",
+    ):
+        _generator_certified_result_traces(
+            (("physical", 0), ("physical", 1)),
+            _UnavailableResultAnalysis(),
+            circuit,
+            [{"name": "physical", "values": [False, True], "result_ids": []}],
+            required_tags=["physical"],
+        )
 
 
 def test_generator_layout_checks_synthetic_array_slots_against_base_array_ids() -> None:
@@ -892,6 +1112,7 @@ def test_generator_layout_checks_synthetic_array_slots_against_base_array_ids() 
     with pytest.raises(ValueError, match="generator-certified layout requires 4"):
         _generator_certified_result_traces(
             (("physical:meas:0", 0), ("physical:meas:1", 0)),
+            _UnavailableResultAnalysis(),
             circuit,
             traces,
             required_tags=["physical:meas:0", "physical:meas:1"],
@@ -1008,11 +1229,8 @@ def test_build_compiles_once_and_traces_analyzed_text(monkeypatch: pytest.Monkey
     assert compiler.call_count == tracer.call_count == wrapper.call_count == 1
     traced_program = tracer.call_args.args[0]
     assert isinstance(traced_program, pecos.Qis)
-    if certified:
-        extractor.assert_not_called()
-    else:
-        extractor.assert_called_once_with(wrapper.call_args.args[0])
-        assert extractor.call_args.args[0] is wrapper.call_args.args[0]
+    extractor.assert_called_once_with(wrapper.call_args.args[0])
+    assert extractor.call_args.args[0] is wrapper.call_args.args[0]
 
 
 @pytest.mark.parametrize("references", ["typed", "json", "records"])

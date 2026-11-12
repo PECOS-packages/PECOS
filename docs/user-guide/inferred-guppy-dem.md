@@ -216,8 +216,9 @@ validation. Additional provenance shots run only when raw outputs lack direct
 runtime IDs and provenance checking is enabled. Inferred builds record
 `dem_raw_measurement_binding` as `runtime_result_ids`,
 `probe_correlated_result_ids`, or `assumed_canonical_result_order`. A failed
-rank, binding, or schedule check stops the build. Only requested output tags
-are inspected; their widths must remain fixed across inference shots.
+rank, binding, or schedule check stops the build. Requested output tags must
+have fixed widths across inference shots. Every named-result trace is checked
+for explicit `unknown` provenance, including tags not selected for inference.
 
 Rust supports mixed lists through typed sources:
 
@@ -328,10 +329,7 @@ inferred = infer_guppy_dem_annotations(
 assert inferred.raw_measurement_ids == (0, 1)
 assert inferred.detector_supports == ((0, 1),)
 assert inferred.observable_supports == ((0,),)
-assert inferred.raw_binding in {
-    "runtime_result_ids",
-    "probe_correlated_result_ids",
-}
+assert inferred.raw_binding == "runtime_result_ids"
 
 dem = inferred.build_dem(
     p1=0.001,
@@ -364,10 +362,11 @@ graph-like projection instead — see
 experimental Frontier and BP-Trellis decoders additionally report a per-shot
 confidence gap; see [Experimental Decoders](../experimental/decoders.md).
 
-The two accepted `raw_binding` values are both identity-preserving. A compiler
-may retain a directly tagged measurement ID, or it may erase the ID while
-duplicating the value into raw and computed outputs; strict probe correlation
-handles either lowering.
+With trace capture enabled at engine build time, PECOS instruments the compiled
+program with a byte-shadow pass. Copies through SSA values, internal calls and
+memory preserve each measurement's identity even when reads and outputs are
+reordered. The example therefore uses `runtime_result_ids`. Arithmetic such as
+XOR is classified as `derived` and does not claim a measurement identity.
 
 The returned supports contain QIS `MeasId` values. PECOS writes equivalent
 `meas_ids` entries into `inferred.detectors_json` and
@@ -451,17 +450,22 @@ assert inferred.detector_supports == (
     (1, 2, 3),
 )
 assert inferred.observable_supports == ((2,),)
-assert inferred.raw_binding == "probe_correlated_result_ids"
+assert inferred.raw_binding == "runtime_result_ids"
 
 dem = inferred.build_dem(p1=0.001, p2=0.005, p_meas=0.005, p_prep=0.001)
 assert dem.num_detectors == 3
 assert dem.num_observables == 1
 ```
 
-Array indexing, copying, and aggregation can erase element-level result IDs in
-the compiled path. In strict mode, PECOS recovers them by correlating each raw
-output column with result-ID-keyed physical outcomes over independent
-coin-toss traces. `probe_correlated_result_ids` records that stronger binding.
+Under trace capture, array copies and aggregation preserve element-level result
+IDs, including copies through wide loads/stores and memory intrinsics. Indexing
+with a measurement-independent address also preserves identity. A
+measurement-dependent address or range produces `derived` values instead.
+The raw arrays above retain direct IDs and require no correlation shots.
+For traces without direct IDs, strict mode can still attempt a unique empirical
+binding against independent coin-toss outcomes (`probe_correlated_result_ids`).
+Explicit `unknown` provenance is rejected with its tag, occurrence and element;
+it never falls back to correlation.
 
 ## Example: raw outputs in a different order
 
@@ -500,7 +504,7 @@ inferred = infer_guppy_dem_annotations(
 assert inferred.raw_measurement_ids == (2, 0, 1)
 assert inferred.detector_supports == ((2, 0),)
 assert inferred.observable_supports == ((1,),)
-assert inferred.raw_binding == "probe_correlated_result_ids"
+assert inferred.raw_binding == "runtime_result_ids"
 ```
 
 This distinction matters whenever an intermediate array is assembled in an
@@ -572,11 +576,12 @@ bindings) and the total `schedule_validation_shots`, excluding the baseline.
 Its `schedule_validation` uses the circuit's `dem_schedule_validation` value,
 `empirical_trace_comparison`; the circuit records the binding as
 `dem_raw_measurement_binding`.
-Correlation fails loudly if the quantum schedule changes, a raw element is a
-computed value instead of a direct measurement, a measurement is omitted or
-duplicated, or two physical signatures collide. Increasing
-`provenance_shots` resolves a rare signature collision; it cannot repair an
-incomplete or computed raw record.
+Correlation rejects a changed quantum schedule, missing or duplicate measurement
+IDs, and raw columns without a unique matching physical signature. A computed
+column may coincide with a physical signature on the sampled shots, so this
+fallback remains empirical; the program contract still requires raw physical
+measurements. Increasing `provenance_shots` reduces accidental signature
+collisions; it cannot repair an incomplete raw record.
 
 The weak fallback is explicit:
 
@@ -587,12 +592,14 @@ inferred = infer_guppy_dem_annotations(
     num_qubits=7,
     require_raw_provenance=False,
 )
-assert inferred.raw_binding == "assumed_canonical_result_order"
+assert inferred.raw_binding in {"runtime_result_ids", "assumed_canonical_result_order"}
 ```
 
 Use it only when the application independently guarantees that the
 concatenated raw values occur exactly once each in physical measurement order.
-It checks the measurement count, but it cannot detect a permutation.
+Direct IDs still take precedence when present, including exact permutations.
+The positional fallback checks the measurement count but cannot detect a
+permutation. Disabling strict binding does not permit `unknown` provenance.
 
 ## Parameters and outputs
 
@@ -606,7 +613,7 @@ It checks the measurement count, but it cannot detect a permutation.
 | `detector_tag` | `"DETECTOR"` | Tag containing all computed detection-event bits. |
 | `observable_tags` | `("obs",)` | Logical result tags, in DEM observable order. |
 | `probe_shots` | derived | Coin-toss rows used to infer and validate affine parities. Defaults to one row per raw measurement plus the affine constant, the validation rows, and a rank margin. |
-| `provenance_shots` | `32` | Rows used to correlate array elements with QIS IDs. |
+| `provenance_shots` | `32` | Rows used to correlate raw columns with QIS IDs when direct IDs are unavailable. |
 | `validation_rows` | `32` | Extra probe rows required beyond the square system, as additional consistency constraints on the fit. |
 | `seed` | `0` | Reproducible trace and probe seed. |
 | `runtime` | `None` | Selene runtime selection forwarded to PECOS. |
@@ -650,6 +657,7 @@ cost where it previously failed fast asking for more shots.
 | --- | --- | --- |
 | `missing required tag(s)` | A configured tag was never emitted. | Check spelling and case, or pass the matching tag arguments. |
 | `must expose every physical measurement exactly once` | The raw stream omitted or duplicated a measurement. | Include initialization, syndrome, postselection, and final-readout measurements exactly once. |
+| `unknown provenance` | An output has no established instrumented source. | Check initialization and external calls; the error names its tag, occurrence and element. |
 | `not a direct physical measurement` | A raw element is computed from measurements. | Emit the original measurement value; keep computed values under detector/observable tags. |
 | `signatures are ambiguous` | Too few provenance probes caused an identity collision. | Increase `provenance_shots` or change `seed`. |
 | `not affine` or `constant-one` | An output is not a representable XOR parity. | Replace nonlinear/offset post-processing with explicit parity outputs, or provide audited static definitions. |
@@ -661,7 +669,7 @@ cost where it previously failed fast asking for more shots.
 The prototype establishes two empirical facts:
 
 1. Emitted detector and observable bits fit unique affine GF(2) parities of
-   the raw physical measurements, including independent validation rows.
+   the raw physical measurements, including additional consistency rows.
 2. The raw measurements bind to one runtime-lowered QIS circuit trace.
 
 It is an empirical certificate, not a compiler proof over every possible

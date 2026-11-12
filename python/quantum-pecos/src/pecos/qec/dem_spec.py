@@ -15,6 +15,7 @@ from numbers import Integral
 from typing import TYPE_CHECKING, Any, Self
 
 from pecos._traced_circuit import measurement_ids_in_execution_order
+from pecos._value_provenance import known_provenance_traces
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -444,7 +445,7 @@ def _index_result_traces(
     calls: dict[str, dict[int, tuple[int | None, ...]]] = defaultdict(dict)
     next_occurrence: dict[str, int] = defaultdict(int)
     refs_by_id: dict[int, list[ResultRef]] = defaultdict(list)
-    for trace in traces:
+    for trace in known_provenance_traces(traces):
         tag = trace.get("name")
         if not isinstance(tag, str):
             continue

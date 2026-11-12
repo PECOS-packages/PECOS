@@ -13,7 +13,7 @@ def test_run_preserves_classical_register_metadata() -> None:
     from pecos.slr.qeclib import qubit as qb
 
     q, c = QReg("data", 1), CReg("c", 1)
-    circuit = SlrConverter(Main(q, c, qb.X(q[0]), qb.Measure(q[0]) > c[0])).quantum_circuit()
+    circuit = SlrConverter(Main(q, c, qb.X(q[0]), qb.MeasureZ(q[0]) > c[0])).quantum_circuit()
     original = deepcopy(circuit.metadata)
     pc.HybridEngine().run(SparseStab(1), circuit, shot_id=0, output_spec={"extra": 2})
     assert circuit.metadata == original

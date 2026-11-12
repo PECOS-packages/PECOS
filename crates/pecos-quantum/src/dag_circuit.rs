@@ -529,7 +529,7 @@ impl From<MeasRef> for usize {
 ///   stale rather than being wrong from the start. Removal is tracked with
 ///   tombstones, so this genuinely means `remove_gate` ran;
 /// - a **record-less** id names a measurement that exists but produces no
-///   classical result (`MeasureLeaked` with a supplied id), so nothing that
+///   classical result (`MeasureZLeaked` with a supplied id), so nothing that
 ///   reads records can use it;
 /// - an **inconsistent** id means the circuit's bookkeeping and its gates
 ///   disagree, and the only safe reaction is to stop.
@@ -769,7 +769,7 @@ fn supports_measurement_target(gate_type: GateType) -> bool {
         GateType::MX
             | GateType::MZ
             | GateType::MeasureFree
-            | GateType::MeasureLeaked
+            | GateType::MeasureZLeaked
             | GateType::MPZ
     )
 }
@@ -920,7 +920,7 @@ impl DagCircuit {
     ///   or held twice. This indicates internal corruption; stop trusting the
     ///   circuit.
     /// - [`MeasResolveError::RecordLess`] -- the id names a measurement that
-    ///   consumes no measurement record (`MeasureLeaked` carrying a supplied
+    ///   consumes no measurement record (`MeasureZLeaked` carrying a supplied
     ///   id). It is a real measurement, but nothing that reads records can
     ///   resolve through it.
     ///
@@ -1076,7 +1076,7 @@ impl DagCircuit {
     /// Ids are minted only for `MZ | MeasureFree`, matching every site that
     /// decides which gates consume a measurement record, `TickCircuit`
     /// conversion in both directions included. Ids *supplied* on a
-    /// `MeasureLeaked` are still reserved, so admitting the type later means
+    /// `MeasureZLeaked` are still reserved, so admitting the type later means
     /// changing only which types are minted for.
     ///
     /// Nothing is reserved until the whole gate has been checked: a rejected
@@ -5158,7 +5158,7 @@ mod tests {
     #[test]
     fn update_gate_refuses_stale_measurement_target() {
         let mut circuit = DagCircuit::new();
-        let node = circuit.add_gate_auto_wire(Gate::measure_leaked(&[0]));
+        let node = circuit.add_gate_auto_wire(Gate::measure_z_leaked(&[0]));
         let target = ClassicalBitId::new(3);
         circuit.set_measurement_target(node, target);
 
@@ -5173,7 +5173,7 @@ mod tests {
         );
         assert_eq!(
             circuit.gate(node).map(|gate| gate.gate_type),
-            Some(GateType::MeasureLeaked)
+            Some(GateType::MeasureZLeaked)
         );
         assert_eq!(circuit.measurement_targets().get(&node), Some(&target));
     }
@@ -5256,7 +5256,7 @@ mod measurement_id_tests {
             .filter(|g| {
                 matches!(
                     g.gate_type,
-                    GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked
+                    GateType::MZ | GateType::MeasureFree | GateType::MeasureZLeaked
                 )
             })
             .flat_map(|g| g.meas_ids.iter().map(|id| id.index()))
@@ -5449,7 +5449,7 @@ mod measurement_id_tests {
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0, 1, 2]);
         let refs = circuit.mz(&[0]);
-        let mut leaked = Gate::measure_leaked(&[1usize]);
+        let mut leaked = Gate::measure_z_leaked(&[1usize]);
         leaked.meas_ids = smallvec::smallvec![MeasId::from_raw(7)];
         let leaked_node = circuit.add_gate_auto_wire(leaked);
 
@@ -5507,7 +5507,7 @@ mod measurement_id_tests {
         }
     }
 
-    /// `MeasureLeaked` is a measurement to `Gate::validate`, but the 46 sites
+    /// `MeasureZLeaked` is a measurement to `Gate::validate`, but the 46 sites
     /// that decide which gates consume a measurement record exclude it. Minting
     /// here would hand out ids that `TickCircuit` allocates no record for, so
     /// the two sides would disagree about which id belongs to which
@@ -5516,7 +5516,7 @@ mod measurement_id_tests {
     fn measure_leaked_is_not_minted_an_id() {
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0, 1]);
-        let leaked = circuit.add_gate_auto_wire(Gate::measure_leaked(&[0usize]));
+        let leaked = circuit.add_gate_auto_wire(Gate::measure_z_leaked(&[0usize]));
         let measured = circuit.add_gate_auto_wire(Gate::mz(&[1usize]));
 
         assert!(
@@ -5532,13 +5532,13 @@ mod measurement_id_tests {
         assert_eq!(circuit.num_measurement_ids(), 1);
     }
 
-    /// An id supplied on a `MeasureLeaked` is still reserved, so admitting the
+    /// An id supplied on a `MeasureZLeaked` is still reserved, so admitting the
     /// type later means changing only which gate types are minted for.
     #[test]
     fn a_supplied_measure_leaked_id_is_still_reserved() {
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0, 1]);
-        let mut leaked = Gate::measure_leaked(&[0usize]);
+        let mut leaked = Gate::measure_z_leaked(&[0usize]);
         leaked.meas_ids = smallvec::smallvec![MeasId::from_raw(0)];
         circuit.add_gate_auto_wire(leaked);
         let measured = circuit.add_gate_auto_wire(Gate::mz(&[1usize]));

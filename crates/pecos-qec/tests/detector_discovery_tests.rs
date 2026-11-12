@@ -383,7 +383,7 @@ fn observable_errors_name_bad_values() {
 fn shared_replay_measurements_and_error_classification() -> TestResult {
     let mut tc = TickCircuit::new();
     tc.tick().pz(&[0, 1]);
-    tc.tick().try_add_gate(Gate::measure_leaked(&[3usize]))?;
+    tc.tick().try_add_gate(Gate::measure_z_leaked(&[3usize]))?;
     tc.tick().px(&[0]);
     tc.tick().mx(&[0]);
     tc.tick().mx(&[0]);
@@ -443,7 +443,7 @@ fn later_qubits_and_long_gaps_do_not_change_local_relations() -> TestResult {
 fn unrecorded_measure_leaked_outcomes_are_hidden_random_sources() -> TestResult {
     let mut tc = TickCircuit::new();
     tc.tick().pz(&[0]);
-    tc.tick().try_add_gate(Gate::measure_leaked(&[0usize]))?;
+    tc.tick().try_add_gate(Gate::measure_z_leaked(&[0usize]))?;
     tc.tick().mz(&[0]);
     // Every suffix after tick 0 turns the leaked outcome into an unobserved
     // random source, so the record is deterministic only from the real input.
@@ -453,7 +453,7 @@ fn unrecorded_measure_leaked_outcomes_are_hidden_random_sources() -> TestResult 
     );
     tc.tick_at(0).h(&[1]);
     tc.tick_at(1)
-        .try_add_gate(Gate::measure_leaked(&[1usize]))?;
+        .try_add_gate(Gate::measure_z_leaked(&[1usize]))?;
     tc.tick().mz(&[1]);
     tc.tick().mz(&[1]);
     // The first record to observe the hidden outcome is random; the repeat is

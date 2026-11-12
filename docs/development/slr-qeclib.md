@@ -65,7 +65,7 @@ prog = Main(
     c := CReg("c", 2),  # 2-bit classical register
     qb.H(q[0]),  # Hadamard on qubit 0
     qb.CX(q[0], q[1]),  # CNOT
-    qb.Measure(q) > c,  # Measure all qubits into c
+    qb.MeasureZ(q) > c,  # Measure all qubits into c
 )
 
 # Convert to QASM
@@ -113,7 +113,7 @@ prog = Main(
         qb.CX(q[2], q[3]),
     ),
     # Measurement
-    qb.Measure(q) > c,
+    qb.MeasureZ(q) > c,
 )
 ```
 
@@ -135,7 +135,7 @@ prog = Main(
         qb.H(q[2]),
         qb.H(q[3]),
     ),
-    qb.Measure(q) > c,
+    qb.MeasureZ(q) > c,
 )
 
 # SlrConverter optimizes parallel blocks by default
@@ -154,12 +154,12 @@ prog = Main(
     q := QReg("q", 2),
     c := CReg("c", 2),
     qb.H(q[0]),
-    qb.Measure(q[0]) > c[0],
+    qb.MeasureZ(q[0]) > c[0],
     # Conditional X gate (use .Then() method)
     If(c[0] == 1).Then(
         qb.X(q[1]),
     ),
-    qb.Measure(q[1]) > c[1],
+    qb.MeasureZ(q[1]) > c[1],
 )
 ```
 
@@ -178,7 +178,7 @@ prog = Main(
     Repeat(3).block(
         qb.H(q[0]),
     ),
-    qb.Measure(q) > c,
+    qb.MeasureZ(q) > c,
 )
 ```
 
@@ -198,7 +198,7 @@ prog = Main(
     For(i, range(4)).Do(
         qb.H(q[i]),  # q[i] uses symbolic indexing
     ),
-    qb.Measure(q) > c,
+    qb.MeasureZ(q) > c,
 )
 ```
 
@@ -214,7 +214,7 @@ prog = Main(
     # While loop (use .Do() method)
     While(c[0] == 0).Do(
         qb.H(q[0]),
-        qb.Measure(q[0]) > c[0],
+        qb.MeasureZ(q[0]) > c[0],
     ),
 )
 ```
@@ -252,7 +252,7 @@ prog = Main(
     qb.CY(q[0], q[1]),
     qb.CZ(q[0], q[1]),
     # Measurements and preparations
-    qb.Measure(q[0]) > c[0],
+    qb.MeasureZ(q[0]) > c[0],
     qb.PZ(q[0]),  # Prepare |0>
     qb.PX(q[0]),  # Prepare |+>
 )
@@ -299,7 +299,7 @@ prog = Main(
     c := CReg("c", 2),
     qb.H(q[0]),
     qb.CX(q[0], q[1]),
-    qb.Measure(q) > c,
+    qb.MeasureZ(q) > c,
 )
 
 converter = SlrConverter(prog)
@@ -331,7 +331,7 @@ prog = Main(
     q := QReg("q", 2),
     c := CReg("c", 2),
     qb.H(q[0]),
-    qb.Measure(q) > c,
+    qb.MeasureZ(q) > c,
 )
 converter = SlrConverter(prog)
 
@@ -352,7 +352,7 @@ prog = Main(
     q := QReg("q", 2),
     c := CReg("c", 2),
     qb.H(q[0]),
-    qb.Measure(q) > c,
+    qb.MeasureZ(q) > c,
 )
 
 # Optimization enabled by default
@@ -373,7 +373,7 @@ prog = Main(
     q := QReg("q", 2),
     c := CReg("c", 2),
     qb.H(q[0]),
-    qb.Measure(q) > c,
+    qb.MeasureZ(q) > c,
 )
 converter = SlrConverter(prog)
 
@@ -401,7 +401,7 @@ prog = Main(
     c := CReg("c", 2),
     qb.H(q[0]),
     qb.CX(q[0], q[1]),
-    qb.Measure(q) > c,
+    qb.MeasureZ(q) > c,
 )
 
 # Option 1: Convert to QASM and simulate
@@ -440,17 +440,17 @@ def surface_code_syndrome(d: int):
             qb.CX(ancilla[0], data[0]),
             qb.CX(ancilla[0], data[1]),
             qb.H(ancilla[0]),
-            qb.Measure(ancilla[0]) > syn[0],
+            qb.MeasureZ(ancilla[0]) > syn[0],
         ),
         # Z stabilizer measurement (simplified)
         Block(
             qb.PZ(ancilla[1]),  # Prepare |0>
             qb.CX(data[0], ancilla[1]),
             qb.CX(data[3], ancilla[1]),
-            qb.Measure(ancilla[1]) > syn[1],
+            qb.MeasureZ(ancilla[1]) > syn[1],
         ),
         # Final measurement
-        qb.Measure(data) > final,
+        qb.MeasureZ(data) > final,
     )
 
     return prog
@@ -478,7 +478,7 @@ def ghz_state(n: int):
         # CNOT chain
         Block(*[qb.CX(q[i], q[i + 1]) for i in range(n - 1)]),
         # Measure all
-        qb.Measure(q) > c,
+        qb.MeasureZ(q) > c,
     )
     return prog
 

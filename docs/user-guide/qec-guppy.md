@@ -640,7 +640,7 @@ prog = Main(
         qb.CX(q[0], q[1]),
         # ... more operations
     ),
-    qb.Measure(q) > c,
+    qb.MeasureZ(q) > c,
 )
 
 # Convert to QASM

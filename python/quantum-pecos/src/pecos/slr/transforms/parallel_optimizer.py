@@ -349,7 +349,7 @@ class ParallelOptimizer:
                 "CX",
                 "CY",
                 "CZ",
-                "Measure",
+                "MeasureZ",
                 "Other",
             ]
             # Use list comprehension to build groups from ordered types

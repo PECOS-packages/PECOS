@@ -64,7 +64,7 @@ fn gate_rep(gate: &Gate) -> Option<UnitaryRep> {
             }
             GateType::MX
             | GateType::MZ
-            | GateType::MeasureLeaked
+            | GateType::MeasureZLeaked
             | GateType::MeasureFree
             | GateType::MPZ
             | GateType::PX

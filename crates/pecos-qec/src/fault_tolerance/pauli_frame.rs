@@ -416,7 +416,7 @@ fn measurement_records_by_node(dag: &DagCircuit) -> (MeasurementRecordMap, usize
         let Some(gate) = dag.gate(node) else {
             continue;
         };
-        // `MeasureLeaked` consumes no measurement record.
+        // `MeasureZLeaked` consumes no measurement record.
         if !gate.gate_type.consumes_measurement_record() {
             continue;
         }
@@ -484,7 +484,7 @@ fn propagate_tracked_pauli_forward(
             GateType::MX
             | GateType::MZ
             | GateType::MeasureFree
-            | GateType::MeasureLeaked
+            | GateType::MeasureZLeaked
             | GateType::MPZ => {
                 if let Some(entries) = measurement_records.get(&node) {
                     for &(qubit, record) in entries {
@@ -578,7 +578,7 @@ mod tests {
     use super::*;
     use pecos_quantum::Gate;
 
-    /// A `MeasureLeaked` must affect a propagating Pauli exactly as an `MZ`
+    /// A `MeasureZLeaked` must affect a propagating Pauli exactly as an `MZ`
     /// does: both are non-destructive Z-collapses, executed identically by the
     /// simulators.
     #[test]
@@ -591,7 +591,7 @@ mod tests {
                 vec![pecos_quantum::QubitId::from(0usize)],
             ));
             let leading_gate = match leading {
-                GateType::MeasureLeaked => Gate::measure_leaked(&[0usize]),
+                GateType::MeasureZLeaked => Gate::measure_z_leaked(&[0usize]),
                 _ => Gate::mz(&[0usize]),
             };
             dag.add_gate_auto_wire(leading_gate);
@@ -622,7 +622,7 @@ mod tests {
         }
 
         assert_eq!(
-            later_measurement_flipped(GateType::MeasureLeaked),
+            later_measurement_flipped(GateType::MeasureZLeaked),
             later_measurement_flipped(GateType::MZ),
             "the two non-destructive measurements must treat a Pauli identically"
         );
@@ -655,7 +655,7 @@ mod tests {
         assert_eq!(num_measurements, 2);
     }
 
-    /// `MeasureLeaked` must not consume a measurement record here.
+    /// `MeasureZLeaked` must not consume a measurement record here.
     ///
     /// It once did and claimed record 0, the record the first real measurement
     /// holds, so two different measurements mapped to one record.
@@ -663,7 +663,7 @@ mod tests {
     fn measure_leaked_does_not_claim_a_measurement_record() {
         let mut dag = DagCircuit::new();
         dag.pz(&[0, 1]);
-        let leaked = dag.add_gate_auto_wire(Gate::measure_leaked(&[0usize]));
+        let leaked = dag.add_gate_auto_wire(Gate::measure_z_leaked(&[0usize]));
         let measured = dag.add_gate_auto_wire(Gate::mz(&[1usize]));
 
         let (by_node, num_measurements) = measurement_records_by_node(&dag);

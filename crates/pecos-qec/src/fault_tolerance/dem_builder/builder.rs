@@ -1372,7 +1372,7 @@ impl<'a> DemBuilder<'a> {
                 sim.mz(qubits);
                 sim.h(qubits);
             }
-            GateType::MeasureLeaked => {
+            GateType::MeasureZLeaked => {
                 require(1)?;
                 sim.mz_unrecorded(qubits);
             }
@@ -5255,7 +5255,7 @@ mod tests {
         DemBuilder::apply_symbolic_gate_for_crosstalk_hidden_mz(
             &mut sim,
             0,
-            &pecos_core::Gate::measure_leaked(&[0]),
+            &pecos_core::Gate::measure_z_leaked(&[0]),
         )
         .unwrap();
         assert_eq!(sim.measurement_count(), 0);
@@ -5270,7 +5270,7 @@ mod tests {
         DemBuilder::apply_symbolic_gate_for_crosstalk_hidden_mz(
             &mut sim,
             0,
-            &pecos_core::Gate::measure_leaked(&[0]),
+            &pecos_core::Gate::measure_z_leaked(&[0]),
         )
         .unwrap();
         sim.h(&[0]);

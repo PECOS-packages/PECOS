@@ -32,7 +32,7 @@ fn leaked_bell_measurement_keeps_two_correlated_records() {
     circuit.tick().cx(&[(0, 1)]);
     circuit
         .tick()
-        .try_add_gate(Gate::measure_leaked(&[0]))
+        .try_add_gate(Gate::measure_z_leaked(&[0]))
         .unwrap();
     circuit.tick().mz(&[1]);
     circuit.tick().mz(&[0]);
@@ -86,7 +86,7 @@ fn random_circuit(seed: u64) -> (TickCircuit, usize) {
             9 | 10 => Gate::mz(&[q]),
             11 => Gate::mx(&[q]),
             12 => Gate::mpz(&[q]),
-            _ => Gate::measure_leaked(&[q]),
+            _ => Gate::measure_z_leaked(&[q]),
         };
         circuit.tick().try_add_gate(gate).unwrap();
     }
@@ -103,7 +103,7 @@ fn sampled_twin(circuit: &TickCircuit) -> (TickCircuit, Vec<usize>) {
             let mut gate = batch.as_gate().clone();
             if gate.gate_type.consumes_measurement_record() {
                 record_columns.extend(column..column + gate.qubits.len());
-            } else if gate.gate_type == GateType::MeasureLeaked {
+            } else if gate.gate_type == GateType::MeasureZLeaked {
                 gate = Gate::mz(&gate.qubits);
             }
             if gate.gate_type.consumes_measurement_record() {
@@ -162,7 +162,7 @@ fn vecset_history(
                     }
                 }
             }
-            GateType::MeasureLeaked => sim.mz_unrecorded(&qubits),
+            GateType::MeasureZLeaked => sim.mz_unrecorded(&qubits),
             other => panic!("unexpected generated gate {other:?}"),
         }
     }

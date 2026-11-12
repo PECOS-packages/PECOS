@@ -485,7 +485,7 @@ fn leakage_aware_metadata_selects_the_encoded_measurement_command() {
         let AdmittedSchedule { commands, .. } = executor.admit(&[b]).unwrap();
         let gates = commands.quantum_ops().unwrap();
         assert_eq!(gates.len(), 1);
-        assert_eq!(gates[0].gate_type, GateType::MeasureLeaked);
+        assert_eq!(gates[0].gate_type, GateType::MeasureZLeaked);
     }
     let executor = fixture_executor(Fixture::default());
     let mut b = batch(0, vec![]);

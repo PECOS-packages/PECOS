@@ -62,7 +62,7 @@ def test_bell_qir() -> None:
         m := CReg("m", 2),
         p.H(q[0]),
         p.CX(q[0], q[1]),
-        p.Measure(q) > m,
+        p.MeasureZ(q) > m,
         Return(m),
     )
 
@@ -77,7 +77,7 @@ def test_bell_qreg_qir() -> None:
         m := CReg("m", 2),
         p.H(q),
         p.CX(q[0], q[1]),
-        p.Measure(q) > m,
+        p.MeasureZ(q) > m,
         Return(m),
     )
 
@@ -92,7 +92,7 @@ def test_qir_creg_size_too_large() -> None:
         m := CReg("m", 75),
         p.H(q[0]),
         p.CX(q[0], q[1]),
-        p.Measure(q) > m,
+        p.MeasureZ(q) > m,
         Return(m),
     )
 
@@ -133,7 +133,7 @@ def test_control_flow_qir() -> None:
         p.CX(q[0], q[1]),
         Barrier(q[1], q[0]),
         p.RX(rad(0.3), q[0]),
-        p.Measure(q) > m,
+        p.MeasureZ(q) > m,
         Return(m),
     )
     # Whole-CReg scalar conditions (`If(m == 0)` / `If(m <
@@ -262,7 +262,7 @@ def test_sx_sxdg() -> None:
         p.CX(q[0], q[1]),
         p.SX(q[0]),
         p.SXdg(q[1]),
-        p.Measure(q) > m,
+        p.MeasureZ(q) > m,
         Return(m),
     )
 
@@ -287,7 +287,7 @@ def test_parallel_qir() -> None:
             p.Y(q[2]),
             p.Z(q[3]),
         ),
-        p.Measure(q) > m,
+        p.MeasureZ(q) > m,
         Return(m),
     )
     qir = SlrConverter(prog).qir()
@@ -311,7 +311,7 @@ def test_nested_parallel_qir() -> None:
             p.Z(q[3]),
         ),
         Barrier(q),
-        p.Measure(q) > m,
+        p.MeasureZ(q) > m,
         Return(m),
     )
     qir = SlrConverter(prog).qir()
@@ -327,7 +327,7 @@ def test_parallel_in_control_flow_qir() -> None:
         q := QReg("q", 4),
         m := CReg("m", 4),
         p.H(q[0]),
-        p.Measure(q[0]) > m[0],
+        p.MeasureZ(q[0]) > m[0],
         If(m[0] == 1).Then(
             Parallel(
                 p.X(q[1]),
@@ -342,7 +342,7 @@ def test_parallel_in_control_flow_qir() -> None:
                 p.RZ(rad(0.5), q[2]),
             ),
         ),
-        p.Measure(q) > m,
+        p.MeasureZ(q) > m,
         Return(m),
     )
     qir = SlrConverter(prog).qir()

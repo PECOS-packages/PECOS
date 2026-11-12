@@ -629,11 +629,20 @@ impl ByteMessageBuilder {
     /// # Panics
     ///
     /// Panics if any qubit ID is too large to fit in a u32.
-    pub fn measure_leakages(&mut self, qubit_ids: &[usize]) -> &mut Self {
+    pub fn measure_z_leaked(&mut self, qubit_ids: &[usize]) -> &mut Self {
         for &qubit in qubit_ids {
-            self.add_single_qubit_gate_parts(GateType::MeasureLeaked, qubit, &[], &[]);
+            self.add_single_qubit_gate_parts(GateType::MeasureZLeaked, qubit, &[], &[]);
         }
         self
+    }
+
+    /// Deprecated spelling of [`ByteMessageBuilder::measure_z_leaked`].
+    ///
+    /// # Panics
+    /// Panics if any qubit ID is too large to fit in a u32.
+    #[deprecated(note = "renamed to ByteMessageBuilder::measure_z_leaked")]
+    pub fn measure_leakages(&mut self, qubit_ids: &[usize]) -> &mut Self {
+        self.measure_z_leaked(qubit_ids)
     }
 
     /// Add an MPZ (measure-and-prepare) gate: measure +Z, then prepare |0>.
@@ -1123,7 +1132,7 @@ mod tests {
         builder.szz(&[(0, 1)]);
         builder.szzdg(&[(0, 1)]);
         builder.mz(&[0]);
-        builder.measure_leakages(&[0]);
+        builder.measure_z_leaked(&[0]);
         builder.mpz(&[0]);
         builder.meas_crosstalk_global_payload(&[0]);
         builder.meas_crosstalk_local_payload(&[0]);
@@ -1155,7 +1164,7 @@ mod tests {
                 Gate::szz(&[(0, 1)]),
                 Gate::szzdg(&[(0, 1)]),
                 Gate::mz(&[0]),
-                Gate::measure_leaked(&[0]),
+                Gate::measure_z_leaked(&[0]),
                 Gate::mpz(&[0]),
                 Gate::meas_crosstalk_global_payload(&[0]),
                 Gate::meas_crosstalk_local_payload(&[0]),
@@ -1545,9 +1554,9 @@ mod tests {
         let mut builder = ByteMessageBuilder::new();
         let _ = builder.for_quantum_operations();
 
-        // Add measure_leakages for multiple qubits
+        // Add measure_z_leaked for multiple qubits
         let qubits = vec![0, 1, 2];
-        builder.measure_leakages(&qubits);
+        builder.measure_z_leaked(&qubits);
 
         // Build the message
         let message = builder.build();
@@ -1558,7 +1567,7 @@ mod tests {
         // Verify the commands
         assert_eq!(commands.len(), 3);
         for i in 0..3 {
-            assert_eq!(commands[i].gate_type, GateType::MeasureLeaked);
+            assert_eq!(commands[i].gate_type, GateType::MeasureZLeaked);
             assert_eq!(commands[i].qubits.as_slice(), &[QubitId(qubits[i])]);
         }
     }

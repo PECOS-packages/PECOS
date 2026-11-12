@@ -46,5 +46,5 @@ class NoFlagMeasureZ(Block):
                 (d[2], a[0]),
             ),
             qubit.H(a[0]),
-            qubit.Measure(a[0]) > out[0],
+            qubit.MeasureZ(a[0]) > out[0],
         )

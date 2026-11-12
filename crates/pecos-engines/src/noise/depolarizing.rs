@@ -263,7 +263,7 @@ impl DepolarizingNoiseModel {
                 Self::apply_meas_faults(rng, p_meas_threshold, builder, gate);
                 NoiseUtils::add_gate_to_builder(builder, gate);
             }
-            GateType::MX | GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree => {
+            GateType::MX | GateType::MZ | GateType::MeasureZLeaked | GateType::MeasureFree => {
                 trace!("Applying measurement with possible fault");
                 Self::apply_meas_faults(rng, p_meas_threshold, builder, gate);
                 NoiseUtils::add_gate_to_builder(builder, gate);

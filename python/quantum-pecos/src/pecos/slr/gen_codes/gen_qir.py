@@ -731,7 +731,7 @@ class QIRGenerator(Generator):
         to transform into a QIR Gate"""
 
         match type(gate).__name__:
-            case "Measure":
+            case "MeasureZ":
                 creg_or_bit = gate.cout[0]
                 if isinstance(creg_or_bit, CReg):
                     ll_creg = self._creg_dict[creg_or_bit.sym][0]

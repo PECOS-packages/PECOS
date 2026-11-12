@@ -102,7 +102,7 @@ class TestQASMEquivalence:
             q := QReg("q", 1),
             c := CReg("c", 1),
             qb.H(q[0]),
-            qb.Measure(q[0]) > c[0],
+            qb.MeasureZ(q[0]) > c[0],
         )
 
         # AST path first (before direct generator mutates prog)
@@ -275,7 +275,7 @@ class TestConditionalEquivalence:
             q := QReg("q", 1),
             c := CReg("c", 1),
             qb.H(q[0]),
-            qb.Measure(q[0]) > c[0],
+            qb.MeasureZ(q[0]) > c[0],
             If(c[0] == 1).Then(
                 qb.X(q[0]),
             ),
@@ -450,7 +450,7 @@ class TestNestedControlFlowEquivalence:
             c := CReg("c", 1),
             Repeat(cond=2).block(
                 qb.H(q[0]),
-                qb.Measure(q[0]) > c[0],
+                qb.MeasureZ(q[0]) > c[0],
                 If(c[0] == 1).Then(
                     qb.X(q[0]),
                 ),
@@ -502,7 +502,7 @@ class TestNestedControlFlowEquivalence:
             q := QReg("q", 1),
             c := CReg("c", 1),
             qb.H(q[0]),
-            qb.Measure(q[0]) > c[0],
+            qb.MeasureZ(q[0]) > c[0],
             If(c[0] == 1)
             .Then(
                 qb.X(q[0]),
@@ -694,7 +694,7 @@ class TestComplexCircuitEquivalence:
             c := CReg("c", 1),
             Repeat(cond=3).block(
                 qb.H(q[0]),
-                qb.Measure(q[0]) > c[0],
+                qb.MeasureZ(q[0]) > c[0],
             ),
         )
 

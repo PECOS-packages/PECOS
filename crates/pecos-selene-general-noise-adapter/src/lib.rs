@@ -291,7 +291,7 @@ impl GeneralNoiseErrorModel {
                 } => {
                     let qubit = self.qubit(qubit_id)?;
                     self.add_idle_before(&mut builder, qubit, start, &mut touched)?;
-                    builder.measure_leakages(&[qubit]);
+                    builder.measure_z_leaked(&[qubit]);
                     if !result_ids.insert(result_id) {
                         bail!("duplicate user measurement result ID {result_id}");
                     }
@@ -722,7 +722,7 @@ mod tests {
                 } => {
                     let qubit = usize::try_from(*qubit_id).unwrap();
                     idle_before(qubit);
-                    builder.measure_leakages(&[qubit]);
+                    builder.measure_z_leaked(&[qubit]);
                     expected.push((*result_id, true));
                 }
                 Operation::Reset { qubit_id } => {

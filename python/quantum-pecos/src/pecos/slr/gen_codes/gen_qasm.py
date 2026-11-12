@@ -530,7 +530,7 @@ class QASMGenerator(Generator):
             stat = True
             op_str = op.qasm()
 
-        elif op_name == "Measure":
+        elif op_name == "MeasureZ":
             # Check if this is a register-wide measurement (QReg > CReg)
             if (
                 len(op.qargs) == 1
@@ -657,7 +657,7 @@ class QASMGenerator(Generator):
 
         else:
             match sym:
-                case "Measure":
+                case "MeasureZ":
                     measurements = []
                     for q, c in zip(op.qargs, op.cout, strict=True):
                         # Apply permutation to the qubit

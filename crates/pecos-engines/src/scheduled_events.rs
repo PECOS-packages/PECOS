@@ -110,7 +110,7 @@ impl ScheduledEventBatch {
     }
 }
 fn measured(gate: &Gate) -> bool {
-    matches!(gate.gate_type, GateType::MZ | GateType::MeasureLeaked)
+    matches!(gate.gate_type, GateType::MZ | GateType::MeasureZLeaked)
 }
 fn validate_batch(batch: &ScheduledEventBatch) -> Result<(), PecosError> {
     if batch

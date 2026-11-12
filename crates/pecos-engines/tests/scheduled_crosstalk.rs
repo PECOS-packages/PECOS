@@ -37,7 +37,7 @@ fn batch(
         .enumerate()
         .filter_map(|(i, op)| {
             if let ScheduledEventOp::Gate(g) = op
-                && matches!(g.gate_type, GateType::MZ | GateType::MeasureLeaked)
+                && matches!(g.gate_type, GateType::MZ | GateType::MeasureZLeaked)
             {
                 Some(ScheduledResult {
                     operation_index: i,
@@ -405,7 +405,7 @@ fn leakage_and_unprepared_victims_follow_general_semantics() {
     let mut system = host(config);
     let ml = |q| {
         Gate::new(
-            GateType::MeasureLeaked,
+            GateType::MeasureZLeaked,
             vec![],
             vec![],
             vec![pecos_core::QubitId(q)],
@@ -722,7 +722,7 @@ fn exposure_leakage_suppresses_deferred_z_idle_rng_draws() {
             &[
                 batch(0, 0, 0, vec![g(Gate::pz(&[0]))]),
                 batch(1, 1_000_000_000, 0, vec![e(0, &[0])]),
-                batch(2, 1_000_000_000, 0, vec![g(Gate::measure_leaked(&[0]))]),
+                batch(2, 1_000_000_000, 0, vec![g(Gate::measure_z_leaked(&[0]))]),
             ],
         );
         assert_eq!(observed, vec![2]);
@@ -744,7 +744,7 @@ fn exposure_leakage_suppresses_deferred_z_idle_rng_draws() {
             if !idle_before_exposure {
                 commands.idle(1.0, &[0]);
             }
-            commands.measure_leakages(&[0]);
+            commands.measure_z_leaked(&[0]);
             assert_eq!(
                 reference
                     .process(commands.build())

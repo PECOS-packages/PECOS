@@ -76,7 +76,7 @@ def test_permute_rejects_cross_kind_pairs(backend, whole) -> None:
     permute = Permute(q, c) if whole else Permute([q[0], c[0]], [c[0], q[0]])
     error = GuppyCodegenError if backend == "guppy" else NotImplementedError
     with pytest.raises(error, match="Permute"):
-        getattr(SlrConverter(Main(q, c, permute, qb.X(q[0]), qb.Measure(q) > c)), backend)()
+        getattr(SlrConverter(Main(q, c, permute, qb.X(q[0]), qb.MeasureZ(q) > c)), backend)()
 
 
 @pytest.mark.parametrize("classical_first", [False, True])

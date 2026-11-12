@@ -455,7 +455,7 @@ fn seeded_explicit_batches_match_unsplit_direct_controller_with_hooks() {
         b.rz(Angle64::try_from_radians(0.5).unwrap(), &[0]);
         b.mz(&[1]);
         b.meas_crosstalk_global_payload(&[1]);
-        b.measure_leakages(&[0]);
+        b.measure_z_leaked(&[0]);
         b.meas_crosstalk_local_payload(&[1]);
         let expected = process_direct_model(direct.as_mut(), b.build(), &mut direct_simulator)
             .outcomes()

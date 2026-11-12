@@ -1090,7 +1090,7 @@ class AstToGuppy:
     def _validate_print_inline_creg_assignment(self, program: Program) -> None:
         """Reject Print of an inline CReg bit before Measure has written to it.
 
-        Inline CRegs are those introduced only by `Measure(q) > CReg(...)` --
+        Inline CRegs are those introduced only by `MeasureZ(q) > CReg(...)` --
         they appear in `context.registers` via `_collect_implicit_measure_registers`
         but not in `program.declarations`. Without explicit user declaration in
         `Main(...)`, the runtime sees an auto-initialized all-False register if a
@@ -1178,7 +1178,7 @@ class AstToGuppy:
                     f"Print references inline CReg bit {reg}[{op.value.index}] before any "
                     f"Measure has written to it. Print would emit the auto-initialized False "
                     f"value (or read past the inferred register bound), not a measurement "
-                    f"output. Move the Print after a Measure(...) > {reg}[{op.value.index}] "
+                    f"output. Move the Print after a MeasureZ(...) > {reg}[{op.value.index}] "
                     f"that runs on every path, or declare {reg!r} explicitly as a positional "
                     f"in Main(...) if you intend to print the zero-initialized state."
                 )

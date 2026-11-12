@@ -57,7 +57,7 @@ def test_conditional_qubit_permute_rejected(backend, branch, nested) -> None:
         conditional.Then(operation)
     else:
         conditional.Then(qb.X(q[0])).Else(operation)
-    program = Main(q, c, qb.Measure(q[2]) > c[0], conditional, qb.X(q[0]))
+    program = Main(q, c, qb.MeasureZ(q[2]) > c[0], conditional, qb.X(q[0]))
     with pytest.raises(NotImplementedError, match=r"Permute.*If"):
         compile_program(program, backend)
 
@@ -74,7 +74,7 @@ def test_conditional_classical_permute_rejected(backend, branch) -> None:
     else:
         conditional.Then(qb.X(q[0])).Else(operation)
     with pytest.raises(NotImplementedError, match=r"Permute.*If"):
-        compile_program(Main(q, c, qb.Measure(q[0]) > c[0], conditional), backend)
+        compile_program(Main(q, c, qb.MeasureZ(q[0]) > c[0], conditional), backend)
 
 
 @pytest.mark.parametrize("backend", [*BACKENDS, *LEGACY_WITH_REGIONS])
@@ -92,10 +92,10 @@ def test_while_permute_rejected(backend) -> None:
 def test_stim_repeat_permute_records(count, nested) -> None:
     """#992: every iteration and the following measurement use the current map."""
     q, c = QReg("q", 3), CReg("c", 1)
-    body = Block(qb.Measure(q[0]) > c[0], Permute([q[0], q[1]], [q[1], q[0]]))
+    body = Block(qb.MeasureZ(q[0]) > c[0], Permute([q[0], q[1]], [q[1], q[0]]))
     if nested:
         body = Repeat(1).block(body)
-    program = Main(q, c, qb.X(q[0]), Repeat(count).block(body), qb.Measure(q[2]), qb.Measure(q[0]))
+    program = Main(q, c, qb.X(q[0]), Repeat(count).block(body), qb.MeasureZ(q[2]), qb.MeasureZ(q[0]))
     circuit = stim.Circuit(compile_program(program, "stim"))
     expected = [1 - i % 2 for i in range(count)] + [0, 1 - count % 2]
     assert circuit.compile_sampler().sample(shots=4).tolist() == [expected] * 4
@@ -113,7 +113,7 @@ def test_guppy_region_permute_must_restore_slot_bindings(region) -> None:
         "If else": lambda: If(c == 1).Then(qb.X(q[0])).Else(swap),
         "If nested Repeat": lambda: If(c == 1).Then(qb.X(q[0])).Else(Repeat(2).block(swap)),
     }[region]()
-    program = Main(q, c, qb.Measure(q[2]) > c[0], body, qb.X(q[0]))
+    program = Main(q, c, qb.MeasureZ(q[2]) > c[0], body, qb.X(q[0]))
     with pytest.raises(LinearityError, match=r"divergent Guppy slot states|changes Guppy slot state"):
         compile_program(program, "guppy")
 
@@ -158,8 +158,8 @@ def test_issue_992_exact_reproducer() -> None:
         q := QReg("q", 3),
         c := CReg("c", 1),
         qb.X(q[0]),
-        Repeat(2).block(qb.Measure(q[0]) > c[0], Permute([q[0], q[1]], [q[1], q[0]])),
-        qb.Measure(q[2]),
+        Repeat(2).block(qb.MeasureZ(q[0]) > c[0], Permute([q[0], q[1]], [q[1], q[0]])),
+        qb.MeasureZ(q[2]),
     )
     circuit = stim.Circuit(compile_program(program, "stim"))
     assert circuit.compile_sampler().sample(shots=4).tolist() == [[1, 0, 0]] * 4
@@ -172,9 +172,9 @@ def test_stim_unrolled_repeat_preserves_measurement_tracking() -> None:
         q,
         c,
         qb.X(q[0]),
-        Repeat(2).block(qb.Measure(q[0]) > c[0], Permute([q[0], q[1]], [q[1], q[0]])),
+        Repeat(2).block(qb.MeasureZ(q[0]) > c[0], Permute([q[0], q[1]], [q[1], q[0]])),
         If(c[0]).Then(qb.X(q[2])),
-        qb.Measure(q[2]),
+        qb.MeasureZ(q[2]),
     )
     circuit = stim.Circuit(compile_program(program, "stim"))
     assert circuit.compile_sampler().sample(shots=4).tolist() == [[1, 0, 0]] * 4
@@ -185,7 +185,7 @@ def test_stim_repeat_classical_permute_invalidates_measurement(whole_register) -
     """Unrolling must retain the rule that all named CRegs lose tracked records."""
     q, c, d = QReg("q", 1), CReg("c", 1), CReg("d", 1)
     operation = Permute(c, d) if whole_register else Permute([c[0], d[0]], [d[0], c[0]])
-    program = Main(q, c, d, qb.Measure(q[0]) > c[0], Repeat(2).block(operation), If(c[0]).Then(qb.X(q[0])))
+    program = Main(q, c, d, qb.MeasureZ(q[0]) > c[0], Repeat(2).block(operation), If(c[0]).Then(qb.X(q[0])))
     # Whole CReg Permute is already unsupported in Stim; element permutations
     # invalidate records even when two swaps restore the original bit mapping.
     reason = "whole-register Permute" if whole_register else "no longer comes from a tracked measurement"

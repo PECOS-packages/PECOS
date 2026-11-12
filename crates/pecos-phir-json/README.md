@@ -162,6 +162,10 @@ helper in `tests/common/phir_test_utils.rs`, which adds noise-model and worker o
 
 ### Quantum Operations
 
+Z-basis measurement qops accept both `"Measure"` and `"MeasureZ"`. Parsing
+canonicalizes `"MeasureZ"` to the PHIR specification's `"Measure"`; execution,
+noise classification, and PHIR re-emission continue to use `"Measure"`.
+
 The native engine and JSON-to-module converter support every quantum operation
 and alias in [PHIR v0.1 Table II](specification/v0.1/spec.md#table-ii---quantum-operations):
 

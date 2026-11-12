@@ -161,8 +161,8 @@ class TestResourceCounterOperations:
             c := CReg("c", 2),
             qb.PZ(q[0]),
             qb.PZ(q[1]),
-            qb.Measure(q[0]) > c[0],
-            qb.Measure(q[1]) > c[1],
+            qb.MeasureZ(q[0]) > c[0],
+            qb.MeasureZ(q[1]) > c[1],
         )
         ast = slr_to_ast(prog)
 
@@ -220,7 +220,7 @@ class TestResourceCounterQEC:
             qb.PZ(ancilla[0]),
             qb.CX(data[0], ancilla[0]),
             qb.CX(data[1], ancilla[0]),
-            qb.Measure(ancilla[0]) > c[0],
+            qb.MeasureZ(ancilla[0]) > c[0],
         )
         ast = slr_to_ast(prog)
 

@@ -169,7 +169,7 @@ fn measurement_walks_follow_tick_batch_instance_and_qubit_order() {
         }
     }
     let mut leaked = Gate::mz(&[4]);
-    leaked.gate_type = GateType::MeasureLeaked;
+    leaked.gate_type = GateType::MeasureZLeaked;
     tc.tick().try_add_gate(leaked).unwrap();
     metadata(&mut tc, "num_measurements", "8");
     metadata(

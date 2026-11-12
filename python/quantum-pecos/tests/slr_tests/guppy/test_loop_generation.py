@@ -9,7 +9,7 @@ buggy form and have been deleted.
 
 from pecos.slr import Block, CReg, Main, QReg, Return
 from pecos.slr.qeclib import qubit
-from pecos.slr.qeclib.qubit.measures import Measure
+from pecos.slr.qeclib.qubit.measures import MeasureZ
 
 from ..ast_guppy._harness import assert_ast_guppy_compiles  # noqa: TID252
 
@@ -24,7 +24,7 @@ def test_consecutive_gate_applications() -> None:
         qubit.H(q[2]),
         qubit.H(q[3]),
         qubit.H(q[4]),
-        Measure(q) > c,
+        MeasureZ(q) > c,
         Return(c),
     )
     assert_ast_guppy_compiles(prog)
@@ -36,7 +36,7 @@ def test_register_wide_generates_loop() -> None:
         q := QReg("q", 5),
         c := CReg("c", 5),
         qubit.H(q),
-        Measure(q) > c,
+        MeasureZ(q) > c,
         Return(c),
     )
     assert_ast_guppy_compiles(prog)
@@ -51,7 +51,7 @@ def test_mixed_individual_and_register_wide() -> None:
         qubit.X(q[0]),
         qubit.X(q[2]),
         qubit.Z(q),
-        Measure(q) > c,
+        MeasureZ(q) > c,
         Return(c),
     )
     assert_ast_guppy_compiles(prog)
@@ -72,7 +72,7 @@ def test_loop_in_function() -> None:
         q := QReg("q", 4),
         c := CReg("c", 4),
         ApplyHadamards(q),
-        Measure(q) > c,
+        MeasureZ(q) > c,
         Return(c),
     )
     assert_ast_guppy_compiles(prog)
@@ -87,7 +87,7 @@ def test_different_gates_separate_loops() -> None:
         qubit.X(q),
         qubit.Y(q),
         qubit.Z(q),
-        Measure(q) > c,
+        MeasureZ(q) > c,
         Return(c),
     )
     assert_ast_guppy_compiles(prog)
@@ -101,8 +101,8 @@ def test_multiple_registers() -> None:
         c := CReg("c", 6),
         qubit.H(q1),
         qubit.X(q2),
-        Measure(q1) > c[0:3],
-        Measure(q2) > c[3:6],
+        MeasureZ(q1) > c[0:3],
+        MeasureZ(q2) > c[3:6],
         Return(c),
     )
     assert_ast_guppy_compiles(prog)

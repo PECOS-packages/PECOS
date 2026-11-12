@@ -2,7 +2,7 @@
 
 from pecos.slr import Block, CReg, Main, QReg, Return, SlrConverter
 from pecos.slr.qeclib import qubit
-from pecos.slr.qeclib.qubit.measures import Measure
+from pecos.slr.qeclib.qubit.measures import MeasureZ
 
 
 class MeasureAncillas(Block):
@@ -22,7 +22,7 @@ class MeasureAncillas(Block):
         self.syndrome = syndrome
         self.ops = [
             qubit.CX(data[0], ancilla[0]),
-            Measure(ancilla) > syndrome,
+            MeasureZ(ancilla) > syndrome,
         ]
 
 
@@ -33,7 +33,7 @@ prog = Main(
     result := CReg("result", 2),
     MeasureAncillas(data, ancilla, syndrome),
     qubit.H(data[0]),
-    Measure(data) > result,
+    MeasureZ(data) > result,
     Return(syndrome, result),
 )
 

@@ -142,7 +142,7 @@ def test_float_division_stays_division() -> None:
 @pytest.mark.parametrize(("numerator", "expected"), [(1, 0), (7, 1)])
 def test_integer_division_truncates_like_the_qir_backend(numerator, expected) -> None:
     q, m = QReg("q", 1), CReg("m", 1)
-    program = Main(q, m, If(DIV(numerator, 2)).Then(qb.X(q[0])), qb.Measure(q[0]) > m[0], Return(m))
+    program = Main(q, m, If(DIV(numerator, 2)).Then(qb.X(q[0])), qb.MeasureZ(q[0]) > m[0], Return(m))
     package = SlrConverter(program).hugr()
     results = sim(Hugr(package.to_str().encode("utf-8"))).classical(selene_engine()).qubits(1).seed(42).run(1).to_dict()
     assert results == {"measurement_0": [expected]}
@@ -270,7 +270,7 @@ def test_register_comparison_compares_unsigned_values(compare, left_width, right
         d.set(right),
         If(compare(c, d)).Then(qb.X(q[0])),
         If(compare(c, right)).Then(qb.X(q[1])),
-        qb.Measure(q) > m,
+        qb.MeasureZ(q) > m,
         Return(m),
     )
     package = SlrConverter(program).hugr()

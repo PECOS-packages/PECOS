@@ -123,7 +123,7 @@ fn convert_gate_type(core_type: CoreGateType) -> Option<NeoGateType> {
 
         // Measurement and preparation
         CoreGateType::MZ => NeoGateType::MZ,
-        CoreGateType::MeasureLeaked => NeoGateType::MeasureLeaked,
+        CoreGateType::MeasureZLeaked => NeoGateType::MeasureLeaked,
         CoreGateType::MeasureFree => NeoGateType::MeasureFree,
         CoreGateType::PZ => NeoGateType::PZ,
         CoreGateType::QAlloc => NeoGateType::QAlloc,

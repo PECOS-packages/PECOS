@@ -18,9 +18,9 @@ from pecos.slr.qeclib import qubit
 
 
 def test_Measure(compare_qasm: Callable[..., None]) -> None:
-    """Test Measure gate QASM regression."""
+    """Test MeasureZ against the original measurement QASM golden."""
     q = QReg("q_test", 1)
     m = CReg("m_test", 1)
 
-    prog = qubit.Measure(q[0]) > m[0]
-    compare_qasm(prog)
+    prog = qubit.MeasureZ(q[0]) > m[0]
+    compare_qasm(prog, filename="pecos.slr.qeclib.qubit.measures.Measure")

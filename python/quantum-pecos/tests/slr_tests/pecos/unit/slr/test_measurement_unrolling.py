@@ -36,7 +36,7 @@ def create_measurement_unrolling_program() -> tuple:
         qubit.H(a[1]),  # Should be H(c[1])
         qubit.CX(c[0], b[2]),  # Should be CX(a[0], b[2])
         # Register-wide measurement - should be unrolled correctly
-        qubit.Measure(a) > m,
+        qubit.MeasureZ(a) > m,
         Return(m),
     )
 

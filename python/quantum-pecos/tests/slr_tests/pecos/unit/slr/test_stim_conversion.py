@@ -6,7 +6,7 @@ import pytest
 import stim
 from pecos.slr import Comment, CReg, For, Main, Parallel, QReg, Repeat, Return, SlrConverter, While, rad
 from pecos.slr.qeclib import qubit
-from pecos.slr.qeclib.qubit.measures import Measure
+from pecos.slr.qeclib.qubit.measures import MeasureZ
 
 
 def _return_declared_cregs(prog: Main) -> Main:
@@ -162,8 +162,8 @@ class TestSLRToStim:
             qubit.PZ(q[1]),
             qubit.H(q[0]),
             qubit.CX(q[0], q[1]),
-            qubit.Measure(q[0]) > c[0],
-            qubit.Measure(q[1]) > c[1],
+            qubit.MeasureZ(q[0]) > c[0],
+            qubit.MeasureZ(q[1]) > c[1],
             Return(c),
         )
 
@@ -270,8 +270,8 @@ class TestStimRoundTrip:
             c := CReg("c", 2),
             qubit.H(q[0]),
             qubit.CX(q[0], q[1]),
-            qubit.Measure(q[0]) > c[0],
-            qubit.Measure(q[1]) > c[1],
+            qubit.MeasureZ(q[0]) > c[0],
+            qubit.MeasureZ(q[1]) > c[1],
             Return(c),
         )
 
@@ -309,7 +309,7 @@ class TestStimStaticForAndWhile:
             q := QReg("q", 1),
             c := CReg("c", 1),
             For("i", 0, 3).Do(qubit.X(q[0])),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             Return(c),
         )
         circ = SlrConverter(prog).stim()
@@ -321,7 +321,7 @@ class TestStimStaticForAndWhile:
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
-            While(c[0] == 0).Do(qubit.X(q[0]), Measure(q[0]) > c[0]),
+            While(c[0] == 0).Do(qubit.X(q[0]), MeasureZ(q[0]) > c[0]),
             Return(c),
         )
         with pytest.raises(NotImplementedError, match=r"does not support While loops"):

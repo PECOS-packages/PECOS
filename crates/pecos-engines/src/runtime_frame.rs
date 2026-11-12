@@ -96,7 +96,7 @@ fn opcode(g: &Gate) -> Result<u32, PecosError> {
         GateType::Z => Ok(3),
         GateType::H => Ok(4),
         GateType::MZ => Ok(5),
-        GateType::MeasureLeaked => Ok(6),
+        GateType::MeasureZLeaked => Ok(6),
         GateType::Idle => Ok(7),
         GateType::MeasCrosstalkLocalPayload => Ok(8),
         _ => Err(error("unsupported frame gate")),
@@ -229,7 +229,7 @@ pub(crate) fn decode(
                     3 => Gate::z(&[q]),
                     4 => Gate::h(&[q]),
                     5 => Gate::mz(&[q]),
-                    6 => Gate::measure_leaked(&[q]),
+                    6 => Gate::measure_z_leaked(&[q]),
                     7 => Gate::idle(duration, vec![QubitId(q)]),
                     8 => Gate::new(
                         GateType::MeasCrosstalkLocalPayload,

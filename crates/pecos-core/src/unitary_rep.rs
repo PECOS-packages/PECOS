@@ -2533,7 +2533,7 @@ impl UnitaryRep {
                         }
                         GateType::MX
                         | GateType::MZ
-                        | GateType::MeasureLeaked
+                        | GateType::MeasureZLeaked
                         | GateType::MeasureFree
                         | GateType::MPZ
                         | GateType::PX
@@ -4237,7 +4237,7 @@ fn gate_type_color(gt: GateType) -> CellColor {
 /// gates keep their asymmetric brackets (`|MZ)` and `(PZ|`).
 fn gate_type_family(gt: GateType) -> GateFamily {
     match gt {
-        GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree | GateType::MPZ => {
+        GateType::MZ | GateType::MeasureZLeaked | GateType::MeasureFree | GateType::MPZ => {
             GateFamily::Measurement
         }
         GateType::PZ | GateType::QAlloc | GateType::QFree => GateFamily::Preparation,

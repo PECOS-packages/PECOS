@@ -219,7 +219,7 @@ impl MeasurementAdmission {
                 }
                 self.ids.push(m.program_result);
                 if m.leakage_aware {
-                    Gate::measure_leaked(&[q(*qubit_id)?])
+                    Gate::measure_z_leaked(&[q(*qubit_id)?])
                 } else {
                     Gate::mz(&[q(*qubit_id)?])
                 }

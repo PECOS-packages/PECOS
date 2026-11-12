@@ -13,7 +13,7 @@ conditional through ``SlrConverter.hugr()`` (AST-routed post-cutover).
 
 import pytest
 from pecos.slr import CReg, If, Main, QReg, Return, SlrConverter
-from pecos.slr.qeclib.qubit.measures import Measure
+from pecos.slr.qeclib.qubit.measures import MeasureZ
 
 
 def test_hugr_compilation_simple() -> None:
@@ -22,13 +22,13 @@ def test_hugr_compilation_simple() -> None:
         q := QReg("q", 2),
         c := CReg("c", 2),
         # Simple conditional that should work
-        Measure(q[0]) > c[0],
+        MeasureZ(q[0]) > c[0],
         If(c[0])
         .Then(
-            Measure(q[1]) > c[1],
+            MeasureZ(q[1]) > c[1],
         )
         .Else(
-            Measure(q[1]) > c[1],
+            MeasureZ(q[1]) > c[1],
         ),
         Return(c),
     )

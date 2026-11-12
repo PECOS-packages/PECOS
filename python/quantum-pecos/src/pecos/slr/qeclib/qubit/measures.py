@@ -18,6 +18,7 @@ used in quantum error correction protocols.
 
 from __future__ import annotations
 
+import warnings
 from typing import TYPE_CHECKING
 
 from pecos.slr.qeclib.qubit.qgate_base import QGate
@@ -26,7 +27,7 @@ if TYPE_CHECKING:
     from pecos.slr import Bit, Qubit
 
 
-class Measure(QGate):
+class MeasureZ(QGate):
     """A measurement of a qubit in the Z basis."""
 
     csize = 1
@@ -40,7 +41,7 @@ class Measure(QGate):
         super().__init__(*qargs)
         self.cout = None
 
-    def __gt__(self, cout: Bit | tuple[Bit, ...]) -> Measure:
+    def __gt__(self, cout: Bit | tuple[Bit, ...]) -> MeasureZ:
         """Set the classical output bit(s) for measurement using > operator."""
         g = self.copy()
 
@@ -50,3 +51,16 @@ class Measure(QGate):
             g.cout = (cout,)
 
         return g
+
+
+def Measure(*qargs: Qubit) -> MeasureZ:
+    """Deprecated function alias for :class:`MeasureZ`.
+
+    This alias cannot be used for isinstance checks or subclassing.
+    """
+    warnings.warn(
+        "Measure is deprecated and will be removed in a future version. Please use MeasureZ instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return MeasureZ(*qargs)

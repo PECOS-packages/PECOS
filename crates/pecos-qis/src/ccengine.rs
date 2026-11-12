@@ -33,6 +33,7 @@ use crate::runtime::{QisRuntime, for_each_quantum_qubit};
 use crate::scheduled_transport::ScheduledTransport;
 use log::{debug, warn};
 use pecos_core::Angle64;
+use pecos_core::gate_type::GateType;
 use pecos_core::prelude::PecosError;
 use pecos_engines::shot_results::{Data, Shot};
 use pecos_engines::{
@@ -1008,7 +1009,7 @@ impl QisEngine {
                         }
                         QuantumOp::MeasureLeaked(qubit, result_id) => {
                             self.measurement_mapping.push(*result_id);
-                            builder.measure_leakages(&[self.mapped_qubit(*qubit, qop)?]);
+                            builder.measure_z_leaked(&[self.mapped_qubit(*qubit, qop)?]);
                             Self::push_gate_metadata(&mut gate_metadata, &mut pending_metadata);
                         }
                         QuantumOp::ZZ(qubit1, qubit2) => {
@@ -1349,7 +1350,7 @@ impl QisEngine {
                     }
                     QuantumOp::MeasureLeaked(qubit, result_id) => {
                         self.measurement_mapping.push(result_id);
-                        builder.measure_leakages(&[qubit]);
+                        builder.measure_z_leaked(&[qubit]);
                         gate_metadata.push(metadata);
                     }
                     QuantumOp::ZZ(qubit1, qubit2) => {
@@ -1535,7 +1536,7 @@ impl QisEngine {
                         .iter()
                         .map(|q| usize::from(*q))
                         .collect::<Vec<_>>();
-                    let measurement_result_ids = if matches!(gate_type.as_str(), "MZ" | "MeasureLeaked") {
+                    let measurement_result_ids = if matches!(gate.gate_type, GateType::MZ | GateType::MeasureZLeaked) {
                         let end = measurement_cursor + qubits.len();
                         if end > measurement_mapping.len() {
                             return Err(
@@ -4150,6 +4151,48 @@ mod tests {
     }
 
     #[test]
+    fn test_leakage_measurement_trace_name_and_result_id() {
+        let temp_dir = TempDir::new().expect("tempdir");
+        let mut engine = QisEngine::with_runtime(Box::new(DummyRuntime::default()));
+        engine.set_operation_trace_dir(temp_dir.path());
+        let collector = OperationTraceStore::default();
+        engine.set_operation_trace_collector(collector.clone());
+        engine.begin_trace_shot().unwrap();
+
+        let ops = vec![
+            Operation::AllocateQubit { id: 0 },
+            QuantumOp::MeasureLeaked(0, 17).into(),
+        ];
+        let lowered = engine
+            .lower_operations_to_commands(&ops)
+            .expect("lower leakage measurement");
+        engine.trace_operations_chunk("unit_test", &ops, Some(17), Some(&lowered));
+
+        let in_memory = collector.lock().expect("collector lock");
+        assert_eq!(in_memory.len(), 1);
+        assert_eq!(in_memory[0].lowered_quantum_ops.len(), 2);
+        let gate = &in_memory[0].lowered_quantum_ops[1];
+        assert_eq!(gate.gate_type, "MeasureZLeaked");
+        assert_eq!(gate.measurement_result_ids, vec![17]);
+
+        let trace_files = std::fs::read_dir(temp_dir.path())
+            .expect("read trace dir")
+            .map(|entry| entry.expect("dir entry").path())
+            .collect::<Vec<_>>();
+        assert_eq!(trace_files.len(), 1);
+        let trace_json = std::fs::read_to_string(&trace_files[0]).expect("read trace json");
+        let value: serde_json::Value = serde_json::from_str(&trace_json).expect("parse trace json");
+        assert_eq!(
+            value["lowered_quantum_ops"][1]["gate_type"],
+            "MeasureZLeaked"
+        );
+        assert_eq!(
+            value["lowered_quantum_ops"][1]["measurement_result_ids"],
+            serde_json::json!([17])
+        );
+    }
+
+    #[test]
     fn nonfinite_runtime_rotations_are_errors() {
         for angle in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
             for op in [
@@ -4352,7 +4395,7 @@ mod tests {
         assert_eq!(quantum_ops.len(), 2);
         assert_eq!(
             quantum_ops[1].gate_type,
-            pecos_core::gate_type::GateType::MeasureLeaked
+            pecos_core::gate_type::GateType::MeasureZLeaked
         );
         assert_eq!(engine.measurement_mapping, vec![8]);
     }
@@ -4375,7 +4418,7 @@ mod tests {
         builder.pz(&[0]);
         builder.rxy1q(Angle64::QUARTER_TURN, Angle64::THREE_QUARTERS_TURN, &[0]);
         builder.rz(Angle64::HALF_TURN, &[0]);
-        builder.measure_leakages(&[0]);
+        builder.measure_z_leaked(&[0]);
 
         let result = system.process(builder.build()).expect("simulate leakage");
 

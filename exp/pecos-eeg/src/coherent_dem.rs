@@ -929,7 +929,7 @@ fn backward_conjugate_bm(prop: &mut Bm, gate: &Gate) {
         // Measurement: kill X on measured qubit (Z-basis measurement
         // is insensitive to Z errors, but X errors flip the result).
         // For backward propagation, we don't propagate X past MZ.
-        GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked => {
+        GateType::MZ | GateType::MeasureFree | GateType::MeasureZLeaked => {
             for q in &gate.qubits {
                 let qi = q.index();
                 if prop.has_x(qi) {

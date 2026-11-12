@@ -75,7 +75,7 @@ from pecos.slr import CReg, For, If, Main, Print, QReg, Return, SlrConverter, Wh
 from pecos.slr.ast.codegen.qir import AstToQir
 from pecos.slr.ast.nodes import VarExpr
 from pecos.slr.qeclib import qubit as qb
-from pecos.slr.qeclib.qubit.measures import Measure
+from pecos.slr.qeclib.qubit.measures import MeasureZ
 
 from ._selene_harness import run_ast_guppy_via_selene  # noqa: TID252
 from .audit_runner import _curated_cases  # noqa: TID252
@@ -178,7 +178,7 @@ def _zero_init_safety() -> Main:
         c := CReg("c", 1),
         d := CReg("d", 1),
         If(c[0]).Then(qb.X(q[0])),
-        Measure(q[0]) > d[0],
+        MeasureZ(q[0]) > d[0],
         Return(d),
     )
 
@@ -191,8 +191,8 @@ def _multi_creg() -> Main:
         b := CReg("b", 2),
         qb.X(q[0]),
         a.set(0b10),
-        Measure(q[0]) > b[0],
-        Measure(q[1]) > b[1],
+        MeasureZ(q[0]) > b[0],
+        MeasureZ(q[1]) > b[1],
         Return(a, b),
     )
 
@@ -360,10 +360,10 @@ def test_oversize_creg_raises_loud() -> None:
     """A >64-bit CReg must FAIL LOUD at QIR codegen, not silently drop
     its storage/output. 64 is the cap
     (single-i64 record pack); 65 must raise a clear error."""
-    ok = Main(q := QReg("q", 1), c := CReg("c", 64), Measure(q[0]) > c[0], Return(c))
+    ok = Main(q := QReg("q", 1), c := CReg("c", 64), MeasureZ(q[0]) > c[0], Return(c))
     SlrConverter(ok).qir_bc()  # 64 is allowed (boundary)
 
-    over = Main(q := QReg("q", 1), c := CReg("c", 65), Measure(q[0]) > c[0], Return(c))
+    over = Main(q := QReg("q", 1), c := CReg("c", 65), MeasureZ(q[0]) > c[0], Return(c))
     with pytest.raises(NotImplementedError, match=r"CReg 'c' has 65 bits.*64-bit cap"):
         SlrConverter(over).qir_bc()
 
@@ -377,7 +377,7 @@ def test_while_raises_loud() -> None:
     prog = Main(
         q := QReg("q", 1),
         c := CReg("c", 1),
-        While(c[0] == 0).Do(qb.H(q[0]), Measure(q[0]) > c[0]),
+        While(c[0] == 0).Do(qb.H(q[0]), MeasureZ(q[0]) > c[0]),
         Return(c),
     )
     with pytest.raises(NotImplementedError, match=r"does not support While loops"):
@@ -390,7 +390,7 @@ def test_print_raises_loud() -> None:
     prog = Main(
         q := QReg("q", 1),
         c := CReg("c", 1),
-        Measure(q[0]) > c[0],
+        MeasureZ(q[0]) > c[0],
         Print(c),
         Return(c),
     )
@@ -408,7 +408,7 @@ def test_static_for_unrolls_body_not_dropped() -> None:
         q := QReg("q", 1),
         c := CReg("c", 1),
         For("i", 0, 3).Do(qb.X(q[0])),
-        Measure(q[0]) > c[0],
+        MeasureZ(q[0]) > c[0],
         Return(c),
     )
     ir = SlrConverter(prog).qir()
@@ -444,7 +444,7 @@ def test_inline_returned_creg_raises_loud() -> None:
     QIS recorded `[]` for an explicit `Return(final)`). Mirrors the
     fail-loud doctrine: silent miscompile -> loud ValueError."""
     final = CReg("final", 2)
-    prog = Main(q := QReg("q", 2), Measure(q) > final, Return(final))
+    prog = Main(q := QReg("q", 2), MeasureZ(q) > final, Return(final))
     with pytest.raises(ValueError, match=r"classical register 'final'.*not.*declared at Main scope"):
         SlrConverter(prog).qir_bc()
 
@@ -461,7 +461,7 @@ def test_prep_stray_string_arg_raises_loud() -> None:
     # No-string preps build (PZ default; dedicated gate identity).
     # No-string prep on every dedicated gate builds (basis = identity).
     for prep in (qb.PZ, qb.PNZ, qb.PX, qb.PNX, qb.PY, qb.PNY):
-        ok = Main(q := QReg("q", 1), c := CReg("c", 1), prep(q[0]), Measure(q) > c, Return(c))
+        ok = Main(q := QReg("q", 1), c := CReg("c", 1), prep(q[0]), MeasureZ(q) > c, Return(c))
         SlrConverter(ok).qir_bc()
 
     # ANY string qarg on EVERY prep gate fails loud (incl. "Z" -- the
@@ -474,7 +474,7 @@ def test_prep_stray_string_arg_raises_loud() -> None:
         (qb.PY, "Z"),
         (qb.PNY, "Y"),
     ):
-        bad = Main(q := QReg("q", 1), c := CReg("c", 1), prep(q[0], s), Measure(q) > c, Return(c))
+        bad = Main(q := QReg("q", 1), c := CReg("c", 1), prep(q[0], s), MeasureZ(q) > c, Return(c))
         with pytest.raises(NotImplementedError, match=r"stray string argument"):
             SlrConverter(bad).qir_bc()
 

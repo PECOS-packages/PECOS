@@ -159,7 +159,7 @@ class TestAstToQuantumCircuitPrepMeasure:
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
-            qb.Measure(q[0]) > c[0],
+            qb.MeasureZ(q[0]) > c[0],
         )
         ast = slr_to_ast(prog)
 
@@ -273,7 +273,7 @@ class TestAstToQuantumCircuitQEC:
             c := CReg("c", 1),
             qb.CX(data[0], ancilla[0]),
             qb.CX(data[1], ancilla[0]),
-            qb.Measure(ancilla[0]) > c[0],
+            qb.MeasureZ(ancilla[0]) > c[0],
         )
         ast = slr_to_ast(prog)
 
@@ -393,7 +393,7 @@ class TestAstToQuantumCircuitFullPipeline:
             Repeat(cond=2).block(
                 qb.CX(data[0], ancilla[0]),
                 qb.CX(data[1], ancilla[0]),
-                qb.Measure(ancilla[0]) > c[0],
+                qb.MeasureZ(ancilla[0]) > c[0],
                 qb.PZ(ancilla[0]),
             ),
         )
@@ -460,24 +460,24 @@ def measurement_program(request):
     q, c, d = QReg("q", 4), CReg("c", 2), CReg("d", 2)
     if request.param == "whole_register":
         c = CReg("c", 4)
-    pair = (qb.Measure(q[1]) > c[1], qb.Measure(q[0]) > c[0])
+    pair = (qb.MeasureZ(q[1]) > c[1], qb.MeasureZ(q[0]) > c[0])
     bodies = {
         "out_of_order": pair,
-        "two_registers": (qb.Measure(q[1]) > d[0], qb.Measure(q[0]) > c[1]),
-        "rewritten_bit": (qb.Measure(q[0]) > c[0], qb.Measure(q[1]) > c[0]),
-        "bare": (qb.Measure(q[1]), qb.Measure(q[0]) > c[0]),
-        "short_results": (qb.Measure(q[1], q[0], q[2]) > c[1],),
-        "whole_register": (qb.Measure(q) > c,),
-        "reversed_targets": (qb.Measure(q[1], q[0]) > (c[1], c[0]),),
+        "two_registers": (qb.MeasureZ(q[1]) > d[0], qb.MeasureZ(q[0]) > c[1]),
+        "rewritten_bit": (qb.MeasureZ(q[0]) > c[0], qb.MeasureZ(q[1]) > c[0]),
+        "bare": (qb.MeasureZ(q[1]), qb.MeasureZ(q[0]) > c[0]),
+        "short_results": (qb.MeasureZ(q[1], q[0], q[2]) > c[1],),
+        "whole_register": (qb.MeasureZ(q) > c,),
+        "reversed_targets": (qb.MeasureZ(q[1], q[0]) > (c[1], c[0]),),
         "repeat": (Repeat(3).block(*pair),),
         "static_for": (For("i", 0, 3).Do(*pair),),
-        "parallel": (Parallel(qb.X(q[2]), *pair, qb.Measure(q[3])),),
+        "parallel": (Parallel(qb.X(q[2]), *pair, qb.MeasureZ(q[3])),),
         "permute": (Permute([q[0], q[1]], [q[1], q[0]]), *pair),
-        "duplicate_targets": (qb.Measure(q[0], q[0]) > (c[0], c[1]),),
-        "parallel_duplicate": (Parallel(qb.Measure(q[0]) > c[0], qb.Measure(q[0]) > c[1]),),
-        "parallel_bare_duplicate": (Parallel(qb.Measure(q[0]), qb.Measure(q[0]), qb.Measure(q[1]) > c[0]),),
-        "parallel_bare_order": (Parallel(qb.Measure(q[1]), qb.Measure(q[0]), qb.Measure(q[2]) > c[0]),),
-        "parallel_gate_between": (Parallel(qb.Measure(q[0]) > c[0], qb.X(q[0]), qb.Measure(q[0]) > c[1]),),
+        "duplicate_targets": (qb.MeasureZ(q[0], q[0]) > (c[0], c[1]),),
+        "parallel_duplicate": (Parallel(qb.MeasureZ(q[0]) > c[0], qb.MeasureZ(q[0]) > c[1]),),
+        "parallel_bare_duplicate": (Parallel(qb.MeasureZ(q[0]), qb.MeasureZ(q[0]), qb.MeasureZ(q[1]) > c[0]),),
+        "parallel_bare_order": (Parallel(qb.MeasureZ(q[1]), qb.MeasureZ(q[0]), qb.MeasureZ(q[2]) > c[0]),),
+        "parallel_gate_between": (Parallel(qb.MeasureZ(q[0]) > c[0], qb.X(q[0]), qb.MeasureZ(q[0]) > c[1]),),
     }
     program = Main(q, c, d, *bodies[request.param])
     # QASM does not lower static For: use its explicit unrolling as the oracle.
@@ -522,7 +522,7 @@ def test_measurement_results_reach_phir(measurement_program, optimize_parallel) 
 def test_parallel_measurement_params_are_local() -> None:
     """Disjoint gates share a tick while keeping each measurement's own metadata."""
     q, c, d = QReg("q", 4), CReg("c", 1), CReg("d", 1)
-    program = Main(q, c, d, Parallel(qb.X(q[2]), qb.Measure(q[1]) > c[0], qb.Measure(q[0]) > d[0], qb.Measure(q[3])))
+    program = Main(q, c, d, Parallel(qb.X(q[2]), qb.MeasureZ(q[1]) > c[0], qb.MeasureZ(q[0]) > d[0], qb.MeasureZ(q[3])))
     converter = SlrConverter(program, optimize_parallel=False)
     circuit = converter.quantum_circuit()
     assert len(circuit) == 1
@@ -532,7 +532,7 @@ def test_parallel_measurement_params_are_local() -> None:
 def test_measurements_flush_conflicting_gates_in_order() -> None:
     """A gate between two measurements cannot move before the first measurement."""
     q, c = QReg("q", 1), CReg("c", 2)
-    program = Main(q, c, Parallel(qb.Measure(q[0]) > c[0], qb.X(q[0]), qb.Measure(q[0]) > c[1]))
+    program = Main(q, c, Parallel(qb.MeasureZ(q[0]) > c[0], qb.X(q[0]), qb.MeasureZ(q[0]) > c[1]))
     converter = SlrConverter(program, optimize_parallel=False)
     circuit = converter.quantum_circuit()
     assert [name for name, _locations, _params in circuit.items()] == ["Measure", "X", "Measure"]
@@ -550,7 +550,7 @@ def test_classical_effects_are_rejected(operation) -> None:
         "mixed_permute": (Permute([q[0], c[0]], [c[0], q[0]]), "Permute.*c\\[0\\].*QASM"),
     }
     op, message = operations[operation]
-    program = Main(q, c, qb.X(q[1]), qb.Measure(q[0]) > c[0], qb.Measure(q[1]) > c[1], op)
+    program = Main(q, c, qb.X(q[1]), qb.MeasureZ(q[0]) > c[0], qb.MeasureZ(q[1]) > c[1], op)
     with pytest.raises(NotImplementedError, match=message):
         SlrConverter(program).quantum_circuit()
 
@@ -568,7 +568,7 @@ def test_unresolved_block_call_is_rejected() -> None:
 def test_bare_register_measurement_preserves_depth(optimize_parallel) -> None:
     """A whole-register bare measurement occupies one tick."""
     q = QReg("q", 100)
-    circuit = SlrConverter(Main(q, qb.H(q), qb.Measure(q)), optimize_parallel=optimize_parallel).quantum_circuit()
+    circuit = SlrConverter(Main(q, qb.H(q), qb.MeasureZ(q)), optimize_parallel=optimize_parallel).quantum_circuit()
     measurement_ticks = [tick_to_dict(circuit[i]) for i in range(len(circuit)) if "Measure" in tick_to_dict(circuit[i])]
     assert measurement_ticks == [{"Measure": set(range(100))}]
 
@@ -576,7 +576,7 @@ def test_bare_register_measurement_preserves_depth(optimize_parallel) -> None:
 def test_parallel_bare_measurements_preserve_depth() -> None:
     """Explicit Parallel keeps disjoint bare measurements in a single tick."""
     q = QReg("q", 2)
-    program = Main(q, Parallel(qb.Measure(q[0]), qb.Measure(q[1])))
+    program = Main(q, Parallel(qb.MeasureZ(q[0]), qb.MeasureZ(q[1])))
     circuit = SlrConverter(program, optimize_parallel=False).quantum_circuit()
     assert len(circuit) == 1
     assert tick_to_dict(circuit[0]) == {"Measure": {0, 1}}
@@ -629,10 +629,10 @@ def test_measurement_registers_execute_in_phir() -> None:
         unused,
         qb.X(q[1]),
         qb.X(q[3]),
-        qb.Measure(q[1]) > d[1],
-        qb.Measure(q[0]) > c[1],
-        qb.Measure(q[3]) > c[0],
-        qb.Measure(q[2]) > d[0],
+        qb.MeasureZ(q[1]) > d[1],
+        qb.MeasureZ(q[0]) > c[1],
+        qb.MeasureZ(q[3]) > c[0],
+        qb.MeasureZ(q[2]) > d[0],
     )
     converter = SlrConverter(program)
     expected = {"c": 0, "d": 0, "unused": 0}
@@ -674,7 +674,7 @@ def test_empty_classical_spec_reader_compatibility(semantics: str) -> None:
 def test_return_preserves_measurement_results() -> None:
     """Return declares outputs without adding circuit operations."""
     q, c = QReg("q", 1), CReg("c", 1)
-    program = Main(q, c, qb.X(q[0]), qb.Measure(q[0]) > c[0])
+    program = Main(q, c, qb.X(q[0]), qb.MeasureZ(q[0]) > c[0])
     expected = SlrConverter(program).quantum_circuit()
     program.extend(Return(c))
     circuit = SlrConverter(program).quantum_circuit()
@@ -691,7 +691,7 @@ def test_allocator_wide_prepare_matches_explicit_slots(basis) -> None:
     from pecos.slr.ast.nodes import PrepareOp
 
     q, c = QReg("q", 3), CReg("c", 3)
-    program = Main(q, c, qb.X(q), getattr(qb, basis)(q), qb.Measure(q) > c)
+    program = Main(q, c, qb.X(q), getattr(qb, basis)(q), qb.MeasureZ(q) > c)
     qasm = SlrConverter(program).qasm()
     # SLR expands PZ(q) into explicit slots; exercise the allocator-wide AST form.
     ast = slr_to_ast(program)
@@ -712,7 +712,7 @@ def test_allocator_wide_pz_executes_in_phir() -> None:
     from pecos.slr.ast.nodes import PrepareOp
 
     q, c = QReg("q", 3), CReg("c", 3)
-    program = Main(q, c, qb.X(q), qb.PZ(q), qb.Measure(q) > c)
+    program = Main(q, c, qb.X(q), qb.PZ(q), qb.MeasureZ(q) > c)
     qasm = SlrConverter(program).qasm()
     ast = slr_to_ast(program)
     ast = replace(ast, body=tuple(replace(op, slots=None) if isinstance(op, PrepareOp) else op for op in ast.body))
@@ -741,7 +741,7 @@ def test_parallel_conflicts_preserve_qasm_order(shape, optimize_parallel) -> Non
         "nested_then_gate": Parallel(Parallel(qb.H(q[0])), qb.X(q[0])),
         "nested_siblings": Parallel(Parallel(qb.X(q[0])), Parallel(qb.Z(q[0]))),
     }
-    program = Main(q, c, bodies[shape], qb.Measure(q[3], q[1], q[2], q[0]) > (c[0], c[2], c[1], c[3]))
+    program = Main(q, c, bodies[shape], qb.MeasureZ(q[3], q[1], q[2], q[0]) > (c[0], c[2], c[1], c[3]))
     converter = SlrConverter(program, optimize_parallel=optimize_parallel)
     expected = defaultdict(list)
     for line in converter.qasm().splitlines():
@@ -770,7 +770,7 @@ def test_named_qubits_execute_in_phir() -> None:
     from pecos.engines.hybrid_engine import HybridEngine
 
     data, other, bits = QReg("data", 2), QReg("other", 1), CReg("q", 2)
-    program = Main(data, other, bits, qb.X(data[1]), qb.Measure(data[0]) > bits[1], qb.Measure(data[1]) > bits[0])
+    program = Main(data, other, bits, qb.X(data[1]), qb.MeasureZ(data[0]) > bits[1], qb.MeasureZ(data[1]) > bits[0])
     converter = SlrConverter(program)
     qasm = converter.qasm()
     circuit = converter.quantum_circuit()
@@ -825,7 +825,7 @@ def test_block_local_classical_permute_is_rejected(whole_register) -> None:
         def __init__(self) -> None:
             c = CReg("local", 2)
             permutation = Permute(c, c) if whole_register else Permute([c[0], c[1]], [c[1], c[0]])
-            super().__init__(qb.Measure(q[0]) > c[0], permutation)
+            super().__init__(qb.MeasureZ(q[0]) > c[0], permutation)
 
     ref = "local" if whole_register else r"local\[0\]"
     with pytest.raises(ValueError, match=rf"Permute.*{ref}.*declare.*qubit"):

@@ -10,7 +10,7 @@ realistic shape.
 
 from pecos.slr import Block, CReg, If, Main, QReg, Return
 from pecos.slr.qeclib import qubit
-from pecos.slr.qeclib.qubit.measures import Measure
+from pecos.slr.qeclib.qubit.measures import MeasureZ
 
 from ..ast_guppy._harness import assert_ast_guppy_compiles  # noqa: TID252
 
@@ -38,7 +38,7 @@ class TestComplexPatterns:
                     qubit.CX(data[4], ancilla[1]),
                     qubit.CX(data[5], ancilla[1]),
                     qubit.H(ancilla[1]),
-                    Measure(ancilla) > syndrome,
+                    MeasureZ(ancilla) > syndrome,
                 ]
 
         prog = Main(

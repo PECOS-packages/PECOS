@@ -116,8 +116,8 @@ struct SourceTraceMetadata {
 /// | rzz | RZZ | RZZ |
 /// | rpp | RXYXY2Q | RXYXY2Q |
 /// | reset | Reset | PZ |
-/// | measure | Measure | MZ (MeasureLeaked for a leakage-aware result) |
-/// | measure_leaked | MeasureLeaked | MeasureLeaked |
+/// | measure | Measure | MZ (MeasureZLeaked for a leakage-aware result) |
+/// | measure_leaked | MeasureLeaked | MeasureZLeaked |
 /// | set_batch_time | Idle for timing gaps | Idle; scheduled routes retain batch timing |
 /// | custom | no automatic gate mapping | configured handler / explicit Capture / rejection |
 #[repr(C)]
@@ -3445,7 +3445,7 @@ impl SeleneRuntime {
                         // The pinned runtime ABI allocates both Boolean and
                         // leakage-aware futures through `runtime_measure`.
                         // Restore the source result kind after scheduling so
-                        // PECOS executes MeasureLeaked and can produce 2.
+                        // PECOS executes MeasureZLeaked and can produce 2.
                         lowered_ops.push(QuantumOp::MeasureLeaked(qubit, program_result));
                     } else {
                         lowered_ops.push(QuantumOp::Measure(qubit, program_result));

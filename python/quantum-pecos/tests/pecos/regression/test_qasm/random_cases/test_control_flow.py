@@ -24,7 +24,7 @@ def test_phys_teleport(compare_qasm: Callable[..., None]) -> None:
         c := CReg("m", 2),
         qb.H(q[0]),
         qb.CX(q[0], q[1]),
-        qb.Measure(q) > c,
+        qb.MeasureZ(q) > c,
         Return(c),
     )
 
@@ -38,7 +38,7 @@ def test_phys_tele_block_block(compare_qasm: Callable[..., None]) -> None:
         c := CReg("m", 2),
         qb.H(q[0]),
         qb.CX(q[0], q[1]),
-        qb.Measure(q) > c,
+        qb.MeasureZ(q) > c,
         Block(
             qb.H(q[0]),
             Block(
@@ -58,7 +58,7 @@ def test_phys_tele_if(compare_qasm: Callable[..., None]) -> None:
         c := CReg("m", 2),
         qb.H(q[0]),
         qb.CX(q[0], q[1]),
-        qb.Measure(q) > c,
+        qb.MeasureZ(q) > c,
         If(c == 0).Then(
             qb.H(q[0]),
         ),
@@ -75,7 +75,7 @@ def test_phys_tele_if_block_block(compare_qasm: Callable[..., None]) -> None:
         c := CReg("m", 2),
         qb.H(q[0]),
         qb.CX(q[0], q[1]),
-        qb.Measure(q) > c,
+        qb.MeasureZ(q) > c,
         If(c == 0).Then(
             qb.H(q[0]),
             Block(
@@ -96,12 +96,12 @@ def test_phys_tele_block_telep_block(compare_qasm: Callable[..., None]) -> None:
         c2 := CReg("m2", 2),
         qb.H(q[0]),
         qb.CX(q[0], q[1]),
-        qb.Measure(q) > c,
+        qb.MeasureZ(q) > c,
         Block(
             qb.PZ(q),
             qb.H(q[0]),
             qb.CX(q[0], q[1]),
-            qb.Measure(q) > c2,
+            qb.MeasureZ(q) > c2,
             Block(
                 qb.H(q[0]),
             ),
@@ -120,7 +120,7 @@ def test_phys_repeat(compare_qasm: Callable[..., None]) -> None:
         Repeat(3).block(
             qb.H(q[0]),
             qb.CX(q[0], q[1]),
-            qb.Measure(q) > c,
+            qb.MeasureZ(q) > c,
         ),
         Return(c),
     )
@@ -141,7 +141,7 @@ def test_phys_parallel() -> None:
             qb.X(q[2]),
             qb.Y(q[3]),
         ),
-        qb.Measure(q) > c,
+        qb.MeasureZ(q) > c,
         Return(c),
     )
 
@@ -174,7 +174,7 @@ def test_phys_nested_parallel() -> None:
             ),
             qb.Z(q[3]),
         ),
-        qb.Measure(q) > c,
+        qb.MeasureZ(q) > c,
         Return(c),
     )
 
@@ -197,7 +197,7 @@ def test_phys_parallel_in_if() -> None:
         q := QReg("q", 4),
         c := CReg("m", 4),
         qb.H(q[0]),
-        qb.Measure(q[0]) > c[0],
+        qb.MeasureZ(q[0]) > c[0],
         If(c[0] == 1).Then(
             Parallel(
                 qb.X(q[1]),
@@ -205,7 +205,7 @@ def test_phys_parallel_in_if() -> None:
                 qb.Z(q[3]),
             ),
         ),
-        qb.Measure(q[1:4]) > c[1:4],
+        qb.MeasureZ(q[1:4]) > c[1:4],
         Return(c),
     )
 

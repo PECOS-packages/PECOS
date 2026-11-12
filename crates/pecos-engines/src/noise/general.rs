@@ -827,7 +827,7 @@ impl GeneralNoiseModel {
             // Track which qubits are being measured for leakage handling
             if matches!(
                 gate.gate_type,
-                GateType::MZ | GateType::MeasureLeaked | GateType::MPZ
+                GateType::MZ | GateType::MeasureZLeaked | GateType::MPZ
             ) {
                 self.measured_qubits.extend(gate.qubits.iter().map(|q| {
                     (
@@ -876,7 +876,7 @@ impl GeneralNoiseModel {
                     self.apply_prep_faults(&gate, builder);
                     self.apply_simple_crosstalk_faults(&gate, self.p_prep_crosstalk, builder);
                 }
-                GateType::MZ | GateType::MeasureLeaked => {
+                GateType::MZ | GateType::MeasureZLeaked => {
                     // Measurement noise is handled in apply_noise_on_continue_processing
                     // We still need to add the original gate here
                     builder.add_gate_command(&gate);
@@ -1112,13 +1112,13 @@ impl GeneralNoiseModel {
                         ops_builder.add_gate_command(&gate);
                     }
                 }
-                GateType::MeasureLeaked => {
+                GateType::MeasureZLeaked => {
                     let mut val = outcome as usize;
                     if leaked_at_measurement {
                         trace!("Qubit {qubit} is leaked, MeasureLeaked returns 2");
-                        // For MeasureLeaked, return 2 for leaked qubits
+                        // For MeasureZLeaked, return 2 for leaked qubits
                         val = 2;
-                    } else if !self.noiseless_gates.contains(&GateType::MeasureLeaked) {
+                    } else if !self.noiseless_gates.contains(&GateType::MeasureZLeaked) {
                         // For non-leaked qubits, apply measurement noise below
                         // Apply asymmetric measurement noise to each outcome
                         if val == 1 {
@@ -2108,7 +2108,7 @@ impl GeneralNoiseModel {
     /// # Behavior of Leaked Qubits
     ///
     /// - Regular `Measure` operations on leaked qubits always return 1
-    /// - `MeasureLeaked` operations on leaked qubits return 2
+    /// - `MeasureZLeaked` operations on leaked qubits return 2
     /// - Preparation, seepage, and recovery channels can return leaked qubits to the computational subspace
     /// - Gates applied to leaked qubits have no effect on the quantum state
     ///
@@ -2470,7 +2470,7 @@ mod tests {
     fn scheduled_measurement_snapshots_clear_on_completion_and_reset() {
         let mut noise = GeneralNoiseModel::builder().build();
         let gates = ByteMessage::quantum_operations_builder()
-            .add_gate_commands(&[Gate::measure_leaked(&[0]), Gate::pz(&[0]), Gate::mz(&[0])])
+            .add_gate_commands(&[Gate::measure_z_leaked(&[0]), Gate::pz(&[0]), Gate::mz(&[0])])
             .build();
         noise.mark_as_leaked(0);
         noise.start_scheduled(&gates).unwrap();
@@ -3338,11 +3338,11 @@ mod tests {
         assert!(!noise.is_leaked(0));
         assert!(!noise.is_leaked(1));
 
-        // Create measurement gates with both Measure and MeasureLeaked
+        // Create measurement gates with both Measure and MeasureZLeaked
         let mut builder = ByteMessageBuilder::new();
         let _ = builder.for_quantum_operations();
         builder.mz(&[0]); // Regular measure
-        builder.measure_leakages(&[1]); // MeasureLeaked
+        builder.measure_z_leaked(&[1]); // MeasureZLeaked
 
         let measurement_command = builder.build();
         let _noisy_command = noise.start(measurement_command.clone()).unwrap();
@@ -3405,11 +3405,11 @@ mod tests {
         noise.mark_as_leaked(0);
         noise.mark_as_leaked(1);
 
-        // Create measurement gates with both Measure and MeasureLeaked
+        // Create measurement gates with both Measure and MeasureZLeaked
         let mut builder = ByteMessageBuilder::new();
         let _ = builder.for_quantum_operations();
         builder.mz(&[0]); // Regular measure on leaked qubit
-        builder.measure_leakages(&[1]); // MeasureLeaked on leaked qubit
+        builder.measure_z_leaked(&[1]); // MeasureZLeaked on leaked qubit
 
         let measurement_command = builder.build();
         let _noisy_command = noise.start(measurement_command).unwrap();
@@ -3462,8 +3462,8 @@ mod tests {
         let mut builder = ByteMessageBuilder::new();
         let _ = builder.for_quantum_operations();
         builder.mz(&[0]); // Regular measure on leaked qubit 0
-        builder.measure_leakages(&[1]); // MeasureLeaked on non-leaked qubit 1
-        builder.measure_leakages(&[2]); // MeasureLeaked on leaked qubit 2
+        builder.measure_z_leaked(&[1]); // MeasureZLeaked on non-leaked qubit 1
+        builder.measure_z_leaked(&[2]); // MeasureZLeaked on leaked qubit 2
         builder.mz(&[3]); // Regular measure on non-leaked qubit 3
 
         let measurement_command = builder.build();

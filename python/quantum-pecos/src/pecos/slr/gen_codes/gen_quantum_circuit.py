@@ -326,7 +326,7 @@ class QuantumCircuitGenerator(Generator):
             "CNOT": "CX",
             "CY": "CY",
             "CZ": "CZ",
-            "Measure": "Measure",
+            "MeasureZ": "Measure",
             "PZ": "RESET",
             "RX": "RX",
             "RY": "RY",

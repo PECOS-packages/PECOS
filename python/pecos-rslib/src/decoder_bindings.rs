@@ -2682,7 +2682,7 @@ fn decode_relay_batch(
 
 fn validate_dem_error_rate(error_rate: Option<f64>) -> PyResult<()> {
     if let Some(value) = error_rate
-        && (!value.is_finite() || !(0.0..=1.0).contains(&value))
+        && !(0.0..=1.0).contains(&value)
     {
         return Err(pyo3::exceptions::PyValueError::new_err(format!(
             "error_rate must be finite and in [0, 1], got {value}"

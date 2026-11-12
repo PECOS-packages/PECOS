@@ -86,15 +86,16 @@ impl MbpDecoder {
 
         // Normalize XYZ bias
         let bias_sum = xyz_bias[0] + xyz_bias[1] + xyz_bias[2];
-        if bias_sum <= 0.0 {
-            return Err(LdpcError::InvalidInput(
-                "XYZ bias values must sum to a positive number".to_string(),
-            ));
+        if bias_sum <= 0.0 || !bias_sum.is_finite() {
+            return Err(LdpcError::InvalidInput(format!(
+                "XYZ bias values must sum to a positive finite number, got {bias_sum}"
+            )));
         }
+        // `+ 0.0` turns -0.0 into +0.0 so the core's log-likelihoods never see -0.0.
         let normalized_bias = [
-            xyz_bias[0] / bias_sum,
-            xyz_bias[1] / bias_sum,
-            xyz_bias[2] / bias_sum,
+            xyz_bias[0] / bias_sum + 0.0,
+            xyz_bias[1] / bias_sum + 0.0,
+            xyz_bias[2] / bias_sum + 0.0,
         ];
 
         // Create sparse matrix representations
@@ -104,7 +105,7 @@ impl MbpDecoder {
         let inner = ffi::create_mbp_decoder(
             &hx_repr,
             &hz_matrix_repr,
-            error_rate,
+            error_rate + 0.0,
             &normalized_bias,
             i32::try_from(max_iter).unwrap_or(i32::MAX),
             bp_method.to_ffi(),
@@ -343,6 +344,7 @@ mod tests {
             (0.1, [f64::NAN, 1.0, 1.0], "XYZ bias"),
             (0.1, [-1.0, 1.0, 1.0], "XYZ bias"),
             (0.1, [f64::INFINITY, 1.0, 1.0], "XYZ bias"),
+            (0.1, [1e308, 1e308, 1e308], "XYZ bias"),
         ] {
             assert!(
                 matches!(&build(rate, bias), Err(LdpcError::InvalidInput(message)) if message.contains(expected)),
@@ -350,6 +352,7 @@ mod tests {
             );
         }
         assert!(build(0.1, [1.0, 0.0, 1.0]).is_ok());
+        assert!(build(-0.0, [1.0, -0.0, 1.0]).is_ok());
     }
 
     #[test]

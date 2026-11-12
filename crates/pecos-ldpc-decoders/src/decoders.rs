@@ -21,7 +21,8 @@ fn prepare_channel_probs(
     error_channel: Option<&[f64]>,
 ) -> Result<Vec<f64>, LdpcError> {
     // The C++ core takes log((1 - p) / p) unchecked, so only probabilities may pass.
-    // The range check also rejects NaN and infinities.
+    // The range check also rejects NaN and infinities; `+ 0.0` turns -0.0 into
+    // +0.0, whose log-likelihood is +inf rather than NaN.
     match (error_rate, error_channel) {
         (Some(rate), None) => {
             if !(0.0..=1.0).contains(&rate) {
@@ -29,7 +30,7 @@ fn prepare_channel_probs(
                     "error_rate must be finite and in [0, 1], got {rate}"
                 )));
             }
-            Ok(vec![rate; pcm_cols])
+            Ok(vec![rate + 0.0; pcm_cols])
         }
         (None, Some(probs)) => {
             if probs.len() != pcm_cols {
@@ -46,7 +47,7 @@ fn prepare_channel_probs(
                     "error_channel[{column}] must be finite and in [0, 1], got {p}"
                 )));
             }
-            Ok(probs.to_vec())
+            Ok(probs.iter().map(|p| p + 0.0).collect())
         }
         (None, None) => Err(LdpcError::InvalidInput(
             "Either error_rate or error_channel must be provided".to_string(),

@@ -112,6 +112,7 @@ nav:
   - experimental/index.md
   - Composable Noise (pecos-neo): experimental/composable-noise.md
   - Experimental Decoders: experimental/decoders.md
+  - Quantum Detector Models: experimental/quantum-detector-models.md
 - Releases:
   - releases/changelog.md
 markdown_extensions:

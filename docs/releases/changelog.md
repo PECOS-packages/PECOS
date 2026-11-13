@@ -6,6 +6,12 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- Added experimental detector-conditioned quantum processes and exact reference
+  compilation in `pecos.experimental.detector_models`, with explicit coherent,
+  leakage, vacancy, and readout semantics, JSON serialization, and a compact
+  coherent bit/phase repetition generator. Includes a Guppy/Selene state-vector
+  example; conventional DEM construction and decoder APIs are unchanged.
+
 - **Deprecated:** Core `GateType::MeasureLeaked` is now `GateType::MeasureZLeaked`
   (wire value 105 is unchanged); its deprecated associated-const alias works in
   values and patterns but cannot be `use`-imported. The builders

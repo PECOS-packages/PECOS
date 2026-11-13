@@ -18,6 +18,7 @@ APIs in this module may change without notice.
 Currently available:
 - Symbolic circuit execution for efficient sampling of Clifford circuits
 - Noisy symbolic execution with depolarizing noise model
+- Quantum detector processes and coherent repetition models in ``detector_models``
 """
 
 from pecos_rslib.experimental import (

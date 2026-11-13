@@ -391,7 +391,7 @@ fn weights(field: &str, value: &Value) -> Result<BTreeMap<String, f64>, PecosErr
             )
         })?
         .iter()
-        .map(|(k, v)| Ok((k.clone(), number(&format!("{field}.{k}"), v)?)))
+        .map(|(k, v)| Ok((k.clone(), number(&format!("{field}.{}", key_name(k)), v)?)))
         .collect()
 }
 

@@ -1560,6 +1560,25 @@ fn measurement_loss_draws_in_operand_order() {
 }
 
 #[test]
+fn loss_empty_labels_render_quoted() {
+    for (value, expected) in [
+        (
+            json!({"enabled":true,"lost_partner":{"pauli_model":{"":false}}}),
+            r#"Input error: loss.lost_partner.pauli_model."" = false: use a JSON number"#,
+        ),
+        (
+            json!({"enabled":true,"channels":[{"site":"before_two_qubit","kind":"events","probability":0.1,"events":{"":"x"}}]}),
+            r#"Input error: loss.channels[0].events."" = "x": use a JSON number"#,
+        ),
+    ] {
+        assert_eq!(
+            QubitLoss::from_json_value(&value).unwrap_err().to_string(),
+            expected
+        );
+    }
+}
+
+#[test]
 fn loss_unknown_keys_preserve_literal_names() {
     for (value, expected) in [
         (

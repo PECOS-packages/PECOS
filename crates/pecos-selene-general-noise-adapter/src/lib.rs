@@ -83,6 +83,9 @@ impl GeneralNoiseErrorModel {
                 .build()
                 .context("invalid general-noise configuration")?,
         );
+        if model.has_loss() {
+            bail!("Selene does not support qubit loss; remove the loss section");
+        }
         if model.has_configured_readout() {
             bail!("Selene does not support readout matrices; remove measurement.readout");
         }
@@ -461,6 +464,19 @@ mod tests {
                 [0]
             );
         }
+    }
+
+    #[test]
+    fn t20_qubit_loss_is_rejected() {
+        let error =
+            GeneralNoiseErrorModel::from_plugin_json(1, r#"{"model":{"loss":{"enabled":true}}}"#)
+                .err()
+                .unwrap()
+                .to_string();
+        assert!(
+            error.contains("qubit loss") && error.contains("remove the loss section"),
+            "{error}"
+        );
     }
 
     #[test]

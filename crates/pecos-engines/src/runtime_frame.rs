@@ -295,6 +295,11 @@ impl RuntimeNoise {
         }
         let physical = inner.runtime_frame_supports_physical_events();
         let inner = inner.build();
+        if inner.has_loss() {
+            return Err(error(
+                "runtime frames do not support qubit loss; remove the loss section",
+            ));
+        }
         if inner.has_configured_readout() {
             return Err(error(
                 "runtime frames do not support readout matrices; remove measurement.readout",

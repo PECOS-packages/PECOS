@@ -1,6 +1,6 @@
 //! Validated, per-flavor conditional readout distributions.
 
-use super::GeneralNoiseModel;
+use super::{GeneralNoiseModel, loss::MeasurementState};
 use crate::noise::weighted_sampler::{NORMALIZATION_TOLERANCE, WeightedSampler};
 use pecos_core::{errors::PecosError, gate_type::GateType};
 use std::collections::BTreeMap;
@@ -134,7 +134,7 @@ impl ReadoutMatrix {
     pub(super) fn validate_without_loss(&self) -> Result<(), String> {
         if let Some(row) = &self.rows[TrueState::Lost as usize] {
             return Err(format!(
-                "readout {} row \"lost\": invalid value {:?}; the lost row needs qubit loss, which is not configured; remove the lost row",
+                "readout {} row \"lost\": invalid value {:?}; the lost row needs qubit loss, which is not configured; configure loss or remove the lost row",
                 self.flavor,
                 row.get_weighted_map()
             ));
@@ -155,9 +155,11 @@ impl GeneralNoiseModel {
         &mut self,
         flavor: GateType,
         outcome: u32,
-        leaked: bool,
+        state: MeasurementState,
     ) -> Option<usize> {
-        let row = if leaked {
+        let row = if state == MeasurementState::Lost {
+            TrueState::Lost
+        } else if state == MeasurementState::Leaked {
             TrueState::Leaked
         } else if outcome == 0 {
             TrueState::Zero

@@ -15,6 +15,7 @@ publish = false
 [dependencies]
 pecos-decoder-core.workspace = true
 pecos-trellis.workspace = true
+libm.workspace = true
 
 [lib]
 name = "pecos_frontier"

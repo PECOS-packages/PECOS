@@ -30,11 +30,13 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   and the raw LDPC constructors return `LdpcError::InvalidInput` naming `error_rate`,
   the `error_channel` entry or the `xyz_bias` entry (`ValueError` from the Python `BpOsdBuilder` /
   `BpLsdBuilder`). They previously decoded with meaningless priors.
-- **Breaking:** The Python LDPC decoder bindings raise `ValueError` instead of
+- **Breaking:** The LDPC decoder classes in `pecos_rslib.decoders` (the raw
+  builders and decoders, and `DemAwareDecoder`) raise `ValueError` instead of
   `RuntimeError` for input errors that the Rust layer detects
-  (`LdpcError::InvalidInput`), such as an invalid prior or a channel of the wrong
-  length. Errors raised by the C++ core, such as a syndrome of the wrong length,
-  remain `RuntimeError`.
+  (`LdpcError::InvalidInput`), such as an invalid prior, a channel of the wrong
+  length, or a union-find syndrome of the wrong length. Errors raised by the C++
+  core remain `RuntimeError`; BP-OSD and BP-LSD check the syndrome length there.
+  Decoders built from a `DecoderSpec` keep their exception types.
 - **Breaking:** Relay-BP and min-sum decoders now use PECOS's native kernel;
   results change. Relay-BP is deterministic per `(seed, syndrome)`, independent
   of decode order, batch splitting and worker count, enabling parallel batches.

@@ -413,6 +413,20 @@ class TestUnionFindDecoder:
         result_peel = decoder_peel.decode_syndrome([0, 0, 0])
         assert result_peel is not None
 
+    def test_wrong_syndrome_length_raises_value_error(self) -> None:
+        """A syndrome whose length differs from the check count is a caller error."""
+        from pecos_rslib.decoders import DemAwareDecoder, SparseMatrix, UnionFindBuilder
+
+        H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
+        decoder = UnionFindBuilder(H).build()
+        with pytest.raises(ValueError, match="Syndrome length 2 does not match check count 3"):
+            decoder.decode_syndrome([0, 1])
+
+        dem = "error(0.1) D0 L0\nerror(0.1) D0 D1\nerror(0.1) D1"
+        dem_decoder = DemAwareDecoder.from_dem(dem, decoder_type="union_find")
+        with pytest.raises(ValueError, match="Syndrome length 3 does not match check count 2"):
+            dem_decoder.decode_syndrome([0, 1, 1])
+
 
 class TestMinSumBpDecoder:
     """Tests for MinSumBpDecoder via MinSumBpBuilder."""

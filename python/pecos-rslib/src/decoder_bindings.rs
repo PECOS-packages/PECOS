@@ -38,6 +38,7 @@
 //! - `MinSumBpDecoder` - Plain min-sum BP decoder
 
 use ndarray::{Array1, Array2};
+use pecos_decoders::bp_lsd_defaults;
 use pyo3::prelude::*;
 
 use crate::observable_flips_bindings::PyObservableFlips;
@@ -1177,9 +1178,9 @@ fn parse_bp_method(s: &str) -> PyResult<RustBpMethod> {
     match s {
         "product_sum" | "ps" => Ok(RustBpMethod::ProductSum),
         "minimum_sum" | "ms" => Ok(RustBpMethod::MinimumSum),
-        _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-            "bp_method must be 'product_sum' or 'minimum_sum'",
-        )),
+        _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+            "bp_method must be 'product_sum' or 'minimum_sum'; got {s:?}"
+        ))),
     }
 }
 
@@ -1205,12 +1206,37 @@ fn uf_method(s: &str) -> Result<RustUfMethod, String> {
     }
 }
 
+/// Preserve the offending Python value in boundary validation errors.
+pub(crate) fn non_negative_integer(value: &Bound<'_, PyAny>, parameter: &str) -> PyResult<usize> {
+    let invalid = || {
+        pyo3::exceptions::PyValueError::new_err(format!(
+            "{parameter} must be a non-negative integer; got {value}"
+        ))
+    };
+    let integer = value.extract::<i128>().map_err(|_| invalid())?;
+    optional_usize(Some(integer), parameter)?.ok_or_else(invalid)
+}
+
+fn non_negative_factor(value: &Bound<'_, PyAny>, parameter: &str) -> PyResult<f64> {
+    let invalid = || {
+        pyo3::exceptions::PyValueError::new_err(format!(
+            "{parameter} must be finite and non-negative; got {value}"
+        ))
+    };
+    let factor = value.extract::<f64>().map_err(|_| invalid())?;
+    if factor.is_finite() && factor >= 0.0 {
+        Ok(factor)
+    } else {
+        Err(invalid())
+    }
+}
+
 fn optional_usize(value: Option<i128>, parameter: &str) -> PyResult<Option<usize>> {
     value
         .map(|value| {
             usize::try_from(value).map_err(|_| {
                 PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                    "{parameter} must be a non-negative integer no greater than {}",
+                    "{parameter} must be a non-negative integer no greater than {}; got {value}",
                     usize::MAX
                 ))
             })
@@ -1329,17 +1355,21 @@ struct BpLsdDemConfig {
     bp_schedule: RustBpSchedule,
     ms_scaling_factor: f64,
     random_schedule_seed: Option<i32>,
+    lsd_order: usize,
+    bits_per_step: usize,
 }
 
 impl Default for BpLsdDemConfig {
     fn default() -> Self {
         Self {
             error_rate: None,
-            max_iter: DEFAULT_DEM_MAX_ITER,
-            bp_method: RustBpMethod::ProductSum,
-            bp_schedule: RustBpSchedule::Parallel,
-            ms_scaling_factor: 1.0,
+            max_iter: bp_lsd_defaults::MAX_ITER,
+            bp_method: bp_lsd_defaults::BP_METHOD,
+            bp_schedule: bp_lsd_defaults::BP_SCHEDULE,
+            ms_scaling_factor: bp_lsd_defaults::MS_SCALING_FACTOR,
             random_schedule_seed: None,
+            lsd_order: bp_lsd_defaults::LSD_ORDER,
+            bits_per_step: bp_lsd_defaults::BITS_PER_STEP,
         }
     }
 }
@@ -1367,6 +1397,25 @@ fn bp_lsd_config(
     }
     if let Some(random_schedule_seed) = random_schedule_seed {
         config.random_schedule_seed = Some(random_schedule_seed);
+    }
+    Ok(config)
+}
+
+/// Apply Python-only options after resolving the common DEM settings.
+fn bp_lsd_options(
+    mut config: BpLsdDemConfig,
+    bp_method: Option<&str>,
+    bits_per_step: Option<&Bound<'_, PyAny>>,
+    lsd_order: Option<&Bound<'_, PyAny>>,
+) -> PyResult<BpLsdDemConfig> {
+    if let Some(method) = bp_method {
+        config.bp_method = parse_bp_method(method)?;
+    }
+    if let Some(bits) = bits_per_step {
+        config.bits_per_step = non_negative_integer(bits, "bits_per_step")?;
+    }
+    if let Some(order) = lsd_order {
+        config.lsd_order = non_negative_integer(order, "lsd_order")?;
     }
     Ok(config)
 }
@@ -1689,8 +1738,9 @@ pub struct PyBpLsdBuilder {
     pcm: RustSparseMatrix,
     error_rate: PyErrorPrior,
     max_iter: usize,
-    bp_method: String,
-    schedule: String,
+    bp_method: RustBpMethod,
+    ms_scaling_factor: f64,
+    schedule: RustBpSchedule,
     lsd_order: usize,
     bits_per_step: usize,
 }
@@ -1708,61 +1758,72 @@ impl PyBpLsdBuilder {
         Self {
             pcm: pcm.inner.clone(),
             error_rate,
-            max_iter: 100,
-            bp_method: "product_sum".to_string(),
-            schedule: "parallel".to_string(),
-            lsd_order: 0,
-            bits_per_step: 0,
+            max_iter: bp_lsd_defaults::MAX_ITER,
+            bp_method: bp_lsd_defaults::BP_METHOD,
+            ms_scaling_factor: bp_lsd_defaults::MS_SCALING_FACTOR,
+            schedule: bp_lsd_defaults::BP_SCHEDULE,
+            lsd_order: bp_lsd_defaults::LSD_ORDER,
+            bits_per_step: bp_lsd_defaults::BITS_PER_STEP,
         }
     }
 
-    /// Set maximum BP iterations (default: 100).
+    /// Set maximum BP iterations (default: 30).
     fn max_iter(mut slf: PyRefMut<'_, Self>, val: usize) -> PyRefMut<'_, Self> {
         slf.max_iter = val;
         slf
     }
 
-    /// Set BP algorithm: "`product_sum`" or "`minimum_sum`" (default: "`product_sum`").
-    fn bp_method(mut slf: PyRefMut<'_, Self>, val: String) -> PyRefMut<'_, Self> {
-        slf.bp_method = val;
-        slf
+    /// Set BP algorithm: "`product_sum`" or "`minimum_sum`" (default: "`minimum_sum`").
+    fn bp_method<'py>(mut slf: PyRefMut<'py, Self>, val: &str) -> PyResult<PyRefMut<'py, Self>> {
+        slf.bp_method = parse_bp_method(val)?;
+        Ok(slf)
     }
 
     /// Set update schedule: "parallel" or "serial" (default: "parallel").
-    fn schedule(mut slf: PyRefMut<'_, Self>, val: String) -> PyRefMut<'_, Self> {
-        slf.schedule = val;
-        slf
+    fn schedule<'py>(mut slf: PyRefMut<'py, Self>, val: &str) -> PyResult<PyRefMut<'py, Self>> {
+        slf.schedule = parse_bp_schedule(val)?;
+        Ok(slf)
+    }
+
+    /// Set minimum-sum scaling (default: 0.625); ignored by product-sum.
+    fn ms_scaling_factor<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        val: &Bound<'py, PyAny>,
+    ) -> PyResult<PyRefMut<'py, Self>> {
+        slf.ms_scaling_factor = non_negative_factor(val, "ms_scaling_factor")?;
+        Ok(slf)
     }
 
     /// Set LSD order parameter (default: 0).
-    fn lsd_order(mut slf: PyRefMut<'_, Self>, val: usize) -> PyRefMut<'_, Self> {
-        slf.lsd_order = val;
-        slf
+    fn lsd_order<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        val: &Bound<'py, PyAny>,
+    ) -> PyResult<PyRefMut<'py, Self>> {
+        slf.lsd_order = non_negative_integer(val, "lsd_order")?;
+        Ok(slf)
     }
 
-    /// Set bits added per cluster-growth step (default: 0 = grow all candidate
-    /// bits each step, the crate convention; measured ~50x faster than 1 on
-    /// large circuit DEMs with comparable corrections).
-    fn bits_per_step(mut slf: PyRefMut<'_, Self>, val: usize) -> PyRefMut<'_, Self> {
-        slf.bits_per_step = val;
-        slf
+    /// Set bits added per cluster-growth step (default: 1; 0 grows all candidates).
+    fn bits_per_step<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        val: &Bound<'py, PyAny>,
+    ) -> PyResult<PyRefMut<'py, Self>> {
+        slf.bits_per_step = non_negative_integer(val, "bits_per_step")?;
+        Ok(slf)
     }
 
     /// Build the BP+LSD decoder.
     fn build(&self) -> PyResult<PyBpLsdDecoder> {
-        let bp = parse_bp_method(&self.bp_method)?;
-        let bp_schedule = parse_bp_schedule(&self.schedule)?;
-
         let (error_rate, error_channel) = self.error_rate.as_core_args();
         RustBpLsdDecoder::new(
             &self.pcm,
             error_rate,
             error_channel,
             self.max_iter,
-            bp,
-            bp_schedule,
-            1.0,
-            RustOsdMethod::Osd0,
+            self.bp_method,
+            self.schedule,
+            self.ms_scaling_factor,
+            bp_lsd_defaults::lsd_method_for_order(self.lsd_order),
             self.lsd_order,
             self.bits_per_step,
             RustInputVectorType::Syndrome,
@@ -1801,27 +1862,35 @@ impl PyBpLsdDecoder {
     ///   (default: each line's DEM probability, merged the same way).
     /// * `max_iter` - BP iteration cap; larger values can improve convergence but increase runtime
     /// * `bp_schedule` - Update ordering; serial may converge sooner while parallel favors throughput
-    /// * `ms_scaling_factor` - Select minimum-sum BP and set its correction factor;
-    ///   tuning can improve accuracy with negligible runtime cost
+    /// * `bp_method` - "minimum_sum" (default) or "product_sum"
+    /// * `ms_scaling_factor` - Minimum-sum factor (default: 0.625); ignored by product-sum
+    /// * `bits_per_step` - Bits grown per step (default: 1; 0 grows all candidates)
+    /// * `lsd_order` - Reprocessing order (default: 0, LSD-0)
     /// * `random_schedule_seed` - Reproducible randomized scheduling; changes exploration, not its runtime bound
     #[staticmethod]
-    #[pyo3(signature = (dem, error_rate=None, max_iter=None, bp_schedule=None, ms_scaling_factor=None, random_schedule_seed=None))]
+    #[pyo3(signature = (dem, error_rate=None, max_iter=None, bp_schedule=None, ms_scaling_factor=None, random_schedule_seed=None, *, bp_method=None, bits_per_step=None, lsd_order=None))]
     fn from_dem(
         dem: &str,
         error_rate: Option<f64>,
         max_iter: Option<i128>,
         bp_schedule: Option<&str>,
-        ms_scaling_factor: Option<f64>,
+        ms_scaling_factor: Option<&Bound<'_, PyAny>>,
         random_schedule_seed: Option<i64>,
+        bp_method: Option<&str>,
+        bits_per_step: Option<&Bound<'_, PyAny>>,
+        lsd_order: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<PyDemAwareDecoder> {
         let config = bp_lsd_config(
             error_rate,
             optional_usize(max_iter, "max_iter")?,
             bp_schedule,
-            ms_scaling_factor,
+            ms_scaling_factor
+                .map(|value| non_negative_factor(value, "ms_scaling_factor"))
+                .transpose()?,
             optional_i32(random_schedule_seed, "random_schedule_seed")?,
         )
         .map_err(PyErr::new::<pyo3::exceptions::PyValueError, _>)?;
+        let config = bp_lsd_options(config, bp_method, bits_per_step, lsd_order)?;
         PyDemAwareDecoder::from_dem_with_config(dem, DemDecoderConfig::BpLsd(config))
     }
 
@@ -3370,9 +3439,9 @@ impl PyDemAwareDecoder {
                     config.bp_method,
                     config.bp_schedule,
                     config.ms_scaling_factor,
-                    RustOsdMethod::Off,
-                    0,
-                    0,
+                    bp_lsd_defaults::lsd_method_for_order(config.lsd_order),
+                    config.lsd_order,
+                    config.bits_per_step,
                     RustInputVectorType::Syndrome,
                     None,
                     None,
@@ -3486,9 +3555,14 @@ impl PyDemAwareDecoder {
     ///   For `relay_bp`, `min_sum_bp`, `bp_osd` and `bp_lsd`, this is applied before
     ///   merging identical detector and observable sets; a group of k lines receives the
     ///   k-fold independent XOR of the rate.
-    /// * `max_iter` - None uses 100 for BP-OSD, BP-LSD and min-sum. Relay-BP and
+    /// * `max_iter` - None uses 30 for BP-LSD, 100 for BP-OSD and min-sum. Relay-BP and
     ///   union-find reject explicit values; use `pre_iter` / `set_max_iter` on
     ///   the Relay builder or spec factory to configure Relay iteration limits.
+    ///
+    /// * `bp_method` - BP+LSD only: "minimum_sum" (default) or "product_sum"
+    /// * `ms_scaling_factor` - BP+LSD only: default 0.625, ignored by product-sum
+    /// * `bits_per_step` - BP+LSD only: default 1; 0 grows all candidates
+    /// * `lsd_order` - BP+LSD only: default 0 (LSD-0, no reprocessing)
     ///
     /// # Example
     ///
@@ -3496,13 +3570,37 @@ impl PyDemAwareDecoder {
     /// decoder = DemAwareDecoder.from_dem(dem, decoder_type="bp_osd")
     /// ```
     #[staticmethod]
-    #[pyo3(signature = (dem, decoder_type="bp_osd", error_rate=None, max_iter=None))]
+    #[pyo3(signature = (dem, decoder_type="bp_osd", error_rate=None, max_iter=None, *, bp_method=None, ms_scaling_factor=None, bits_per_step=None, lsd_order=None))]
     fn from_dem(
         dem: &str,
         decoder_type: &str,
         error_rate: Option<f64>,
         max_iter: Option<usize>,
+        bp_method: Option<&str>,
+        ms_scaling_factor: Option<&Bound<'_, PyAny>>,
+        bits_per_step: Option<&Bound<'_, PyAny>>,
+        lsd_order: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
+        if decoder_type != "bp_lsd" {
+            for (name, value) in [
+                ("bp_method", bp_method.map(str::to_owned)),
+                (
+                    "ms_scaling_factor",
+                    ms_scaling_factor.map(ToString::to_string),
+                ),
+                ("bits_per_step", bits_per_step.map(ToString::to_string)),
+                ("lsd_order", lsd_order.map(ToString::to_string)),
+            ] {
+                if let Some(value) = value {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "{name}={value} is only supported for decoder_type='bp_lsd'"
+                    )));
+                }
+            }
+        }
+        let ms_scaling_factor = ms_scaling_factor
+            .map(|value| non_negative_factor(value, "ms_scaling_factor"))
+            .transpose()?;
         let dcm = Self::parse_dem(dem)?;
         let config = match decoder_type {
             "bp_osd" => DemDecoderConfig::BpOsd(
@@ -3516,16 +3614,13 @@ impl PyDemAwareDecoder {
                 )
                 .map_err(PyErr::new::<pyo3::exceptions::PyValueError, _>)?,
             ),
-            "bp_lsd" => DemDecoderConfig::BpLsd(
-                bp_lsd_config(
-                    error_rate,
-                    Some(max_iter.unwrap_or(DEFAULT_DEM_MAX_ITER)),
-                    None,
-                    None,
-                    None,
-                )
-                .map_err(PyErr::new::<pyo3::exceptions::PyValueError, _>)?,
-            ),
+            "bp_lsd" => DemDecoderConfig::BpLsd(bp_lsd_options(
+                bp_lsd_config(error_rate, max_iter, None, ms_scaling_factor, None)
+                    .map_err(PyErr::new::<pyo3::exceptions::PyValueError, _>)?,
+                bp_method,
+                bits_per_step,
+                lsd_order,
+            )?),
             "union_find" => {
                 if let Some(value) = max_iter {
                     return Err(pyo3::exceptions::PyValueError::new_err(format!(
@@ -3978,10 +4073,13 @@ mod dem_tuning_tests {
         let config = bp_lsd_config(None, None, None, None, None).unwrap();
 
         assert_eq!(config.error_rate, None);
-        assert_eq!(config.max_iter, 100);
-        assert_eq!(config.bp_method, RustBpMethod::ProductSum);
-        assert_eq!(config.bp_schedule, RustBpSchedule::Parallel);
-        assert_eq!(config.ms_scaling_factor.to_bits(), 1.0_f64.to_bits());
+        assert_eq!(config.max_iter, bp_lsd_defaults::MAX_ITER);
+        assert_eq!(config.bp_method, bp_lsd_defaults::BP_METHOD);
+        assert_eq!(config.bp_schedule, bp_lsd_defaults::BP_SCHEDULE);
+        assert_eq!(
+            config.ms_scaling_factor.to_bits(),
+            bp_lsd_defaults::MS_SCALING_FACTOR.to_bits()
+        );
         assert_eq!(config.random_schedule_seed, None);
     }
 
@@ -4122,16 +4220,73 @@ mod dem_tuning_tests {
     }
 
     #[test]
+    fn bp_lsd_python_growth_options_reach_inner_decoders() {
+        let dem = "error(0.1) D0\nerror(0.1) D1 L0\nerror(0.1) D0 D1";
+        Python::initialize();
+        Python::attach(|py| {
+            for (order, method) in [(0, RustOsdMethod::Osd0), (2, RustOsdMethod::OsdCs)] {
+                for bits in [0, 2] {
+                    for generic in [false, true] {
+                        let kwargs = pyo3::types::PyDict::new(py);
+                        kwargs.set_item("lsd_order", order).unwrap();
+                        kwargs.set_item("bits_per_step", bits).unwrap();
+                        let decoder_type = if generic {
+                            kwargs.set_item("decoder_type", "bp_lsd").unwrap();
+                            py.get_type::<PyDemAwareDecoder>()
+                        } else {
+                            py.get_type::<PyBpLsdDecoder>()
+                        };
+                        let built = decoder_type
+                            .call_method("from_dem", (dem,), Some(&kwargs))
+                            .unwrap();
+                        let built = built.extract::<PyRef<'_, PyDemAwareDecoder>>().unwrap();
+                        let InnerDecoder::BpLsd(inner) = &built.inner else {
+                            panic!("expected BP+LSD decoder");
+                        };
+                        assert_eq!(inner.lsd_order(), order);
+                        assert_eq!(inner.lsd_method(), method);
+                        let expected_bits = if bits == 0 { inner.bit_count() } else { bits };
+                        assert_eq!(inner.bits_per_step(), expected_bits);
+                    }
+
+                    let pcm = Py::new(py, PySparseMatrix::new(vec![vec![1, 1, 0], vec![0, 1, 1]]))
+                        .unwrap();
+                    let builder = py.get_type::<PyBpLsdBuilder>().call1((pcm, 0.1)).unwrap();
+                    builder.call_method1("lsd_order", (order,)).unwrap();
+                    builder.call_method1("bits_per_step", (bits,)).unwrap();
+                    let built = builder.call_method0("build").unwrap();
+                    let built = built.extract::<PyRef<'_, PyBpLsdDecoder>>().unwrap();
+                    assert_eq!(built.inner.lsd_order(), order);
+                    assert_eq!(built.inner.lsd_method(), method);
+                    let expected_bits = if bits == 0 {
+                        built.inner.bit_count()
+                    } else {
+                        bits
+                    };
+                    assert_eq!(built.inner.bits_per_step(), expected_bits);
+                }
+            }
+        });
+    }
+
+    #[test]
     fn bp_lsd_overrides_reach_inner_decoder() {
-        let decoder = PyBpLsdDecoder::from_dem(
-            DEM,
-            None,
-            Some(19),
-            Some("serial_relative"),
-            Some(0.625),
-            Some(24),
-        )
-        .unwrap();
+        pyo3::Python::initialize();
+        let decoder = Python::attach(|py| {
+            let factor = 0.625_f64.into_pyobject(py).unwrap().into_any();
+            PyBpLsdDecoder::from_dem(
+                DEM,
+                None,
+                Some(19),
+                Some("serial_relative"),
+                Some(&factor),
+                Some(24),
+                None,
+                None,
+                None,
+            )
+            .unwrap()
+        });
         let InnerDecoder::BpLsd(inner) = decoder.inner else {
             panic!("expected BP+LSD inner decoder");
         };
@@ -4266,9 +4421,19 @@ mod dem_tuning_tests {
                 .unwrap();
         assert!(preset_error.to_string().contains("preset"));
 
-        let schedule_error = PyBpLsdDecoder::from_dem(DEM, None, None, Some("random"), None, None)
-            .err()
-            .unwrap();
+        let schedule_error = PyBpLsdDecoder::from_dem(
+            DEM,
+            None,
+            None,
+            Some("random"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .err()
+        .unwrap();
         assert!(schedule_error.to_string().contains("bp_schedule"));
 
         let method_error = PyUnionFindDecoder::from_dem(DEM, Some("fast"))

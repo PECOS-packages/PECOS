@@ -764,3 +764,17 @@ are per-label best-route (Viterbi) masses, the gap is a route-mass margin, and
 - [Getting Started Guide](getting-started.md) - Main installation guide
 - [LLVM Setup Guide](llvm-setup.md) - For building with LLVM support
 - [Experimental Decoders](../experimental/decoders.md) - Frontier, BP-Trellis, complementary gap
+
+BP+LSD builders, specs and DEM constructors default to the paper settings:
+minimum-sum BP, scaling factor 0.625, at most 30 iterations, parallel schedule,
+one bit per cluster-growth step, and LSD-0 with no reprocessing (`lsd_order=0`).
+Cluster growth ranks the BP log-probability ratios in ascending order, choosing
+more likely errors first. `bits_per_step=0` grows all candidate bits each step.
+
+Python `BpLsdBuilder` exposes `.bp_method(...)`, `.ms_scaling_factor(...)`,
+`.bits_per_step(...)` and `.lsd_order(...)`. `BpLsdDecoder.from_dem` and
+`DemAwareDecoder.from_dem(..., decoder_type="bp_lsd")` accept those four settings
+as keywords. `bp_method="product_sum"` ignores `ms_scaling_factor`; no rejection
+is imposed, consistent with the BP-OSD path. Rust specs retain the convention
+that `ms_scaling_factor=None` selects product-sum; the Python `bp_lsd` spec factory
+also supports this convention, or an explicit `bp_method` keyword.

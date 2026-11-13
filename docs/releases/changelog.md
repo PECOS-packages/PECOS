@@ -55,6 +55,14 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 - Added Python Relay-BP explicit gamma rows and sampling interval setters, plus
   GIL-releasing flat-byte batch decoding for native Relay-BP and min-sum BP.
 
+- **Breaking:** BP+LSD now grows clusters from the most likely bits. The previous
+  order was inverted, which mattered when `bits_per_step` was small. All BP+LSD
+  construction paths now default to the BP+LSD paper settings: minimum-sum BP,
+  scaling factor 0.625, at most 30 iterations, parallel scheduling, one bit per
+  growth step, and LSD-0 with order 0 (no reprocessing). Results change.
+  `bits_per_step`, `lsd_order`, and `bp_method` are now settable on the Python DEM
+  paths; `bits_per_step=0` still grows all candidates each step. Product-sum
+  remains selectable and ignores the scaling factor.
 - **Breaking:** Named-result measurement identity now comes from a compile-time
   shadow pass instead of read adjacency, so reordered reads and copied arrays
   retain exact measurement IDs. `NamedResultTrace` gains `provenance` and

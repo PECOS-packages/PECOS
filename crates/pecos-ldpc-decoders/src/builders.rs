@@ -235,13 +235,13 @@ impl<'a> BpLsdBuilder<'a> {
             pcm,
             error_rate: None,
             error_channel: None,
-            max_iter: 0,
-            bp_method: BpMethod::ProductSum,
-            bp_schedule: BpSchedule::Parallel,
-            ms_scaling_factor: 1.0,
-            lsd_method: OsdMethod::Off,
-            lsd_order: 0,
-            bits_per_step: 0,
+            max_iter: crate::bp_lsd_defaults::MAX_ITER,
+            bp_method: crate::bp_lsd_defaults::BP_METHOD,
+            bp_schedule: crate::bp_lsd_defaults::BP_SCHEDULE,
+            ms_scaling_factor: crate::bp_lsd_defaults::MS_SCALING_FACTOR,
+            lsd_method: crate::bp_lsd_defaults::LSD_METHOD,
+            lsd_order: crate::bp_lsd_defaults::LSD_ORDER,
+            bits_per_step: crate::bp_lsd_defaults::BITS_PER_STEP,
             input_vector_type: InputVectorType::Syndrome,
             omp_thread_count: None,
             serial_schedule_order: None,
@@ -299,7 +299,7 @@ impl<'a> BpLsdBuilder<'a> {
         self
     }
 
-    /// Set bits per step for LSD
+    /// Set bits per step for LSD (0 grows all candidate bits each step)
     pub fn bits_per_step(mut self, bits: usize) -> Self {
         self.bits_per_step = bits;
         self

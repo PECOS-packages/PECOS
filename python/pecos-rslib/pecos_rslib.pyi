@@ -3603,13 +3603,21 @@ class decoders:
     def bp_lsd(
         *,
         error_rate: float | None = ...,
-        max_iter: int = ...,
-        bp_schedule: str = ...,
+        max_iter: int | None = ...,
+        bp_schedule: str | None = ...,
         ms_scaling_factor: float | None = ...,
-        lsd_order: int = ...,
-        bits_per_step: int = ...,
+        lsd_order: int | None = ...,
+        bits_per_step: int | None = ...,
         random_schedule_seed: int | None = ...,
-    ) -> decoders.DecoderSpec: ...
+        bp_method: str | None = ...,
+    ) -> decoders.DecoderSpec:
+        """Paper defaults; ms_scaling_factor=None selects product-sum.
+
+        Explicit bp_method overrides that selection; product-sum ignores scaling.
+        bits_per_step=0 grows all candidates.
+        """
+        ...
+
     @staticmethod
     def fusion_blossom(
         *, correlated: bool = ..., solver: str = ..., irreducible: Literal["refuse", "drop"] = "refuse"
@@ -3941,11 +3949,15 @@ class decoders:
             error_rate: float | Sequence[float],
         ) -> None: ...
         def max_iter(self, val: int) -> decoders.BpLsdBuilder:
-            """Set maximum BP iterations (default: 100)."""
+            """Set maximum BP iterations (default: 30)."""
             ...
 
         def bp_method(self, val: str) -> decoders.BpLsdBuilder:
-            """Set BP algorithm: "product_sum" or "minimum_sum" (default: "product_sum")."""
+            """Set BP algorithm: "product_sum" or "minimum_sum" (default: "minimum_sum")."""
+            ...
+
+        def ms_scaling_factor(self, val: float) -> decoders.BpLsdBuilder:
+            """Set min-sum scaling (default: 0.625); ignored by product-sum."""
             ...
 
         def schedule(self, val: str) -> decoders.BpLsdBuilder:
@@ -3957,8 +3969,7 @@ class decoders:
             ...
 
         def bits_per_step(self, val: int) -> decoders.BpLsdBuilder:
-            """Set bits added per cluster-growth step (default: 0 = grow all
-            candidate bits each step)."""
+            """Bits grown per step (default: 1); 0 grows all candidates."""
             ...
 
         def build(self) -> decoders.BpLsdDecoder:
@@ -3981,6 +3992,10 @@ class decoders:
             bp_schedule: str | None = ...,
             ms_scaling_factor: float | None = ...,
             random_schedule_seed: int | None = ...,
+            *,
+            bp_method: str | None = ...,
+            bits_per_step: int | None = ...,
+            lsd_order: int | None = ...,
         ) -> decoders.DemAwareDecoder:
             """Build BP+LSD from a detector error model.
 
@@ -3992,8 +4007,10 @@ class decoders:
                     None keeps each line's DEM probability, merged the same way.
                 max_iter: BP iteration cap; larger values may improve convergence but increase runtime.
                 bp_schedule: Update order; serial may converge sooner while parallel favors throughput.
-                ms_scaling_factor: Selects minimum-sum BP and sets its correction factor; tuning can improve
-                    accuracy at negligible runtime cost. ``None`` preserves product-sum BP.
+                bp_method: "minimum_sum" (default) or "product_sum".
+                ms_scaling_factor: Min-sum scaling (default: 0.625); ignored by product-sum.
+                bits_per_step: Bits grown per step (default: 1); 0 grows all candidates.
+                lsd_order: Reprocessing order (default: 0, LSD-0).
                 random_schedule_seed: Makes randomized scheduling reproducible without changing its runtime bound.
             """
             ...
@@ -4184,8 +4201,17 @@ class decoders:
             decoder_type: str = ...,
             error_rate: float | None = ...,
             max_iter: int | None = ...,
+            *,
+            bp_method: str | None = ...,
+            ms_scaling_factor: float | None = ...,
+            bits_per_step: int | None = ...,
+            lsd_order: int | None = ...,
         ) -> decoders.DemAwareDecoder:
-            """Build a DEM decoder. None uses 100 iterations for iterative families.
+            """Build a DEM decoder. None uses 30 iterations for BP+LSD, 100 for BP-OSD/min-sum.
+
+            BP+LSD options: bp_method="minimum_sum", ms_scaling_factor=0.625,
+            bits_per_step=1 (0 grows all candidates), lsd_order=0 (LSD-0).
+            Product-sum ignores scaling. These keywords require decoder_type="bp_lsd".
 
             Relay-BP and union_find reject explicit max_iter. For Relay-BP,
             use pre_iter / set_max_iter through its builder or spec factory.

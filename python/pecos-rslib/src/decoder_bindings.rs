@@ -49,6 +49,9 @@ fn decoder_runtime_error_to_py(error: impl std::error::Error + 'static) -> PyErr
             current.downcast_ref::<pecos_decoder_core::DecoderError>(),
             Some(pecos_decoder_core::DecoderError::InvalidDemSyntax(_))
         ) || matches!(
+            current.downcast_ref::<pecos_decoders::LdpcError>(),
+            Some(pecos_decoders::LdpcError::InvalidInput(_))
+        ) || matches!(
             current.downcast_ref::<pecos_decoders::TesseractError>(),
             Some(
                 pecos_decoders::TesseractError::InvalidConfig(_)
@@ -3375,9 +3378,8 @@ impl PyDemAwareDecoder {
                 InnerDecoder::BpLsd(decoder)
             }
             DemDecoderConfig::UnionFind(config) => {
-                let decoder = RustUnionFindDecoder::new(&sparse_h, config.method).map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-                })?;
+                let decoder = RustUnionFindDecoder::new(&sparse_h, config.method)
+                    .map_err(decoder_runtime_error_to_py)?;
                 InnerDecoder::UnionFind(decoder)
             }
             DemDecoderConfig::RelayBp(config) => {
@@ -3563,21 +3565,17 @@ impl PyDemAwareDecoder {
         let arr = Array1::from_vec(syndrome);
         let (decoding, converged, iterations) = match &mut self.inner {
             InnerDecoder::BpOsd(d) => {
-                let r = d.decode(&arr.view()).map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-                })?;
+                let r = d.decode(&arr.view()).map_err(decoder_runtime_error_to_py)?;
                 (r.decoding.to_vec(), r.converged, r.iterations)
             }
             InnerDecoder::BpLsd(d) => {
-                let r = d.decode(&arr.view()).map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-                })?;
+                let r = d.decode(&arr.view()).map_err(decoder_runtime_error_to_py)?;
                 (r.decoding.to_vec(), r.converged, r.iterations)
             }
             InnerDecoder::UnionFind(d) => {
-                let r = d.decode(&arr.view(), &[], 0).map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-                })?;
+                let r = d
+                    .decode(&arr.view(), &[], 0)
+                    .map_err(decoder_runtime_error_to_py)?;
                 (r.decoding.to_vec(), r.converged, r.iterations)
             }
             InnerDecoder::RelayBp(d) => {

@@ -28,8 +28,13 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   non-finite or negative XYZ bias): Python DEM constructors raise `ValueError`
   naming `error_rate`, Rust `DecoderSpec` builds return `DecoderError::MatrixError`,
   and the raw LDPC constructors return `LdpcError::InvalidInput` naming `error_rate`,
-  the `error_channel` entry or the `xyz_bias` entry (`RuntimeError` from the Python `BpOsdBuilder` /
+  the `error_channel` entry or the `xyz_bias` entry (`ValueError` from the Python `BpOsdBuilder` /
   `BpLsdBuilder`). They previously decoded with meaningless priors.
+- **Breaking:** The Python LDPC decoder bindings raise `ValueError` instead of
+  `RuntimeError` for input errors that the Rust layer detects
+  (`LdpcError::InvalidInput`), such as an invalid prior or a channel of the wrong
+  length. Errors raised by the C++ core, such as a syndrome of the wrong length,
+  remain `RuntimeError`.
 - **Breaking:** Relay-BP and min-sum decoders now use PECOS's native kernel;
   results change. Relay-BP is deterministic per `(seed, syndrome)`, independent
   of decode order, batch splitting and worker count, enabling parallel batches.

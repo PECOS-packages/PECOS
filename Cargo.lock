@@ -4266,6 +4266,7 @@ dependencies = [
 name = "pecos-frontier"
 version = "0.2.0-dev.0"
 dependencies = [
+ "libm",
  "pecos-decoder-core",
  "pecos-trellis",
  "rand 0.10.2",

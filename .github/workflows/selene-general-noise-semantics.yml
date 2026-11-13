@@ -25,7 +25,7 @@ env:
 jobs:
   extended-semantics:
     name: Extended device-neutral semantics
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 45
 
     steps:
@@ -68,11 +68,18 @@ jobs:
           tool: just@1.59.0
           fallback: none
 
+      - name: Identify the runner image for the LLVM cache key
+        # The managed LLVM is built for one OS release; ImageOS (for example ubuntu24
+        # or ubuntu26) keeps a copy from one image from being restored onto another.
+        id: runner-image
+        shell: bash
+        run: echo "id=${ImageOS:?ImageOS is not set on this runner}" >> "$GITHUB_OUTPUT"
+
       - name: Cache LLVM ${{ env.LLVM_VERSION }}
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: ~/.pecos/deps/llvm-21.1
-          key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
+          key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ steps.runner-image.outputs.id }}-${{ runner.arch }}-v3
 
       - name: Ensure LLVM ${{ env.LLVM_VERSION }}
         run: just ci-env

@@ -30,7 +30,7 @@ on:
 jobs:
   julia-changes:
     if: (github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'ci:julia'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     outputs:
       run: ${{ steps.detect.outputs.run }}
     steps:
@@ -65,7 +65,7 @@ jobs:
   check-julia-versions:
     needs: julia-changes
     if: needs.julia-changes.outputs.run == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     steps:
     - name: Harden the runner (egress audit)
       uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4

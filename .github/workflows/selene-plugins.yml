@@ -43,7 +43,7 @@ defaults:
 jobs:
   selene-changes:
     if: (github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'ci:selene-plugins'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     outputs:
       run: ${{ steps.detect.outputs.run }}
     steps:
@@ -93,11 +93,11 @@ jobs:
     # Linux also builds the PECOS packages for the cross-runtime parity tests
     # (about 14 min cold), and non-PR Linux runs add the extended semantic suite
     # (about 6 min); a cold non-PR run measured about 24 min.
-    timeout-minutes: ${{ matrix.os != 'ubuntu-24.04' && 30 || github.event_name != 'pull_request' && 75 || 60 }}
+    timeout-minutes: ${{ matrix.os != 'ubuntu-latest' && 30 || github.event_name != 'pull_request' && 75 || 60 }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-latest, macos-15-intel, windows-2022]
+        os: [ubuntu-latest, macos-latest, macos-15-intel, windows-2022]
 
     steps:
       # No harden-runner here: its audit agent grows to about 13.5 GB during the
@@ -200,12 +200,19 @@ jobs:
           tool: just@1.59.0
           fallback: none
 
+      - name: Identify the runner image for the LLVM cache key
+        # The managed LLVM is built for one OS release; ImageOS (for example ubuntu24
+        # or ubuntu26) keeps a copy from one image from being restored onto another.
+        id: runner-image
+        shell: bash
+        run: echo "id=${ImageOS:?ImageOS is not set on this runner}" >> "$GITHUB_OUTPUT"
+
       - name: Cache LLVM ${{ env.LLVM_VERSION }}
         if: runner.os == 'Linux'
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: ~/.pecos/deps/llvm-21.1
-          key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
+          key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ steps.runner-image.outputs.id }}-${{ runner.arch }}-v3
 
       - name: Ensure LLVM ${{ env.LLVM_VERSION }}
         if: runner.os == 'Linux'
@@ -256,7 +263,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-latest, macos-15-intel, windows-2022]
+        os: [ubuntu-latest, macos-latest, macos-15-intel, windows-2022]
 
     steps:
       - name: Harden the runner (egress audit)
@@ -360,7 +367,7 @@ jobs:
   # Collect all wheels into a single artifact
   collect-wheels:
     needs: build-wheels
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     steps:
       - name: Harden the runner (egress audit)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4

@@ -73,7 +73,7 @@ defaults:
 
 jobs:
   python-lint:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
     - name: Harden the runner (egress audit)
@@ -121,12 +121,19 @@ jobs:
         # and share the python-core key: same crates, same profile, same env.
         shared-key: python-core
 
+    - name: Identify the runner image for the LLVM cache key
+      # The managed LLVM is built for one OS release; ImageOS (for example ubuntu24
+      # or ubuntu26) keeps a copy from one image from being restored onto another.
+      id: runner-image
+      shell: bash
+      run: echo "id=${ImageOS:?ImageOS is not set on this runner}" >> "$GITHUB_OUTPUT"
+
     - name: Cache LLVM ${{ env.LLVM_VERSION }}
       id: cache-llvm
       uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
         path: ~/.pecos/deps/llvm-21.1
-        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
+        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ steps.runner-image.outputs.id }}-${{ runner.arch }}-v3
 
     - name: Ensure LLVM ${{ env.LLVM_VERSION }}
       run: just ci-env
@@ -151,7 +158,7 @@ jobs:
     # Post-merge only. Pull requests get this suite from the required PR core gate
     # and the lockfile checks from python-lint.
     if: github.event_name != 'pull_request'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     # Use the same complete partition as the PR gate: the unsharded suite
     # exceeds 75 minutes on trunk. Keep every shard running after a failure.
     strategy:
@@ -209,12 +216,19 @@ jobs:
         # into the top-level target/.
         shared-key: python-core
 
+    - name: Identify the runner image for the LLVM cache key
+      # The managed LLVM is built for one OS release; ImageOS (for example ubuntu24
+      # or ubuntu26) keeps a copy from one image from being restored onto another.
+      id: runner-image
+      shell: bash
+      run: echo "id=${ImageOS:?ImageOS is not set on this runner}" >> "$GITHUB_OUTPUT"
+
     - name: Cache LLVM ${{ env.LLVM_VERSION }}
       id: cache-llvm
       uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
         path: ~/.pecos/deps/llvm-21.1
-        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
+        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ steps.runner-image.outputs.id }}-${{ runner.arch }}-v3
 
     - name: Ensure LLVM ${{ env.LLVM_VERSION }}
       run: just ci-env
@@ -241,7 +255,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-24.04
+          - os: ubuntu-latest
             python-version: "3.12"
             artifact-name: python-compat-smoke-ubuntu
             build-llvm: true
@@ -334,12 +348,19 @@ jobs:
         # and share the python-core key: same crates, same profile, same env.
         shared-key: python-core
 
+    - name: Identify the runner image for the LLVM cache key
+      # The managed LLVM is built for one OS release; ImageOS (for example ubuntu24
+      # or ubuntu26) keeps a copy from one image from being restored onto another.
+      id: runner-image
+      shell: bash
+      run: echo "id=${ImageOS:?ImageOS is not set on this runner}" >> "$GITHUB_OUTPUT"
+
     - name: Cache LLVM ${{ env.LLVM_VERSION }}
       id: cache-llvm
       uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
         path: ~/.pecos/deps/llvm-21.1
-        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
+        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ steps.runner-image.outputs.id }}-${{ runner.arch }}-v3
 
     - name: Ensure LLVM ${{ env.LLVM_VERSION }}
       run: just ci-env
@@ -433,12 +454,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-24.04
+          - os: ubuntu-latest
             artifact-name: python-compat-smoke-ubuntu
             python-version: "3.12"
             include-llvm: true
             include-pecos: true
-          - os: ubuntu-24.04
+          - os: ubuntu-latest
             artifact-name: python-compat-smoke-ubuntu
             python-version: "3.14"
             include-llvm: true
@@ -512,13 +533,20 @@ jobs:
         tool: just@1.59.0
         fallback: none
 
+    - name: Identify the runner image for the LLVM cache key
+      # The managed LLVM is built for one OS release; ImageOS (for example ubuntu24
+      # or ubuntu26) keeps a copy from one image from being restored onto another.
+      id: runner-image
+      shell: bash
+      run: echo "id=${ImageOS:?ImageOS is not set on this runner}" >> "$GITHUB_OUTPUT"
+
     - name: Cache LLVM ${{ env.LLVM_VERSION }}
       id: cache-llvm
       if: matrix.include-llvm
       uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
         path: ~/.pecos/deps/llvm-21.1
-        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
+        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ steps.runner-image.outputs.id }}-${{ runner.arch }}-v3
 
     - name: Ensure LLVM ${{ env.LLVM_VERSION }}
       if: matrix.include-llvm
@@ -604,7 +632,7 @@ jobs:
     # All admitted non-PR events validate the slow suite. Dispatch also lets a
     # branch get a signal before landing; PRs keep their fast checks.
     if: github.event_name != 'pull_request'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
       PECOS_BUILD_MWPF: "1"
@@ -657,12 +685,19 @@ jobs:
         # and share the python-core key: same crates, same profile, same env.
         shared-key: python-core
 
+    - name: Identify the runner image for the LLVM cache key
+      # The managed LLVM is built for one OS release; ImageOS (for example ubuntu24
+      # or ubuntu26) keeps a copy from one image from being restored onto another.
+      id: runner-image
+      shell: bash
+      run: echo "id=${ImageOS:?ImageOS is not set on this runner}" >> "$GITHUB_OUTPUT"
+
     - name: Cache LLVM ${{ env.LLVM_VERSION }}
       id: cache-llvm
       uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
         path: ~/.pecos/deps/llvm-21.1
-        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
+        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ steps.runner-image.outputs.id }}-${{ runner.arch }}-v3
 
     - name: Ensure LLVM ${{ env.LLVM_VERSION }}
       run: just ci-env
@@ -686,7 +721,7 @@ jobs:
 
   zluppy-postmerge:
     if: github.event_name != 'pull_request'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
       PECOS_BUILD_MWPF: "1"
@@ -738,12 +773,19 @@ jobs:
         # a root-workspace member and builds into the top-level target/, so the
         # default (root) workspace is the right one.
 
+    - name: Identify the runner image for the LLVM cache key
+      # The managed LLVM is built for one OS release; ImageOS (for example ubuntu24
+      # or ubuntu26) keeps a copy from one image from being restored onto another.
+      id: runner-image
+      shell: bash
+      run: echo "id=${ImageOS:?ImageOS is not set on this runner}" >> "$GITHUB_OUTPUT"
+
     - name: Cache LLVM ${{ env.LLVM_VERSION }}
       id: cache-llvm-zluppy
       uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
         path: ~/.pecos/deps/llvm-21.1
-        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
+        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ steps.runner-image.outputs.id }}-${{ runner.arch }}-v3
 
     - name: Ensure LLVM ${{ env.LLVM_VERSION }}
       run: just ci-env

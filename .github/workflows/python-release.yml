@@ -57,7 +57,7 @@ defaults:
 
 jobs:
   resolve_release_mode:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     # The push trigger limits refs; every admitted event builds and tests all artifacts.
     if: github.event_name != 'pull_request'
     outputs:
@@ -90,7 +90,7 @@ jobs:
         include:
           # Linux x86_64 with CUDA support. Build in manylinux 2.28 and use the
           # GCC 13 toolset that previously produced policy-compatible wheels.
-          - os: ubuntu-24.04
+          - os: ubuntu-latest
             architecture: x86_64
             cibw_archs: x86_64
             install_cuda: true
@@ -506,8 +506,8 @@ jobs:
       fail-fast: false
       matrix:
         platform:
-          - runner: ubuntu-24.04
-            os: ubuntu-24.04
+          - runner: ubuntu-latest
+            os: ubuntu-latest
             architecture: x86_64
           - runner: windows-2022
             os: windows-2022
@@ -631,7 +631,7 @@ jobs:
     if: |
       always() &&
       needs.build_wheelspecos_rslib.result == 'success'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     container: quay.io/pypa/manylinux_2_28_x86_64:2026.01.04-1@sha256:4d62ce9d1ca259171e7cde403686e538e6f8fdc517660a557a66e102577d67d3
     steps:
       - name: Harden the runner (egress audit)
@@ -642,13 +642,13 @@ jobs:
       - name: Download pecos-rslib wheel
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
-          name: wheel-pecos-rslib-ubuntu-24.04-x86_64
+          name: wheel-pecos-rslib-ubuntu-latest-x86_64
           path: ./pecos-rslib-wheel
 
       - name: Download pecos-rslib-llvm wheel
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
-          name: wheel-pecos-rslib-llvm-ubuntu-24.04-x86_64
+          name: wheel-pecos-rslib-llvm-ubuntu-latest-x86_64
           path: ./pecos-rslib-llvm-wheel
 
       - name: Install and import wheels on glibc 2.28
@@ -665,7 +665,7 @@ jobs:
     if: |
       always() &&
       needs.build_wheelspecos_rslib.result == 'success'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     steps:
       - name: Harden the runner (egress audit)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -685,13 +685,13 @@ jobs:
       - name: Download pecos-rslib wheel
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
-          name: wheel-pecos-rslib-ubuntu-24.04-x86_64
+          name: wheel-pecos-rslib-ubuntu-latest-x86_64
           path: ./pecos-rslib-wheel
 
       - name: Download pecos-rslib-llvm wheel
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
-          name: wheel-pecos-rslib-llvm-ubuntu-24.04-x86_64
+          name: wheel-pecos-rslib-llvm-ubuntu-latest-x86_64
           path: ./pecos-rslib-llvm-wheel
 
       - name: Install pecos-rslib and pecos-rslib-llvm
@@ -724,7 +724,7 @@ jobs:
     if: |
       always() &&
       needs.build_wheelspecos_rslib.result == 'success'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
 
     steps:
       - name: Harden the runner (egress audit)
@@ -745,13 +745,13 @@ jobs:
       - name: Download pecos-rslib wheel
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
-          name: wheel-pecos-rslib-ubuntu-24.04-x86_64
+          name: wheel-pecos-rslib-ubuntu-latest-x86_64
           path: ./pecos-rslib-wheel
 
       - name: Download pecos-rslib-llvm wheel
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
-          name: wheel-pecos-rslib-llvm-ubuntu-24.04-x86_64
+          name: wheel-pecos-rslib-llvm-ubuntu-latest-x86_64
           path: ./pecos-rslib-llvm-wheel
 
       - name: Install pecos-rslib and pecos-rslib-llvm
@@ -792,7 +792,7 @@ jobs:
       needs.build_wheels_quantum_pecos.result == 'success' &&
       needs.test_abi3_wheels.result == 'success' &&
       needs.test_manylinux_2_28_wheels.result == 'success'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     steps:
       - name: Harden the runner (egress audit)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4

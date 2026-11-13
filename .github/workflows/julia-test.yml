@@ -52,7 +52,7 @@ defaults:
 jobs:
   julia-changes:
     if: (github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'ci:julia'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     outputs:
       run: ${{ steps.detect.outputs.run }}
     steps:
@@ -91,7 +91,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, windows-2022, macOS-latest]
+        os: [ubuntu-latest, windows-2022, macOS-latest]
         julia-version: ["1"]  # Latest stable (experimental bindings)
 
     steps:

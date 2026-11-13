@@ -73,7 +73,7 @@ defaults:
 
 jobs:
   python-lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
     - name: Harden the runner (egress audit)
@@ -151,7 +151,7 @@ jobs:
     # Post-merge only. Pull requests get this suite from the required PR core gate
     # and the lockfile checks from python-lint.
     if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Use the same complete partition as the PR gate: the unsharded suite
     # exceeds 75 minutes on trunk. Keep every shard running after a failure.
     strategy:
@@ -241,7 +241,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             python-version: "3.12"
             artifact-name: python-compat-smoke-ubuntu
             build-llvm: true
@@ -430,12 +430,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             artifact-name: python-compat-smoke-ubuntu
             python-version: "3.12"
             include-llvm: true
             include-pecos: true
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             artifact-name: python-compat-smoke-ubuntu
             python-version: "3.14"
             include-llvm: true
@@ -601,7 +601,7 @@ jobs:
     # All admitted non-PR events validate the slow suite. Dispatch also lets a
     # branch get a signal before landing; PRs keep their fast checks.
     if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
       PECOS_BUILD_MWPF: "1"
@@ -683,7 +683,7 @@ jobs:
 
   zluppy-postmerge:
     if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
       PECOS_BUILD_MWPF: "1"

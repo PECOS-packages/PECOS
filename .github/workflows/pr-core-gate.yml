@@ -50,7 +50,7 @@ defaults:
 jobs:
   pr-core-python:
     name: pr-core-python (${{ matrix.shard }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -157,7 +157,7 @@ jobs:
         run: echo "No core-relevant paths changed; core Python suite skipped."
 
   pr-core-rust:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # 60 min: 31 observed on a cold cache.
     timeout-minutes: 60
     steps:

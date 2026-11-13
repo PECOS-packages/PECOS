@@ -71,7 +71,7 @@ concurrency:
 jobs:
   rust-lint:
     if: (github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'ci:full-rust'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Harden the runner (egress audit)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -151,7 +151,7 @@ jobs:
 
   rust-lint-no-llvm:
     if: (github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'ci:full-rust'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Harden the runner (egress audit)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -200,7 +200,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-2022]
+        os: [ubuntu-24.04, macos-latest, windows-2022]
 
     steps:
       - name: Harden the runner (egress audit)
@@ -214,7 +214,7 @@ jobs:
           persist-credentials: false
 
       - name: Harden apt against mirror flakiness
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-24.04'
         run: ./scripts/ci/harden-apt.sh
 
       - name: Set up Rust (Windows)
@@ -277,7 +277,7 @@ jobs:
           key: ${{ steps.cache-llvm.outputs.cache-primary-key }}
 
       - name: Install CUDA Toolkit (Linux)
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-24.04'
         uses: Jimver/cuda-toolkit@3d45d157f327c09c04b50ee6ccdea2d9d017ec76 # v0.2.35
         id: cuda-toolkit-test
         # This step downloads from an external host and normally finishes in a couple of
@@ -295,7 +295,7 @@ jobs:
         run: cargo build --locked -p pecos-cli --release
 
       - name: Compile tests (Linux)
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-24.04'
         run: |
           # Use `pecos rust test` for runtime hardware detection (cuQuantum, GPU)
           # Dry-run: just compile, the run step below does the actual test
@@ -354,7 +354,7 @@ jobs:
           ./target/release/pecos rust test
 
       - name: Run tests (Linux)
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-24.04'
         run: |
           ./target/release/pecos rust test
 

@@ -22,7 +22,7 @@ def wheel_set(tmp_path: Path, linux_tag: str = "manylinux_2_28_x86_64") -> dict[
     plugins = sorted(path.name for path in (ROOT / "python/selene-plugins").glob("pecos-selene-*/") if path.is_dir())
     assert plugins, "No Selene plugins discovered"
     platforms = {
-        "ubuntu-latest": linux_tag,
+        "ubuntu-24.04": linux_tag,
         "macos-latest": "macosx_14_0_arm64",
         "macos-15-intel": "macosx_15_0_x86_64",
         "windows-2022": "win_amd64",

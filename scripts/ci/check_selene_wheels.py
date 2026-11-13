@@ -26,7 +26,7 @@ def main() -> None:
     # These are the four build-wheels runners. Platform tags distinguish both
     # macOS architectures even when their deployment target versions change.
     platforms = {
-        "ubuntu-latest": ("manylinux*_x86_64", "linux_x86_64"),
+        "ubuntu-24.04": ("manylinux*_x86_64", "linux_x86_64"),
         "macos-latest": ("macosx_*_arm64",),
         "macos-15-intel": ("macosx_*_x86_64",),
         "windows-2022": ("win_amd64",),

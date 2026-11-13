@@ -37,7 +37,7 @@ concurrency:
 
 jobs:
   rust-release:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     env:
       # The release profile's fat LTO and single codegen unit suit shipped
@@ -92,7 +92,7 @@ jobs:
         run: just rstest release
 
   python-performance:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
       - name: Harden the runner (egress audit)

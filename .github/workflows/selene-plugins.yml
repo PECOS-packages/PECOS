@@ -43,7 +43,7 @@ defaults:
 jobs:
   selene-changes:
     if: (github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'ci:selene-plugins'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       run: ${{ steps.detect.outputs.run }}
     steps:
@@ -93,11 +93,11 @@ jobs:
     # Linux also builds the PECOS packages for the cross-runtime parity tests
     # (about 14 min cold), and non-PR Linux runs add the extended semantic suite
     # (about 6 min); a cold non-PR run measured about 24 min.
-    timeout-minutes: ${{ matrix.os != 'ubuntu-latest' && 30 || github.event_name != 'pull_request' && 75 || 60 }}
+    timeout-minutes: ${{ matrix.os != 'ubuntu-24.04' && 30 || github.event_name != 'pull_request' && 75 || 60 }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, macos-15-intel, windows-2022]
+        os: [ubuntu-24.04, macos-latest, macos-15-intel, windows-2022]
 
     steps:
       # No harden-runner here: its audit agent grows to about 13.5 GB during the
@@ -256,7 +256,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, macos-15-intel, windows-2022]
+        os: [ubuntu-24.04, macos-latest, macos-15-intel, windows-2022]
 
     steps:
       - name: Harden the runner (egress audit)
@@ -360,7 +360,7 @@ jobs:
   # Collect all wheels into a single artifact
   collect-wheels:
     needs: build-wheels
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Harden the runner (egress audit)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4

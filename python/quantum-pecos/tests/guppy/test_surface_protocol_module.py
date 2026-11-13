@@ -193,8 +193,8 @@ def test_measurement_partition(module, patch, recipe):
         {"a": "D"} if recipe == "h" else {"ctrl": "D", "tgt": "A"} if recipe == "cx" else {"data": "D", "anc": "A"}
     )
     builder = _builder(patch, recipe)
-    expected = measurement_partition_from_builder(builder)
-    actual = measurement_partition_from_trace(module[name](*args), n, tag_patches)
+    expected = measurement_partition_from_builder(builder, by_index=True)
+    actual = measurement_partition_from_trace(module[name](*args), n, tag_patches, by_index=True)
     assert_same_measurement_partition(actual, expected)
     assert (
         sum(map(len, actual.values()))
@@ -652,7 +652,7 @@ def test_shared_module_directory(module):
 @pytest.mark.parametrize("dagger", [False, True])
 @pytest.mark.parametrize(("before", "after"), [(0, 2), (1, 1), (2, 0), (0, 0)])
 def test_logical_sz_factory(patch, module, before, after, dagger):
-    """Compile either phase and certify scoped measurement ordinals against the builder."""
+    """Compile either phase and compare scoped measurement identities with the builder."""
     program = module["make_logical_sz_experiment"](before, after, dagger=dagger)
     assert program.compile() is not None
     builder = LogicalCircuitBuilder()
@@ -661,8 +661,8 @@ def test_logical_sz_factory(patch, module, before, after, dagger):
     builder.add_logical_sz("D", dagger=dagger)
     builder.add_memory("D", after, "Z")
     assert_same_measurement_partition(
-        measurement_partition_from_trace(program, patch.geometry.num_qubits, {"a": "D"}),
-        measurement_partition_from_builder(builder),
+        measurement_partition_from_trace(program, patch.geometry.num_qubits, {"a": "D"}, by_index=True),
+        measurement_partition_from_builder(builder, by_index=True),
     )
     results = _results(program, patch.geometry.num_qubits)
     _assert_parity(results["final_a"], patch.geometry.logical_z.data_qubits, 0)
@@ -701,8 +701,8 @@ def test_logical_y_readout_factory(patch, module, rounds):
     builder.add_logical_sz("D")
     builder.add_memory("D", rounds, "Y")
     assert_same_measurement_partition(
-        measurement_partition_from_trace(program, patch.geometry.num_qubits, {"a": "D"}),
-        measurement_partition_from_builder(builder),
+        measurement_partition_from_trace(program, patch.geometry.num_qubits, {"a": "D"}, by_index=True),
+        measurement_partition_from_builder(builder, by_index=True),
     )
 
 
@@ -751,8 +751,13 @@ def test_teleportation_factory_projection_boundary(module, patch, recipe, rounds
         program = module["make_t_teleportation_placeholder"](rounds_before, 2)
         builder.add_t_teleportation_placeholder("D", "A", rounds_before, 2)
     assert_same_measurement_partition(
-        measurement_partition_from_trace(program, 2 * patch.geometry.num_qubits, {"data": "D", "anc": "A"}),
-        measurement_partition_from_builder(builder),
+        measurement_partition_from_trace(
+            program,
+            2 * patch.geometry.num_qubits,
+            {"data": "D", "anc": "A"},
+            by_index=True,
+        ),
+        measurement_partition_from_builder(builder, by_index=True),
     )
 
 
@@ -897,3 +902,19 @@ def test_sz_recorded_signed_witness(distance):
     assert set(recorded) == {0, 1}
     assert corrected == parities_by_mode["physical"] == [0] * 64
     assert decisions_by_mode["record"] == decisions_by_mode["physical"]
+
+
+@pytest.mark.parametrize("mutation", ["drop", "duplicate", "round"])
+def test_indexed_partition_rejects_changed_measurement_inventory(mutation):
+    expected = {("D", "X", 0, 0): (0,), ("D", "X", 0, 1): (1,)}
+    actual = {("D", "X", 0, 0): (7,), ("D", "X", 0, 1): (3,)}
+    assert_same_measurement_partition(actual, expected)
+    key = "D", "X", 0, 1
+    if mutation == "drop":
+        del actual[key]
+    elif mutation == "duplicate":
+        actual[key] = (3, 4)
+    else:
+        actual["D", "X", 1, 1] = actual.pop(key)
+    with pytest.raises(AssertionError, match="Measurement partition differs"):
+        assert_same_measurement_partition(actual, expected)

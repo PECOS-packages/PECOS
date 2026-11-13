@@ -6,7 +6,10 @@
 Rounds are unrolled calls to gadget functions. Each measurement emits a scalar
 result with a round-free tag; its occurrence identifies the round. RELABEL uses
 ``mem_swap`` to exchange data and local ancilla bindings without a quantum gate.
-Certification uses the step-ordered circuit to match source measurement order.
+Certification inventories output slots from the step-ordered circuit; layout
+order is informational. Unique physical labels carry identity, resolved from
+runtime provenance or compiled analysis. Per-tag occurrences assume result()
+prints retain source order when measurements reorder.
 DEMs instead use typed result references from the ASAP circuit's discovered
 parities, so measurement reordering cannot misattribute detector records.
 """
@@ -150,7 +153,7 @@ def _render_module(gadgets: list[tuple[str, list[CircuitStep]]], program_name: s
 
 
 def make_helix_memory(basis: str, rounds: int) -> object:
-    """Compile memory and bind its scalar layout to the program's source order."""
+    """Compile memory and certify output slots whose identities are resolved from evidence."""
     source = render_helix_memory_source(basis, rounds)
     module = load_cached_guppy_source("helix", source)
     program = module[f"make_memory_{basis.lower()}"]()
@@ -160,7 +163,7 @@ def make_helix_memory(basis: str, rounds: int) -> object:
 
 
 def make_helix_logic(basis: str, tokens: tuple[str, ...]) -> object:
-    """Compile logic and certify its measurements against step-order lowering."""
+    """Compile logic and certify the output-slot inventory from step-order lowering."""
     source = render_helix_logic_source(basis, tokens)
     module = load_cached_guppy_source("helix", source)
     program = module[f"make_logic_{basis.lower()}"]()
@@ -232,7 +235,7 @@ def render_helix_cnot_source(basis_a: str, basis_b: str) -> str:
 
 
 def make_helix_cnot(basis_a: str, basis_b: str) -> object:
-    """Compile two-block CNOT and bind its layout to step-order lowering."""
+    """Compile two-block CNOT and certify output slots from step-order lowering."""
     source = render_helix_cnot_source(basis_a, basis_b)
     module = load_cached_guppy_source("helix", source)
     program = module[f"make_cnot_{(basis_a + basis_b).lower()}"]()

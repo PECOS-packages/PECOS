@@ -17,13 +17,13 @@ For new workflows, prefer the additive typed build API over separately tracing
 metadata and then calling `from_guppy`:
 
 ```python,notest
-from pecos.qec import Detector, Observable, build_dem_from_guppy, rec
+from pecos.qec import Detector, Observable, build_dem_from_guppy, result_ref
 
 build = build_dem_from_guppy(
     program,
     num_qubits=num_qubits,
-    detectors=[Detector(rec[-2], rec[-1])],
-    observables=[Observable(rec[-1])],
+    detectors=[Detector(result_ref("m0"), result_ref("m1"))],
+    observables=[Observable(result_ref("m1"))],
     runtime=runtime,
 )
 dem = build.dem
@@ -33,6 +33,12 @@ The `GuppyDemBuild` owns the one traced circuit, resolved `MeasId` metadata,
 measurement ledger, schema fingerprint, and shot evaluators. This prevents a
 second runtime trace or a separately maintained detector conversion from
 silently permuting decoder inputs.
+
+Typed Guppy specs reject `rec[...]`: compiled measurements do not preserve source
+order. Use `result_ref(tag)` or `result_ref(tag, occurrence=...)` for repeated
+tags. The retained audit names `runtime_order_is_canonical`,
+`runtime_order_mismatch_count` and `canonical_record_index` refer to runtime
+positions versus compiled MeasIds, not source measurement order.
 
 The audited path is deliberately fail-closed. A runtime trace must contain a
 complete, contiguously framed lowered operation stream with stable measurement
@@ -57,7 +63,7 @@ with its error propagated and latched. A plugin that only detects an invalid
 final schedule at shot end therefore fails the shot rather than receiving a
 certified trace. Named shot conversion accepts compiler-certified direct
 scalar `result()` provenance from the executed lowered QIS and built-in
-generator layouts checked against independent runtime provenance or compiled
+generator slots whose identities are resolved from runtime provenance or compiled
 scalar analysis. Both sources must agree when available, and every layout slot
 requires evidence. The certificate digest binds both the HUGR and layout. Aggregate arrays
 and transformed booleans must not be treated as generic measurement identity
@@ -70,13 +76,21 @@ their program-bound static-layout certificate.
 
 The certificate is an integrity mechanism, not an authentication mechanism.
 Its digest binds a layout to the exact compiled HUGR and detects changes to
-either without a matching digest update. Measurement identity is checked
-separately against independent evidence for every slot, even when the digest
-has been recomputed for a permuted layout. It does not defend against
+either without a matching digest update. Measurement identity is resolved
+from runtime provenance or compiled scalar analysis for every slot; both must
+agree when available, and distinct slots must resolve to distinct measurements.
+Together with the entry-count and traced-ID membership checks, this establishes
+a bijection from slots to traced measurements. Reordering the layout and recomputing its digest preserves
+these identities: layout order is informational. The certificate still supplies
+control-flow admission, entry count against the trace, slot inventory against
+runtime value counts, required tags and producer integrity. Per-tag occurrence k
+assumes the k-th compiled print is the k-th abstract occurrence: `result()` calls
+retain source order even when measurements reorder. No check compares the
+executed trace's measurement order against the abstract schedule; identity rests
+on the tags and the evidence above. The certificate does not defend against
 deliberate in-process forgery: any Python code that can set the attribute can
 also recompute the public digest (or monkeypatch the checker), and no
-in-process scheme changes that. The digest alone does not prove that the
-compiled program measures in layout order.
+in-process scheme changes that. The certificate makes no claim that compiled measurement order matches layout order.
 
 Generic scalar tags now derive their measurement ordinals from the exact lowered
 QIS text used for execution. CFG dominance and cycle checks certify measurement

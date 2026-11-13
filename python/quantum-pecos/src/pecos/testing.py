@@ -329,8 +329,11 @@ def group_contains(generators: tuple[str, ...], pauli: str) -> bool:
     return row == (0, 0, 0)
 
 
+MeasurementKey = tuple[str, str, int] | tuple[str, str, int, int]
+
+
 def _validate_measurement_partition(
-    partition: dict[tuple[str, str, int], tuple[int, ...]],
+    partition: dict[MeasurementKey, tuple[int, ...]],
     total: int,
 ) -> None:
     """Require exactly one semantic group for every measurement ordinal."""
@@ -344,7 +347,9 @@ def measurement_partition_from_trace(
     program: object,
     num_qubits: int,
     tag_patches: dict[str, str],
-) -> dict[tuple[str, str, int], tuple[int, ...]]:
+    *,
+    by_index: bool = False,
+) -> dict[MeasurementKey, tuple[int, ...]]:
     """Bind scoped scalar sidebands and final arrays to measurement ordinals.
 
     ``pecos.tracing._trace_program_to_tick_circuit_with_result_traces`` returns
@@ -355,6 +360,12 @@ def measurement_partition_from_trace(
     of family order. The swapped marker maps physical labels to current families.
     ``measurement_ids_in_execution_order`` reads the circuit's ``Gate.meas_ids``
     to translate IDs to zero-based circuit measurement ordinals.
+
+    With ``by_index=True``, keys include the check index (or final data-qubit
+    index) and each value is one circuit ordinal. Final array element i is data
+    qubit i: protocol preparation allocates code.data in patch data order.
+    Indexed partitions can be compared across independently scheduled circuits.
+
     """
     circuit, records = _trace_program_to_tick_circuit_with_result_traces(program, num_qubits)
     measurement_ids = measurement_ids_in_execution_order(circuit)
@@ -374,7 +385,7 @@ def measurement_partition_from_trace(
         for result_id in record["result_ids"]
         if type(result_id) is int
     }
-    groups: dict[tuple[str, str, int], list[int]] = defaultdict(list)
+    groups: dict[MeasurementKey, list[int]] = defaultdict(list)
     rounds: dict[str, int] = defaultdict(int)
     seen_labels: dict[str, set[tuple[str, int]]] = defaultdict(set)
     for record in known_provenance_traces(records):
@@ -429,10 +440,12 @@ def measurement_partition_from_trace(
         ):
             msg = f"Measurement partition {key!r}: invalid measurement result IDs for {name!r}: {result_ids!r}"
             raise ValueError(msg)
-        if family == "final" and key in groups:
+        if family == "final" and any(existing[:3] == key for existing in groups):
             msg = f"Measurement partition contains repeated final readout for {label!r}"
             raise ValueError(msg)
-        groups[key].extend(ordinal_by_id[result_id] for result_id in result_ids)
+        for element, result_id in enumerate(result_ids):
+            indexed_key = (*key, int(physical_index) if scalar else element) if by_index else key
+            groups[indexed_key].append(ordinal_by_id[result_id])
     partition = {key: tuple(sorted(ordinals)) for key, ordinals in groups.items()}
     _validate_measurement_partition(partition, len(measurement_ids))
     return partition
@@ -440,12 +453,15 @@ def measurement_partition_from_trace(
 
 def measurement_partition_from_builder(
     builder: LogicalCircuitBuilder,
-) -> dict[tuple[str, str, int], tuple[int, ...]]:
+    *,
+    by_index: bool = False,
+) -> dict[MeasurementKey, tuple[int, ...]]:
     """Group the builder's measurement ordinals by patch, family, and per-patch round.
 
     Reads the ``measurement_keys`` metadata that ``to_tick_circuit`` publishes.
     Segment/round pairs are ranked separately for each patch so a patch absent
-    from a segment acquires no phantom rounds.
+    from a segment acquires no phantom rounds. With ``by_index=True``, include
+    the check index or patch-local final data-qubit index in each key.
     """
     tc = builder.to_tick_circuit()
     keys = json.loads(tc.get_meta("measurement_keys"))
@@ -457,23 +473,31 @@ def measurement_partition_from_builder(
         for label, patch_rounds in rounds.items()
         for ordinal, (segment, round_index) in enumerate(sorted(patch_rounds))
     }
-    groups: dict[tuple[str, str, int], list[int]] = defaultdict(list)
-    for label, family, _index, segment, round_index, ordinal in keys["stabilizer"]:
-        groups[label, family, global_rounds[label, segment, round_index]].append(ordinal)
-    for label, _qubit, ordinal in keys["data"]:
-        groups[label, "final", 0].append(ordinal)
+    groups: dict[MeasurementKey, list[int]] = defaultdict(list)
+    for label, family, index, segment, round_index, ordinal in keys["stabilizer"]:
+        key = label, family, global_rounds[label, segment, round_index]
+        groups[(*key, index) if by_index else key].append(ordinal)
+    for label, qubit, ordinal in keys["data"]:
+        key = label, "final", 0
+        groups[(*key, qubit) if by_index else key].append(ordinal)
     partition = {key: tuple(sorted(ordinals)) for key, ordinals in groups.items()}
     _validate_measurement_partition(partition, int(tc.get_meta("num_measurements")))
     return partition
 
 
 def assert_same_measurement_partition(
-    a: dict[tuple[str, str, int], tuple[int, ...]],
-    b: dict[tuple[str, str, int], tuple[int, ...]],
+    a: dict[MeasurementKey, tuple[int, ...]],
+    b: dict[MeasurementKey, tuple[int, ...]],
 ) -> None:
-    """Report the first differing semantic key and both ordinal tuples."""
+    """Compare partitions; indexed keys require exactly one ordinal on each side.
+
+    Indexed comparisons check semantic keys and cardinalities, not ordinal
+    equality: the two circuits may emit the same measurements in different
+    orders. Unindexed partitions compare ordinal tuples within one schedule.
+    """
     for key in sorted(a.keys() | b.keys()):
-        if a.get(key) != b.get(key):
+        equal = len(a.get(key, ())) == len(b.get(key, ())) == 1 if len(key) == 4 else a.get(key) == b.get(key)
+        if not equal:
             msg = f"Measurement partition differs at {key!r}: {a.get(key)!r} != {b.get(key)!r}"
             raise AssertionError(msg)
 

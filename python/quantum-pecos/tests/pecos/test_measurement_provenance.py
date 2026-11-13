@@ -105,6 +105,36 @@ call void @print_bool_arr_selene(ptr @label, i64 3, ptr %z, i64 2)
         assert identities(s) == [{"class": "measurement", "id": 0}, {"class": "measurement", "id": 1}]
 
 
+def test_fixed_integer_vector_copy():
+    body = READS + """
+%x = alloca [2 x i64]
+%y = alloca [2 x i64]
+%p = getelementptr i64, ptr %x, i64 1
+%wide = zext i1 %a to i64
+store i64 %wide, ptr %x
+store i64 0, ptr %p
+%vector = load <2 x i64>, ptr %x, align 8
+store <2 x i64> %vector, ptr %y, align 8
+%copied = load i64, ptr %y
+%bit = trunc i64 %copied to i1
+""" + emit("%bit")
+    for shot in capture(program(body)):
+        assert identities(shot) == [{"class": "measurement", "id": 0}]
+        assert shot["records"][0]["values"] == [shot["outcomes"][0]]
+
+
+def test_vector_arithmetic_rejects():
+    body = READS + """
+%x = alloca [2 x i64]
+store <2 x i64> zeroinitializer, ptr %x
+%v = load <2 x i64>, ptr %x
+%sum = add <2 x i64> %v, %v
+store <2 x i64> %sum, ptr %x
+"""
+    with pytest.raises(Exception, match="non-constant vector value"):
+        capture(program(body))
+
+
 def test_helper_two_calls_and_aggregate():
     helper = """define fastcc {i1, i1} @helper(i1 noundef %a, i1 %b) {
 entry:

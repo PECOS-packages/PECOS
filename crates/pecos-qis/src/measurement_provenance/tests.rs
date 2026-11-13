@@ -127,3 +127,81 @@ fn zero_argument_quantum_call_needs_no_control_operation() {
     let ir = instrument(source).unwrap();
     assert!(!ir.contains(&format!("@pecos_prov_op_v1(i64 {},", op::CONTROL)));
 }
+
+#[test]
+fn integer_vector_copy_does_not_admit_vector_computation() {
+    let prefix =
+        "define void @main() {\nentry:\n%p = alloca <2 x i64>\n%v = load <2 x i64>, ptr %p\n";
+    for instruction in [
+        "%w = add <2 x i64> %v, %v",
+        "%w = extractelement <2 x i64> %v, i32 0",
+        "%w = insertelement <2 x i64> %v, i64 0, i32 0",
+        "%w = shufflevector <2 x i64> %v, <2 x i64> %v, <2 x i32> zeroinitializer",
+        "%w = select i1 true, <2 x i64> %v, <2 x i64> %v",
+        "%w = icmp eq <2 x i64> %v, %v",
+        "%w = bitcast <2 x i64> %v to i128",
+        "call void @consume(<2 x i64> %v)",
+    ] {
+        let source =
+            format!("declare void @consume(<2 x i64>)\n{prefix}{instruction}\nret void\n}}");
+        assert!(instrument(&source).is_err(), "{instruction}");
+    }
+    let returns = "define <2 x i64> @copy(ptr %p) {\nentry:\n%v = load <2 x i64>, ptr %p\nret <2 x i64> %v\n}\ndefine void @main() {\nret void\n}";
+    assert!(instrument(returns).is_err());
+    let phi =
+        format!("{prefix}br label %next\nnext:\n%w = phi <2 x i64> [%v, %entry]\nret void\n}}");
+    assert!(instrument(&phi).is_err());
+}
+
+#[test]
+fn integer_vector_copies_and_constant_operands_are_admitted() {
+    let copies = "define void @main() {\nentry:\n%p = alloca <2 x i64>\n%q = alloca <2 x i64>\nstore <2 x i64> <i64 1, i64 0>, ptr %p\n%v = load <2 x i64>, ptr %p\nstore <2 x i64> %v, ptr %q\nret void\n}";
+    assert!(instrument(copies).is_ok());
+    for source in [
+        "declare void @consume(<2 x i64>)\ndefine void @main() {\nentry:\ncall void @consume(<2 x i64> <i64 1, i64 0>)\nret void\n}",
+        "define <2 x i64> @constant() {\nentry:\nret <2 x i64> <i64 1, i64 0>\n}\ndefine void @main() {\nentry:\nret void\n}",
+        "define void @main() {\nentry:\n%a = insertvalue {i64, <2 x i64>} zeroinitializer, <2 x i64> <i64 1, i64 0>, 1\nret void\n}",
+    ] {
+        let outcome = instrument(source);
+        assert!(outcome.is_ok(), "{source}: {outcome:?}");
+    }
+}
+
+#[test]
+fn rejected_vector_operands_are_named() {
+    for instruction in [
+        "call void @consume(<2 x i64> %actual)",
+        "%a = insertvalue {<2 x i64>} zeroinitializer, <2 x i64> %actual, 0",
+        "ret <2 x i64> %actual",
+    ] {
+        let end = if instruction.starts_with("ret ") {
+            ""
+        } else {
+            "ret <2 x i64> zeroinitializer"
+        };
+        let source = format!(
+            "declare void @consume(<2 x i64>)\ndefine <2 x i64> @main() {{\nentry:\n%p = alloca <2 x i64>\n%actual = load <2 x i64>, ptr %p\n{instruction}\n{end}\n}}"
+        );
+        let message = instrument(&source).unwrap_err().to_string();
+        assert!(
+            message.contains("non-constant vector value %actual"),
+            "{message}"
+        );
+    }
+}
+
+#[test]
+fn memory_vectors_require_fixed_integer_elements() {
+    for ty in ["<vscale x 2 x i64>", "<2 x ptr>", "<2 x float>"] {
+        assert!(reject_memory_vector(ty, "SSA").is_err(), "{ty}");
+    }
+    for ty in ["<2 x i64>", "<2 x i8>", "<3 x i8>"] {
+        assert!(reject_memory_vector(ty, "SSA").is_ok(), "{ty}");
+    }
+}
+
+#[test]
+fn literal_vector_store_remains_constant() {
+    let source = "define void @main() {\nentry:\n%p = alloca [2 x double]\nstore <2 x double> <double 1.0, double 2.0>, ptr %p, align 8\nret void\n}";
+    assert!(instrument(source).is_ok());
+}

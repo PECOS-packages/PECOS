@@ -24,7 +24,7 @@ from pecos._traced_circuit import (
     normalize_traced_tick_circuit,
 )
 from pecos.guppy_gen import get_num_qubits, make_surface_code
-from pecos.qec import Detector, DetectorErrorModel, Observable, build_dem_from_guppy, rec
+from pecos.qec import Detector, DetectorErrorModel, Observable, build_dem_from_guppy, result_ref
 from pecos.qec.surface import RUNTIME_IDLE_TIME_UNITS_PER_SECOND, NoiseParameters, SurfacePatch
 from pecos.qec.surface.circuit_builder import (
     generate_tick_circuit_from_patch,
@@ -216,8 +216,8 @@ def _structured_idle_dem(entrypoint: str, **kwargs):
         return DetectorErrorModel.from_guppy(
             _structured_idle_noise_target,
             num_qubits=2,
-            detectors_json=_TWO_QUBIT_DETECTORS_JSON,
-            observables_json=_TWO_QUBIT_OBSERVABLES_JSON,
+            detectors_json='[{"id":0,"result_tags":["m0"]}]',
+            observables_json='[{"id":0,"result_tags":["m1"]}]',
             num_measurements=2,
             seed=0,
             **_NO_GATE_NOISE,
@@ -226,8 +226,8 @@ def _structured_idle_dem(entrypoint: str, **kwargs):
     return build_dem_from_guppy(
         _structured_idle_noise_target,
         num_qubits=2,
-        detectors=[Detector(rec[-2])],
-        observables=[Observable(rec[-1])],
+        detectors=[Detector("m0")],
+        observables=[Observable("m1")],
         seed=0,
         **_NO_GATE_NOISE,
         **kwargs,
@@ -272,16 +272,16 @@ def _noise_model_entrypoint_dem(entrypoint: str, **kwargs):
         return DetectorErrorModel.from_guppy(
             _structured_idle_noise_target,
             num_qubits=2,
-            detectors_json=_TWO_QUBIT_DETECTORS_JSON,
-            observables_json=_TWO_QUBIT_OBSERVABLES_JSON,
+            detectors_json='[{"id":0,"result_tags":["m0"]}]',
+            observables_json='[{"id":0,"result_tags":["m1"]}]',
             num_measurements=2,
             **kwargs,
         )
     return build_dem_from_guppy(
         _structured_idle_noise_target,
         num_qubits=2,
-        detectors=[Detector(rec[-2])],
-        observables=[Observable(rec[-1])],
+        detectors=[Detector("m0")],
+        observables=[Observable("m1")],
         **kwargs,
     ).dem
 
@@ -355,8 +355,8 @@ def test_guppy_build_audit_surfaces_idle_conversion_residuals() -> None:
     build = build_dem_from_guppy(
         _structured_idle_noise_target,
         num_qubits=2,
-        detectors=[Detector(rec[-2])],
-        observables=[Observable(rec[-1])],
+        detectors=[Detector(result_ref("m0"))],
+        observables=[Observable(result_ref("m1"))],
         p1=0.0,
         p2=0.0,
         p_meas=0.0,
@@ -833,8 +833,8 @@ def test_from_guppy_idle_insertion_preserves_zero_rz_fault_site(monkeypatch: pyt
     build = build_dem_from_guppy(
         _two_qubit_idle_target,
         num_qubits=2,
-        detectors=[Detector(rec[-2])],
-        observables=[Observable(rec[-1])],
+        detectors=[Detector(result_ref("m0"))],
+        observables=[Observable(result_ref("m1"))],
         idle_after_2q_duration=1.0,
         p1=0.01,
         p2=0.0,
@@ -894,8 +894,8 @@ def test_build_dem_from_guppy_rejects_idle_noise_without_idle_gates() -> None:
             build_dem_from_guppy(
                 _two_qubit_idle_target,
                 num_qubits=2,
-                detectors=[Detector(rec[-2])],
-                observables=[Observable(rec[-1])],
+                detectors=[Detector(result_ref("m0"))],
+                observables=[Observable(result_ref("m1"))],
                 **{idle_param: value},
                 **_NO_GATE_NOISE,
             )
@@ -906,8 +906,8 @@ def test_build_dem_from_guppy_rejects_non_positive_idle_duration() -> None:
         build_dem_from_guppy(
             _two_qubit_idle_target,
             num_qubits=2,
-            detectors=[Detector(rec[-2])],
-            observables=[Observable(rec[-1])],
+            detectors=[Detector(result_ref("m0"))],
+            observables=[Observable(result_ref("m1"))],
             idle_after_2q_duration=0.0,
             p_idle_linear=0.01,
             **_NO_GATE_NOISE,
@@ -918,8 +918,8 @@ def test_build_dem_from_guppy_strips_then_inserts_idles() -> None:
     build = build_dem_from_guppy(
         _two_qubit_idle_target,
         num_qubits=2,
-        detectors=[Detector(rec[-2])],
-        observables=[Observable(rec[-1])],
+        detectors=[Detector(result_ref("m0"))],
+        observables=[Observable(result_ref("m1"))],
         strip_traced_idles=True,
         idle_after_2q_duration=1.0,
         p_idle_linear=0.01,
@@ -2021,19 +2021,19 @@ def test_constrained_from_guppy_dem_is_consumable_by_pecos_native_decoder() -> N
 
     p = {"p1": 0.005, "p2": 0.005, "p_meas": 0.005, "p_prep": 0.005}
     patch = SurfacePatch.create(distance=3)
-    abstract_tc = _build_surface_tick_circuit_for_native_model(
+    traced_tc = _build_surface_tick_circuit_for_native_model(
         patch,
         num_rounds=2,
         basis="Z",
         ancilla_budget=2,
-        circuit_source="abstract",
+        circuit_source="traced_qis",
     )
     dem = DetectorErrorModel.from_guppy(
         make_surface_code(distance=3, num_rounds=2, basis="Z", ancilla_budget=2),
         num_qubits=get_num_qubits(3, ancilla_budget=2),
-        detectors_json=abstract_tc.get_meta("detectors"),
-        observables_json=abstract_tc.get_meta("observables"),
-        num_measurements=int(abstract_tc.get_meta("num_measurements")),
+        detectors_json=traced_tc.get_meta("detectors"),
+        observables_json=traced_tc.get_meta("observables"),
+        num_measurements=int(traced_tc.get_meta("num_measurements")),
         **p,
     )
 
@@ -2077,14 +2077,14 @@ def test_constrained_from_guppy_fails_loud_on_mismatched_num_measurements() -> N
     different ``num_measurements``-mentioning error wouldn't pass spuriously."""
     p = {"p1": 0.005, "p2": 0.005, "p_meas": 0.005, "p_prep": 0.005}
     patch = SurfacePatch.create(distance=3)
-    abstract_tc = _build_surface_tick_circuit_for_native_model(
+    traced_tc = _build_surface_tick_circuit_for_native_model(
         patch,
         num_rounds=2,
         basis="Z",
         ancilla_budget=2,
-        circuit_source="abstract",
+        circuit_source="traced_qis",
     )
-    actual = int(abstract_tc.get_meta("num_measurements"))
+    actual = int(traced_tc.get_meta("num_measurements"))
     wrong = actual + 1
 
     with pytest.raises(
@@ -2094,8 +2094,8 @@ def test_constrained_from_guppy_fails_loud_on_mismatched_num_measurements() -> N
         DetectorErrorModel.from_guppy(
             make_surface_code(distance=3, num_rounds=2, basis="Z", ancilla_budget=2),
             num_qubits=get_num_qubits(3, ancilla_budget=2),
-            detectors_json=abstract_tc.get_meta("detectors"),
-            observables_json=abstract_tc.get_meta("observables"),
+            detectors_json=traced_tc.get_meta("detectors"),
+            observables_json=traced_tc.get_meta("observables"),
             num_measurements=wrong,
             **p,
         )
@@ -2368,12 +2368,12 @@ def test_surface_result_tags_reject_unbound_final_measurement_slots() -> None:
         ],
     )
 
-    with pytest.raises(ValueError, match="final aggregate result IDs must be contiguous in ascending source order"):
+    with pytest.raises(ValueError, match=r"final:meas:0.*has 1 value.*0 result id"):
         _surface_runtime_measurement_remap_from_result_traces(abstract_tc, result_traces)
 
 
-def test_surface_result_tags_accept_ascending_unbound_final_measurement_slots() -> None:
-    """Ascending final aggregate IDs preserve source order without scalar IDs."""
+def test_surface_result_tags_reject_ascending_unbound_final_measurement_slots() -> None:
+    """Ascending IDs cannot substitute for missing per-element provenance."""
     patch = SurfacePatch.create(distance=3)
     abstract_tc = generate_tick_circuit_from_patch(patch, num_rounds=0, basis="Z")
     result_traces = [
@@ -2391,9 +2391,8 @@ def test_surface_result_tags_accept_ascending_unbound_final_measurement_slots() 
         ],
     )
 
-    remap = _surface_runtime_measurement_remap_from_result_traces(abstract_tc, result_traces)
-
-    assert [remap[index] for index in range(13)] == list(range(13))
+    with pytest.raises(ValueError, match=r"final:meas:0.*has 1 value.*0 result id"):
+        _surface_runtime_measurement_remap_from_result_traces(abstract_tc, result_traces)
 
 
 def test_result_tag_remap_validation_accepts_exact_traced_meas_ids() -> None:
@@ -2575,8 +2574,8 @@ def _approximated_gate_build(
         DetectorErrorModel.builder()
         .with_program(_structured_idle_noise_target)
         .with_qubits(2)
-        .with_detectors([Detector(rec[-2])])
-        .with_observables([Observable(rec[-1])])
+        .with_detectors([Detector(result_ref("m0"))])
+        .with_observables([Observable(result_ref("m1"))])
         .with_noise(
             NoiseParameters(
                 p1=0.0,

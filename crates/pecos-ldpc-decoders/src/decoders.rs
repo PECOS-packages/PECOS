@@ -20,15 +20,37 @@ fn prepare_channel_probs(
     error_rate: Option<f64>,
     error_channel: Option<&[f64]>,
 ) -> Result<Vec<f64>, LdpcError> {
+    // The C++ core takes log((1 - p) / p) unchecked, so only probabilities may pass.
+    // The range check also rejects NaN and infinities; `+ 0.0` turns -0.0 into
+    // +0.0, whose log-likelihood is +inf rather than NaN. The endpoints 0 and 1 stay
+    // legal, but a syndrome that such priors make impossible still yields NaN
+    // log-likelihoods in product-sum BP, as can priors within about 1e-16 of 0 or 1,
+    // through tanh saturation.
     match (error_rate, error_channel) {
-        (Some(rate), None) => Ok(vec![rate; pcm_cols]),
+        (Some(rate), None) => {
+            if !(0.0..=1.0).contains(&rate) {
+                return Err(LdpcError::InvalidInput(format!(
+                    "error_rate must be finite and in [0, 1], got {rate}"
+                )));
+            }
+            Ok(vec![rate + 0.0; pcm_cols])
+        }
         (None, Some(probs)) => {
             if probs.len() != pcm_cols {
                 return Err(LdpcError::InvalidInput(
                     "Error channel length must match number of columns".to_string(),
                 ));
             }
-            Ok(probs.to_vec())
+            if let Some((column, p)) = probs
+                .iter()
+                .enumerate()
+                .find(|(_, p)| !(0.0..=1.0).contains(*p))
+            {
+                return Err(LdpcError::InvalidInput(format!(
+                    "error_channel[{column}] must be finite and in [0, 1], got {p}"
+                )));
+            }
+            Ok(probs.iter().map(|p| p + 0.0).collect())
         }
         (None, None) => Err(LdpcError::InvalidInput(
             "Either error_rate or error_channel must be provided".to_string(),

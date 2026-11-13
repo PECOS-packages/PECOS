@@ -328,8 +328,20 @@ class TestBpOsdDecoder:
         from pecos_rslib.decoders import BpOsdBuilder, SparseMatrix
 
         H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
-        with pytest.raises(RuntimeError, match="length must match"):
+        with pytest.raises(ValueError, match="length must match"):
             BpOsdBuilder(H, error_rate=[0.01, 0.02]).build()
+
+    @pytest.mark.parametrize("bad", [float("nan"), -0.1, 1.5])
+    def test_non_probability_prior_rejected(self, bad: float) -> None:
+        """A rate or channel entry outside [0, 1] fails at build, naming the argument."""
+        from pecos_rslib.decoders import BpLsdBuilder, BpOsdBuilder, SparseMatrix
+
+        H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
+        for builder in (BpOsdBuilder, BpLsdBuilder):
+            with pytest.raises(ValueError, match=r"error_rate must be finite and in \[0, 1\]"):
+                builder(H, error_rate=bad).build()
+            with pytest.raises(ValueError, match=r"error_channel\[2\] must be finite"):
+                builder(H, error_rate=[0.01, 0.01, bad, 0.01]).build()
 
 
 class TestBpLsdDecoder:
@@ -400,6 +412,20 @@ class TestUnionFindDecoder:
         decoder_peel = UnionFindBuilder(H).method("peeling").build()
         result_peel = decoder_peel.decode_syndrome([0, 0, 0])
         assert result_peel is not None
+
+    def test_wrong_syndrome_length_raises_value_error(self) -> None:
+        """A syndrome whose length differs from the check count is a caller error."""
+        from pecos_rslib.decoders import DemAwareDecoder, SparseMatrix, UnionFindBuilder
+
+        H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
+        decoder = UnionFindBuilder(H).build()
+        with pytest.raises(ValueError, match="Syndrome length 2 does not match check count 3"):
+            decoder.decode_syndrome([0, 1])
+
+        dem = "error(0.1) D0 L0\nerror(0.1) D0 D1\nerror(0.1) D1"
+        dem_decoder = DemAwareDecoder.from_dem(dem, decoder_type="union_find")
+        with pytest.raises(ValueError, match="Syndrome length 3 does not match check count 2"):
+            dem_decoder.decode_syndrome([0, 1, 1])
 
 
 class TestMinSumBpDecoder:

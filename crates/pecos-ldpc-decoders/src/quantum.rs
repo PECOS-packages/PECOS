@@ -10,6 +10,44 @@ use crate::{BpMethod, LdpcError};
 use cxx::UniquePtr;
 use ndarray::{Array1, Array2, ArrayView1};
 
+/// Validates MBP's error rate and XYZ weights and divides the weights by their sum.
+///
+/// The C++ core builds `error_rate * bias` channel probabilities unchecked, so only a
+/// probability and finite non-negative weights may pass.
+fn mbp_channel(error_rate: f64, xyz_bias: [f64; 3]) -> Result<(f64, [f64; 3]), LdpcError> {
+    if !(0.0..=1.0).contains(&error_rate) {
+        return Err(LdpcError::InvalidInput(format!(
+            "error_rate must be finite and in [0, 1], got {error_rate}"
+        )));
+    }
+    if let Some((index, bias)) = xyz_bias
+        .iter()
+        .enumerate()
+        .find(|(_, bias)| !bias.is_finite() || **bias < 0.0)
+    {
+        return Err(LdpcError::InvalidInput(format!(
+            "xyz_bias[{index}] must be finite and non-negative, got {bias}"
+        )));
+    }
+
+    // Normalize the relative weights by their sum. Only when that sum overflows are the
+    // weights first quartered: a power-of-two scale leaves every representable ratio
+    // unchanged, and a quarter of three finite weights cannot overflow. `+ 0.0` turns -0.0
+    // into +0.0 so the core's log-likelihoods never see -0.0.
+    let mut weights = xyz_bias;
+    if weights.iter().sum::<f64>().is_infinite() {
+        weights = weights.map(|weight| weight * 0.25);
+    }
+    let weight_sum: f64 = weights.iter().sum();
+    if weight_sum <= 0.0 {
+        return Err(LdpcError::InvalidInput(format!(
+            "xyz_bias must have a positive entry, got {xyz_bias:?}"
+        )));
+    }
+    let normalized_bias = weights.map(|weight| weight / weight_sum + 0.0);
+    Ok((error_rate + 0.0, normalized_bias))
+}
+
 /// Pauli error types for quantum codes
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PauliError {
@@ -72,18 +110,7 @@ impl MbpDecoder {
             ));
         }
 
-        // Normalize XYZ bias
-        let bias_sum = xyz_bias[0] + xyz_bias[1] + xyz_bias[2];
-        if bias_sum <= 0.0 {
-            return Err(LdpcError::InvalidInput(
-                "XYZ bias values must sum to a positive number".to_string(),
-            ));
-        }
-        let normalized_bias = [
-            xyz_bias[0] / bias_sum,
-            xyz_bias[1] / bias_sum,
-            xyz_bias[2] / bias_sum,
-        ];
+        let (error_rate, normalized_bias) = mbp_channel(error_rate, xyz_bias)?;
 
         // Create sparse matrix representations
         let hx_repr = hx.to_ffi_repr();
@@ -305,6 +332,66 @@ mod tests {
 
         let gf4_pcm = css.to_gf4_pcm();
         assert_eq!(gf4_pcm.shape(), &[4, 3]);
+    }
+
+    // Red/green: MBP rejects a non-probability rate and invalid bias components.
+    #[test]
+    fn test_mbp_rejects_invalid_rate_and_bias() {
+        let hx = SparseMatrix::from_coo(1, 3, vec![0, 0, 0], vec![0, 1, 2]).unwrap();
+        let hz = SparseMatrix::from_coo(2, 3, vec![0, 0, 1, 1], vec![0, 1, 1, 2]).unwrap();
+        let build = |rate: f64, bias: [f64; 3]| {
+            MbpDecoder::new(
+                &hx,
+                &hz,
+                rate,
+                bias,
+                10,
+                crate::BpMethod::MinimumSum,
+                0.625,
+                None,
+            )
+        };
+        for (rate, bias, expected) in [
+            (f64::NAN, [1.0, 1.0, 1.0], "error_rate must"),
+            (f64::INFINITY, [1.0, 1.0, 1.0], "error_rate must"),
+            (-0.1, [1.0, 1.0, 1.0], "error_rate must"),
+            (1.5, [1.0, 1.0, 1.0], "error_rate must"),
+            (0.1, [1.0, f64::NAN, 1.0], "xyz_bias[1] must"),
+            (0.1, [1.0, 1.0, -1.0], "xyz_bias[2] must"),
+            (0.1, [f64::INFINITY, 1.0, 1.0], "xyz_bias[0] must"),
+            (0.1, [0.0, -0.0, 0.0], "xyz_bias must have a positive entry"),
+        ] {
+            assert!(
+                matches!(&build(rate, bias), Err(LdpcError::InvalidInput(message)) if message.contains(expected)),
+                "{rate} {bias:?}"
+            );
+        }
+        assert!(build(0.1, [1.0, 0.0, 1.0]).is_ok());
+
+        // Weights whose sum fits are divided by that plain sum; weights whose sum overflows
+        // keep their meaning; -0.0 (whose log-likelihood would be NaN) reaches the core as
+        // +0.0.
+        let channel = |rate: f64, bias: [f64; 3]| mbp_channel(rate, bias).unwrap();
+        let weights = [0.1, 0.2, 0.3];
+        let sum = weights[0] + weights[1] + weights[2];
+        assert_eq!(
+            channel(0.1, weights),
+            (0.1, weights.map(|weight| weight / sum))
+        );
+        assert_eq!(channel(0.1, [0.0, 1.0, 3.0]), (0.1, [0.0, 0.25, 0.75]));
+        assert_eq!(channel(0.1, [5e-324, 5e-324, 0.0]), (0.1, [0.5, 0.5, 0.0]));
+        let third = 1.0 / 3.0;
+        assert_eq!(channel(0.1, [1e308; 3]), (0.1, [third; 3]));
+        assert_eq!(
+            channel(0.1, [0.0, f64::MAX, f64::MAX]),
+            (0.1, [0.0, 0.5, 0.5])
+        );
+        let (rate, bias) = channel(-0.0, [1.0, -0.0, 1.0]);
+        assert!(rate.is_sign_positive(), "{rate}");
+        assert!(
+            bias.iter().all(|weight| weight.is_sign_positive()),
+            "{bias:?}"
+        );
     }
 
     #[test]

@@ -46,6 +46,9 @@ indistinguishable-error merging, BP iterations=0 and int_metric_scale=1024 (unus
 by the float metric). Each projected model uses deadline order and its plain
 reverse committee. Full retained classes, evidence, discarded mass and work
 telemetry are computed. The step budget is 32 columns; it is not a wall-time limit.
+`WindowedDecoder::decode` is a synchronous whole-shot call that drains every
+window before returning. The internal step budget does not bound that public
+call or a future FFI wrapper to 32 columns or a controller latency deadline.
 
 ```sh
 cargo run -p pecos-frontier --release --example decode_dem -- \

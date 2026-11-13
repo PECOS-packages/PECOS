@@ -489,7 +489,9 @@ impl WindowedDecoder {
         self.max_columns
     }
 
-    /// Decode one fresh full detector vector. Logical truth is not an input.
+    /// Synchronously decode one fresh full detector vector, draining all windows
+    /// before returning. Logical truth is not an input. `max_columns` limits
+    /// internal committee steps, not the work or duration of this whole-shot call.
     ///
     /// Errors are never retried or recovered. A later call starts fresh attempts
     /// using the compiled models, including after a failed shot.

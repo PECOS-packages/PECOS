@@ -78,3 +78,53 @@ def test_bp_lsd_product_sum_and_growth_options(entry_point) -> None:
             else DemAwareDecoder.from_dem(dem, decoder_type="bp_lsd", **options)
         )
         assert list(decoder.decode_syndrome([1]).observable_flips) == [True]
+
+
+@pytest.mark.parametrize("entry_point", ["builder", "dem", "generic_dem", "spec"])
+@pytest.mark.parametrize(
+    ("argument", "value"), [("ms_scaling_factor", "0.5"), ("bits_per_step", "2"), ("lsd_order", "3")],
+)
+def test_bp_lsd_errors_quote_string_values(entry_point, argument, value) -> None:
+    from pecos_rslib.decoders import BpLsdDecoder, DemAwareDecoder, bp_lsd
+
+    dem = "error(0.1) D0 L0"
+    if entry_point == "builder":
+        builder = BpLsdBuilder(SparseMatrix([[1]]), error_rate=0.1)
+        invoke = partial(getattr(builder, argument), value)
+    elif entry_point == "dem":
+        invoke = partial(BpLsdDecoder.from_dem, dem, **{argument: value})
+    elif entry_point == "generic_dem":
+        invoke = partial(DemAwareDecoder.from_dem, dem, decoder_type="bp_lsd", **{argument: value})
+    else:
+        invoke = partial(bp_lsd, **{argument: value})
+    with pytest.raises(ValueError, match=argument) as exc_info:
+        invoke()
+    assert repr(value) in str(exc_info.value)
+
+
+@pytest.mark.parametrize("argument", ["bp_method", "ms_scaling_factor", "bits_per_step", "lsd_order"])
+def test_generic_dem_rejects_lsd_options_with_repr(argument) -> None:
+    from pecos_rslib.decoders import DemAwareDecoder
+
+    with pytest.raises(ValueError, match="only supported") as exc_info:
+        DemAwareDecoder.from_dem("error(0.1) D0", "bp_osd", **{argument: "x"})
+    assert argument in str(exc_info.value)
+    assert repr("x") in str(exc_info.value)
+
+
+@pytest.mark.parametrize("options", [{"bp_method": "x"}, {"ms_scaling_factor": "0.5"}])
+def test_generic_dem_validates_decoder_type_first(options) -> None:
+    from pecos_rslib.decoders import DemAwareDecoder
+
+    with pytest.raises(ValueError, match="Unknown decoder type: bogus"):
+        DemAwareDecoder.from_dem("error(0.1) D0", "bogus", **options)
+
+
+@pytest.mark.parametrize("entry_point", ["dem", "generic_dem", "spec"])
+def test_bp_lsd_scaling_signature_default(entry_point) -> None:
+    from inspect import signature
+
+    from pecos_rslib.decoders import BpLsdDecoder, DemAwareDecoder, bp_lsd
+
+    factories = {"dem": BpLsdDecoder.from_dem, "generic_dem": DemAwareDecoder.from_dem, "spec": bp_lsd}
+    assert signature(factories[entry_point]).parameters["ms_scaling_factor"].default == 0.625

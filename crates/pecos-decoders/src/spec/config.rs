@@ -184,6 +184,7 @@ pub struct BpLsdConfig {
     pub bp_schedule: BpSchedule,
     /// `None` selects product-sum; `Some` selects minimum-sum with this factor.
     pub ms_scaling_factor: Option<f64>,
+    /// 0 = LSD-0, no reprocessing; > 0 = combination-sweep (OSD-CS) reprocessing of that order.
     pub lsd_order: usize,
     /// Bits grown per step; zero grows all candidate bits.
     pub bits_per_step: usize,

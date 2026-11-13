@@ -539,7 +539,7 @@ impl BpLsdDecoder {
         }
     }
 
-    /// Get the LSD order
+    /// Get the LSD order: 0 = LSD-0, no reprocessing; > 0 = combination-sweep (OSD-CS) reprocessing of that order.
     #[must_use]
     pub fn lsd_order(&self) -> usize {
         usize::try_from(ffi::get_lsd_order_lsd(&self.inner)).unwrap_or(0)
@@ -637,7 +637,7 @@ pub struct LsdStatistics {
     pub elapsed_time: u64,
     /// LSD method used
     pub lsd_method: OsdMethod,
-    /// LSD order parameter
+    /// LSD order: 0 = LSD-0, no reprocessing; > 0 = combination-sweep (OSD-CS) reprocessing of that order.
     pub lsd_order: usize,
 }
 

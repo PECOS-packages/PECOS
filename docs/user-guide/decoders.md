@@ -201,6 +201,25 @@ println!("Converged: {}", result.converged);
 
 Localized version of OSD for better scaling with large codes.
 
+BP+LSD builders, specs and DEM constructors default to minimum-sum BP, scaling
+factor 0.625, at most 30 iterations, parallel scheduling, one bit per growth step,
+and order 0. `lsd_order`: 0 = LSD-0, no reprocessing; > 0 = combination-sweep (OSD-CS) reprocessing of that order.
+The raw Rust builder permits explicit reprocessing methods; `Off` or `Osd0` with
+positive order is rejected.
+
+Cluster growth ranks BP log-probability ratios in ascending order, choosing more
+likely errors first. `bits_per_step=0` grows all candidate bits each step; their
+insertion order still affects pivots and the solution.
+
+Python `BpLsdBuilder` exposes `.bp_method(...)`, `.ms_scaling_factor(...)`,
+`.bits_per_step(...)` and `.lsd_order(...)`. `BpLsdDecoder.from_dem`, the `bp_lsd`
+spec factory and `DemAwareDecoder.from_dem(..., decoder_type="bp_lsd")` accept
+these settings as keywords. Scaling defaults to 0.625; explicit `None` selects
+product-sum. An explicit `bp_method="product_sum"` (alias `"ps"`) ignores scaling;
+`bp_method="minimum_sum"` (alias `"ms"`) with `None` uses 0.625. These rules also
+apply to the Python builder. Rust specs use `ms_scaling_factor: None` to select
+product-sum.
+
 ```rust
 use pecos_decoders::BpLsdDecoder;
 
@@ -209,6 +228,8 @@ let mut decoder = BpLsdDecoder::builder(&pcm)
     .bits_per_step(1)
     .lsd_order(10)
     .build()?;
+
+assert_eq!(decoder.lsd_method(), pecos_decoders::OsdMethod::OsdCs);
 
 let result = decoder.decode(&syndrome.view())?;
 ```
@@ -764,17 +785,3 @@ are per-label best-route (Viterbi) masses, the gap is a route-mass margin, and
 - [Getting Started Guide](getting-started.md) - Main installation guide
 - [LLVM Setup Guide](llvm-setup.md) - For building with LLVM support
 - [Experimental Decoders](../experimental/decoders.md) - Frontier, BP-Trellis, complementary gap
-
-BP+LSD builders, specs and DEM constructors default to the paper settings:
-minimum-sum BP, scaling factor 0.625, at most 30 iterations, parallel schedule,
-one bit per cluster-growth step, and LSD-0 with no reprocessing (`lsd_order=0`).
-Cluster growth ranks the BP log-probability ratios in ascending order, choosing
-more likely errors first. `bits_per_step=0` grows all candidate bits each step.
-
-Python `BpLsdBuilder` exposes `.bp_method(...)`, `.ms_scaling_factor(...)`,
-`.bits_per_step(...)` and `.lsd_order(...)`. `BpLsdDecoder.from_dem` and
-`DemAwareDecoder.from_dem(..., decoder_type="bp_lsd")` accept those four settings
-as keywords. `bp_method="product_sum"` ignores `ms_scaling_factor`; no rejection
-is imposed, consistent with the BP-OSD path. Rust specs retain the convention
-that `ms_scaling_factor=None` selects product-sum; the Python `bp_lsd` spec factory
-also supports this convention, or an explicit `bp_method` keyword.

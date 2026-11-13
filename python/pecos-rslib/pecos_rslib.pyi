@@ -3605,7 +3605,7 @@ class decoders:
         error_rate: float | None = ...,
         max_iter: int | None = ...,
         bp_schedule: str | None = ...,
-        ms_scaling_factor: float | None = ...,
+        ms_scaling_factor: float | None = 0.625,
         lsd_order: int | None = ...,
         bits_per_step: int | None = ...,
         random_schedule_seed: int | None = ...,
@@ -3613,7 +3613,9 @@ class decoders:
     ) -> decoders.DecoderSpec:
         """Paper defaults; ms_scaling_factor=None selects product-sum.
 
-        Explicit bp_method overrides that selection; product-sum ignores scaling.
+        Explicit bp_method overrides that selection; minimum_sum with None uses 0.625.
+        Product-sum ignores scaling.
+        lsd_order: 0 = LSD-0, no reprocessing; > 0 = combination-sweep (OSD-CS) reprocessing of that order.
         bits_per_step=0 grows all candidates.
         """
         ...
@@ -3956,8 +3958,11 @@ class decoders:
             """Set BP algorithm: "product_sum" or "minimum_sum" (default: "minimum_sum")."""
             ...
 
-        def ms_scaling_factor(self, val: float) -> decoders.BpLsdBuilder:
-            """Set min-sum scaling (default: 0.625); ignored by product-sum."""
+        def ms_scaling_factor(self, val: float | None) -> decoders.BpLsdBuilder:
+            """Set scaling (default: 0.625); None selects product-sum.
+
+            Explicit bp_method overrides this; minimum_sum with None uses 0.625.
+            """
             ...
 
         def schedule(self, val: str) -> decoders.BpLsdBuilder:
@@ -3965,7 +3970,7 @@ class decoders:
             ...
 
         def lsd_order(self, val: int) -> decoders.BpLsdBuilder:
-            """Set LSD order parameter (default: 0)."""
+            """Set LSD order (default: 0): 0 = LSD-0, no reprocessing; > 0 = combination-sweep (OSD-CS) reprocessing of that order."""
             ...
 
         def bits_per_step(self, val: int) -> decoders.BpLsdBuilder:
@@ -3990,7 +3995,7 @@ class decoders:
             error_rate: float | None = ...,
             max_iter: int | None = ...,
             bp_schedule: str | None = ...,
-            ms_scaling_factor: float | None = ...,
+            ms_scaling_factor: float | None = 0.625,
             random_schedule_seed: int | None = ...,
             *,
             bp_method: str | None = ...,
@@ -4008,9 +4013,10 @@ class decoders:
                 max_iter: BP iteration cap; larger values may improve convergence but increase runtime.
                 bp_schedule: Update order; serial may converge sooner while parallel favors throughput.
                 bp_method: "minimum_sum" (default) or "product_sum".
-                ms_scaling_factor: Min-sum scaling (default: 0.625); ignored by product-sum.
+                ms_scaling_factor: Default 0.625; None selects product-sum. Explicit bp_method
+                    overrides this; minimum_sum with None uses 0.625, product_sum ignores scaling.
                 bits_per_step: Bits grown per step (default: 1); 0 grows all candidates.
-                lsd_order: Reprocessing order (default: 0, LSD-0).
+                lsd_order: 0 = LSD-0, no reprocessing; > 0 = combination-sweep (OSD-CS) reprocessing of that order.
                 random_schedule_seed: Makes randomized scheduling reproducible without changing its runtime bound.
             """
             ...
@@ -4203,15 +4209,18 @@ class decoders:
             max_iter: int | None = ...,
             *,
             bp_method: str | None = ...,
-            ms_scaling_factor: float | None = ...,
+            ms_scaling_factor: float | None = 0.625,
             bits_per_step: int | None = ...,
             lsd_order: int | None = ...,
         ) -> decoders.DemAwareDecoder:
             """Build a DEM decoder. None uses 30 iterations for BP+LSD, 100 for BP-OSD/min-sum.
 
             BP+LSD options: bp_method="minimum_sum", ms_scaling_factor=0.625,
-            bits_per_step=1 (0 grows all candidates), lsd_order=0 (LSD-0).
-            Product-sum ignores scaling. These keywords require decoder_type="bp_lsd".
+            bits_per_step=1 (0 grows all candidates).
+            lsd_order: 0 = LSD-0, no reprocessing; > 0 = combination-sweep (OSD-CS) reprocessing of that order.
+            None scaling selects product-sum; explicit bp_method overrides it.
+            minimum_sum with None uses 0.625; product_sum ignores scaling.
+            These keywords require decoder_type="bp_lsd".
 
             Relay-BP and union_find reject explicit max_iter. For Relay-BP,
             use pre_iter / set_max_iter through its builder or spec factory.

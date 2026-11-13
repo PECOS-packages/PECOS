@@ -432,12 +432,18 @@ fn bp_osd(
 }
 
 /// BP+LSD paper defaults. None scaling selects product-sum unless bp_method is set.
+/// Explicit minimum-sum with None uses 0.625; product-sum ignores scaling.
+/// `lsd_order`: 0 = LSD-0, no reprocessing; > 0 = combination-sweep (OSD-CS) reprocessing of that order.
 #[pyfunction]
 #[pyo3(signature = (*, error_rate=None, max_iter=None, bp_schedule=None, ms_scaling_factor=Some(pecos_decoders::bp_lsd_defaults::MS_SCALING_FACTOR), lsd_order=None, bits_per_step=None, random_schedule_seed=None, bp_method=None))]
+#[pyo3(
+    text_signature = "(*, error_rate=None, max_iter=None, bp_schedule=None, ms_scaling_factor=0.625, lsd_order=None, bits_per_step=None, random_schedule_seed=None, bp_method=None)"
+)]
 fn bp_lsd(
     error_rate: Option<f64>,
     max_iter: Option<i64>,
     bp_schedule: Option<&str>,
+    #[pyo3(from_py_with = crate::decoder_bindings::optional_bp_lsd_factor)]
     ms_scaling_factor: Option<f64>,
     lsd_order: Option<&Bound<'_, PyAny>>,
     bits_per_step: Option<&Bound<'_, PyAny>>,
@@ -445,21 +451,7 @@ fn bp_lsd(
     bp_method: Option<&str>,
 ) -> PyResult<PyDecoderSpec> {
     use pecos_decoders::bp_lsd_defaults as defaults;
-    let factor = optional_non_negative("ms_scaling_factor", ms_scaling_factor)?;
-    let factor = match bp_method {
-        None => factor,
-        Some("product_sum") => None,
-        Some("minimum_sum") => {
-            Some(factor.unwrap_or(pecos_decoders::bp_lsd_defaults::MS_SCALING_FACTOR))
-        }
-        Some(value) => {
-            return Err(invalid_choice(
-                "bp_method",
-                value,
-                "'minimum_sum', 'product_sum'",
-            ));
-        }
-    };
+    let factor = crate::decoder_bindings::resolve_bp_lsd_scaling(bp_method, ms_scaling_factor)?;
     Ok(PyDecoderSpec::new(pecos_decoders::DecoderSpec::BpLsd(
         BpLsdConfig {
             error_rate: optional_probability("error_rate", error_rate)?,
@@ -1218,6 +1210,40 @@ pub fn register_decoder_specs(module: &Bound<'_, PyModule>) -> PyResult<()> {
 #[cfg(test)]
 mod bp_lsd_tests {
     use super::*;
+
+    #[test]
+    fn bp_lsd_factory_resolves_none_and_method_aliases() {
+        Python::initialize();
+        Python::attach(|py| {
+            let factory = wrap_pyfunction!(bp_lsd, py).unwrap();
+            for (method, factor, expected) in [
+                (None, None, Some(0.625_f64)),
+                (None, Some(None), None),
+                (None, Some(Some(0.5)), Some(0.5)),
+                (Some("ps"), Some(Some(0.5)), None),
+                (Some("ms"), Some(None), Some(0.625)),
+                (Some("product_sum"), None, None),
+                (Some("minimum_sum"), Some(None), Some(0.625)),
+            ] {
+                let kwargs = pyo3::types::PyDict::new(py);
+                if let Some(method) = method {
+                    kwargs.set_item("bp_method", method).unwrap();
+                }
+                if let Some(factor) = factor {
+                    kwargs.set_item("ms_scaling_factor", factor).unwrap();
+                }
+                let spec = factory.call((), Some(&kwargs)).unwrap();
+                let spec = spec.extract::<PyRef<'_, PyDecoderSpec>>().unwrap();
+                let pecos_decoders::DecoderSpec::BpLsd(config) = &spec.inner else {
+                    panic!("expected BP+LSD spec");
+                };
+                assert_eq!(
+                    config.ms_scaling_factor.map(f64::to_bits),
+                    expected.map(f64::to_bits)
+                );
+            }
+        });
+    }
 
     #[test]
     fn bp_lsd_factory_preserves_growth_options() {

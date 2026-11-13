@@ -12,7 +12,7 @@ pub const BP_SCHEDULE: BpSchedule = BpSchedule::Parallel;
 pub const MS_SCALING_FACTOR: f64 = 0.625;
 /// LSD-0, without reprocessing.
 pub const LSD_METHOD: OsdMethod = OsdMethod::Osd0;
-/// Reprocessing order.
+/// Reprocessing order: 0 = LSD-0, no reprocessing; > 0 = combination-sweep (OSD-CS) reprocessing of that order.
 pub const LSD_ORDER: usize = 0;
 /// Bits added per cluster-growth step; an explicit zero grows all candidates.
 pub const BITS_PER_STEP: usize = 1;

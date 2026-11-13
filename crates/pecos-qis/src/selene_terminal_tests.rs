@@ -412,8 +412,10 @@ fn native_end_tail_executes_before_engine_completion() {
         );
         return;
     }
-    let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
     let (_library, _fixture, _descriptor, path, public) = install_descriptor();
+    let _env_lock = crate::test_env::ENV_MUTEX
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let program = pecos_programs::Qis::from_string(
         r#"
         define i64 @qmain(i64 %shot) #0 {

@@ -68,7 +68,8 @@ pub fn prepare(context: &BuildContext, tests: bool) -> Result<RuntimeArtifacts> 
         .target_directory
         .as_std_path()
         .join("pecos-qis-runtime")
-        .join(context.profile.directory());
+        .join(context.profile.directory())
+        .join(if tests { "tests" } else { "runtime" });
     let libraries = copy_artifacts(&artifacts?, &destination).map_err(|error| {
         Error::Config(format!(
             "Could not stage artifacts from {description}: {error}"
@@ -107,18 +108,30 @@ fn parse_artifacts(
     command: &str,
 ) -> Result<Vec<PathBuf>> {
     let mut artifacts: BTreeMap<String, BTreeSet<PathBuf>> = BTreeMap::new();
+    let mut import_libraries = BTreeSet::new();
     for message in Message::parse_stream(reader) {
         match message.map_err(|error| {
             Error::Config(format!("Invalid Cargo message from {command}: {error}"))
         })? {
             Message::CompilerArtifact(artifact) if libraries.contains(&artifact.target.name) => {
-                for file in artifact.filenames {
-                    if matches!(file.extension(), Some("so" | "dylib" | "dll")) {
-                        artifacts
-                            .entry(artifact.target.name.clone())
-                            .or_default()
-                            .insert(file.into_std_path_buf());
+                let paths = artifact
+                    .filenames
+                    .iter()
+                    .filter(|file| matches!(file.extension(), Some("so" | "dylib" | "dll")));
+                for file in paths {
+                    if artifact.target.name == "pecos_qis_ffi" && file.extension() == Some("dll") {
+                        import_libraries.extend(
+                            artifact
+                                .filenames
+                                .iter()
+                                .filter(|path| path.as_str().ends_with(".dll.lib"))
+                                .map(|path| path.as_std_path().to_path_buf()),
+                        );
                     }
+                    artifacts
+                        .entry(artifact.target.name.clone())
+                        .or_default()
+                        .insert(file.as_std_path().to_path_buf());
                 }
             }
             _ => {}
@@ -136,14 +149,13 @@ fn parse_artifacts(
         if name == "pecos_qis_ffi" {
             for ffi in &paths {
                 if ffi.extension().is_some_and(|extension| extension == "dll") {
-                    let import_library = ffi.with_extension("dll.lib");
-                    if !import_library.is_file() {
+                    if import_libraries.len() != 1 {
                         return Err(Error::Config(format!(
-                            "Missing pecos_qis_ffi import library {} from {command}; rebuild the Windows QIS FFI library",
-                            import_library.display()
+                            "Expected one pecos_qis_ffi import library in Cargo filenames, found {} ({import_libraries:?}) from {command}; rebuild the Windows QIS FFI library",
+                            import_libraries.len()
                         )));
                     }
-                    files.push(import_library);
+                    files.extend(import_libraries.iter().cloned());
                 }
             }
         }
@@ -153,13 +165,8 @@ fn parse_artifacts(
 }
 
 pub fn copy_artifacts(files: &[PathBuf], destination: &Path) -> Result<Vec<PathBuf>> {
-    std::fs::create_dir_all(destination)?;
-    for entry in std::fs::read_dir(destination)? {
-        let entry = entry?;
-        if entry.file_type()?.is_file() || entry.file_type()?.is_symlink() {
-            std::fs::remove_file(entry.path())?;
-        }
-    }
+    std::fs::create_dir_all(destination)
+        .map_err(|error| staging_error("create directory", destination, &error))?;
     let mut staged = Vec::with_capacity(files.len());
     for file in files {
         let name = file.file_name().ok_or_else(|| {
@@ -169,16 +176,44 @@ pub fn copy_artifacts(files: &[PathBuf], destination: &Path) -> Result<Vec<PathB
             ))
         })?;
         let path = destination.join(name);
-        std::fs::copy(file, &path).map_err(|error| {
+        let temporary = tempfile::NamedTempFile::new_in(destination)
+            .map_err(|error| staging_error("create temporary file in", destination, &error))?;
+        std::fs::copy(file, temporary.path()).map_err(|error| {
             Error::Config(format!(
                 "Cannot copy runtime artifact {} to {}: {error}; rebuild the runtime libraries",
                 file.display(),
+                temporary.path().display()
+            ))
+        })?;
+        temporary.persist(&path).map_err(|error| {
+            Error::Config(format!(
+                "Cannot rename runtime artifact {} to {}: {error}; close processes that have the library loaded (for example a Python session using pecos_rslib), then retry runtime staging",
+                error.file.path().display(),
                 path.display()
             ))
         })?;
         staged.push(path);
     }
+    for entry in std::fs::read_dir(destination)
+        .map_err(|error| staging_error("list", destination, &error))?
+    {
+        let entry = entry.map_err(|error| staging_error("list entry in", destination, &error))?;
+        let path = entry.path();
+        let kind = entry
+            .file_type()
+            .map_err(|error| staging_error("inspect", &path, &error))?;
+        if !staged.contains(&path) && (kind.is_file() || kind.is_symlink()) {
+            std::fs::remove_file(&path).map_err(|error| staging_error("remove", &path, &error))?;
+        }
+    }
     Ok(staged)
+}
+
+fn staging_error(operation: &str, path: &Path, error: &std::io::Error) -> Error {
+    Error::Config(format!(
+        "Cannot {operation} {}: {error}; check the path and permissions, then retry runtime staging",
+        path.display()
+    ))
 }
 
 #[cfg(test)]
@@ -268,10 +303,73 @@ mod tests {
     }
 
     #[test]
+    fn staging_preserves_loaded_files_and_delays_cleanup() {
+        let directory = tempfile::tempdir().expect("test directory");
+        let source = directory.path().join("runtime.dll");
+        std::fs::write(&source, b"new").expect("source");
+        let destination = directory.path().join("staged");
+        std::fs::create_dir(&destination).expect("destination");
+        let target = destination.join("runtime.dll");
+        std::fs::write(&target, b"old").expect("old library");
+        let stale = destination.join("stale.dll.lib");
+        std::fs::write(&stale, b"stale").expect("stale library");
+        #[cfg(unix)]
+        let mut loaded = std::fs::File::open(&target).expect("loaded library");
+        copy_artifacts(std::slice::from_ref(&source), &destination).expect("stage");
+        #[cfg(unix)]
+        {
+            use std::io::Read;
+            let mut bytes = Vec::new();
+            loaded.read_to_end(&mut bytes).expect("read old inode");
+            assert_eq!(bytes, b"old");
+        }
+        assert_eq!(std::fs::read(&target).expect("new library"), b"new");
+        assert!(!stale.exists());
+        std::fs::write(&stale, b"stale").expect("stale library");
+        std::fs::remove_file(&source).expect("missing source");
+        let error = copy_artifacts(std::slice::from_ref(&source), &destination)
+            .expect_err("copy fails")
+            .to_string();
+        for text in [
+            "copy",
+            &source.display().to_string(),
+            &destination.display().to_string(),
+        ] {
+            assert!(error.contains(text), "{error}");
+        }
+        assert_eq!(
+            std::fs::read(&target).expect("previous library remains"),
+            b"new"
+        );
+        assert!(stale.exists(), "cleanup must wait until all copies succeed");
+    }
+
+    #[test]
+    fn staging_io_errors_name_operation_and_path() {
+        let directory = tempfile::tempdir().expect("test directory");
+        let source = directory.path().join("runtime.dll");
+        std::fs::write(&source, b"new").expect("source");
+        let error = copy_artifacts(&[], &source)
+            .expect_err("not a directory")
+            .to_string();
+        assert!(error.contains("create"), "{error}");
+        assert!(error.contains(&source.display().to_string()), "{error}");
+        let destination = directory.path().join("staged");
+        let target = destination.join("runtime.dll");
+        std::fs::create_dir_all(&target).expect("directory cannot be replaced by file");
+        let error = copy_artifacts(&[source], &destination)
+            .expect_err("rename fails")
+            .to_string();
+        for text in ["rename", "close processes", "pecos_rslib", "retry"] {
+            assert!(error.contains(text), "{error}");
+        }
+        assert!(error.contains(&target.display().to_string()), "{error}");
+    }
+
+    #[test]
     fn windows_import_library_is_required_and_staged() {
-        let directory =
-            std::env::temp_dir().join(format!("pecos-cli-import-test-{}", std::process::id()));
-        std::fs::create_dir_all(&directory).expect("test directory");
+        let temporary = tempfile::tempdir().expect("test directory");
+        let directory = temporary.path();
         let dll = directory.join("pecos_qis_ffi.dll");
         let import_library = dll.with_extension("dll.lib");
         if import_library.exists() {
@@ -293,8 +391,31 @@ mod tests {
         }
         std::fs::write(&dll, b"dll").expect("fixture DLL");
         std::fs::write(&import_library, b"import").expect("fixture import library");
+        assert!(
+            parse_artifacts(recording.as_bytes(), &names, COMMAND).is_err(),
+            "an adjacent unreported import library must not be accepted"
+        );
+        message["filenames"] =
+            serde_json::json!([dll, import_library, directory.join("extra.dll.lib")]);
+        assert!(parse_artifacts(message.to_string().as_bytes(), &names, COMMAND).is_err());
+        message["filenames"] = serde_json::json!([dll, import_library]);
+        let recording = message.to_string();
         let paths =
             parse_artifacts(recording.as_bytes(), &names, COMMAND).expect("Windows artifacts");
+        let repeated = format!("{recording}\n{recording}");
+        assert_eq!(
+            parse_artifacts(repeated.as_bytes(), &names, COMMAND)
+                .expect("repeated Windows artifacts"),
+            paths
+        );
+        message["filenames"] = serde_json::json!([dll, directory.join("extra.dll.lib")]);
+        let ambiguous = format!("{recording}\n{message}");
+        let error = parse_artifacts(ambiguous.as_bytes(), &names, COMMAND)
+            .expect_err("ambiguous imports across Cargo messages")
+            .to_string();
+        for text in ["pecos_qis_ffi", "import library", "found 2", COMMAND] {
+            assert!(error.contains(text), "{error}");
+        }
         assert_eq!(paths, vec![import_library, dll]);
         let destination = directory.join("staged");
         std::fs::create_dir_all(&destination).expect("staging directory");
@@ -309,6 +430,5 @@ mod tests {
             std::fs::read(destination.join("pecos_qis_ffi.dll")).expect("staged DLL"),
             b"dll"
         );
-        std::fs::remove_dir_all(directory).expect("clean test directory");
     }
 }

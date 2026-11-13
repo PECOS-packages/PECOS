@@ -45,9 +45,16 @@ let engine = qis_engine()
 
 Cargo's build-directory layout is internal. PECOS obtains runtime library paths
 from Cargo's `compiler-artifact` JSON messages and stages them in the flat
-`<cargo target_directory>/pecos-qis-runtime/<debug|release|native>/` directory.
+`<cargo target_directory>/pecos-qis-runtime/<debug|release|native>/runtime/` directory.
+With `--tests`, the separate `.../<profile>/tests/` directory includes the test fixture.
+On Unix, each staged file is replaced atomically using a temporary file and rename.
+On Windows, a loaded library cannot be replaced until the process using it exits;
+close that process (for example a Python session using `pecos_rslib`) and retry.
+Replacement is per file, not per set: a reader racing a restage can see a mix of
+old and new libraries. Obsolete files are removed only after all replacements succeed.
+`just clean` removes the entire staged directory.
 The library set is declared in `pecos-qis`'s `package.metadata.pecos.runtime-libraries`.
-On Windows the FFI DLL's matching `.dll.lib` is included too.
+On Windows the FFI DLL's Cargo-reported `.dll.lib` is included too.
 
 For Python, run `just build-debug`; both that command and editable/wheel builds
 bundle the libraries in `pecos_rslib/_native`. For Rust tests, use
@@ -67,9 +74,11 @@ directory. Omit `--tests` when the descriptor test fixture is not needed.
 The FFI lookup order is `PECOS_QIS_FFI_PATH`, the registered bundle, then a library
 directly beside the executable. `PECOS_QIS_FFI_PATH` accepts a file or directory;
 an invalid value fails immediately. Selene runtime constructors use
-`PECOS_SELENE_DIR`, then the bundle. The separate `find_selene_runtime` utility
+`PECOS_SELENE_DIR`, then the bundle when the variable is unset. An invalid
+`PECOS_SELENE_DIR` fails immediately. The separate `find_selene_runtime` utility
 also searches `/usr/local/lib`, `/usr/lib`, and `/opt/pecos/lib`.
-Explicit directory overrides retain `deps/` and hash-suffixed filename support.
+Every directory is searched only for the exact platform filename directly inside it;
+`deps/` subdirectories and hash-suffixed filenames are never searched.
 No runtime lookup walks Cargo target directories, workspace parents, or the cwd.
 
 ## Acknowledgements

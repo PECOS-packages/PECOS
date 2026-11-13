@@ -104,14 +104,9 @@ fn run_build(profile: super::BuildProfile, rustflags: Option<&str>, cuda: bool) 
     let repo_root = get_repo_root()?;
 
     let mut context = super::build_context::BuildContext::new(profile, rustflags);
-    context.python_environment(&repo_root);
+    let venv_bin = context.python_environment(&repo_root);
     let profile_name = profile.as_str();
 
-    let venv_bin = if cfg!(windows) {
-        repo_root.join(".venv/Scripts")
-    } else {
-        repo_root.join(".venv/bin")
-    };
     // The mwpf decoder builds pure-Rust (its LP solver is the workspace
     // `highs` shim, patched in via the root Cargo.toml), so it is enabled by
     // default; PECOS_BUILD_MWPF=0 opts out.
@@ -142,7 +137,7 @@ fn run_build(profile: super::BuildProfile, rustflags: Option<&str>, cuda: bool) 
 
         println!("Building {crate_name} ({profile_name})...");
 
-        remove_stale_extension_artifacts(&repo_root, profile_name, crate_name)?;
+        remove_stale_extension_artifacts(&repo_root, profile, crate_name)?;
 
         let maturin = venv_bin.join("maturin");
         let mut cmd = Command::new(&maturin);
@@ -249,15 +244,6 @@ fn editable_install_command(repo_root: &Path) -> Command {
     cmd
 }
 
-fn cargo_profile_dir(profile: &str) -> &'static str {
-    match profile {
-        "release" => super::BuildProfile::Release,
-        "native" => super::BuildProfile::Native,
-        _ => super::BuildProfile::Debug,
-    }
-    .directory()
-}
-
 fn extension_library_filename(crate_name: &str) -> String {
     let module_name = crate_name.replace('-', "_");
 
@@ -279,41 +265,38 @@ fn extension_library_filename(crate_name: &str) -> String {
 
 fn extension_artifact_candidates(
     repo_root: &Path,
-    profile: &str,
+    profile: super::BuildProfile,
     crate_name: &str,
-) -> [PathBuf; 3] {
+) -> [PathBuf; 2] {
     let filename = extension_library_filename(crate_name);
     let target_dir = repo_root.join("target");
-    let profile_dir = target_dir.join(cargo_profile_dir(profile));
+    let profile_dir = target_dir.join(profile.directory());
 
     [
         profile_dir.join(&filename),
-        profile_dir.join("deps").join(&filename),
         target_dir.join("maturin").join(&filename),
     ]
 }
 
 fn remove_stale_extension_artifacts(
     repo_root: &Path,
-    profile: &str,
+    profile: super::BuildProfile,
     crate_name: &str,
 ) -> Result<()> {
-    let [profile_artifact, deps_artifact, maturin_staging_artifact] =
+    let [profile_artifact, maturin_staging_artifact] =
         extension_artifact_candidates(repo_root, profile, crate_name);
 
-    for path in [profile_artifact, deps_artifact] {
-        match fs::metadata(&path) {
-            Ok(metadata) if metadata.is_file() && metadata.len() == 0 => {
-                println!(
-                    "Removing zero-byte extension artifact before rebuild: {}",
-                    path.display()
-                );
-                fs::remove_file(path)?;
-            }
-            Ok(_) => {}
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => return Err(err.into()),
+    match fs::metadata(&profile_artifact) {
+        Ok(metadata) if metadata.is_file() && metadata.len() == 0 => {
+            println!(
+                "Removing zero-byte extension artifact before rebuild: {}",
+                profile_artifact.display()
+            );
+            fs::remove_file(profile_artifact)?;
         }
+        Ok(_) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err.into()),
     }
 
     match fs::metadata(&maturin_staging_artifact) {
@@ -360,25 +343,17 @@ mod tests {
     }
 
     #[test]
-    fn cargo_profile_dir_matches_cargos_target_subdir() {
-        assert_eq!(cargo_profile_dir("dev"), "debug");
-        assert_eq!(cargo_profile_dir("debug"), "debug");
-        assert_eq!(cargo_profile_dir("release"), "release");
-        assert_eq!(cargo_profile_dir("native"), "native");
-    }
-
-    #[test]
     fn extension_artifact_candidates_use_python_module_name() {
         let repo = PathBuf::from("/repo");
-        let candidates = extension_artifact_candidates(&repo, "debug", "pecos-rslib-llvm");
+        let candidates = extension_artifact_candidates(
+            &repo,
+            super::super::BuildProfile::Debug,
+            "pecos-rslib-llvm",
+        );
         let filename = extension_library_filename("pecos-rslib-llvm");
 
         assert!(filename.contains("pecos_rslib_llvm"));
         assert_eq!(candidates[0], repo.join("target/debug").join(&filename));
-        assert_eq!(
-            candidates[1],
-            repo.join("target/debug/deps").join(&filename)
-        );
-        assert_eq!(candidates[2], repo.join("target/maturin").join(&filename));
+        assert_eq!(candidates[1], repo.join("target/maturin").join(&filename));
     }
 }

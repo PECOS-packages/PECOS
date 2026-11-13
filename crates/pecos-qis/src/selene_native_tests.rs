@@ -1339,7 +1339,6 @@ mod measurement_followups {
     #[test]
     fn engine_reads_runtime_values_and_processes_end_feedback() {
         use pecos_engines::{ClassicalEngine, ControlEngine, Engine, EngineStage, StateVecEngine};
-        let _lock = crate::test_env::ENV_MUTEX.lock().unwrap();
         for mode in [0, 1, 2, 3] {
             with_descriptor(|mut runtime| {
                 runtime.reset().unwrap();
@@ -1737,7 +1736,6 @@ mod measurement_followups {
     #[test]
     fn engine_waits_for_custom_request_feedback_before_resuming_program() {
         use pecos_engines::{ClassicalEngine, ControlEngine, Engine, EngineStage, StateVecEngine};
-        let _lock = crate::test_env::ENV_MUTEX.lock().unwrap();
         with_descriptor(|mut runtime| {
             runtime.reset().unwrap();
             RELEASE.set(0);
@@ -1810,7 +1808,6 @@ mod measurement_followups {
     #[test]
     fn engine_waits_for_refcount_feedback_before_resuming_program() {
         use pecos_engines::{ClassicalEngine, ControlEngine, Engine, EngineStage, StateVecEngine};
-        let _lock = crate::test_env::ENV_MUTEX.lock().unwrap();
         with_descriptor(|mut runtime| {
             runtime.reset().unwrap();
             RELEASE.set(0);
@@ -1883,7 +1880,10 @@ mod measurement_followups {
     }
 
     fn with_descriptor(run: impl FnOnce(SeleneRuntime)) {
-        let source = crate::test_env::runtime_fixture();
+        let lock = crate::test_env::ENV_MUTEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let source = crate::test_env::runtime_fixture_locked(&lock);
         let directory = tempfile::tempdir().unwrap();
         let plugin = directory.path().join(source.file_name().unwrap());
         std::fs::copy(source, &plugin).unwrap();

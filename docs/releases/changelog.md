@@ -19,6 +19,10 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   or set `PECOS_QIS_FFI_PATH` and `PECOS_SELENE_DIR` to the directory printed by
   `pecos qis-runtime --profile debug` (`--tests` includes the Rust fixture).
   `pecos run` and `pecos compile` require explicitly prepared libraries.
+  These override directories are searched only for the exact library file
+  name, never `deps/` or Cargo hash-suffixed files, and a set
+  `PECOS_SELENE_DIR` that lacks the library is now an error instead of falling
+  back to the bundled runtime.
 
 - **Deprecated:** Core `GateType::MeasureLeaked` is now `GateType::MeasureZLeaked`
   (wire value 105 is unchanged); its deprecated associated-const alias works in

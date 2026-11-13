@@ -249,17 +249,33 @@ pub(crate) mod test_env {
     pub(crate) static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
     pub(crate) fn runtime_fixture() -> std::path::PathBuf {
-        const MISSING: &str = "pecos_qis_test_runtime missing from PECOS_SELENE_DIR; run \
-            `just rstest debug` or set PECOS_SELENE_DIR to the output of \
-            `pecos qis-runtime --profile debug --tests`";
-        std::env::var_os("PECOS_SELENE_DIR")
+        let lock = ENV_MUTEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        runtime_fixture_locked(&lock)
+    }
+
+    pub(crate) fn runtime_fixture_locked(
+        _lock: &std::sync::MutexGuard<'_, ()>,
+    ) -> std::path::PathBuf {
+        let directory = std::env::var_os("PECOS_SELENE_DIR");
+        directory
+            .as_ref()
             .and_then(|directory| {
                 crate::selene_runtimes::find_library_in_dir(
-                    std::path::Path::new(&directory),
+                    std::path::Path::new(directory),
                     pecos_qis_test_runtime::LIBRARY_NAME,
                 )
             })
-            .expect(MISSING)
+            .unwrap_or_else(|| {
+                panic!(
+                    "PECOS_SELENE_DIR={directory:?} does not contain {}; set it to the output of \
+             `pecos qis-runtime --profile <profile> --tests` using the profile you built with",
+                    crate::selene_runtimes::platform_library_name(
+                        pecos_qis_test_runtime::LIBRARY_NAME
+                    )
+                )
+            })
     }
 
     pub(crate) struct EnvVarGuard {

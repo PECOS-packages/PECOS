@@ -3,9 +3,7 @@
 //! This module implements the `QisInterface` trait for Selene's Helios compiler.
 
 use crate::qis_interface::{DynamicSyncHandle, InterfaceError, ProgramFormat, QisInterface};
-use crate::selene_runtimes::{
-    bundled_library, find_library_in_dir, platform_hashed_library_pattern, platform_library_name,
-};
+use crate::selene_runtimes::{bundled_library, find_library_in_dir, platform_library_name};
 use libloading::{Library, Symbol};
 use log::{debug, error, info, warn};
 use pecos_qis_ffi_types::OperationCollector;
@@ -896,8 +894,7 @@ impl QisHeliosInterface {
     /// then a library directly next to the running executable.
     /// Prepare development libraries with `pecos qis-runtime` or `just build-debug`.
     ///
-    /// Unlike `PECOS_SELENE_DIR`, which is one source in a fallthrough search,
-    /// a set-but-invalid `PECOS_QIS_FFI_PATH` fails loudly because it is an
+    /// A set-but-invalid `PECOS_QIS_FFI_PATH` fails loudly because it is an
     /// authoritative per-purpose override.
     fn find_pecos_qis_lib() -> Result<PathBuf, InterfaceError> {
         let lib_name = platform_library_name("pecos_qis_ffi");
@@ -909,7 +906,6 @@ impl QisHeliosInterface {
 
         if let Some(override_path) = std::env::var_os("PECOS_QIS_FFI_PATH") {
             let override_path = PathBuf::from(override_path);
-            let hashed_pattern = platform_hashed_library_pattern("pecos_qis_ffi");
             if override_path.is_file() {
                 return Ok(override_path);
             }
@@ -920,7 +916,7 @@ impl QisHeliosInterface {
             }
 
             return Err(InterfaceError::ExecutionError(format!(
-                "PECOS_QIS_FFI_PATH is set to {}, but no library was found. Searched it as a direct file and searched for {lib_name} and {hashed_pattern} in the directory and its deps subdirectory. Set PECOS_QIS_FFI_PATH and PECOS_SELENE_DIR to the directory printed by `pecos qis-runtime --profile debug`, use `pecos rust test` / `just rstest debug`, or run `just build-debug` for Python",
+                "PECOS_QIS_FFI_PATH is set to {}, but no library was found. Searched it as a direct file or for {lib_name} directly in the directory. Set PECOS_QIS_FFI_PATH and PECOS_SELENE_DIR to the directory printed by `pecos qis-runtime --profile <profile>` using the profile you built with, use `pecos rust test --profile <profile>`, or run `pecos python build --profile <profile>` with the same profile (for example `just build-debug` for debug)",
                 override_path.display()
             )));
         }
@@ -952,7 +948,7 @@ impl QisHeliosInterface {
             return Ok(path);
         }
         Err(InterfaceError::ExecutionError(format!(
-            "Failed to find {lib_name}. No registered bundle or executable-adjacent library at {}. Set PECOS_QIS_FFI_PATH and PECOS_SELENE_DIR to the directory printed by `pecos qis-runtime --profile debug` (add --tests for Rust tests), use `pecos rust test` / `just rstest debug`, or run `just build-debug` for Python.",
+            "Failed to find {lib_name}. No registered bundle or executable-adjacent library at {}. Set PECOS_QIS_FFI_PATH and PECOS_SELENE_DIR to the directory printed by `pecos qis-runtime --profile <profile>` using the profile you built with (add --tests for Rust tests), use `pecos rust test --profile <profile>`, or run `pecos python build --profile <profile>` with the same profile (for example `just build-debug` for debug).",
             path.display()
         )))
     }
@@ -4485,13 +4481,13 @@ attributes #0 = { "EntryPoint" }
     }
 
     #[test]
-    fn qis_ffi_env_accepts_directory_with_hashed_deps_library() {
+    fn qis_ffi_env_rejects_directory_with_hashed_deps_library() {
         // The process-wide QIS FFI singleton reads PECOS_QIS_FFI_PATH on first load,
         // possibly from a parallel test, so change it only in a child process.
         const CHILD_ENV: &str = "PECOS_TEST_QIS_FFI_HASHED_DIR";
         if std::env::var_os(CHILD_ENV).is_none() {
             run_test_in_child(
-                "executor::tests::qis_ffi_env_accepts_directory_with_hashed_deps_library",
+                "executor::tests::qis_ffi_env_rejects_directory_with_hashed_deps_library",
                 &[(CHILD_ENV, "1".as_ref())],
             );
             return;
@@ -4510,10 +4506,17 @@ attributes #0 = { "EntryPoint" }
         File::create(&library_path).expect("create hashed library");
         let _env = EnvVarGuard::set("PECOS_QIS_FFI_PATH", temp_dir.path());
 
-        assert_eq!(
-            QisHeliosInterface::find_pecos_qis_lib().expect("find hashed library"),
-            library_path
-        );
+        let error = QisHeliosInterface::find_pecos_qis_lib()
+            .expect_err("unreported hashed library")
+            .to_string();
+        for text in [
+            "PECOS_QIS_FFI_PATH",
+            &temp_dir.path().display().to_string(),
+            &exact_name,
+            "pecos qis-runtime --profile <profile>",
+        ] {
+            assert!(error.contains(text), "{error}");
+        }
     }
 
     #[test]

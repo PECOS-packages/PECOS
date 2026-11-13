@@ -1,7 +1,7 @@
 //! Shared process environment for Cargo, runtime preparation, and Maturin.
 use super::BuildProfile;
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 pub struct BuildContext {
@@ -38,7 +38,7 @@ impl BuildContext {
         );
     }
 
-    pub fn python_environment(&mut self, root: &Path) {
+    pub fn python_environment(&mut self, root: &Path) -> PathBuf {
         let bin = root.join(if cfg!(windows) {
             ".venv/Scripts"
         } else {
@@ -69,6 +69,7 @@ impl BuildContext {
             self.env.insert("LIBRARY_PATH".into(), "/usr/lib".into());
             self.env.insert("CARGO_CACHE_RUSTC_INFO".into(), "0".into());
         }
+        bin
     }
 
     pub fn apply(&self, command: &mut Command) {

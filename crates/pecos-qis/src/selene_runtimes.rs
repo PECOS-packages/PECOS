@@ -66,72 +66,10 @@ pub(crate) fn platform_library_name(lib_name: &str) -> String {
     format!("{lib_prefix}{lib_name}.{lib_ext}")
 }
 
-pub(crate) fn platform_hashed_library_pattern(lib_name: &str) -> String {
-    let (lib_prefix, lib_ext) = platform_library_parts();
-    format!("{lib_prefix}{lib_name}-*.{lib_ext}")
-}
-
-/// Find an exact or Cargo hash-suffixed dynamic library in a directory or its `deps/`.
+/// Find only the exact platform library filename directly in this directory.
 pub(crate) fn find_library_in_dir(dir: &Path, lib_name: &str) -> Option<PathBuf> {
-    let (lib_prefix, lib_ext) = platform_library_parts();
-    let exact_name = platform_library_name(lib_name);
-    let hashed_stem_prefix = format!("{lib_prefix}{lib_name}-");
-
-    // Cargo dependency artifacts are fresher than copied top-level artifacts.
-    for search_dir in [dir.join("deps"), dir.to_path_buf()] {
-        let exact_path = search_dir.join(&exact_name);
-        if exact_path.is_file() {
-            return Some(exact_path);
-        }
-
-        let mut hashed_paths = std::fs::read_dir(&search_dir)
-            .into_iter()
-            .flatten()
-            .flatten()
-            .map(|entry| entry.path())
-            .filter(|path| {
-                path.is_file()
-                    && path
-                        .extension()
-                        .is_some_and(|ext| ext.eq_ignore_ascii_case(lib_ext))
-                    && path
-                        .file_stem()
-                        .and_then(|stem| stem.to_str())
-                        .and_then(|stem| stem.strip_prefix(&hashed_stem_prefix))
-                        .is_some_and(|hash| !hash.is_empty())
-            })
-            .collect::<Vec<_>>();
-
-        let modified_times = hashed_paths
-            .iter()
-            .map(|path| path.metadata().and_then(|metadata| metadata.modified()))
-            .collect::<Result<Vec<_>, _>>();
-        if let Ok(modified_times) = modified_times {
-            let mut paths_with_times = hashed_paths
-                .into_iter()
-                .zip(modified_times)
-                .collect::<Vec<_>>();
-            paths_with_times.sort_unstable_by(
-                |(left_path, left_time), (right_path, right_time)| {
-                    right_time
-                        .cmp(left_time)
-                        .then_with(|| left_path.cmp(right_path))
-                },
-            );
-            if let Some((path, _)) = paths_with_times.into_iter().next() {
-                return Some(path);
-            }
-            continue;
-        }
-
-        // Some filesystems do not expose modification times.
-        hashed_paths.sort_unstable();
-        if let Some(path) = hashed_paths.into_iter().next() {
-            return Some(path);
-        }
-    }
-
-    None
+    let path = dir.join(platform_library_name(lib_name));
+    path.is_file().then_some(path)
 }
 
 /// Error type for runtime fetching
@@ -253,14 +191,18 @@ pub fn selene_soft_rz_runtime() -> Result<SeleneRuntime, RuntimeFetchError> {
 /// Find a runtime in `PECOS_SELENE_DIR`, then the registered host bundle.
 /// Cargo build directories are internal; `pecos qis-runtime` stages JSON-reported artifacts.
 fn find_built_selene_runtime(lib_name: &str) -> Result<PathBuf, RuntimeFetchError> {
-    if let Some(path) = std::env::var_os("PECOS_SELENE_DIR")
-        .and_then(|dir| find_library_in_dir(Path::new(&dir), lib_name))
-        .or_else(|| bundled_library(lib_name))
-    {
-        return Ok(path);
+    if let Some(directory) = std::env::var_os("PECOS_SELENE_DIR") {
+        let directory = Path::new(&directory);
+        return find_library_in_dir(directory, lib_name).ok_or_else(|| {
+            RuntimeFetchError::InvalidPath(format!(
+                "PECOS_SELENE_DIR is set to {}, but {} was not found directly in that directory. Prepare it with `pecos qis-runtime --profile <profile>` (add --tests for Rust tests), using the profile you built with",
+                directory.display(), platform_library_name(lib_name)
+            ))
+        });
     }
-    Err(RuntimeFetchError::InvalidPath(format!(
-        "Selene runtime {lib_name} not found. Set PECOS_SELENE_DIR and PECOS_QIS_FFI_PATH to the directory printed by `pecos qis-runtime --profile debug` (add --tests for Rust tests), use `pecos rust test` / `just rstest debug`, or run `just build-debug` for Python."
+    bundled_library(lib_name).ok_or_else(|| RuntimeFetchError::InvalidPath(format!(
+        "Selene runtime {} not found. Set PECOS_SELENE_DIR and PECOS_QIS_FFI_PATH to the directory printed by `pecos qis-runtime --profile <profile>` (add --tests for Rust tests), using the profile you built with, or use `pecos rust test --profile <profile>`. For Python, run `pecos python build --profile <profile>` with the same profile (for example `just build-debug` for debug).",
+        platform_library_name(lib_name)
     )))
 }
 
@@ -271,13 +213,8 @@ fn find_built_selene_runtime(lib_name: &str) -> Result<PathBuf, RuntimeFetchErro
 /// 2. Registered host bundle
 /// 3. System library paths (/usr/local/lib, /usr/lib, /opt/pecos/lib)
 ///
-/// Hash-suffixed matching is anchored on the complete requested library name
-/// followed by `-`. A partial name such as `"simple"` therefore does not match
-/// `selene_simple_runtime-*` artifacts.
-///
-/// `PECOS_SELENE_DIR` is one source in this fallthrough search, so a bad value
-/// warns and continues. In contrast, `PECOS_QIS_FFI_PATH` is an authoritative
-/// per-purpose override and fails loudly when set incorrectly.
+/// Only the exact platform filename in each directory is considered.
+/// An invalid `PECOS_SELENE_DIR` override warns and stops the search.
 #[must_use]
 pub fn find_selene_runtime(name: &str) -> Option<PathBuf> {
     let lib_name = if name.starts_with("selene_") {
@@ -286,7 +223,6 @@ pub fn find_selene_runtime(name: &str) -> Option<PathBuf> {
         format!("selene_{name}")
     };
     let filename = platform_library_name(&lib_name);
-    let hashed_pattern = platform_hashed_library_pattern(&lib_name);
 
     // Check environment variable
     if let Some(selene_dir) = std::env::var_os("PECOS_SELENE_DIR") {
@@ -295,9 +231,10 @@ pub fn find_selene_runtime(name: &str) -> Option<PathBuf> {
             return Some(path);
         }
         log::warn!(
-            "PECOS_SELENE_DIR is set to {}, but neither {filename} nor {hashed_pattern} was found there or in its deps directory",
+            "PECOS_SELENE_DIR is set to {}, but {filename} was not found directly in that directory. Prepare it with `pecos qis-runtime --profile <profile>` using the profile you built with",
             selene_dir.display()
         );
+        return None;
     }
 
     if let Some(path) = bundled_library(&lib_name) {
@@ -307,7 +244,7 @@ pub fn find_selene_runtime(name: &str) -> Option<PathBuf> {
     // Check system paths
     for sys_path in &["/usr/local/lib", "/usr/lib", "/opt/pecos/lib"] {
         let path = PathBuf::from(sys_path).join(&filename);
-        if path.exists() {
+        if path.is_file() {
             return Some(path);
         }
     }
@@ -365,7 +302,6 @@ mod tests {
     use super::*;
     use crate::test_env::{ENV_MUTEX, EnvVarGuard, run_test_in_child};
     use std::fs::File;
-    use std::time::{Duration, SystemTime};
 
     #[test]
     fn no_bundle_or_environment_does_not_search_cargo_layout() {
@@ -398,7 +334,7 @@ mod tests {
             "PECOS_SELENE_DIR",
             "PECOS_QIS_FFI_PATH",
             "pecos qis-runtime",
-            "just rstest debug",
+            "pecos python build --profile <profile>",
             "just build-debug",
         ] {
             assert!(error.contains(text), "{error}");
@@ -430,6 +366,47 @@ mod tests {
     }
 
     #[test]
+    fn invalid_override_does_not_fall_back_to_registered_bundle() {
+        const CHILD: &str = "PECOS_TEST_SELENE_INVALID_OVERRIDE_BUNDLE";
+        if std::env::var_os(CHILD).is_none() {
+            crate::test_env::join_test_child(crate::test_env::spawn_test_child_removing(
+                "selene_runtimes::tests::invalid_override_does_not_fall_back_to_registered_bundle",
+                &[(CHILD, "1".as_ref())],
+                &["PECOS_SELENE_DIR", "PECOS_QIS_FFI_PATH"],
+            ));
+            return;
+        }
+        let _lock = ENV_MUTEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let name = "selene_simple_runtime";
+        let bundle = tempfile::tempdir().expect("bundle directory");
+        let filename = platform_library_name(name);
+        let library = bundle.path().join(&filename);
+        File::create(&library).expect("bundled library");
+        set_bundled_library_dir(bundle.path()).expect("register bundle");
+        assert_eq!(
+            find_built_selene_runtime(name).expect("bundle lookup"),
+            library
+        );
+        assert_eq!(find_selene_runtime(name), Some(library));
+
+        let empty = tempfile::tempdir().expect("invalid override directory");
+        let _invalid = EnvVarGuard::set("PECOS_SELENE_DIR", empty.path());
+        let error = find_built_selene_runtime(name)
+            .expect_err("invalid override must not fall back to bundle")
+            .to_string();
+        for text in [
+            "PECOS_SELENE_DIR",
+            &empty.path().display().to_string(),
+            &filename,
+        ] {
+            assert!(error.contains(text), "{error}");
+        }
+        assert_eq!(find_selene_runtime(name), None);
+    }
+
+    #[test]
     fn bundled_runtime_defaults_satisfy_selene_0_3_required_arguments() {
         assert_eq!(SIMPLE_RUNTIME_DEFAULT_INIT_ARGS.len(), 7);
         assert!(
@@ -458,13 +435,13 @@ mod tests {
     }
 
     #[test]
-    fn test_find_selene_runtime_in_hashed_env_deps_dir() {
+    fn test_find_selene_runtime_rejects_hashed_env_deps_dir() {
         // Every runtime lookup reads PECOS_SELENE_DIR, including lookups in tests
         // that do not hold ENV_MUTEX, so change it only in a child process.
         const CHILD_ENV: &str = "PECOS_TEST_HASHED_ENV_DEPS_DIR";
         if std::env::var_os(CHILD_ENV).is_none() {
             run_test_in_child(
-                "selene_runtimes::tests::test_find_selene_runtime_in_hashed_env_deps_dir",
+                "selene_runtimes::tests::test_find_selene_runtime_rejects_hashed_env_deps_dir",
                 &[(CHILD_ENV, "1".as_ref())],
             );
             return;
@@ -482,37 +459,35 @@ mod tests {
         File::create(&runtime_path).expect("create hashed runtime library");
         let _env = EnvVarGuard::set("PECOS_SELENE_DIR", temp_dir.path());
 
-        assert_eq!(
-            find_selene_runtime("selene_simple_runtime"),
-            Some(runtime_path)
-        );
+        assert_eq!(find_selene_runtime("selene_simple_runtime"), None);
+        let error = find_built_selene_runtime("selene_simple_runtime")
+            .expect_err("invalid override")
+            .to_string();
+        for text in [
+            "PECOS_SELENE_DIR",
+            &temp_dir.path().display().to_string(),
+            &platform_library_name("selene_simple_runtime"),
+            "pecos qis-runtime --profile <profile>",
+        ] {
+            assert!(error.contains(text), "{error}");
+        }
     }
 
     #[test]
-    fn library_scan_prefers_newest_hashed_dep_over_top_level_exact() {
-        let temp_dir = tempfile::tempdir().expect("create temp directory");
-        let exact_path = temp_dir
-            .path()
-            .join(platform_library_name("selene_simple_runtime"));
-        File::create(exact_path).expect("create top-level exact library");
-
-        let deps_dir = temp_dir.path().join("deps");
-        std::fs::create_dir(&deps_dir).expect("create deps directory");
-        let (prefix, ext) = platform_library_parts();
-        let older_path = deps_dir.join(format!("{prefix}selene_simple_runtime-aaa-old.{ext}"));
-        let older_file = File::create(older_path).expect("create older hashed library");
-        older_file
-            .set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(1))
-            .expect("set older modification time");
-        let newer_path = deps_dir.join(format!("{prefix}selene_simple_runtime-zzz-new.{ext}"));
-        let newer_file = File::create(&newer_path).expect("create newer hashed library");
-        newer_file
-            .set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(2))
-            .expect("set newer modification time");
-
-        assert_eq!(
-            find_library_in_dir(temp_dir.path(), "selene_simple_runtime"),
-            Some(newer_path)
-        );
+    fn library_scan_only_accepts_exact_file_in_requested_directory() {
+        let directory = tempfile::tempdir().expect("test directory");
+        let name = "selene_simple_runtime";
+        let exact = directory.path().join(platform_library_name(name));
+        let deps = directory.path().join("deps");
+        std::fs::create_dir(&deps).expect("deps");
+        File::create(deps.join(platform_library_name(name))).expect("deps exact library");
+        let (prefix, extension) = platform_library_parts();
+        for root in [directory.path(), deps.as_path()] {
+            File::create(root.join(format!("{prefix}{name}-abc123.{extension}")))
+                .expect("hashed library");
+        }
+        assert_eq!(find_library_in_dir(directory.path(), name), None);
+        File::create(&exact).expect("exact library");
+        assert_eq!(find_library_in_dir(directory.path(), name), Some(exact));
     }
 }

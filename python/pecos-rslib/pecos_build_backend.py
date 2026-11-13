@@ -21,6 +21,7 @@ import subprocess
 import tempfile
 import tomllib
 import zipfile
+from contextlib import contextmanager
 from pathlib import Path
 
 import maturin
@@ -103,6 +104,9 @@ def _runtime_libraries(options: list[str]) -> frozenset[str]:
                     "[package.metadata.pecos] runtime-libraries as a non-empty list of library names"
                 )
                 raise RuntimeError(msg)
+            if "pecos_qis_ffi" not in libraries:
+                msg = "pecos-qis [package.metadata.pecos] runtime-libraries must include pecos_qis_ffi"
+                raise RuntimeError(msg)
             return frozenset(libraries)
     msg = f"{shlex.join(command)} did not report pecos-qis; run from the PECOS workspace"
     raise RuntimeError(msg)
@@ -126,6 +130,7 @@ def _runtime_artifacts(config_settings: dict | None, *, editable: bool) -> list[
         *options,
     ]
     artifacts: dict[str, Path] = {}
+    import_libraries: set[Path] = set()
     for line in _cargo_output(command).splitlines():
         message = json.loads(line)
         if message.get("reason") != "compiler-artifact":
@@ -136,6 +141,16 @@ def _runtime_artifacts(config_settings: dict | None, *, editable: bool) -> list[
         for filename in message["filenames"]:
             path = Path(filename)
             if path.suffix in {".so", ".dylib", ".dll"}:
+                if name == "pecos_qis_ffi" and path.suffix == ".dll":
+                    imports = [Path(file) for file in message["filenames"] if file.endswith(".dll.lib")]
+                    if len(imports) != 1:
+                        msg = (
+                            f"Expected one pecos_qis_ffi import library in Cargo filenames, "
+                            f"found {len(imports)} ({imports}) from {shlex.join(command)}; "
+                            "rebuild the Windows QIS FFI library"
+                        )
+                        raise RuntimeError(msg)
+                    import_libraries.update(imports)
                 if name in artifacts and artifacts[name] != path:
                     msg = f"Ambiguous runtime artifacts for {name}: {artifacts[name]} and {path} from {shlex.join(command)}"
                     raise RuntimeError(msg)
@@ -147,11 +162,13 @@ def _runtime_artifacts(config_settings: dict | None, *, editable: bool) -> list[
     files = list(artifacts.values())
     ffi = artifacts["pecos_qis_ffi"]
     if ffi.suffix == ".dll":
-        import_lib = ffi.with_suffix(".dll.lib")
-        if not import_lib.is_file():
-            msg = f"Cargo did not produce the QIS runtime import library: {import_lib} from {shlex.join(command)}"
+        if len(import_libraries) != 1:
+            msg = (
+                f"Expected one pecos_qis_ffi import library, found {len(import_libraries)} "
+                f"({import_libraries}) from {shlex.join(command)}; rebuild the Windows QIS FFI library"
+            )
             raise RuntimeError(msg)
-        files.append(import_lib)
+        files.extend(import_libraries)
     return files
 
 
@@ -204,11 +221,59 @@ def build_editable(
     """Make the same runtime payload available to an editable installation."""
     artifacts = _runtime_artifacts(config_settings, editable=True)
     filename = maturin.build_editable(wheel_directory, config_settings, metadata_directory)
-    lib_dir = _ROOT / _PACKAGE_LIB_DIR
-    lib_dir.mkdir(parents=True, exist_ok=True)
-    for old in lib_dir.iterdir():
-        if old.is_file():
-            old.unlink()
-    for artifact in artifacts:
-        shutil.copy2(artifact, lib_dir / artifact.name)
+    _stage_runtime(artifacts, _ROOT / _PACKAGE_LIB_DIR)
     return filename
+
+
+@contextmanager
+def _staging_io(
+    operation: str,
+    *,
+    remedy: str = "check the path and permissions, then retry runtime staging",
+):
+    """Give one filesystem step its operation, paths and retry guidance."""
+    try:
+        yield
+    except OSError as error:
+        msg = f"Cannot {operation}: {error}; {remedy}"
+        raise RuntimeError(msg) from error
+
+
+def _stage_runtime(artifacts: list[Path], lib_dir: Path) -> None:
+    """Replace complete files before removing obsolete editable runtime libraries."""
+    with _staging_io(f"create directory {lib_dir}"):
+        lib_dir.mkdir(parents=True, exist_ok=True)
+    _replace_runtime(artifacts, lib_dir)
+
+
+def _replace_runtime(artifacts: list[Path], lib_dir: Path) -> None:
+    for artifact in artifacts:
+        with (
+            _staging_io(f"create temporary file in {lib_dir}"),
+            tempfile.NamedTemporaryFile(dir=lib_dir, delete=False) as temporary,
+        ):
+            temporary_path = Path(temporary.name)
+        try:
+            with _staging_io(f"copy {artifact} to {temporary_path}"):
+                shutil.copy2(artifact, temporary_path)
+            with _staging_io(
+                f"rename {temporary_path} to {lib_dir / artifact.name}",
+                remedy="close processes that have the library loaded "
+                "(for example a Python session using pecos_rslib), then retry runtime staging",
+            ):
+                os.replace(temporary_path, lib_dir / artifact.name)
+        finally:
+            with _staging_io(f"remove {temporary_path}"):
+                if temporary_path.exists():
+                    temporary_path.unlink()
+    names = {artifact.name for artifact in artifacts}
+    with _staging_io(f"list {lib_dir}"):
+        entries = list(lib_dir.iterdir())
+    for old in entries:
+        if old.name in names:
+            continue
+        with _staging_io(f"inspect {old}"):
+            removable = old.is_file() or old.is_symlink()
+        if removable:
+            with _staging_io(f"remove {old}"):
+                old.unlink()

@@ -4102,6 +4102,7 @@ dependencies = [
  "pecos-build",
  "pecos-core",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

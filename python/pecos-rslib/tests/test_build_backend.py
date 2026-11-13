@@ -116,11 +116,18 @@ def test_windows_bundle_requires_matching_import_library(tmp_path: Path, monkeyp
         "run",
         lambda command, **kwargs: _cargo_output(command, messages),
     )
-    with pytest.raises(RuntimeError, match="QIS runtime import library"):
+    with pytest.raises(RuntimeError, match="pecos_qis_ffi import library"):
         backend._runtime_artifacts(None, editable=False)
     import_lib = tmp_path / "pecos_qis_ffi.dll.lib"
     import_lib.write_bytes(b"import library")
+    with pytest.raises(RuntimeError, match="pecos_qis_ffi import library"):
+        backend._runtime_artifacts(None, editable=False)
+    message = next(message for message in messages if message["target"]["name"] == "pecos_qis_ffi")
+    message["filenames"].append(str(import_lib))
     assert import_lib in backend._runtime_artifacts(None, editable=False)
+    message["filenames"].append(str(tmp_path / "extra.dll.lib"))
+    with pytest.raises(RuntimeError, match="pecos_qis_ffi import library"):
+        backend._runtime_artifacts(None, editable=False)
 
 
 @pytest.mark.parametrize("key", ["build-args", "maturin.build-args"])
@@ -166,7 +173,16 @@ def test_metadata_uses_manifest_and_cargo_policy(flags: str, monkeypatch: pytest
     ]
 
 
-@pytest.mark.parametrize("metadata", [None, {}, {"pecos": {}}, {"pecos": {"runtime-libraries": []}}])
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        None,
+        {},
+        {"pecos": {}},
+        {"pecos": {"runtime-libraries": []}},
+        {"pecos": {"runtime-libraries": ["selene_simple_runtime"]}},
+    ],
+)
 def test_metadata_without_runtime_libraries_names_the_manifest_key(
     metadata: dict | None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -179,3 +195,62 @@ def test_metadata_without_runtime_libraries_names_the_manifest_key(
     )
     with pytest.raises(RuntimeError, match=r"\[package\.metadata\.pecos\] runtime-libraries"):
         backend._runtime_libraries([])
+
+
+def test_editable_staging_preserves_loaded_files_and_delays_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed copy leaves old files intact; renaming publishes only complete files."""
+    source = tmp_path / "runtime.dll"
+    source.write_bytes(b"new")
+    directory = tmp_path / "_native"
+    directory.mkdir()
+    staged = directory / source.name
+    staged.write_bytes(b"old")
+    stale = directory / "stale.dll.lib"
+    stale.write_bytes(b"stale")
+    replace = backend.os.replace
+    replacements = []
+
+    def checked_replace(temporary: Path, destination: Path) -> None:
+        assert temporary.parent == directory
+        assert temporary.read_bytes() == b"new"
+        assert destination.read_bytes() == b"old"
+        replacements.append(destination)
+        replace(temporary, destination)
+
+    monkeypatch.setattr(backend.os, "replace", checked_replace)
+    backend._stage_runtime([source], directory)
+    assert replacements == [staged]
+    assert staged.read_bytes() == b"new"
+    assert not stale.exists()
+    stale.write_bytes(b"stale")
+    source.unlink()
+    with pytest.raises(RuntimeError, match="Cannot copy"):
+        backend._stage_runtime([source], directory)
+    assert staged.read_bytes() == b"new"
+    assert stale.read_bytes() == b"stale"
+
+
+def test_staging_rename_failure_explains_loaded_library_remedy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A blocked replacement preserves the old payload and explains how to retry."""
+    source = tmp_path / "runtime.dll"
+    source.write_bytes(b"new")
+    directory = tmp_path / "_native"
+    directory.mkdir()
+    target = directory / source.name
+    target.write_bytes(b"old")
+    stale = directory / "stale.dll"
+    stale.write_bytes(b"stale")
+
+    def blocked_replace(source: Path, destination: Path) -> None:
+        raise PermissionError(destination)
+
+    monkeypatch.setattr(backend.os, "replace", blocked_replace)
+    with pytest.raises(RuntimeError, match="Cannot rename") as error:
+        backend._stage_runtime([source], directory)
+    for text in [str(target), "close processes", "pecos_rslib", "retry"]:
+        assert text in str(error.value)
+    assert target.read_bytes() == b"old"
+    assert stale.read_bytes() == b"stale"
+    assert set(directory.iterdir()) == {target, stale}

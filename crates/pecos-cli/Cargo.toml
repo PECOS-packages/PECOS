@@ -22,6 +22,7 @@ clap_complete = { workspace = true }
 env_logger = { workspace = true }
 serde_json = { workspace = true }
 cargo_metadata.workspace = true
+tempfile.workspace = true
 
 # Build tools (LLVM/CUDA detection, installation)
 pecos-build = { workspace = true }

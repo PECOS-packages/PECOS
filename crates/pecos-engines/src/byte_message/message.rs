@@ -12,6 +12,17 @@ use pecos_core::{Angle64, QubitId};
 use std::fmt::Write as _;
 use std::mem::size_of;
 
+// Thread-local construction counts let source-admission tests distinguish real
+// serialization from validation without timing or process-wide allocator noise.
+#[cfg(test)]
+std::thread_local! {
+    static CREATED_MESSAGES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+#[cfg(test)]
+pub(crate) fn created_message_count() -> usize {
+    CREATED_MESSAGES.get()
+}
+
 /// A message encoded using the PECOS byte protocol
 ///
 /// Uses Vec<u32> for guaranteed 4-byte alignment matching our protocol design
@@ -25,6 +36,8 @@ impl ByteMessage {
     /// Create a new `ByteMessage` from raw bytes
     #[must_use]
     pub fn new(bytes: &[u8]) -> Self {
+        #[cfg(test)]
+        CREATED_MESSAGES.set(CREATED_MESSAGES.get() + 1);
         let byte_len = bytes.len();
 
         if byte_len == 0 {

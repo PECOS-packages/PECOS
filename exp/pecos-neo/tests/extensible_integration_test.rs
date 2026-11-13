@@ -717,8 +717,8 @@ fn test_mixed_native_and_decomposed() {
     }
 
     // Middle 3 should be CX
-    for i in 1..4 {
-        match &resolved.ops[i] {
+    for (i, operation) in resolved.ops.iter().enumerate().take(4).skip(1) {
+        match operation {
             pecos_neo::extensible::ResolvedOp::Gate { gate_id, .. } => {
                 assert_eq!(*gate_id, gates::CX);
             }

@@ -248,6 +248,20 @@ pub(crate) mod test_env {
     // reads or mutates environment state must hold this lock.
     pub(crate) static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
+    pub(crate) fn runtime_fixture() -> std::path::PathBuf {
+        const MISSING: &str = "pecos_qis_test_runtime missing from PECOS_SELENE_DIR; run \
+            `just rstest debug` or set PECOS_SELENE_DIR to the output of \
+            `pecos qis-runtime --profile debug --tests`";
+        std::env::var_os("PECOS_SELENE_DIR")
+            .and_then(|directory| {
+                crate::selene_runtimes::find_library_in_dir(
+                    std::path::Path::new(&directory),
+                    pecos_qis_test_runtime::LIBRARY_NAME,
+                )
+            })
+            .expect(MISSING)
+    }
+
     pub(crate) struct EnvVarGuard {
         key: &'static str,
         previous: Option<OsString>,
@@ -314,11 +328,24 @@ pub(crate) mod test_env {
 
     /// Spawn with a stable inherited environment, releasing `ENV_MUTEX` before waiting.
     pub(crate) fn spawn_test_child(test_name: &str, envs: &[(&str, &OsStr)]) -> TestChild {
+        spawn_test_child_removing(test_name, envs, &[])
+    }
+
+    pub(crate) fn spawn_test_child_removing(
+        test_name: &str,
+        envs: &[(&str, &OsStr)],
+        remove: &[&str],
+    ) -> TestChild {
         let mut process = {
             let _env_lock = ENV_MUTEX
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            std::process::Command::new(std::env::current_exe().expect("test executable"))
+            let mut command =
+                std::process::Command::new(std::env::current_exe().expect("test executable"));
+            for key in remove {
+                command.env_remove(key);
+            }
+            command
                 .args(["--exact", test_name, "--nocapture"])
                 .envs(envs.iter().copied())
                 .stdout(std::process::Stdio::piped())

@@ -394,9 +394,12 @@ jobs:
         maturin build --locked --manifest-path python/pecos-rslib-llvm/Cargo.toml --out dist/pecos-rslib-llvm
 
     - name: Test QIS executor recovery and runtime symbol binding
+      shell: bash
       if: runner.os == 'macOS' || runner.os == 'Windows'
       run: |
         cargo +stable test --locked -p pecos-qis-ffi --lib
+        runtime_dir=$(cargo +stable run --locked -p pecos-cli -- qis-runtime --profile debug --tests)
+        export PECOS_QIS_FFI_PATH="$runtime_dir" PECOS_SELENE_DIR="$runtime_dir"
         cargo +stable test --locked -p pecos-qis --lib executor::tests
 
     - name: Test StabVec numerical reference contract

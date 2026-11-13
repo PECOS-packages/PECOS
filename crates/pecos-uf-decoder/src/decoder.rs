@@ -347,8 +347,8 @@ impl UfDecoder {
         let boundary = self.num_detectors;
         let n = boundary + 1;
         // Bulk-fill each array (SIMD-friendly).
-        for i in 0..n {
-            self.parent[i] = i as u32;
+        for (i, parent) in self.parent.iter_mut().enumerate().take(n) {
+            *parent = i as u32;
         }
         self.rank[..n].fill(0);
         self.parity[..n].fill(false);

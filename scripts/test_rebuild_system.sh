@@ -290,10 +290,15 @@ main() {
     # Build the CLI first
     log_info "Building PECOS CLI..."
     cd "$PROJECT_ROOT"
-    cargo build --locked -p pecos-cli --quiet || {
+    cargo build --locked -p pecos-cli --features runtime --quiet || {
         log_error "Failed to build PECOS CLI"
         exit 1
     }
+
+    # Use this runtime-enabled binary for preparation and subsequent compile calls.
+    local runtime_dir
+    runtime_dir=$("$PROJECT_ROOT/target/debug/pecos" qis-runtime --profile debug)
+    export PECOS_QIS_FFI_PATH="$runtime_dir" PECOS_SELENE_DIR="$runtime_dir"
 
     # Create test directory
     mkdir -p "$TEST_DIR"

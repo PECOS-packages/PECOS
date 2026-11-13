@@ -69,6 +69,17 @@ enum Commands {
     Examples(ExamplesArgs),
 
     // === Dev Tool Commands (always available) ===
+    /// Prepare Cargo-reported QIS runtime libraries and print their directory
+    QisRuntime {
+        #[arg(long, value_enum, default_value = "dev")]
+        profile: cli::BuildProfile,
+        /// Include the runtime descriptor fixture for Rust tests
+        #[arg(long)]
+        tests: bool,
+        /// Cargo output directory (also honours `CARGO_TARGET_DIR`)
+        #[arg(long)]
+        target_dir: Option<std::path::PathBuf>,
+    },
     /// Rust/Cargo commands (CUDA-aware)
     #[command(visible_alias = "rs")]
     Rust {
@@ -713,6 +724,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Examples(args) => handle_examples(args)?,
 
         // Dev tool commands (always available)
+        Commands::QisRuntime {
+            profile,
+            tests,
+            target_dir,
+        } => {
+            let mut context = cli::build_context::BuildContext::new(*profile, None);
+            if let Some(target_dir) = target_dir {
+                context.target_dir(target_dir);
+            }
+            println!(
+                "{}",
+                cli::qis_runtime_cmd::prepare(&context, *tests)?
+                    .directory
+                    .display()
+            );
+        }
         Commands::Rust { command } => cli::rust_cmd::run(command)?,
         Commands::Python { command } => cli::python_cmd::run(command)?,
         Commands::Cuda { command } => cli::cuda_cmd::run(command.clone())?,

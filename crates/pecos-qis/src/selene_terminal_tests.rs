@@ -175,12 +175,7 @@ fn install_descriptor() -> (
     std::path::PathBuf,
     SeleneRuntime,
 ) {
-    let executable = std::env::current_exe().unwrap();
-    let path = crate::selene_runtimes::find_library_in_dir(
-        executable.parent().unwrap(),
-        pecos_qis_test_runtime::LIBRARY_NAME,
-    )
-    .unwrap();
+    let path = crate::test_env::runtime_fixture();
     let public = crate::selene_runtimes::selene_simple_runtime().unwrap();
     let library = unsafe { libloading::Library::new(&public.plugin_path).unwrap() };
     let mut descriptor =

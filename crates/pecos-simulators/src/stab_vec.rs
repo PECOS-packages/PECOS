@@ -995,8 +995,8 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
                 let ez = self.terms[0].1.expectation_value_zq(q);
                 let one_plus_ez = 1.0 + ez;
                 let mut prob = 0.0;
-                for j in 0..t {
-                    prob += self.terms[j].0.norm_sqr() * one_plus_ez;
+                for (coefficient, _) in &self.terms {
+                    prob += coefficient.norm_sqr() * one_plus_ez;
                 }
                 for j in 0..t {
                     for k in (j + 1)..t {
@@ -1101,8 +1101,8 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
                 let mut prob = 0.0;
                 let ez = self.terms[0].1.expectation_value_zq(q);
                 let one_plus_ez = 1.0 + ez;
-                for j in 0..t {
-                    prob += self.terms[j].0.norm_sqr() * one_plus_ez;
+                for (coefficient, _) in &self.terms {
+                    prob += coefficient.norm_sqr() * one_plus_ez;
                 }
                 // Cross terms: only within groups of matching masked keys
                 let mut group_start = 0;

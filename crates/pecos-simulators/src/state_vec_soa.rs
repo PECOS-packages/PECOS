@@ -497,8 +497,13 @@ where
 
         // Collect low-stride pending gates (stride fits within one block)
         let mut low_gates: Vec<(usize, Complex2x2)> = Vec::new();
-        for q in 0..max_low_qubit {
-            if let Some(matrix) = self.pending_gates[q].take()
+        for (q, pending) in self
+            .pending_gates
+            .iter_mut()
+            .enumerate()
+            .take(max_low_qubit)
+        {
+            if let Some(matrix) = pending.take()
                 && !matrix.is_identity()
             {
                 low_gates.push((q, matrix));

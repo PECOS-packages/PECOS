@@ -187,8 +187,7 @@ pub fn validate_llvm_config() -> ConfigValidation {
     let detected_path = find_llvm(repo_root);
     let stale_llvm_prefix_envs = project_root
         .as_deref()
-        .map(read_stale_llvm_prefix_envs)
-        .unwrap_or_default();
+        .map_or_else(Vec::new, read_stale_llvm_prefix_envs);
 
     let (path_exists, path_is_valid_llvm) = if let Some(ref path) = configured_path {
         (path.exists(), is_valid_llvm(path))

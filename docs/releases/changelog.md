@@ -6,6 +6,13 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Breaking:** QIS and Selene development/test runtimes now use Cargo-reported
+  artifacts instead of implicit Cargo build-directory searches (including on
+  Rust 1.100). Use `just build-debug` for Python, `just rstest debug` for Rust,
+  or set `PECOS_QIS_FFI_PATH` and `PECOS_SELENE_DIR` to the directory printed by
+  `pecos qis-runtime --profile debug` (`--tests` includes the Rust fixture).
+  `pecos run` and `pecos compile` require explicitly prepared libraries.
+
 - **Deprecated:** Core `GateType::MeasureLeaked` is now `GateType::MeasureZLeaked`
   (wire value 105 is unchanged); its deprecated associated-const alias works in
   values and patterns but cannot be `use`-imported. The builders

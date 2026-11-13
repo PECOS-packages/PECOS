@@ -41,6 +41,37 @@ let engine = qis_engine()
     .build()?;
 ```
 
+## Runtime libraries in development and tests
+
+Cargo's build-directory layout is internal. PECOS obtains runtime library paths
+from Cargo's `compiler-artifact` JSON messages and stages them in the flat
+`<cargo target_directory>/pecos-qis-runtime/<debug|release|native>/` directory.
+The library set is declared in `pecos-qis`'s `package.metadata.pecos.runtime-libraries`.
+On Windows the FFI DLL's matching `.dll.lib` is included too.
+
+For Python, run `just build-debug`; both that command and editable/wheel builds
+bundle the libraries in `pecos_rslib/_native`. For Rust tests, use
+`just rstest debug` or `pecos rust test --profile debug`. For direct Cargo tests:
+
+```sh
+runtime_dir=$(cargo run --locked -p pecos-cli -- qis-runtime --profile debug --tests)
+export PECOS_QIS_FFI_PATH="$runtime_dir" PECOS_SELENE_DIR="$runtime_dir"
+cargo test --locked -p pecos-qis --lib
+```
+
+Use the same profile and build environment for preparation and execution.
+`qis-runtime --target-dir <path>` and `CARGO_TARGET_DIR` select Cargo's target
+directory. Omit `--tests` when the descriptor test fixture is not needed.
+
+`pecos run` and `pecos compile` do not build runtime libraries implicitly.
+The FFI lookup order is `PECOS_QIS_FFI_PATH`, the registered bundle, then a library
+directly beside the executable. `PECOS_QIS_FFI_PATH` accepts a file or directory;
+an invalid value fails immediately. Selene runtime constructors use
+`PECOS_SELENE_DIR`, then the bundle. The separate `find_selene_runtime` utility
+also searches `/usr/local/lib`, `/usr/lib`, and `/opt/pecos/lib`.
+Explicit directory overrides retain `deps/` and hash-suffixed filename support.
+No runtime lookup walks Cargo target directories, workspace parents, or the cwd.
+
 ## Acknowledgements
 
 This crate integrates with [Selene](https://github.com/Quantinuum/selene), a quantum computer emulation platform developed by Quantinuum.

@@ -278,32 +278,8 @@ fn is_tool_available(tool: &str) -> bool {
 /// `SDKROOT`, etc.) so build scripts that need external tools find the
 /// PECOS-managed installs without further plumbing.
 fn run_cargo_command(args: &[&str]) -> bool {
-    run_cargo_command_with_rustflags(args, None)
-}
-
-/// Like `run_cargo_command` but lets the caller override `RUSTFLAGS`. Used by
-/// `run_test` to inject `-C target-cpu=native` for the native profile.
-fn run_cargo_command_with_rustflags(args: &[&str], rustflags: Option<&str>) -> bool {
-    let mut cmd = Command::new("cargo");
-    let mut locked_args = Vec::with_capacity(args.len() + 1);
-    if let Some((subcommand, rest)) = args.split_first() {
-        locked_args.push(*subcommand);
-        if matches!(*subcommand, "build" | "check" | "clippy" | "run" | "test")
-            && !args
-                .iter()
-                .any(|arg| matches!(*arg, "--locked" | "--frozen" | "--offline"))
-        {
-            locked_args.push("--locked");
-        }
-        locked_args.extend(rest.iter().copied());
-    }
-    cmd.args(&locked_args);
-    for (key, value) in super::env_cmd::collect_env() {
-        cmd.env(key, value);
-    }
-    if let Some(rf) = rustflags {
-        cmd.env("RUSTFLAGS", rf);
-    }
+    let context = super::build_context::BuildContext::new(super::BuildProfile::Dev, None);
+    let mut cmd = context.cargo(args);
     matches!(cmd.status(), Ok(s) if s.success())
 }
 
@@ -470,32 +446,16 @@ fn run_test(profile: super::BuildProfile, include_ffi: bool) -> Result<()> {
         "running the GPU-free pecos-gpu-sims tests",
     );
 
-    // Map our profile to the cargo flags that select the corresponding profile.
-    // Native goes through `--profile native` (not `--release`) so artifacts land
-    // in target/native/ and the C++ build.rs files (pecos-pymatching et al.)
-    // can detect "native" via OUT_DIR and add -march=native to their builds.
-    let profile_args: &[&str] = match profile {
-        super::BuildProfile::Dev | super::BuildProfile::Debug => &[],
-        super::BuildProfile::Release => &["--release"],
-        super::BuildProfile::Native => &["--profile", "native"],
+    reject_static_llvm_workspace_test()?;
+    let context = super::build_context::BuildContext::new(profile, None);
+    let runtime_dir = super::qis_runtime_cmd::prepare(&context, true)?.directory;
+    let profile_args = profile.cargo_args();
+    let run = |args: &[&str]| -> bool {
+        let mut cmd = context.cargo(args);
+        cmd.env("PECOS_QIS_FFI_PATH", &runtime_dir);
+        cmd.env("PECOS_SELENE_DIR", &runtime_dir);
+        matches!(cmd.status(), Ok(status) if status.success())
     };
-
-    // For native, append -C target-cpu=native to RUSTFLAGS. profile.native.rustflags
-    // in Cargo.toml is still gated on nightly so we inject per-process here, matching
-    // what `pecos python build --profile native` and the Justfile recipes do.
-    let inherited_rustflags = std::env::var("RUSTFLAGS").unwrap_or_default();
-    let computed_rustflags: Option<String> = if matches!(profile, super::BuildProfile::Native) {
-        let mut rf = inherited_rustflags;
-        if !rf.is_empty() {
-            rf.push(' ');
-        }
-        rf.push_str("-C target-cpu=native");
-        Some(rf)
-    } else {
-        None
-    };
-    let rustflags = computed_rustflags.as_deref();
-    let run = |args: &[&str]| -> bool { run_cargo_command_with_rustflags(args, rustflags) };
 
     println!("Testing workspace packages...");
     // runtime = sim + qasm + phir (format parsers)
@@ -523,7 +483,6 @@ fn run_test(profile: super::BuildProfile, include_ffi: bool) -> Result<()> {
     ]);
 
     args.extend(profile_args);
-    reject_static_llvm_workspace_test()?;
 
     if !run(&args) {
         return Err(Error::Config("cargo test (workspace) failed".to_string()));

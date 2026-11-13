@@ -545,12 +545,7 @@ fn emitted_custom_events_require_default_acknowledgement_on_every_route() {
         }
         0
     }
-    let executable = std::env::current_exe().unwrap();
-    let source = crate::selene_runtimes::find_library_in_dir(
-        executable.parent().unwrap(),
-        pecos_qis_test_runtime::LIBRARY_NAME,
-    )
-    .unwrap();
+    let source = crate::test_env::runtime_fixture();
     // Isolate the fixture's descriptor slot from other parallel descriptor tests.
     let directory = tempfile::tempdir().unwrap();
     let plugin = directory.path().join(source.file_name().unwrap());
@@ -950,12 +945,7 @@ fn scheduled_release_polls_between_native_submissions_without_barriers() {
         let original = ORIGINAL.get().unwrap();
         unsafe { (original.global_barrier_fn)(instance, delay) }
     }
-    let executable = std::env::current_exe().unwrap();
-    let source = crate::selene_runtimes::find_library_in_dir(
-        executable.parent().unwrap(),
-        pecos_qis_test_runtime::LIBRARY_NAME,
-    )
-    .unwrap();
+    let source = crate::test_env::runtime_fixture();
     let directory = tempfile::tempdir().unwrap();
     let plugin = directory.path().join(source.file_name().unwrap());
     std::fs::copy(source, &plugin).unwrap();
@@ -1893,12 +1883,7 @@ mod measurement_followups {
     }
 
     fn with_descriptor(run: impl FnOnce(SeleneRuntime)) {
-        let executable = std::env::current_exe().unwrap();
-        let source = crate::selene_runtimes::find_library_in_dir(
-            executable.parent().unwrap(),
-            pecos_qis_test_runtime::LIBRARY_NAME,
-        )
-        .unwrap();
+        let source = crate::test_env::runtime_fixture();
         let directory = tempfile::tempdir().unwrap();
         let plugin = directory.path().join(source.file_name().unwrap());
         std::fs::copy(source, &plugin).unwrap();

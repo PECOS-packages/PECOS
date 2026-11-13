@@ -456,9 +456,7 @@ impl GraphState {
 
         if success {
             self.neighbors = new_neighbors;
-            for v in 0..n {
-                self.vops[v] = CliffordFrame::IDENTITY;
-            }
+            self.vops[..n].fill(CliffordFrame::IDENTITY);
         }
         // If not successful (state has Y terms in generators), the VOPs
         // cannot be trivially absorbed. This is fine for LC-equivalence

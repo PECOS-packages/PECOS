@@ -33,7 +33,6 @@ prepare_metadata_for_build_editable = maturin.prepare_metadata_for_build_editabl
 prepare_metadata_for_build_wheel = maturin.prepare_metadata_for_build_wheel
 
 _ROOT = Path(__file__).resolve().parent
-_LIBRARIES = frozenset({"pecos_qis_ffi", "selene_simple_runtime", "selene_soft_rz_runtime"})
 _PACKAGE_LIB_DIR = "pecos_rslib/_native"
 
 
@@ -60,7 +59,10 @@ def _cargo_options(config_settings: dict | None, *, editable: bool) -> list[str]
         if editable
         else config.get("profile", "release")
     )
-    options = ["--profile", parsed.profile or ("release" if parsed.release else profile)]
+    options = [
+        "--profile",
+        parsed.profile or ("release" if parsed.release else profile),
+    ]
     for option in ("target", "target-dir", "jobs"):
         if value := getattr(parsed, option.replace("-", "_")):
             options.extend([f"--{option}", value])
@@ -72,8 +74,44 @@ def _cargo_options(config_settings: dict | None, *, editable: bool) -> list[str]
     return options
 
 
+def _cargo_output(command: list[str]) -> str:
+    """Run a Cargo command assembled from build frontend options."""
+    result = subprocess.run(  # noqa: S603 - build frontend options
+        command, stdout=subprocess.PIPE, text=True, check=True
+    )
+    return result.stdout
+
+
+def _runtime_libraries(options: list[str]) -> frozenset[str]:
+    """Read the library contract through Cargo, including relocated workspaces."""
+    command = [
+        "cargo",
+        "metadata",
+        "--no-deps",
+        "--format-version",
+        "1",
+        "--manifest-path",
+        str(_ROOT / "Cargo.toml"),
+        *(option for option in options if option in {"--offline", "--frozen", "--locked"}),
+    ]
+    for package in json.loads(_cargo_output(command))["packages"]:
+        if package["name"] == "pecos-qis":
+            libraries = ((package.get("metadata") or {}).get("pecos") or {}).get("runtime-libraries")
+            if not isinstance(libraries, list) or not libraries:
+                msg = (
+                    "crates/pecos-qis/Cargo.toml must declare "
+                    "[package.metadata.pecos] runtime-libraries as a non-empty list of library names"
+                )
+                raise RuntimeError(msg)
+            return frozenset(libraries)
+    msg = f"{shlex.join(command)} did not report pecos-qis; run from the PECOS workspace"
+    raise RuntimeError(msg)
+
+
 def _runtime_artifacts(config_settings: dict | None, *, editable: bool) -> list[Path]:
     """Build the runtime dependencies and select their Cargo-reported artifacts."""
+    options = _cargo_options(config_settings, editable=editable)
+    libraries = _runtime_libraries(options)
     command = [
         "cargo",
         "build",
@@ -85,36 +123,33 @@ def _runtime_artifacts(config_settings: dict | None, *, editable: bool) -> list[
         "--features",
         "selene",
         "--message-format=json-render-diagnostics",
-        *_cargo_options(config_settings, editable=editable),
+        *options,
     ]
-    result = subprocess.run(  # noqa: S603 - build frontend options
-        command, stdout=subprocess.PIPE, text=True, check=True
-    )
     artifacts: dict[str, Path] = {}
-    for line in result.stdout.splitlines():
+    for line in _cargo_output(command).splitlines():
         message = json.loads(line)
         if message.get("reason") != "compiler-artifact":
             continue
         name = message["target"]["name"]
-        if name not in _LIBRARIES:
+        if name not in libraries:
             continue
         for filename in message["filenames"]:
             path = Path(filename)
             if path.suffix in {".so", ".dylib", ".dll"}:
                 if name in artifacts and artifacts[name] != path:
-                    msg = f"Ambiguous runtime artifacts for {name}: {artifacts[name]} and {path}"
+                    msg = f"Ambiguous runtime artifacts for {name}: {artifacts[name]} and {path} from {shlex.join(command)}"
                     raise RuntimeError(msg)
                 artifacts[name] = path
-    missing = _LIBRARIES - artifacts.keys()
+    missing = libraries - artifacts.keys()
     if missing:
-        msg = f"Cargo did not produce required QIS runtime libraries: {sorted(missing)}"
+        msg = f"Cargo did not produce required QIS runtime libraries: {sorted(missing)} from {shlex.join(command)}"
         raise RuntimeError(msg)
     files = list(artifacts.values())
     ffi = artifacts["pecos_qis_ffi"]
     if ffi.suffix == ".dll":
         import_lib = ffi.with_suffix(".dll.lib")
         if not import_lib.is_file():
-            msg = f"Cargo did not produce the QIS runtime import library: {import_lib}"
+            msg = f"Cargo did not produce the QIS runtime import library: {import_lib} from {shlex.join(command)}"
             raise RuntimeError(msg)
         files.append(import_lib)
     return files
@@ -150,7 +185,9 @@ def _bundle_runtime(wheel: Path, artifacts: list[Path]) -> None:
 
 
 def build_wheel(
-    wheel_directory: str, config_settings: dict | None = None, metadata_directory: str | None = None
+    wheel_directory: str,
+    config_settings: dict | None = None,
+    metadata_directory: str | None = None,
 ) -> str:
     """Build an extension wheel with its complete QIS runtime payload."""
     artifacts = _runtime_artifacts(config_settings, editable=False)
@@ -160,7 +197,9 @@ def build_wheel(
 
 
 def build_editable(
-    wheel_directory: str, config_settings: dict | None = None, metadata_directory: str | None = None
+    wheel_directory: str,
+    config_settings: dict | None = None,
+    metadata_directory: str | None = None,
 ) -> str:
     """Make the same runtime payload available to an editable installation."""
     artifacts = _runtime_artifacts(config_settings, editable=True)

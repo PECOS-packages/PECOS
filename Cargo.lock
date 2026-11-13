@@ -4093,6 +4093,7 @@ name = "pecos-cli"
 version = "0.2.0-dev.0"
 dependencies = [
  "assert_cmd",
+ "cargo_metadata",
  "clap 4.6.1",
  "clap_complete",
  "env_logger",

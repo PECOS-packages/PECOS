@@ -33,12 +33,7 @@ fn with_config(
     configure: impl FnOnce(&mut RuntimePluginDescriptorV1),
     run: impl FnOnce(SeleneRuntime),
 ) {
-    let executable = std::env::current_exe().unwrap();
-    let source = crate::selene_runtimes::find_library_in_dir(
-        executable.parent().unwrap(),
-        pecos_qis_test_runtime::LIBRARY_NAME,
-    )
-    .unwrap();
+    let source = crate::test_env::runtime_fixture();
     let directory = tempfile::tempdir().unwrap();
     let plugin = directory.path().join(source.file_name().unwrap());
     std::fs::copy(source, &plugin).unwrap();

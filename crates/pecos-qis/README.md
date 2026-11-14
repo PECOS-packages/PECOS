@@ -47,6 +47,7 @@ Cargo's build-directory layout is internal. PECOS obtains runtime library paths
 from Cargo's `compiler-artifact` JSON messages and stages them in the flat
 `<cargo target_directory>/pecos-qis-runtime/<debug|release|native>/runtime/` directory.
 With `--tests`, the separate `.../<profile>/tests/` directory includes the test fixture.
+Concurrent staging into one directory is safe: in-flight temporary files are excluded from cleanup.
 On Unix, each staged file is replaced atomically using a temporary file and rename.
 On Windows, a loaded library cannot be replaced until the process using it exits;
 close that process (for example a Python session using `pecos_rslib`) and retry.
@@ -54,7 +55,9 @@ Replacement is per file, not per set: a reader racing a restage can see a mix of
 old and new libraries. Obsolete files are removed only after all replacements succeed.
 `just clean` removes the entire staged directory.
 The library set is declared in `pecos-qis`'s `package.metadata.pecos.runtime-libraries`.
-On Windows the FFI DLL's Cargo-reported `.dll.lib` is included too.
+Staged files use canonical platform names regardless of the names Cargo reports.
+On Windows the FFI DLL's Cargo-reported `.dll.lib` is included too; this pair must already
+use canonical names because the import library records the DLL name it was linked with.
 
 For Python, run `just build-debug`; both that command and editable/wheel builds
 bundle the libraries in `pecos_rslib/_native`. For Rust tests, use

@@ -18,6 +18,7 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   Rust 1.100). Use `just build-debug` for Python, `just rstest debug` for Rust,
   or set `PECOS_QIS_FFI_PATH` and `PECOS_SELENE_DIR` to the directory printed by
   `pecos qis-runtime --profile debug` (`--tests` includes the Rust fixture).
+  Staged files use canonical platform names regardless of the names Cargo reports.
   `pecos run` and `pecos compile` require explicitly prepared libraries.
   These override directories are searched only for the exact library file
   name, never `deps/` or Cargo hash-suffixed files, and a set

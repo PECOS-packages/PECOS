@@ -35,6 +35,7 @@ prepare_metadata_for_build_wheel = maturin.prepare_metadata_for_build_wheel
 
 _ROOT = Path(__file__).resolve().parent
 _PACKAGE_LIB_DIR = "pecos_rslib/_native"
+_STAGING_TEMP_PREFIX = ".pecos-runtime-"
 
 
 def _cargo_options(config_settings: dict | None, *, editable: bool) -> list[str]:
@@ -112,7 +113,7 @@ def _runtime_libraries(options: list[str]) -> frozenset[str]:
     raise RuntimeError(msg)
 
 
-def _runtime_artifacts(config_settings: dict | None, *, editable: bool) -> list[Path]:
+def _runtime_artifacts(config_settings: dict | None, *, editable: bool) -> dict[str, Path]:
     """Build the runtime dependencies and select their Cargo-reported artifacts."""
     options = _cargo_options(config_settings, editable=editable)
     libraries = _runtime_libraries(options)
@@ -143,11 +144,22 @@ def _runtime_artifacts(config_settings: dict | None, *, editable: bool) -> list[
             if path.suffix in {".so", ".dylib", ".dll"}:
                 if name == "pecos_qis_ffi" and path.suffix == ".dll":
                     imports = [Path(file) for file in message["filenames"] if file.endswith(".dll.lib")]
+                    if path.name != "pecos_qis_ffi.dll" or any(
+                        item.name != "pecos_qis_ffi.dll.lib" for item in imports
+                    ):
+                        msg = (
+                            f"Cannot stage pecos_qis_ffi DLL {path} with import libraries {imports} "
+                            f"from {shlex.join(command)}: the import library names the DLL it was linked with, "
+                            "so the pair cannot be renamed; rebuild with canonical pecos_qis_ffi.dll "
+                            "and pecos_qis_ffi.dll.lib names"
+                        )
+                        raise RuntimeError(msg)
                     if len(imports) != 1:
                         msg = (
                             f"Expected one pecos_qis_ffi import library in Cargo filenames, "
                             f"found {len(imports)} ({imports}) from {shlex.join(command)}; "
-                            "rebuild the Windows QIS FFI library"
+                            "PECOS stages the MSVC .dll.lib import library; "
+                            f"Cargo reported {message['filenames']}; rebuild for an MSVC Windows target"
                         )
                         raise RuntimeError(msg)
                     import_libraries.update(imports)
@@ -159,7 +171,7 @@ def _runtime_artifacts(config_settings: dict | None, *, editable: bool) -> list[
     if missing:
         msg = f"Cargo did not produce required QIS runtime libraries: {sorted(missing)} from {shlex.join(command)}"
         raise RuntimeError(msg)
-    files = list(artifacts.values())
+    files = {f"{'' if path.suffix == '.dll' else 'lib'}{name}{path.suffix}": path for name, path in artifacts.items()}
     ffi = artifacts["pecos_qis_ffi"]
     if ffi.suffix == ".dll":
         if len(import_libraries) != 1:
@@ -168,11 +180,11 @@ def _runtime_artifacts(config_settings: dict | None, *, editable: bool) -> list[
                 f"({import_libraries}) from {shlex.join(command)}; rebuild the Windows QIS FFI library"
             )
             raise RuntimeError(msg)
-        files.extend(import_libraries)
+        files["pecos_qis_ffi.dll.lib"] = next(iter(import_libraries))
     return files
 
 
-def _bundle_runtime(wheel: Path, artifacts: list[Path]) -> None:
+def _bundle_runtime(wheel: Path, artifacts: dict[str, Path]) -> None:
     """Add native artifacts and regenerate the wheel's integrity RECORD."""
     with tempfile.TemporaryDirectory() as directory:
         replacement = Path(directory) / wheel.name
@@ -192,8 +204,8 @@ def _bundle_runtime(wheel: Path, artifacts: list[Path]) -> None:
                 if info.filename == record_name or info.filename.startswith(f"{_PACKAGE_LIB_DIR}/"):
                     continue
                 write(info.filename, source.read(info), info)
-            for artifact in artifacts:
-                write(f"{_PACKAGE_LIB_DIR}/{artifact.name}", artifact.read_bytes())
+            for name, artifact in artifacts.items():
+                write(f"{_PACKAGE_LIB_DIR}/{name}", artifact.read_bytes())
             output = io.StringIO(newline="")
             writer = csv.writer(output, lineterminator="\n")
             writer.writerows([*records, (record_name, "", "")])
@@ -239,38 +251,42 @@ def _staging_io(
         raise RuntimeError(msg) from error
 
 
-def _stage_runtime(artifacts: list[Path], lib_dir: Path) -> None:
+def _stage_runtime(artifacts: dict[str, Path], lib_dir: Path) -> None:
     """Replace complete files before removing obsolete editable runtime libraries."""
     with _staging_io(f"create directory {lib_dir}"):
         lib_dir.mkdir(parents=True, exist_ok=True)
     _replace_runtime(artifacts, lib_dir)
 
 
-def _replace_runtime(artifacts: list[Path], lib_dir: Path) -> None:
-    for artifact in artifacts:
+def _replace_runtime(artifacts: dict[str, Path], lib_dir: Path) -> None:
+    for name, artifact in artifacts.items():
         with (
             _staging_io(f"create temporary file in {lib_dir}"),
-            tempfile.NamedTemporaryFile(dir=lib_dir, delete=False) as temporary,
+            tempfile.NamedTemporaryFile(dir=lib_dir, prefix=_STAGING_TEMP_PREFIX, delete=False) as temporary,
         ):
             temporary_path = Path(temporary.name)
         try:
             with _staging_io(f"copy {artifact} to {temporary_path}"):
                 shutil.copy2(artifact, temporary_path)
             with _staging_io(
-                f"rename {temporary_path} to {lib_dir / artifact.name}",
-                remedy="close processes that have the library loaded "
-                "(for example a Python session using pecos_rslib), then retry runtime staging",
+                f"rename {temporary_path} to {lib_dir / name}",
+                remedy=(
+                    "close processes that have the library loaded "
+                    "(for example a Python session using pecos_rslib), then retry runtime staging"
+                    if os.name == "nt"
+                    else "check the path and permissions, then retry runtime staging"
+                ),
             ):
-                os.replace(temporary_path, lib_dir / artifact.name)
+                os.replace(temporary_path, lib_dir / name)
         finally:
             with _staging_io(f"remove {temporary_path}"):
                 if temporary_path.exists():
                     temporary_path.unlink()
-    names = {artifact.name for artifact in artifacts}
+    names = set(artifacts)
     with _staging_io(f"list {lib_dir}"):
         entries = list(lib_dir.iterdir())
     for old in entries:
-        if old.name in names:
+        if old.name in names or old.name.startswith(_STAGING_TEMP_PREFIX):
             continue
         with _staging_io(f"inspect {old}"):
             removable = old.is_file() or old.is_symlink()

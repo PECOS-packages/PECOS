@@ -248,6 +248,36 @@ pub(crate) mod test_env {
     // reads or mutates environment state must hold this lock.
     pub(crate) static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
+    pub(crate) fn runtime_fixture() -> std::path::PathBuf {
+        let lock = ENV_MUTEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        runtime_fixture_locked(&lock)
+    }
+
+    pub(crate) fn runtime_fixture_locked(
+        _lock: &std::sync::MutexGuard<'_, ()>,
+    ) -> std::path::PathBuf {
+        let directory = std::env::var_os("PECOS_SELENE_DIR");
+        directory
+            .as_ref()
+            .and_then(|directory| {
+                crate::selene_runtimes::find_library_in_dir(
+                    std::path::Path::new(directory),
+                    pecos_qis_test_runtime::LIBRARY_NAME,
+                )
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "PECOS_SELENE_DIR={directory:?} does not contain {}; set it to the output of \
+             `pecos qis-runtime --profile <profile> --tests` using the profile you built with",
+                    crate::selene_runtimes::platform_library_name(
+                        pecos_qis_test_runtime::LIBRARY_NAME
+                    )
+                )
+            })
+    }
+
     pub(crate) struct EnvVarGuard {
         key: &'static str,
         previous: Option<OsString>,
@@ -314,11 +344,24 @@ pub(crate) mod test_env {
 
     /// Spawn with a stable inherited environment, releasing `ENV_MUTEX` before waiting.
     pub(crate) fn spawn_test_child(test_name: &str, envs: &[(&str, &OsStr)]) -> TestChild {
+        spawn_test_child_removing(test_name, envs, &[])
+    }
+
+    pub(crate) fn spawn_test_child_removing(
+        test_name: &str,
+        envs: &[(&str, &OsStr)],
+        remove: &[&str],
+    ) -> TestChild {
         let mut process = {
             let _env_lock = ENV_MUTEX
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            std::process::Command::new(std::env::current_exe().expect("test executable"))
+            let mut command =
+                std::process::Command::new(std::env::current_exe().expect("test executable"));
+            for key in remove {
+                command.env_remove(key);
+            }
+            command
                 .args(["--exact", test_name, "--nocapture"])
                 .envs(envs.iter().copied())
                 .stdout(std::process::Stdio::piped())

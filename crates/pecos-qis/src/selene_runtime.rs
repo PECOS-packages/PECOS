@@ -2871,8 +2871,7 @@ impl SeleneRuntime {
         Self::fail_if_metadata_was_not_lowered(&retired)?;
         let metadata = records
             .remove(index - retired.len())
-            .map(|record| record.metadata)
-            .unwrap_or_default();
+            .map_or_else(TraceMetadata::new, |record| record.metadata);
         Ok(metadata)
     }
 
@@ -6059,12 +6058,7 @@ mod tests {
             );
             return;
         }
-        let executable = std::env::current_exe().unwrap();
-        let plugin = crate::selene_runtimes::find_library_in_dir(
-            executable.parent().unwrap(),
-            pecos_qis_test_runtime::LIBRARY_NAME,
-        )
-        .expect("Cargo-built runtime fixture beside the test executable");
+        let plugin = crate::test_env::runtime_fixture();
         let public_runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
         // SAFETY: The public library, fixture and descriptor outlive all runtime
         // instances. The descriptor retains the public runtime's callback ABI.
@@ -6208,12 +6202,7 @@ mod tests {
             );
             return;
         }
-        let executable = std::env::current_exe().unwrap();
-        let plugin = crate::selene_runtimes::find_library_in_dir(
-            executable.parent().unwrap(),
-            pecos_qis_test_runtime::LIBRARY_NAME,
-        )
-        .expect("Cargo-built runtime fixture beside the test executable");
+        let plugin = crate::test_env::runtime_fixture();
         let public_runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
         // SAFETY: Both libraries stay loaded and the boxed descriptor outlives the
         // runtime below. Every callback has its original ABI.
@@ -6321,12 +6310,7 @@ mod tests {
             return;
         }
 
-        let executable = std::env::current_exe().unwrap();
-        let plugin = crate::selene_runtimes::find_library_in_dir(
-            executable.parent().unwrap(),
-            pecos_qis_test_runtime::LIBRARY_NAME,
-        )
-        .expect("Cargo-built runtime fixture beside the test executable");
+        let plugin = crate::test_env::runtime_fixture();
         let public_runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
         // SAFETY: Both libraries stay loaded and the boxed descriptor outlives the
         // runtimes below. Every callback has its original ABI.
@@ -6430,12 +6414,7 @@ mod tests {
             return;
         }
 
-        let executable = std::env::current_exe().unwrap();
-        let plugin = crate::selene_runtimes::find_library_in_dir(
-            executable.parent().unwrap(),
-            pecos_qis_test_runtime::LIBRARY_NAME,
-        )
-        .expect("Cargo-built runtime fixture beside the test executable");
+        let plugin = crate::test_env::runtime_fixture();
         let public_runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
         // SAFETY: Both libraries stay loaded and the boxed descriptor outlives the
         // runtimes below. Every callback has its original ABI.
@@ -6518,12 +6497,7 @@ mod tests {
         // Export a descriptor accessor from a tiny test library. Its descriptor
         // lives in this process and delegates every other callback to the real
         // public runtime; no ABI layout duplication or invalid pointers are used.
-        let executable = std::env::current_exe().unwrap();
-        let plugin = crate::selene_runtimes::find_library_in_dir(
-            executable.parent().unwrap(),
-            pecos_qis_test_runtime::LIBRARY_NAME,
-        )
-        .expect("Cargo-built runtime fixture beside the test executable");
+        let plugin = crate::test_env::runtime_fixture();
         let public_runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
         // SAFETY: Both libraries stay loaded and the boxed descriptor stays alive
         // until all runtimes have been reset. Every callback has its original ABI.

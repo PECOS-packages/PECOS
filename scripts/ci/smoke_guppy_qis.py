@@ -1,5 +1,6 @@
 """Exercise an installed PECOS wheel through the Guppy -> QIS -> Selene path."""
 
+import sys
 from pathlib import Path
 
 import pecos
@@ -21,8 +22,11 @@ def coin() -> bool:
 
 bundle = Path(pecos_rslib.__file__).parent / "_native"
 for library in ("pecos_qis_ffi", "selene_simple_runtime", "selene_soft_rz_runtime"):
-    if not any(library in path.name and path.suffix in {".so", ".dylib", ".dll"} for path in bundle.glob("*")):
-        message = f"installed wheel is missing {library} in {bundle}"
+    filename = (
+        f"{library}.dll" if sys.platform == "win32" else f"lib{library}.{'dylib' if sys.platform == 'darwin' else 'so'}"
+    )
+    if not (bundle / filename).is_file():
+        message = f"installed wheel is missing {filename} in {bundle}"
         raise QisSmokeError(message)
 
 for runtime in ("selene_simple_runtime", "selene_soft_rz_runtime"):

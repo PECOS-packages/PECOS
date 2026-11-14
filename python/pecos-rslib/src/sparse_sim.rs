@@ -641,7 +641,8 @@ impl SparseSim {
     }
 
     /// Returns the raw gens data (`col_x`, `col_z`, `row_x`, `row_z`) for stabs or destabs.
-    fn _gens_data(&self, is_stab: bool) -> crate::simulator_utils::GensData {
+    #[pyo3(name = "_gens_data")]
+    fn gens_data(&self, is_stab: bool) -> crate::simulator_utils::GensData {
         self.inner.gens_data(is_stab)
     }
 

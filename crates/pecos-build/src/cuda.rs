@@ -111,11 +111,7 @@ pub fn is_valid_cuda_installation(path: &Path) -> bool {
 
     // Check for cuda_runtime.h
     let runtime_header = path.join("include").join("cuda_runtime.h");
-    if !runtime_header.exists() {
-        return false;
-    }
-
-    true
+    runtime_header.exists()
 }
 
 /// Get CUDA version from an installation

@@ -683,10 +683,11 @@ mod tests {
             ]
         }"#;
         let program: PHIRProgram = serde_json::from_str(json).expect("should parse");
+        assert_eq!(program.ops.len(), 4);
 
         // All three should produce the same angle (pi/2)
-        for i in 1..=3 {
-            if let Operation::QuantumOp { angles, .. } = &program.ops[i] {
+        for (i, operation) in program.ops.iter().enumerate().take(4).skip(1) {
+            if let Operation::QuantumOp { angles, .. } = operation {
                 let a = angles.as_ref().unwrap();
                 assert!(
                     (a[0] - std::f64::consts::FRAC_PI_2).abs() < 1e-10,

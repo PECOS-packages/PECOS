@@ -16,7 +16,7 @@ pub fn run(command: &super::PythonCommands) -> Result<()> {
             no_cuda,
         } => {
             let cuda_resolved = resolve_cuda_choice(*cuda, *no_cuda);
-            run_build(profile.as_str(), rustflags.as_deref(), cuda_resolved)
+            run_build(*profile, rustflags.as_deref(), cuda_resolved)
         }
     }
 }
@@ -93,7 +93,7 @@ fn check_python_available() -> Result<()> {
 }
 
 /// Build all pecos rslib crates via maturin
-fn run_build(profile: &str, rustflags: Option<&str>, cuda: bool) -> Result<()> {
+fn run_build(profile: super::BuildProfile, rustflags: Option<&str>, cuda: bool) -> Result<()> {
     if check_python_available().is_err() {
         return Err(Error::Config(
             "Python/uv is not available. Please install uv and set up a Python environment."
@@ -103,54 +103,9 @@ fn run_build(profile: &str, rustflags: Option<&str>, cuda: bool) -> Result<()> {
 
     let repo_root = get_repo_root()?;
 
-    // Map our profile name to maturin's cargo-profile flag. `dev`/`debug` use
-    // cargo's default dev profile (no flag), `release` uses --release, `native`
-    // uses --profile native so artifacts land in target/native/. Routing native
-    // through --profile native (rather than --release with target-cpu RUSTFLAGS)
-    // also lets the C++ build.rs files in pecos-pymatching/-chromobius/-tesseract
-    // detect "native" via OUT_DIR and add -march=native to their C++ compilation.
-    let cargo_profile_flag: &[&str] = match profile {
-        "release" => &["--release"],
-        "native" => &["--profile", "native"],
-        "dev" | "debug" => &[],
-        other => {
-            return Err(Error::Config(format!(
-                "Unknown profile: {other} (expected dev, debug, release, or native)"
-            )));
-        }
-    };
-
-    // Build up RUSTFLAGS. For native we inject -C target-cpu=native because
-    // profile.native.rustflags in Cargo.toml is still gated on nightly; other
-    // callers (Justfile julia-build/build-selene/bench) inject the
-    // same flag so the resulting artifacts are consistent regardless of entry
-    // point.
-    let mut flags = std::env::var("RUSTFLAGS").unwrap_or_default();
-    if profile == "native" {
-        if !flags.is_empty() {
-            flags.push(' ');
-        }
-        flags.push_str("-C target-cpu=native");
-    }
-    if let Some(extra) = rustflags {
-        if !flags.is_empty() {
-            flags.push(' ');
-        }
-        flags.push_str(extra);
-    }
-
-    let venv_bin = if cfg!(windows) {
-        repo_root.join(".venv/Scripts")
-    } else {
-        repo_root.join(".venv/bin")
-    };
-    let path_sep = if cfg!(windows) { ";" } else { ":" };
-    let path_with_venv = format!(
-        "{}{}{}",
-        venv_bin.display(),
-        path_sep,
-        std::env::var("PATH").unwrap_or_default()
-    );
+    let mut context = super::build_context::BuildContext::new(profile, rustflags);
+    let venv_bin = context.python_environment(&repo_root);
+    let profile_name = profile.as_str();
 
     // The mwpf decoder builds pure-Rust (its LP solver is the workspace
     // `highs` shim, patched in via the root Cargo.toml), so it is enabled by
@@ -180,14 +135,14 @@ fn run_build(profile: &str, rustflags: Option<&str>, cuda: bool) -> Result<()> {
             continue;
         }
 
-        println!("Building {crate_name} ({profile})...");
+        println!("Building {crate_name} ({profile_name})...");
 
         remove_stale_extension_artifacts(&repo_root, profile, crate_name)?;
 
         let maturin = venv_bin.join("maturin");
         let mut cmd = Command::new(&maturin);
         cmd.args(["develop", "--uv", "--locked"]);
-        cmd.args(cargo_profile_flag);
+        cmd.args(profile.cargo_args());
         // Maturin's CLI --features REPLACES (not merges with) the features list
         // in pyproject.toml's [tool.maturin], so any time we pass extra features
         // we must also pass `extension-module` -- otherwise the cdylib loses
@@ -198,43 +153,7 @@ fn run_build(profile: &str, rustflags: Option<&str>, cuda: bool) -> Result<()> {
             cmd.args(["--features", "extension-module,mwpf"]);
         }
         cmd.current_dir(&crate_dir);
-        // On macOS, add rpath for system libc++ and clean Homebrew paths
-        // (cdylibs linking inkwell/LLVM reference @rpath/libc++.1.dylib)
-        #[cfg(target_os = "macos")]
-        {
-            if !flags.contains("-rpath") {
-                let rpath_flag = " -C link-arg=-Wl,-rpath,/usr/lib";
-                flags.push_str(rpath_flag);
-            }
-        }
-
-        if !flags.is_empty() {
-            cmd.env("RUSTFLAGS", &flags);
-        }
-        cmd.env("PATH", &path_with_venv);
-        cmd.env_remove("CONDA_PREFIX");
-        #[cfg(target_os = "macos")]
-        {
-            cmd.env_remove("LIBRARY_PATH");
-            cmd.env_remove("LD_LIBRARY_PATH");
-            cmd.env_remove("DYLD_LIBRARY_PATH");
-            cmd.env_remove("DYLD_FALLBACK_LIBRARY_PATH");
-            cmd.env("LIBRARY_PATH", "/usr/lib");
-            // Cargo caches failed target probes without accounting for changes
-            // to dyld search paths. Reprobe after sanitizing the environment so
-            // a previous incompatible-LLVM crash cannot survive this cleanup.
-            cmd.env("CARGO_CACHE_RUSTC_INFO", "0");
-        }
-
-        // Apply PECOS build environment (SDKROOT, LLVM, CUDA, etc.)
-        // This is the single source of truth — same logic as `pecos env`.
-        let build_env = super::env_cmd::collect_env();
-        for (key, value) in &build_env {
-            // Don't override PATH — we already set it above with venv
-            if key != "PATH" {
-                cmd.env(key, value);
-            }
-        }
+        context.apply(&mut cmd);
 
         let status = cmd.status();
         match status {
@@ -251,6 +170,12 @@ fn run_build(profile: &str, rustflags: Option<&str>, cuda: bool) -> Result<()> {
             }
         }
     }
+
+    let artifacts = super::qis_runtime_cmd::prepare(&context, false)?;
+    super::qis_runtime_cmd::copy_artifacts(
+        &artifacts.libraries,
+        &repo_root.join("python/pecos-rslib/pecos_rslib/_native"),
+    )?;
 
     // Install quantum-pecos in editable mode (--no-deps since rslib crates
     // are already installed by maturin develop above)
@@ -319,14 +244,6 @@ fn editable_install_command(repo_root: &Path) -> Command {
     cmd
 }
 
-fn cargo_profile_dir(profile: &str) -> &'static str {
-    match profile {
-        "release" => "release",
-        "native" => "native",
-        _ => "debug",
-    }
-}
-
 fn extension_library_filename(crate_name: &str) -> String {
     let module_name = crate_name.replace('-', "_");
 
@@ -348,41 +265,38 @@ fn extension_library_filename(crate_name: &str) -> String {
 
 fn extension_artifact_candidates(
     repo_root: &Path,
-    profile: &str,
+    profile: super::BuildProfile,
     crate_name: &str,
-) -> [PathBuf; 3] {
+) -> [PathBuf; 2] {
     let filename = extension_library_filename(crate_name);
     let target_dir = repo_root.join("target");
-    let profile_dir = target_dir.join(cargo_profile_dir(profile));
+    let profile_dir = target_dir.join(profile.directory());
 
     [
         profile_dir.join(&filename),
-        profile_dir.join("deps").join(&filename),
         target_dir.join("maturin").join(&filename),
     ]
 }
 
 fn remove_stale_extension_artifacts(
     repo_root: &Path,
-    profile: &str,
+    profile: super::BuildProfile,
     crate_name: &str,
 ) -> Result<()> {
-    let [profile_artifact, deps_artifact, maturin_staging_artifact] =
+    let [profile_artifact, maturin_staging_artifact] =
         extension_artifact_candidates(repo_root, profile, crate_name);
 
-    for path in [profile_artifact, deps_artifact] {
-        match fs::metadata(&path) {
-            Ok(metadata) if metadata.is_file() && metadata.len() == 0 => {
-                println!(
-                    "Removing zero-byte extension artifact before rebuild: {}",
-                    path.display()
-                );
-                fs::remove_file(path)?;
-            }
-            Ok(_) => {}
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => return Err(err.into()),
+    match fs::metadata(&profile_artifact) {
+        Ok(metadata) if metadata.is_file() && metadata.len() == 0 => {
+            println!(
+                "Removing zero-byte extension artifact before rebuild: {}",
+                profile_artifact.display()
+            );
+            fs::remove_file(profile_artifact)?;
         }
+        Ok(_) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err.into()),
     }
 
     match fs::metadata(&maturin_staging_artifact) {
@@ -429,25 +343,17 @@ mod tests {
     }
 
     #[test]
-    fn cargo_profile_dir_matches_cargos_target_subdir() {
-        assert_eq!(cargo_profile_dir("dev"), "debug");
-        assert_eq!(cargo_profile_dir("debug"), "debug");
-        assert_eq!(cargo_profile_dir("release"), "release");
-        assert_eq!(cargo_profile_dir("native"), "native");
-    }
-
-    #[test]
     fn extension_artifact_candidates_use_python_module_name() {
         let repo = PathBuf::from("/repo");
-        let candidates = extension_artifact_candidates(&repo, "debug", "pecos-rslib-llvm");
+        let candidates = extension_artifact_candidates(
+            &repo,
+            super::super::BuildProfile::Debug,
+            "pecos-rslib-llvm",
+        );
         let filename = extension_library_filename("pecos-rslib-llvm");
 
         assert!(filename.contains("pecos_rslib_llvm"));
         assert_eq!(candidates[0], repo.join("target/debug").join(&filename));
-        assert_eq!(
-            candidates[1],
-            repo.join("target/debug/deps").join(&filename)
-        );
-        assert_eq!(candidates[2], repo.join("target/maturin").join(&filename));
+        assert_eq!(candidates[1], repo.join("target/maturin").join(&filename));
     }
 }

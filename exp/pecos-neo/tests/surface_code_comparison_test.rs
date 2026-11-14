@@ -221,8 +221,7 @@ fn run_general_noise_repetition(
         // Parse outcomes
         let outcomes: Vec<u32> = output
             .outcomes()
-            .map(|o| o.into_iter().collect())
-            .unwrap_or_default();
+            .map_or_else(|_| Vec::new(), |o| o.into_iter().collect());
 
         // Extract syndromes and final data
         let total_ancilla_meas = num_rounds * code.z_ancillas.len();

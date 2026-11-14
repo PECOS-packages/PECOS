@@ -1028,15 +1028,11 @@ impl PySimNeoBuilder {
             .iter()
             .map(|shot| shot.iter().map(|o| u8::from(o.outcome)).collect())
             .collect();
-        let weights: Vec<f64> = results
-            .weights
-            .as_ref()
-            .map(|ws| {
-                ws.iter()
-                    .map(pecos_neo::sampling::weight::SampleWeight::weight)
-                    .collect()
-            })
-            .unwrap_or_default();
+        let weights: Vec<f64> = results.weights.as_ref().map_or_else(Vec::new, |ws| {
+            ws.iter()
+                .map(pecos_neo::sampling::weight::SampleWeight::weight)
+                .collect()
+        });
 
         Ok(PyRawMeasurementResult::from_rows_weighted(rows, weights))
     }

@@ -1972,16 +1972,16 @@ impl SparseRowOnly {
         let q = qubit as u16;
 
         // Check if any stabilizer has X on this qubit
-        for g in 0..self.num_qubits {
-            if Self::contains(&self.stab_row_x[g], q) {
+        for row in self.stab_row_x.iter().take(self.num_qubits) {
+            if Self::contains(row, q) {
                 return None;
             }
         }
 
         // Collect destabilizer indices with X on this qubit
         let mut destab_ids: SmallVec<[usize; 8]> = SmallVec::new();
-        for g in 0..self.num_qubits {
-            if Self::contains(&self.destab_row_x[g], q) {
+        for (g, row) in self.destab_row_x.iter().enumerate().take(self.num_qubits) {
+            if Self::contains(row, q) {
                 destab_ids.push(g);
             }
         }

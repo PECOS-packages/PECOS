@@ -762,7 +762,8 @@ impl PyPauliProp {
     }
 
     #[staticmethod]
-    fn _from_pickle(
+    #[pyo3(name = "_from_pickle")]
+    fn from_pickle(
         track_sign: bool,
         faults: &Bound<'_, PyDict>,
         sign: bool,

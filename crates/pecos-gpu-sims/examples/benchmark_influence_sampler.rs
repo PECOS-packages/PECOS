@@ -165,8 +165,8 @@ impl CpuSampler {
                 if pauli == 0 {
                     let dem_output_start = self.dem_output_offsets_x[loc] as usize;
                     let dem_output_end = self.dem_output_offsets_x[loc + 1] as usize;
-                    for i in dem_output_start..dem_output_end {
-                        let dem_output_idx = self.dem_output_data_x[i] as usize;
+                    for &output in &self.dem_output_data_x[dem_output_start..dem_output_end] {
+                        let dem_output_idx = output as usize;
                         if dem_output_idx < dem_output_flips.len() {
                             dem_output_flips[dem_output_idx] ^= 1;
                         }

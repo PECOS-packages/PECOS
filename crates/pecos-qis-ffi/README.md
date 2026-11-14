@@ -9,7 +9,7 @@ Provides the C-compatible FFI functions that quantum programs call. These functi
 ## How It Works
 
 1. Compiled quantum programs call `__quantum__rt__qubit_allocate()`, `__quantum__qis__h__body()`, etc.
-2. These functions are provided by `libpecos_qis_ffi.so` (this crate)
+2. These functions are provided by `libpecos_qis_ffi.so` (`.dylib` on macOS, `pecos_qis_ffi.dll` on Windows; this crate)
 3. Operations are recorded in thread-local `OperationCollector`
 4. After program execution, operations are retrieved and passed to the runtime
 
@@ -24,4 +24,10 @@ Provides the C-compatible FFI functions that quantum programs call. These functi
 
 ## Crate Type
 
-This crate produces both `rlib` (for Rust) and `cdylib` (`libpecos_qis_ffi.so`) for dynamic loading.
+This crate produces both `rlib` (for Rust) and `cdylib` (the platform-specific shared library) for dynamic loading.
+
+## Runtime libraries in development and tests
+
+Development builds and tests locate this library through Cargo's JSON artifact
+messages, not Cargo's internal build directories. See "Runtime libraries in
+development and tests" in the `pecos-qis` README for preparation and lookup order.

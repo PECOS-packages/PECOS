@@ -141,8 +141,7 @@ fn choose_most_likely_logicals(weights: &LookupWeights) -> BTreeMap<Syndrome, Lo
             let best_logical = logical_weights
                 .iter()
                 .max_by(|(_, a), (_, b)| a.total_cmp(b))
-                .map(|(logical, _)| logical.clone())
-                .unwrap_or_default();
+                .map_or_else(Vec::new, |(logical, _)| logical.clone());
             (syndrome.clone(), best_logical)
         })
         .collect()
@@ -538,8 +537,7 @@ mod tests {
             let expected_best = expected
                 .iter()
                 .max_by(|(_, a), (_, b)| a.total_cmp(b))
-                .map(|(logical, _)| logical.clone())
-                .unwrap_or_default();
+                .map_or_else(Vec::new, |(logical, _)| logical.clone());
             assert_eq!(result.best_logical, expected_best);
         }
     }

@@ -146,6 +146,9 @@ def clean_project(root: Path, *, dry_run: bool = False) -> None:
         if count > 0 and not dry_run:
             print(f"  Removed {count} '{pattern}' directories")
 
+    # Runtime bundles contain platform-specific DLLs, import libraries and dylibs.
+    rmtree_safe(root / "python/pecos-rslib/pecos_rslib/_native", dry_run=dry_run)
+
     # Compiled Python extensions
     python_dir = root / "python"
     if python_dir.exists():

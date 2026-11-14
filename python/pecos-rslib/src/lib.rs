@@ -187,8 +187,8 @@ fn setup_cuda_library_path() {
 }
 
 /// Register package-relative native libraries without changing process environment variables.
-#[pyfunction]
-fn _set_qis_library_dir(path: std::path::PathBuf) -> PyResult<()> {
+#[pyfunction(name = "_set_qis_library_dir")]
+fn set_qis_library_dir(path: std::path::PathBuf) -> PyResult<()> {
     pecos_qis::set_bundled_library_dir(path).map_err(pyo3::exceptions::PyRuntimeError::new_err)
 }
 
@@ -205,7 +205,7 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Set up QuEST CUDA backend path for runtime loading (before any QuEST usage)
     setup_cuda_library_path();
 
-    m.add_function(wrap_pyfunction!(_set_qis_library_dir, m)?)?;
+    m.add_function(wrap_pyfunction!(set_qis_library_dir, m)?)?;
 
     m.add_class::<PyStabVec>()?;
     m.add_class::<PySparseStab>()?;

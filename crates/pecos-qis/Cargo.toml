@@ -11,6 +11,9 @@ license.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+[package.metadata.pecos]
+runtime-libraries = ["pecos_qis_ffi", "selene_simple_runtime", "selene_soft_rz_runtime"]
+
 [lib]
 # Just a rlib - the cdylib with __quantum__rt__* symbols is in pecos-qis-ffi
 crate-type = ["rlib"]

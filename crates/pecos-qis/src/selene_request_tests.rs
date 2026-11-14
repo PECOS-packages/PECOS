@@ -33,12 +33,10 @@ fn with_config(
     configure: impl FnOnce(&mut RuntimePluginDescriptorV1),
     run: impl FnOnce(SeleneRuntime),
 ) {
-    let executable = std::env::current_exe().unwrap();
-    let source = crate::selene_runtimes::find_library_in_dir(
-        executable.parent().unwrap(),
-        pecos_qis_test_runtime::LIBRARY_NAME,
-    )
-    .unwrap();
+    let lock = crate::test_env::ENV_MUTEX
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let source = crate::test_env::runtime_fixture_locked(&lock);
     let directory = tempfile::tempdir().unwrap();
     let plugin = directory.path().join(source.file_name().unwrap());
     std::fs::copy(source, &plugin).unwrap();
@@ -144,7 +142,6 @@ fn missing_custom_call_support_fails_loudly() {
 
 #[test]
 fn program_barriers_reach_runtime_and_produce_timed_trace_idles() {
-    let _lock = crate::test_env::ENV_MUTEX.lock().unwrap();
     with_runtime(|runtime| {
         let source = r"
             @qubits = private constant [2 x i64] [i64 1, i64 0]
@@ -281,7 +278,6 @@ fn native_custom_qubit_handle_identity() {
             (ORIGINAL.get().unwrap().rxy_gate_fn)(instance, qubit, 0.0, 0.0)
         }
     }
-    let _lock = crate::test_env::ENV_MUTEX.lock().unwrap();
     with_config(
         |d| d.custom_call_fn = Some(use_qubit),
         |runtime| {
@@ -351,7 +347,6 @@ fn native_custom_returned_qubit_identity() {
             (ORIGINAL.get().unwrap().rxy_gate_fn)(instance, qubit, 0.0, 0.0)
         }
     }
-    let _lock = crate::test_env::ENV_MUTEX.lock().unwrap();
     with_config(
         |d| d.custom_call_fn = Some(use_qubit),
         |runtime| {
@@ -446,7 +441,6 @@ fn native_custom_future_handle_identity() {
         }
         0
     }
-    let _lock = crate::test_env::ENV_MUTEX.lock().unwrap();
     for native in [100, (1_u64 << 63) + 7, u64::MAX - 1, u64::MAX] {
         for returned in [false, true] {
             FUTURE.set(native);
@@ -525,7 +519,6 @@ fn native_custom_future_handle_identity() {
 
 #[test]
 fn native_allocation_failure_sentinel_is_returned_to_program() {
-    let _lock = crate::test_env::ENV_MUTEX.lock().unwrap();
     with_config(
         |_| {},
         |runtime| {
@@ -617,7 +610,6 @@ fn native_guppy_futures_preserve_unsigned_handles_and_lazy_force() {
         COUNTS.with_borrow_mut(|counts| counts.push(false));
         0
     }
-    let _lock = crate::test_env::ENV_MUTEX.lock().unwrap();
     for read in [false, true] {
         READY.set(false);
         FORCES.set(0);
@@ -736,7 +728,6 @@ fn native_custom_call_events_are_executed_or_rejected_before_return() {
                 .collect()
         }
     }
-    let _lock = crate::test_env::ENV_MUTEX.lock().unwrap();
     for normalize in [false, true] {
         EVENT.set(None);
         with_config(
@@ -853,7 +844,6 @@ fn native_custom_call_events_are_executed_or_rejected_before_return() {
 
 #[test]
 fn selene_rpp_abi_preserves_native_targets_and_angles() {
-    let _lock = crate::test_env::ENV_MUTEX.lock().unwrap();
     with_config(
         |_| {},
         |runtime| {
@@ -909,7 +899,6 @@ fn custom_created_measurements_use_engine_feedback_without_source_slots() {
     unsafe extern "C" fn discard(_: RuntimeInstance, _: u64) -> i32 {
         0
     }
-    let _lock = crate::test_env::ENV_MUTEX.lock().unwrap();
     for (trace_enabled, deferred) in [(false, false), (true, false), (false, true), (true, true)] {
         let before_custom = if deferred {
             "%old = call i64 @___lazy_measure(i64 %a)\n            call void @___dec_future_refcount(i64 %old)"
@@ -1073,7 +1062,6 @@ fn opaque_future_reuse_does_not_inherit_source_provenance() {
             "ptr null, i64 0, ptr null, i64 0"
         ),
     );
-    let _lock = crate::test_env::ENV_MUTEX.lock().unwrap();
     for (trace_enabled, output) in [
         (false, "bool"),
         (false, "observed"),
@@ -1232,7 +1220,6 @@ fn decoder_request_never_forces_an_unread_native_future_or_inserts_a_barrier() {
             self.decode_v1(window, instance, syndrome, context)
         }
     }
-    let _lock = crate::test_env::ENV_MUTEX.lock().unwrap();
     for mode in 0..3 {
         FORCES.set(0);
         with_config(

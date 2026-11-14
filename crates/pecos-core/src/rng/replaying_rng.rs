@@ -118,11 +118,11 @@ impl Debug for ReplayingRng {
         } else {
             let display_len = std::cmp::min(self.values.len(), MAX_DISPLAY);
 
-            for i in 0..display_len {
+            for (i, value) in self.values.iter().enumerate().take(display_len) {
                 if i > 0 {
                     write!(f, ", ")?;
                 }
-                write!(f, "{}", self.values[i])?;
+                write!(f, "{value}")?;
             }
 
             if self.values.len() > MAX_DISPLAY {

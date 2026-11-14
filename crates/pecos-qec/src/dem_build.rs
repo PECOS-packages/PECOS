@@ -552,12 +552,10 @@ impl DemBuildBuilder {
                 &detector_outputs,
                 report
                     .as_ref()
-                    .map(|r| r.detector_supports.as_slice())
-                    .unwrap_or_default(),
+                    .map_or_else(Default::default, |r| r.detector_supports.as_slice()),
                 settings
                     .as_ref()
-                    .map(|s| vec![s.detector_tag.clone()])
-                    .unwrap_or_default(),
+                    .map_or_else(Vec::new, |s| vec![s.detector_tag.clone()]),
                 input.resolved_detector_outputs.as_deref(),
             ),
             (
@@ -567,12 +565,10 @@ impl DemBuildBuilder {
                 &observable_outputs,
                 report
                     .as_ref()
-                    .map(|r| r.observable_supports.as_slice())
-                    .unwrap_or_default(),
+                    .map_or_else(Default::default, |r| r.observable_supports.as_slice()),
                 settings
                     .as_ref()
-                    .map(|s| s.observable_tags.clone())
-                    .unwrap_or_default(),
+                    .map_or_else(Vec::new, |s| s.observable_tags.clone()),
                 input.resolved_observable_outputs.as_deref(),
             ),
         ] {

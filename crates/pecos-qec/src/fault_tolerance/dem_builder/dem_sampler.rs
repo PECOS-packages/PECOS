@@ -1061,7 +1061,7 @@ impl SamplingEngine {
             SamplingStatistics::with_channels(num_shots, self.num_detectors, self.num_dem_outputs);
 
         // Per-channel counts (cheap -- data is already in cache from the OR passes above)
-        for det_idx in 0..self.num_detectors {
+        for (det_idx, detector_count) in stats.per_detector.iter_mut().enumerate() {
             let base = det_idx * num_words;
             let mut count = 0usize;
             for word_idx in 0..num_words {
@@ -1077,10 +1077,10 @@ impl SamplingEngine {
                 };
                 count += (det_data[base + word_idx] & valid_bits).count_ones() as usize;
             }
-            stats.per_detector[det_idx] = count;
+            *detector_count = count;
         }
 
-        for obs_idx in 0..self.num_dem_outputs {
+        for (obs_idx, output_count) in stats.per_dem_output.iter_mut().enumerate() {
             let base = obs_idx * num_words;
             let mut count = 0usize;
             for word_idx in 0..num_words {
@@ -1096,7 +1096,7 @@ impl SamplingEngine {
                 };
                 count += (obs_data[base + word_idx] & valid_bits).count_ones() as usize;
             }
-            stats.per_dem_output[obs_idx] = count;
+            *output_count = count;
         }
 
         // Aggregate counts

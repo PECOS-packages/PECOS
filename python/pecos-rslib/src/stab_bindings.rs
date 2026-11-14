@@ -594,7 +594,8 @@ impl PyStabilizer {
         self.inner.destab_tableau()
     }
 
-    fn _gens_data(&self, is_stab: bool) -> crate::simulator_utils::GensData {
+    #[pyo3(name = "_gens_data")]
+    fn gens_data(&self, is_stab: bool) -> crate::simulator_utils::GensData {
         self.inner.gens_data(is_stab)
     }
 

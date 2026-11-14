@@ -6,6 +6,12 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Added:** Core `MeasureZLost` and `MeasureZLeakedLost` herald gates, with alphabets
+  `{0, 1, 3}` and `{0, 1, 2, 3}`, and per-flavor general-noise readout matrices
+  configurable from Rust, JSON, and Python. Qubit-loss state is not introduced.
+- **Changed:** Unsupported runtime-frame and scheduled gate errors now name the gate
+  after their existing error prefix.
+
 - **Fixed:** A PECOS-managed LLVM whose shared libraries no longer load, such as
   a copy kept across an upgrade to Ubuntu 26.04 (its `libLLVM` needs
   `libxml2.so.2`), is now reported as invalid. `pecos llvm ensure --managed`

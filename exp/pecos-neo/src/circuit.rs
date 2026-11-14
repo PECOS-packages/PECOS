@@ -402,6 +402,16 @@ mod tests {
     use pecos_core::Angle64;
 
     #[test]
+    fn new_heralds_are_rejected_by_core_conversion() {
+        for gate_type in [CoreGateType::MeasureZLost, CoreGateType::MeasureZLeakedLost] {
+            assert!(GateType::try_from_core(gate_type).is_none());
+            let gate = Gate::simple(gate_type, vec![0.into()]);
+            let error = GateCommand::try_from(&gate).unwrap_err().to_string();
+            assert!(error.contains(&gate_type.to_string()), "{error}");
+        }
+    }
+
+    #[test]
     fn test_gate_type_conversion_roundtrip() {
         // Test a few gate types
         let neo_types = [

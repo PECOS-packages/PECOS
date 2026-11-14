@@ -234,13 +234,19 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
                 }
             }
             // Batch consecutive MZ commands
-            GateType::MZ | GateType::MeasureZLeaked => {
+            GateType::MZ
+            | GateType::MeasureZLeaked
+            | GateType::MeasureZLost
+            | GateType::MeasureZLeakedLost => {
                 mz_qubits.clear();
                 mz_qubits.extend_from_slice(&cmd.qubits);
                 while cmd_idx + 1 < batch.len()
                     && matches!(
                         batch[cmd_idx + 1].gate_type,
-                        GateType::MZ | GateType::MeasureZLeaked
+                        GateType::MZ
+                            | GateType::MeasureZLeaked
+                            | GateType::MeasureZLost
+                            | GateType::MeasureZLeakedLost
                     )
                 {
                     cmd_idx += 1;
@@ -599,13 +605,19 @@ fn process_general_message<
                 }
             }
             // Batch consecutive MZ commands into one simulator call
-            GateType::MZ | GateType::MeasureZLeaked => {
+            GateType::MZ
+            | GateType::MeasureZLeaked
+            | GateType::MeasureZLost
+            | GateType::MeasureZLeakedLost => {
                 mz_qubits.clear();
                 mz_qubits.extend_from_slice(&cmd.qubits);
                 while cmd_idx + 1 < batch.len()
                     && matches!(
                         batch[cmd_idx + 1].gate_type,
-                        GateType::MZ | GateType::MeasureZLeaked
+                        GateType::MZ
+                            | GateType::MeasureZLeaked
+                            | GateType::MeasureZLost
+                            | GateType::MeasureZLeakedLost
                     )
                 {
                     cmd_idx += 1;
@@ -721,6 +733,8 @@ impl ScheduledBackend {
                 GateType::PZ
                 | GateType::MZ
                 | GateType::MeasureZLeaked
+                | GateType::MeasureZLost
+                | GateType::MeasureZLeakedLost
                 | GateType::X
                 | GateType::Y
                 | GateType::Z
@@ -1208,13 +1222,19 @@ where
                 }
                 // Batch consecutive MZ commands into one simulator call.
                 // This enables joint-sampling optimizations (fewer state vector passes).
-                GateType::MZ | GateType::MeasureZLeaked => {
-                    // Collect qubits from consecutive MZ/MeasureZLeaked commands
+                GateType::MZ
+                | GateType::MeasureZLeaked
+                | GateType::MeasureZLost
+                | GateType::MeasureZLeakedLost => {
+                    // Collect qubits from consecutive MZ or Z-herald commands
                     let mut mz_qubits: Vec<QubitId> = cmd.qubits.to_vec();
                     while cmd_idx + 1 < batch.len()
                         && matches!(
                             batch[cmd_idx + 1].gate_type,
-                            GateType::MZ | GateType::MeasureZLeaked
+                            GateType::MZ
+                                | GateType::MeasureZLeaked
+                                | GateType::MeasureZLost
+                                | GateType::MeasureZLeakedLost
                         )
                     {
                         cmd_idx += 1;
@@ -1775,7 +1795,12 @@ impl Engine for CoinTossEngine {
             check_qubit_capacity(cmd.gate_type, &cmd.qubits, self.simulator.num_qubits())?;
             match cmd.gate_type {
                 // All gates are no-ops for CoinToss - only measurements matter
-                GateType::MZ | GateType::MeasureZLeaked | GateType::MeasureFree | GateType::MPZ => {
+                GateType::MZ
+                | GateType::MeasureZLeaked
+                | GateType::MeasureZLost
+                | GateType::MeasureZLeakedLost
+                | GateType::MeasureFree
+                | GateType::MPZ => {
                     for q in &cmd.qubits {
                         debug!("CoinToss: Processing measurement on qubit {q:?}");
                         let meas_ids = self.simulator.mz(&[*q]);
@@ -1901,6 +1926,23 @@ mod tests {
     use super::*;
     use crate::byte_message::ByteMessageBuilder;
     use std::f64::consts::FRAC_1_SQRT_2;
+
+    #[test]
+    fn scheduled_backend_directly_admits_all_z_heralds() {
+        for flavor in [
+            GateType::MeasureZLeaked,
+            GateType::MeasureZLost,
+            GateType::MeasureZLeakedLost,
+        ] {
+            let backend = ScheduledBackend {
+                capacity: 1,
+                clifford: true,
+            };
+            backend
+                .validate(&[Gate::simple(flavor, vec![0.into()])], false)
+                .unwrap();
+        }
+    }
 
     #[test]
     fn diagonal_gates_are_exact_in_both_engine_dispatchers() {

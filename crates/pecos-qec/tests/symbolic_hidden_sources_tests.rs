@@ -26,28 +26,34 @@ fn reset_entangled_partner_history_is_random() {
 
 #[test]
 fn leaked_bell_measurement_keeps_two_correlated_records() {
-    let mut circuit = TickCircuit::new();
-    circuit.tick().pz(&[0, 1]);
-    circuit.tick().h(&[0]);
-    circuit.tick().cx(&[(0, 1)]);
-    circuit
-        .tick()
-        .try_add_gate(Gate::measure_z_leaked(&[0]))
-        .unwrap();
-    circuit.tick().mz(&[1]);
-    circuit.tick().mz(&[0]);
-    let history = symbolic_measurement_history(&circuit).unwrap();
-    assert_eq!(history.len(), 2);
-    let first = history.get(0).unwrap();
-    assert_eq!(first.index, 0);
-    assert!(!first.is_deterministic);
-    assert_eq!(first.outcome, BitSet::single(0));
-    assert!(!first.flip);
-    let second = history.get(1).unwrap();
-    assert_eq!(second.index, 1);
-    assert!(second.is_deterministic);
-    assert_eq!(second.outcome, BitSet::single(0));
-    assert!(!second.flip);
+    for flavor in [
+        GateType::MeasureZLeaked,
+        GateType::MeasureZLost,
+        GateType::MeasureZLeakedLost,
+    ] {
+        let mut circuit = TickCircuit::new();
+        circuit.tick().pz(&[0, 1]);
+        circuit.tick().h(&[0]);
+        circuit.tick().cx(&[(0, 1)]);
+        circuit
+            .tick()
+            .try_add_gate(Gate::simple(flavor, vec![0.into()]))
+            .unwrap();
+        circuit.tick().mz(&[1]);
+        circuit.tick().mz(&[0]);
+        let history = symbolic_measurement_history(&circuit).unwrap();
+        assert_eq!(history.len(), 2);
+        let first = history.get(0).unwrap();
+        assert_eq!(first.index, 0);
+        assert!(!first.is_deterministic);
+        assert_eq!(first.outcome, BitSet::single(0));
+        assert!(!first.flip);
+        let second = history.get(1).unwrap();
+        assert_eq!(second.index, 1);
+        assert!(second.is_deterministic);
+        assert_eq!(second.outcome, BitSet::single(0));
+        assert!(!second.flip);
+    }
 }
 
 fn random_circuit(seed: u64) -> (TickCircuit, usize) {
@@ -75,7 +81,7 @@ fn random_circuit(seed: u64) -> (TickCircuit, usize) {
             }
             continue;
         }
-        let gate = match rng.random_range(0..14) {
+        let gate = match rng.random_range(0..16) {
             0 => Gate::h(&[q]),
             1 => Gate::sz(&[q]),
             2 | 3 => Gate::cx(&[(q, r)]),
@@ -86,7 +92,9 @@ fn random_circuit(seed: u64) -> (TickCircuit, usize) {
             9 | 10 => Gate::mz(&[q]),
             11 => Gate::mx(&[q]),
             12 => Gate::mpz(&[q]),
-            _ => Gate::measure_z_leaked(&[q]),
+            13 => Gate::measure_z_leaked(&[q]),
+            14 => Gate::measure_z_lost(&[q]),
+            _ => Gate::measure_z_leaked_lost(&[q]),
         };
         circuit.tick().try_add_gate(gate).unwrap();
     }
@@ -103,7 +111,10 @@ fn sampled_twin(circuit: &TickCircuit) -> (TickCircuit, Vec<usize>) {
             let mut gate = batch.as_gate().clone();
             if gate.gate_type.consumes_measurement_record() {
                 record_columns.extend(column..column + gate.qubits.len());
-            } else if gate.gate_type == GateType::MeasureZLeaked {
+            } else if matches!(
+                gate.gate_type,
+                GateType::MeasureZLeaked | GateType::MeasureZLost | GateType::MeasureZLeakedLost
+            ) {
                 gate = Gate::mz(&gate.qubits);
             }
             if gate.gate_type.consumes_measurement_record() {
@@ -162,7 +173,9 @@ fn vecset_history(
                     }
                 }
             }
-            GateType::MeasureZLeaked => sim.mz_unrecorded(&qubits),
+            GateType::MeasureZLeaked | GateType::MeasureZLost | GateType::MeasureZLeakedLost => {
+                sim.mz_unrecorded(&qubits);
+            }
             other => panic!("unexpected generated gate {other:?}"),
         }
     }
@@ -171,8 +184,10 @@ fn vecset_history(
 
 #[test]
 fn seeded_histories_match_sparse_stab_soundness_and_completeness() {
+    let mut generated_flavors = std::collections::BTreeSet::new();
     for seed in 0..300 {
         let (circuit, num_qubits) = random_circuit(seed);
+        generated_flavors.extend(circuit.iter_gate_batches().map(|gate| gate.gate_type));
         let history = symbolic_measurement_history(&circuit)
             .unwrap_or_else(|err| panic!("seed {seed}, circuit {circuit:?}: {err}"));
         assert_eq!(
@@ -223,6 +238,16 @@ fn seeded_histories_match_sparse_stab_soundness_and_completeness() {
             nullity,
             history.deterministic().len(),
             "completeness: seed {seed}, circuit {circuit:?}"
+        );
+    }
+    for flavor in [
+        GateType::MeasureZLeaked,
+        GateType::MeasureZLost,
+        GateType::MeasureZLeakedLost,
+    ] {
+        assert!(
+            generated_flavors.contains(&flavor),
+            "generator never exercised {flavor}"
         );
     }
 }

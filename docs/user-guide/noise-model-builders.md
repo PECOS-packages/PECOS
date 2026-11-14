@@ -315,6 +315,86 @@ blocked across clones until reset, which clears pending gates and buffered reado
 to `apply_noise_on_continue_processing` until no commands remain; the initial
 command message need not contain every source gate.
 
+### Readout matrices
+
+`GeneralNoiseModel` supports separate conditional readout matrices for four Z-measurement
+flavors. `MZ` (also used by `MPZ`) reports `{0, 1}`; `MeasureZLeaked` reports `{0, 1, 2}`;
+`MeasureZLost` reports `{0, 1, 3}`; and `MeasureZLeakedLost` reports `{0, 1, 2, 3}`.
+Here 2 heralds leakage and 3 heralds loss. There is no qubit-loss state yet: a configured
+matrix can report 3 for a present qubit, but it does not remove the qubit.
+
+Rows describe the true state: `"0"`, `"1"`, or `"leaked"`. The simulator supplies the
+computational outcome; leakage is captured when the measurement is emitted. Columns are
+string outcome labels. For example, this JSON configures readout of present qubits:
+
+```json
+{
+  "measurement": {
+    "readout": {
+      "MeasureZLost": {
+        "0": {"0": 0.9958, "1": 0.004, "3": 0.0002},
+        "1": {"1": 0.9958, "0": 0.004, "3": 0.0002}
+      }
+    }
+  }
+}
+```
+
+Python provides the same configuration through immutable builder chaining:
+
+```python
+from pecos_rslib import general_noise
+
+noise = general_noise().with_readout(
+    "MeasureZLost",
+    {
+        "0": {"0": 0.9958, "1": 0.004, "3": 0.0002},
+        "1": {"1": 0.9958, "0": 0.004, "3": 0.0002},
+    },
+)
+```
+
+Rust accepts `ReadoutMatrix::new(flavor, &rows)?` followed by
+`GeneralNoiseModelBuilder::with_readout(matrix)`, with nested `BTreeMap<String, ...>` rows.
+Calling `with_readout` again replaces that flavor's entire matrix; other flavors accumulate.
+A present JSON `measurement.readout` replaces all builder readout matrices, including when
+it is `{}`; omitting the key preserves existing matrices. Flavor names use the shared,
+case-insensitive gate parser (`Measure` is an alias of `MZ`). Two JSON names resolving to
+one flavor are rejected. Configure `MZ` for `MPZ`; other measurement bases and non-measurement
+gates have no readout matrix. The new heralds have no QASM, PHIR, QIS, Selene, or SLR source syntax.
+
+Missing outcomes have probability zero. Each supplied row must be nonempty, use outcomes
+in its flavor's alphabet, and contain finite probabilities in `[0, 1]` whose sum is within
+`1e-5` of one. Accepted sums differing from one by more than `1e-10` are renormalized.
+Empty flavor maps and unknown rows are errors. Python row and outcome keys must be strings;
+invalid matrices raise `ValueError`. A well-formed `"lost"` row can be constructed, but
+Rust `try_build`, JSON `build`, and Python simulation building reject it because qubit loss
+is not configured.
+
+Unconfigured rows keep the legacy readout exactly: a true 0 or 1 takes one asymmetric
+`p_meas_0` or `p_meas_1` flip draw. A leaked qubit nominally reads 2 if its alphabet includes
+2, with no default draw; otherwise it nominally reads 1 and takes the default `p_meas_1`
+flip. That fallback never uses a configured `"1"` row. Consequently, without configuration,
+`MeasureZLost` behaves like `MZ`, and `MeasureZLeakedLost` like `MeasureZLeaked`, including
+RNG consumption.
+
+Each configured row replaces only its flavor and true-state default, and always consumes
+one categorical draw, even for a deterministic row. Configured probabilities are never
+scaled; unconfigured rows keep the existing measurement and overall scaling. Noiseless
+readout returns the nominal outcome with no draw: `MZ` and `MPZ` use the `MZ` noiseless key,
+and each herald uses its own gate key. Gate emission still uses the gate's own noiseless
+key. Transition-hook and crosstalk-injected measurements bypass readout matrices.
+
+Configured readout is outside the simple probability subset: neo routing, runtime-frame
+noise, and the Selene general-noise adapter reject it. Remove `measurement.readout` to use
+the latter two consumers. Versioned runtime and scheduled wire formats also reject the
+new herald gates by name.
+
+Classical storage is unchanged. QASM and PHIR-JSON store any nonzero outcome as bit 1;
+the Python PHIR interpreter masks indexed writes with `& 1`. QIS retains the full `u32`.
+The Selene adapter accepts leakage outcomes only up to 2. None provides source syntax for
+the new herald gates in this slice; use core gates or byte-message builders for those gates.
+
 ### Scaling and Global Parameters
 
 ```python

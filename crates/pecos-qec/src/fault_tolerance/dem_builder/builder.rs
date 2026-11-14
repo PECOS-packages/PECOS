@@ -1372,7 +1372,7 @@ impl<'a> DemBuilder<'a> {
                 sim.mz(qubits);
                 sim.h(qubits);
             }
-            GateType::MeasureZLeaked => {
+            GateType::MeasureZLeaked | GateType::MeasureZLost | GateType::MeasureZLeakedLost => {
                 require(1)?;
                 sim.mz_unrecorded(qubits);
             }
@@ -5250,31 +5250,37 @@ mod tests {
 
     #[test]
     fn crosstalk_hidden_replay_supports_leaked_measurements() {
-        let mut sim = SymbolicSparseStab::new(2);
-        sim.h(&[0]).cx(&[(0, 1)]);
-        DemBuilder::apply_symbolic_gate_for_crosstalk_hidden_mz(
-            &mut sim,
-            0,
-            &pecos_core::Gate::measure_z_leaked(&[0]),
-        )
-        .unwrap();
-        assert_eq!(sim.measurement_count(), 0);
-        let results = sim.mz(&[1, 0]);
-        assert!(!results[0].is_deterministic);
-        assert!(results[1].is_deterministic);
-        assert_eq!(results[1].outcome, pecos_core::BitSet::single(0));
+        for flavor in [
+            pecos_core::gate_type::GateType::MeasureZLeaked,
+            pecos_core::gate_type::GateType::MeasureZLost,
+            pecos_core::gate_type::GateType::MeasureZLeakedLost,
+        ] {
+            let mut sim = SymbolicSparseStab::new(2);
+            sim.h(&[0]).cx(&[(0, 1)]);
+            DemBuilder::apply_symbolic_gate_for_crosstalk_hidden_mz(
+                &mut sim,
+                0,
+                &pecos_core::Gate::simple(flavor, vec![0.into()]),
+            )
+            .unwrap();
+            assert_eq!(sim.measurement_count(), 0);
+            let results = sim.mz(&[1, 0]);
+            assert!(!results[0].is_deterministic);
+            assert!(results[1].is_deterministic);
+            assert_eq!(results[1].outcome, pecos_core::BitSet::single(0));
 
-        // Skipping the collapse would let the two H gates cancel.
-        let mut sim = SymbolicSparseStab::new(1);
-        sim.h(&[0]);
-        DemBuilder::apply_symbolic_gate_for_crosstalk_hidden_mz(
-            &mut sim,
-            0,
-            &pecos_core::Gate::measure_z_leaked(&[0]),
-        )
-        .unwrap();
-        sim.h(&[0]);
-        assert!(!sim.mz(&[0])[0].is_deterministic);
+            // Skipping the collapse would let the two H gates cancel.
+            let mut sim = SymbolicSparseStab::new(1);
+            sim.h(&[0]);
+            DemBuilder::apply_symbolic_gate_for_crosstalk_hidden_mz(
+                &mut sim,
+                0,
+                &pecos_core::Gate::simple(flavor, vec![0.into()]),
+            )
+            .unwrap();
+            sim.h(&[0]);
+            assert!(!sim.mz(&[0])[0].is_deterministic);
+        }
     }
 
     #[test]

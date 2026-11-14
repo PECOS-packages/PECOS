@@ -83,6 +83,9 @@ impl GeneralNoiseErrorModel {
                 .build()
                 .context("invalid general-noise configuration")?,
         );
+        if model.has_configured_readout() {
+            bail!("Selene does not support readout matrices; remove measurement.readout");
+        }
         for group in local_groups {
             if let Some(qubit) = group.iter().find(|qubit| **qubit >= n_qubits) {
                 bail!(
@@ -444,6 +447,36 @@ mod tests {
 
     use super::{GeneralNoiseErrorModel, PluginConfig};
     use crate::simulator::SeleneSimulator;
+
+    #[test]
+    fn simulator_measures_new_heralds() {
+        for gate in [GateType::MeasureZLost, GateType::MeasureZLeakedLost] {
+            let mut builder = ByteMessage::quantum_operations_builder();
+            builder.add_gate_command(&pecos_core::Gate::simple(gate, vec![0.into()]));
+            assert_eq!(
+                SeleneSimulator::process(&mut ZeroSimulator, &builder.build())
+                    .unwrap()
+                    .outcomes()
+                    .unwrap(),
+                [0]
+            );
+        }
+    }
+
+    #[test]
+    fn configured_readout_is_rejected() {
+        let error = GeneralNoiseErrorModel::from_plugin_json(
+            1,
+            r#"{"model":{"measurement":{"readout":{"MZ":{"0":{"0":1.0}}}}}}"#,
+        )
+        .err()
+        .unwrap()
+        .to_string();
+        assert!(
+            error.contains("readout matrices") && error.contains("remove measurement.readout"),
+            "{error}"
+        );
+    }
 
     #[test]
     fn all_runtime_rotation_parameters_reject_nonfinite_values() {

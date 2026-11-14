@@ -255,7 +255,12 @@ impl BiasedDepolarizingNoiseModel {
                 GateType::MPZ => {
                     NoiseUtils::add_gate_to_builder(&mut builder, gate);
                 }
-                GateType::MX | GateType::MZ | GateType::MeasureZLeaked | GateType::MeasureFree => {
+                GateType::MX
+                | GateType::MZ
+                | GateType::MeasureZLeaked
+                | GateType::MeasureZLost
+                | GateType::MeasureZLeakedLost
+                | GateType::MeasureFree => {
                     trace!("Applying measurement. Will apply bias after engine returns results.");
                     // we apply biased measurement after the engine
                     // returns the results, rather than before measurement

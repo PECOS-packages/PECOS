@@ -336,9 +336,12 @@ struct IdleConfig {
     scale: Option<f64>,
 }
 
+type ReadoutRows = BTreeMap<String, BTreeMap<String, f64>>;
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 struct MeasurementConfig {
+    readout: Option<BTreeMap<String, ReadoutRows>>,
     p0_to_1: Option<f64>,
     p1_to_0: Option<f64>,
     global_crosstalk_probability: Option<f64>,
@@ -551,6 +554,28 @@ impl GeneralNoiseConfig {
         }
 
         let measurement = &self.measurement;
+        if let Some(readout) = &measurement.readout {
+            builder.clear_readout();
+            let mut flavors = BTreeMap::new();
+            for (name, rows) in readout {
+                let flavor = GateType::from_str(name).map_err(|message| {
+                    input_error(format!("invalid readout flavor {name:?}: {message}; use MZ, MeasureZLeaked, MeasureZLost, or MeasureZLeakedLost"))
+                })?;
+                if let Some(previous) = flavors.insert(flavor, name) {
+                    return Err(input_error(format!(
+                        "readout keys {previous:?} and {name:?} both name {flavor}; configure each flavor once"
+                    )));
+                }
+                let matrix = super::ReadoutMatrix::new(flavor, rows).map_err(|error| {
+                    let message = match error {
+                        PecosError::Input(message) => message,
+                        other => other.to_string(),
+                    };
+                    input_error(format!("measurement.readout key {name:?}: {message}"))
+                })?;
+                builder = builder.with_readout(matrix);
+            }
+        }
         if let Some(value) = measurement.p0_to_1 {
             builder = builder.with_p_meas_0(value);
         }

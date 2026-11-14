@@ -1092,6 +1092,24 @@ impl Gate {
         )
     }
 
+    /// Create `MeasureZLost` gate on multiple qubits
+    #[must_use]
+    pub fn measure_z_lost(qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        Self::simple(
+            GateType::MeasureZLost,
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
+        )
+    }
+
+    /// Create `MeasureZLeakedLost` gate on multiple qubits
+    #[must_use]
+    pub fn measure_z_leaked_lost(qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        Self::simple(
+            GateType::MeasureZLeakedLost,
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
+        )
+    }
+
     /// Deprecated spelling of [`Gate::measure_z_leaked`].
     #[deprecated(note = "renamed to Gate::measure_z_leaked")]
     #[must_use]
@@ -1394,6 +1412,8 @@ impl Gate {
             GateType::MX
                 | GateType::MZ
                 | GateType::MeasureZLeaked
+                | GateType::MeasureZLost
+                | GateType::MeasureZLeakedLost
                 | GateType::MeasureFree
                 | GateType::MPZ
         );

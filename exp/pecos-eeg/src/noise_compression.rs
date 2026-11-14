@@ -235,6 +235,8 @@ fn forward_conjugate_label(label: &mut Bm, gate: &Gate) {
         | GateType::MeasureFree
         | GateType::MPZ
         | GateType::MeasureZLeaked
+        | GateType::MeasureZLost
+        | GateType::MeasureZLeakedLost
         | GateType::I
         | GateType::Idle => return,
         _ => {}
@@ -354,6 +356,24 @@ impl NoiseSpec for CompressedNoiseSpec {
 mod tests {
     use super::*;
     use crate::noise::UniformNoise;
+
+    #[test]
+    fn all_z_heralds_preserve_compressed_pauli_labels() {
+        for flavor in [
+            GateType::MeasureZLeaked,
+            GateType::MeasureZLost,
+            GateType::MeasureZLeakedLost,
+        ] {
+            // For these labels, the explicit herald arm is redundant with the
+            // fallback: sparse_conjugate returns None and leaves them unchanged.
+            // Assert the behavior without depending on which path implements it.
+            for label in [Bm::x(0), Bm::z(0), Bm::x(1)] {
+                let mut actual = label.clone();
+                forward_conjugate_label(&mut actual, &Gate::simple(flavor, vec![0.into()]));
+                assert_eq!(actual, label, "{flavor}");
+            }
+        }
+    }
 
     #[test]
     fn diagonal_gates_are_rejected_by_compression() {

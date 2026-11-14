@@ -151,7 +151,12 @@ pub fn detect_output_qubits(circuit: &TickCircuit) -> Vec<usize> {
                 // Check if this is a measurement gate
                 if matches!(
                     gate.gate_type,
-                    GateType::MZ | GateType::MeasureZLeaked | GateType::MeasureFree | GateType::MPZ
+                    GateType::MZ
+                        | GateType::MeasureZLeaked
+                        | GateType::MeasureZLost
+                        | GateType::MeasureZLeakedLost
+                        | GateType::MeasureFree
+                        | GateType::MPZ
                 ) {
                     measured_qubits.insert(q);
                 }
@@ -204,6 +209,8 @@ impl CircuitIO {
                         gate.gate_type,
                         GateType::MZ
                             | GateType::MeasureZLeaked
+                            | GateType::MeasureZLost
+                            | GateType::MeasureZLeakedLost
                             | GateType::MeasureFree
                             | GateType::MPZ
                     ) {
@@ -292,7 +299,12 @@ pub(crate) fn apply_gate_flip_ledger(prop: &mut PauliProp, gate: &pecos_core::Ga
         // phantom -- and would disagree with the gate's own `mz; pz` lowering,
         // whose explicit PZ clears. Its mid-circuit flips are invisible to
         // end-reads, exactly as the lowering's always were.
-        GateType::MX | GateType::MZ | GateType::MeasureFree | GateType::MeasureZLeaked => {
+        GateType::MX
+        | GateType::MZ
+        | GateType::MeasureFree
+        | GateType::MeasureZLeaked
+        | GateType::MeasureZLost
+        | GateType::MeasureZLeakedLost => {
             let x_basis = gate.gate_type == GateType::MX;
             for q in &gate.qubits {
                 let qubit = q.index();
@@ -2587,6 +2599,43 @@ mod tests {
             expected.get_z_qubits(),
             "Z components differ: {context}"
         );
+    }
+
+    #[test]
+    fn all_z_heralds_are_measured_outputs() {
+        for flavor in [
+            GateType::MeasureZLeaked,
+            GateType::MeasureZLost,
+            GateType::MeasureZLeakedLost,
+        ] {
+            let mut circuit = TickCircuit::new();
+            circuit.tick().h(&[0, 1]);
+            circuit
+                .tick()
+                .try_add_gate(pecos_core::Gate::simple(flavor, vec![0.into()]))
+                .unwrap();
+            assert_eq!(detect_output_qubits(&circuit), [1], "{flavor}");
+            let io = CircuitIO::from_circuit(&circuit);
+            assert_eq!(io.measured_qubits, [0], "{flavor}");
+            assert_eq!(io.output_qubits, [1], "{flavor}");
+        }
+    }
+
+    #[test]
+    fn all_z_heralds_absorb_z_in_the_flip_ledger() {
+        for flavor in [
+            GateType::MeasureZLeaked,
+            GateType::MeasureZLost,
+            GateType::MeasureZLeakedLost,
+        ] {
+            let mut prop = PauliProp::new();
+            prop.track_x(&[0, 1]);
+            prop.track_z(&[0, 1]);
+            apply_gate_flip_ledger(&mut prop, &pecos_core::Gate::simple(flavor, vec![0.into()]));
+            assert!(prop.contains_x(0), "{flavor}");
+            assert!(!prop.contains_z(0), "{flavor}");
+            assert!(prop.contains_x(1) && prop.contains_z(1));
+        }
     }
 
     #[test]

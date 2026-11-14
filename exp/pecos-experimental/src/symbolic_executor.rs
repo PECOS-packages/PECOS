@@ -141,7 +141,8 @@ impl std::error::Error for SymbolicExecutionError {}
 /// - Single-qubit: I, X, Y, Z, H, SX, SY, SZ and their adjoints
 /// - Two-qubit: CX, CY, CZ, SXX, SYY, SZZ and their adjoints
 /// - Rotations at Clifford angles accepted by the shared lowering policy
-/// - Measurements: MX, MZ, `MeasureFree`, `MeasureZLeaked`
+/// - Measurements: MX, MZ, `MeasureFree`, and the Z heralds
+///   (`MeasureZLeaked`, `MeasureZLost`, `MeasureZLeakedLost`)
 /// - Preparations: PX, PZ, `QAlloc` (reset to |0⟩)
 /// - Measurement and reset: MPZ (measure Z, then reset to |0⟩)
 /// - Release, timing and metadata: `QFree`, `Idle`, `MeasCrosstalkGlobalPayload`,
@@ -363,7 +364,10 @@ pub(crate) fn named_action(
             reset: false,
             release: false,
         },
-        GateType::MZ | GateType::MeasureZLeaked => NamedAction::Measure {
+        GateType::MZ
+        | GateType::MeasureZLeaked
+        | GateType::MeasureZLost
+        | GateType::MeasureZLeakedLost => NamedAction::Measure {
             x_basis: false,
             reset: false,
             release: false,
@@ -486,6 +490,20 @@ mod tests {
     use super::*;
     use pecos_quantum::DagCircuit;
     use pecos_simulators::SymbolicSparseStab;
+
+    #[test]
+    fn new_heralds_measure_plain_z() {
+        for gate_type in [GateType::MeasureZLost, GateType::MeasureZLeakedLost] {
+            let mut circuit = DagCircuit::new();
+            circuit.x(&[0]);
+            circuit.add_gate_auto_wire(Gate::simple(gate_type, vec![0.into()]));
+            let mut sim = SymbolicSparseStab::new(1);
+            execute_circuit_symbolic(&mut sim, &circuit).unwrap();
+            let history = sim.measurement_history();
+            assert_eq!(history.len(), 1);
+            assert!(history[0].is_deterministic && history[0].flip);
+        }
+    }
 
     #[test]
     fn diagonal_non_clifford_gates_are_rejected() {

@@ -1900,8 +1900,8 @@ mod tests {
         assert!((weights.weights[14] - 0.5).abs() < 1e-10);
 
         // Other 14 operators should share the remaining 50%
-        for i in 0..14 {
-            assert!((weights.weights[i] - 0.5 / 14.0).abs() < 1e-10);
+        for weight in weights.weights.iter().take(14) {
+            assert!((weight - 0.5 / 14.0).abs() < 1e-10);
         }
 
         // Values >= 0.5 should sample ZZ

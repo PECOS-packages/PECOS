@@ -545,8 +545,7 @@ impl ExecutionContext {
     pub fn get_named_results(&self) -> BTreeMap<String, NamedResult> {
         self.named_results
             .lock()
-            .map(|guard| guard.clone())
-            .unwrap_or_default()
+            .map_or_else(|_| BTreeMap::new(), |guard| guard.clone())
     }
 
     /// Get all named result provenance records (returns a clone)
@@ -554,8 +553,7 @@ impl ExecutionContext {
     pub fn get_named_result_traces(&self) -> Vec<NamedResultTrace> {
         self.named_result_traces
             .lock()
-            .map(|guard| guard.clone())
-            .unwrap_or_default()
+            .map_or_else(|_| Vec::new(), |guard| guard.clone())
     }
 }
 

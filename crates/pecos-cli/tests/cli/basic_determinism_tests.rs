@@ -218,40 +218,29 @@ fn test_basic_determinism_qasm() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Test basic determinism with LLVM files, gracefully skipping if LLVM tools are unavailable
+/// Runtime-feature tests require working QIS libraries and LLVM support.
 #[test]
-fn test_basic_determinism_llvm() {
+fn test_basic_determinism_llvm() -> Result<(), Box<dyn std::error::Error>> {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let bell_ll_path = manifest_dir.join("../../examples/llvm/bell.ll");
 
     println!("BASIC DETERMINISM TEST - LLVM FILES");
     println!("---------------------------------");
 
-    // Try to run LLVM tests, but handle any errors gracefully
-    let result = (|| -> Result<(), Box<dyn std::error::Error>> {
-        // Test with depolarizing noise
-        println!("\nTesting with depolarizing noise (p=0.1):");
-        test_determinism_for_file(&bell_ll_path, 100, 1, "depolarizing", "0.1")?;
+    // Test with depolarizing noise
+    println!("\nTesting with depolarizing noise (p=0.1):");
+    test_determinism_for_file(&bell_ll_path, 100, 1, "depolarizing", "0.1")?;
 
-        // Test with general noise
-        println!("\nTesting with general noise (p=0.1 for all types):");
-        test_determinism_for_file(&bell_ll_path, 100, 1, "general", "0.1,0.05,0.05,0.1,0.2")?;
+    // Test with general noise
+    println!("\nTesting with general noise (p=0.1 for all types):");
+    test_determinism_for_file(&bell_ll_path, 100, 1, "general", "0.1,0.05,0.05,0.1,0.2")?;
 
-        // Test with multiple workers
-        println!("\nTesting with multiple workers (2):");
-        test_determinism_for_file(&bell_ll_path, 100, 2, "depolarizing", "0.1")?;
-
-        Ok(())
-    })();
-
-    // If there was an error, print a message but don't fail the test
-    if let Err(e) = result {
-        println!("Skipping LLVM determinism test - LLVM engine error: {e}");
-        println!("This might be due to missing LLVM tools or other dependencies");
-        return;
-    }
+    // Test with multiple workers
+    println!("\nTesting with multiple workers (2):");
+    test_determinism_for_file(&bell_ll_path, 100, 2, "depolarizing", "0.1")?;
 
     println!("\nLLVM files exhibit deterministic behavior with the same seed");
+    Ok(())
 }
 
 /// Test that with 0 noise probability, both noise models give identical results

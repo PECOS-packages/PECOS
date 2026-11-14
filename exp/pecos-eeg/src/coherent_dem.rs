@@ -567,9 +567,8 @@ pub fn build_coherent_dem_exact(
     //
     // Loss = sum_d (marginal_d - target_d)^2
     //      + sum_pairs (pairwise_ij - target_ij)^2
-    let pairs: Vec<((usize, usize), f64)> = heisenberg_pairwise
-        .map(<[((usize, usize), f64)]>::to_vec)
-        .unwrap_or_default();
+    let pairs: Vec<((usize, usize), f64)> =
+        heisenberg_pairwise.map_or_else(Vec::new, <[((usize, usize), f64)]>::to_vec);
     let has_pairwise = !pairs.is_empty();
 
     // Initialize x from q: x = logit(q / 0.499)

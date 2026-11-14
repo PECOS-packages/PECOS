@@ -17,9 +17,8 @@ pub fn run(verbose: bool) {
     // LLVM status
     let repo_root = get_repo_root_from_manifest();
     if let Some(llvm_path) = find_llvm(repo_root) {
-        let version = get_llvm_version(&llvm_path)
-            .map(|v| format!(" ({v})"))
-            .unwrap_or_default();
+        let version =
+            get_llvm_version(&llvm_path).map_or_else(|_| String::new(), |v| format!(" ({v})"));
         println!("LLVM 21.1:     {}{version}", llvm_path.display());
     } else if pecos_build::llvm::installer::managed_install_unavailable_reason().is_some() {
         println!("LLVM 21.1:     not found (configure shared LLVM 21 manually)");

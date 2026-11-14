@@ -320,8 +320,7 @@ impl<S: CliffordGateable> World<S> {
         let noise_context = self
             .noise_contexts
             .remove(entity)
-            .map(|c| c.context)
-            .unwrap_or_default();
+            .map_or_else(NoiseContext::default, |c| c.context);
         let status = self
             .statuses
             .remove(entity)

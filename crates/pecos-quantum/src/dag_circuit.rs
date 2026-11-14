@@ -1674,13 +1674,11 @@ impl DagCircuit {
         }
         let from_qubits: BTreeSet<QubitId> = self
             .gate(from)
-            .map(|g| g.qubits.iter().copied().collect())
-            .unwrap_or_default();
+            .map_or_else(BTreeSet::new, |g| g.qubits.iter().copied().collect());
 
         let to_qubits: BTreeSet<QubitId> = self
             .gate(to)
-            .map(|g| g.qubits.iter().copied().collect())
-            .unwrap_or_default();
+            .map_or_else(BTreeSet::new, |g| g.qubits.iter().copied().collect());
 
         let shared: Vec<QubitId> = from_qubits.intersection(&to_qubits).copied().collect();
 
@@ -3755,8 +3753,7 @@ mod tests {
         let mut heads = circuit
             .qubit_heads
             .get(&QubitId(qubit))
-            .map(|heads| heads.to_vec())
-            .unwrap_or_default();
+            .map_or_else(Vec::new, |heads| heads.to_vec());
         heads.sort_unstable();
         heads
     }

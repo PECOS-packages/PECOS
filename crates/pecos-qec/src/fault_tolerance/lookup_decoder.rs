@@ -32,8 +32,13 @@
 //! assert!(result.corrections.is_empty());
 //! ```
 
+use super::dem_builder::sampler::{
+    compute_location_probs_from_noise as compute_location_probs,
+    gate_location_prob_from_locations as gate_location_prob,
+};
 use super::dem_builder::{DemBuilderError, NoiseConfig, validate_idle_noise_targets};
-use super::propagator::dag::{DagFaultInfluenceMap, DagSpacetimeLocation, GateFaultLocation};
+use super::propagator::dag::{DagFaultInfluenceMap, GateFaultLocation};
+use super::propagator::{GateNoiseKind, gate_noise_kind};
 use pecos_core::gate_type::GateType;
 use std::collections::BTreeMap;
 
@@ -102,8 +107,21 @@ impl LookupDecoder {
         let mut loc_no_fault_probs: Vec<f64> = Vec::with_capacity(locs.len());
         let mut loc_events: Vec<Vec<EventData>> = Vec::with_capacity(locs.len());
 
+        // Validate the whole node before splitting, so duplicate operands cannot
+        // become superficially valid individual instances.
         for loc in &locs {
-            let p = gate_location_prob(loc, &loc_probs, &map.locations);
+            let duplicates =
+                pecos_core::duplicate_qubits(loc.qubits.iter().map(pecos_core::QubitId::index));
+            if !duplicates.is_empty() {
+                return Err(DemBuilderError::ConfigurationError(format!(
+                    "gate location node {} qubits {:?} contains duplicate qubits {duplicates:?}; use distinct qubits within each gate",
+                    loc.node, loc.qubits
+                )));
+            }
+        }
+
+        for loc in locs.iter().flat_map(GateFaultLocation::gate_instances) {
+            let p = gate_location_prob(&loc, &loc_probs);
 
             let events = loc
                 .all_events()
@@ -112,23 +130,21 @@ impl LookupDecoder {
 
             // For idle gates with T1/T2, compute biased per-Pauli probabilities
             let idle_pauli_probs = if loc.gate_type == GateType::Idle {
-                let duration = map
-                    .locations
-                    .iter()
-                    .find(|l| l.node == loc.node && l.before == loc.before)
-                    .map_or(0.0, |l| l.idle_duration);
+                let duration = map.locations[loc.location_index()].idle_duration;
                 Some(noise.idle_pauli_probs(duration))
             } else {
                 None
             };
 
-            let n_qubits = loc.num_qubits();
+            let gate_kind = gate_noise_kind(loc.gate_type);
             let custom_weights = if idle_pauli_probs.is_some() {
                 None
-            } else if n_qubits == 1 {
-                noise.p1_weights.as_ref()
             } else {
-                noise.p2_weights.as_ref()
+                match gate_kind {
+                    GateNoiseKind::Single => noise.p1_weights.as_ref(),
+                    GateNoiseKind::Two => noise.p2_weights.as_ref(),
+                    _ => None,
+                }
             };
 
             let event_probs: Vec<f64> = if let Some(pp) = &idle_pauli_probs {
@@ -152,7 +168,7 @@ impl LookupDecoder {
                 events
                     .iter()
                     .map(|event| {
-                        let weight = if n_qubits == 2 {
+                        let weight = if gate_kind == GateNoiseKind::Two {
                             weights.two_qubit_weight_for_on(
                                 loc.clifford,
                                 &event.pauli,
@@ -467,29 +483,6 @@ fn enumerate_combos(
     }
 }
 
-/// Compute per-location error probabilities from noise config.
-fn compute_location_probs(locations: &[DagSpacetimeLocation], noise: &NoiseConfig) -> Vec<f64> {
-    super::dem_builder::sampler::compute_location_probs_from_noise(locations, noise)
-}
-
-/// Get the per-qubit error probability for a gate fault location.
-///
-/// Since `gate_fault_locations` groups per-qubit locations, all per-qubit
-/// locations within a gate have the same gate-type-based probability.
-fn gate_location_prob(
-    loc: &GateFaultLocation<'_>,
-    loc_probs: &[f64],
-    all_locations: &[DagSpacetimeLocation],
-) -> f64 {
-    // Find any per-qubit location in the influence map for this gate
-    for (i, l) in all_locations.iter().enumerate() {
-        if l.node == loc.node && l.before == loc.before {
-            return loc_probs[i];
-        }
-    }
-    0.0
-}
-
 fn observable_ids(map: &DagFaultInfluenceMap) -> Vec<u32> {
     map.observable_ids().into_iter().collect()
 }
@@ -500,6 +493,70 @@ mod tests {
     use crate::fault_tolerance::InfluenceBuilder;
     use pecos_core::pauli::X;
     use pecos_quantum::DagCircuit;
+
+    #[test]
+    fn lookup_preserves_preparation_and_measurement_rates_with_p1_weights() {
+        use super::super::dem_builder::PauliWeights;
+        use pecos_core::pauli::Z;
+        let mut dag = DagCircuit::new();
+        dag.pz(&[0]);
+        let measurements = dag.mz(&[0]);
+        dag.detector(&[measurements[0]]).unwrap();
+        let map = InfluenceBuilder::new(&dag).unwrap().build().unwrap();
+        for (p_meas, p_prep) in [(0.25, 0.0), (0.0, 0.25)] {
+            let noise = NoiseConfig::new(0.0, 0.0, p_meas, p_prep)
+                .set_p1_weights(PauliWeights::from([(Z(0), 1.0)]));
+            let no_fault = LookupDecoder::build(&map, &noise, 0).unwrap();
+            let one_fault = LookupDecoder::build(&map, &noise, 1).unwrap();
+            // The only nonzero fault flips detector 0, so the extra probability
+            // at weight one is precisely the probability of syndrome {0}.
+            assert!(one_fault.decode(&[0]).known_syndrome);
+            let syndrome_probability =
+                one_fault.accounted_probability() - no_fault.accounted_probability();
+            assert!(
+                (syndrome_probability - 0.25).abs() < 1e-12,
+                "p_meas={p_meas}, p_prep={p_prep}: syndrome {{0}} probability {syndrome_probability}"
+            );
+        }
+    }
+
+    #[test]
+    fn lookup_batched_single_qubit_channels_are_independent() {
+        use super::super::dem_builder::PauliWeights;
+        let mut dag = DagCircuit::new();
+        for qubit in [0, 1] {
+            dag.add_gate_auto_wire(pecos_core::Gate::px(&[qubit]));
+        }
+        dag.add_gate_auto_wire(pecos_core::Gate::h(&[0, 1]));
+        let measurements = dag.mz(&[0, 1]);
+        for record in measurements {
+            dag.detector(&[record]).unwrap();
+        }
+        let map = InfluenceBuilder::new(&dag).unwrap().build().unwrap();
+        let noise =
+            NoiseConfig::new(0.25, 0.0, 0.0, 0.0).set_p1_weights(PauliWeights::from([(X(0), 1.0)]));
+        for (weight, expected) in [(0, 0.5625), (1, 0.9375), (2, 1.0)] {
+            let decoder = LookupDecoder::build(&map, &noise, weight).unwrap();
+            assert!(
+                (decoder.accounted_probability() - expected).abs() < 1e-12,
+                "weight {weight}: {} != {expected}",
+                decoder.accounted_probability()
+            );
+        }
+    }
+
+    #[test]
+    fn lookup_instance_probability_uses_its_qubit() {
+        let mut dag = DagCircuit::new();
+        dag.add_gate_auto_wire(pecos_core::Gate::h(&[0, 1]));
+        let map = InfluenceBuilder::new(&dag).unwrap().build().unwrap();
+        let locations = map.gate_fault_locations();
+        let instances = locations[0].gate_instances();
+        assert_eq!(instances.len(), 2);
+        for (instance, expected) in instances.iter().zip([0.1, 0.2]) {
+            assert!((gate_location_prob(instance, &[0.1, 0.2]) - expected).abs() < 1e-12);
+        }
+    }
 
     #[test]
     fn observable_indices_use_compact_l_namespace_with_tracked_paulis() {

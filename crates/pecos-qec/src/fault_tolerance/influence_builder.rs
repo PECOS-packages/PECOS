@@ -34,8 +34,8 @@
 use super::propagator::dag::{DagFaultInfluenceMap, DagSpacetimeLocation, DemOutputMetadata};
 use super::propagator::types::{DetectorId, MeasurementId};
 use super::propagator::{
-    DagPropagator, Direction, Pauli, apply_gate_unchecked, is_supported_noop_or_metadata_gate,
-    is_supported_prep_gate,
+    DagPropagator, Direction, GateNoiseKind, Pauli, apply_gate_unchecked, gate_noise_kind,
+    is_supported_noop_or_metadata_gate, is_supported_prep_gate,
 };
 use super::propagator::{UnsupportedGateError, UnsupportedGateLocation};
 use super::symbolic_replay::{Dispatch, apply_lowered_clifford, apply_unitary_clifford};
@@ -519,9 +519,7 @@ impl<'a> InfluenceBuilder<'a> {
                         meas_idx += 1;
                     }
                     // A record-less collapse preserves the node-to-record map.
-                    pecos_quantum::GateType::MeasureZLeaked
-                    | pecos_quantum::GateType::MeasureZLost
-                    | pecos_quantum::GateType::MeasureZLeakedLost => sim.mz_unrecorded(&qubits),
+                    gate if gate.is_recordless_z_measurement() => sim.mz_unrecorded(&qubits),
                     // Resets project onto |0>. Skipping them treated a reused
                     // qubit as still carrying its pre-reset correlations.
                     gate_type if is_supported_prep_gate(gate_type) => {
@@ -699,13 +697,7 @@ impl<'a> InfluenceBuilder<'a> {
 
                 let qubits: Vec<QubitId> = gate.qubits.to_vec();
 
-                let is_measurement = matches!(
-                    gate.gate_type,
-                    pecos_quantum::GateType::MX
-                        | pecos_quantum::GateType::MZ
-                        | pecos_quantum::GateType::MeasureFree
-                        | pecos_quantum::GateType::MPZ
-                );
+                let is_measurement = gate_noise_kind(gate.gate_type) == GateNoiseKind::Measurement;
 
                 // Standard circuit noise model: one fault location per gate.
                 //   Measurement: before. All others: after.
@@ -1008,13 +1000,7 @@ impl<'a> InfluenceBuilder<'a> {
                     continue;
                 }
 
-                let is_measurement = matches!(
-                    gate.gate_type,
-                    pecos_quantum::GateType::MX
-                        | pecos_quantum::GateType::MZ
-                        | pecos_quantum::GateType::MeasureFree
-                        | pecos_quantum::GateType::MPZ
-                );
+                let is_measurement = gate_noise_kind(gate.gate_type) == GateNoiseKind::Measurement;
 
                 let before = is_measurement;
                 let location_qubits: Vec<QubitId> =

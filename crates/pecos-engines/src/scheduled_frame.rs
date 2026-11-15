@@ -553,6 +553,19 @@ impl IntoNoiseModel for ScheduledNoise {
         Ok(Box::new(self.build_model()))
     }
 }
+
+pub(crate) fn unsupported_scheduled_gate(gate_type: GateType) -> PecosError {
+    let fix = if matches!(
+        gate_type,
+        GateType::MeasureZLost | GateType::MeasureZLeakedLost
+    ) {
+        "; the scheduled wire carries only MeasureZLeaked among Z heralds; use MeasureZLeaked (which cannot herald loss) or a non-scheduled engine"
+    } else {
+        ""
+    };
+    error(&format!("unsupported scheduled gate: {gate_type}{fix}"))
+}
+
 pub(crate) fn fields(g: &Gate) -> Result<(u64, u64, u64, u64, u64), PecosError> {
     g.validate().map_err(|s| error(&s))?;
     let (code, n, angles) = match g.gate_type {
@@ -565,12 +578,7 @@ pub(crate) fn fields(g: &Gate) -> Result<(u64, u64, u64, u64, u64), PecosError> 
         GateType::PZ => (5, 1, 0),
         GateType::MZ => (6, 1, 0),
         GateType::MeasureZLeaked => (7, 1, 0),
-        _ => {
-            return Err(error(&format!(
-                "unsupported scheduled gate: {}",
-                g.gate_type
-            )));
-        }
+        _ => return Err(unsupported_scheduled_gate(g.gate_type)),
     };
     if g.qubits.len() != n
         || g.angles.len() != angles
@@ -1001,6 +1009,22 @@ mod timing_tests {
             gates,
         }
     }
+    #[test]
+    fn scheduled_fields_herald_error_gives_repair_guidance() {
+        assert!(fields(&Gate::measure_z_leaked(&[0])).is_ok());
+        for gate in [GateType::MeasureZLost, GateType::MeasureZLeakedLost] {
+            let error = fields(&Gate::simple(gate, vec![0.into()]))
+                .unwrap_err()
+                .to_string();
+            for part in [
+                &gate.to_string(),
+                "use MeasureZLeaked (which cannot herald loss) or a non-scheduled engine",
+            ] {
+                assert!(error.contains(part), "missing {part} in {error}");
+            }
+        }
+    }
+
     #[test]
     fn scheduled_angles_keep_every_fraction_bit() {
         for fraction in [0, 1, u64::MAX, pecos_core::radians!(-0.73).fraction()] {

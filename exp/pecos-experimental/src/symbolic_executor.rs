@@ -451,7 +451,11 @@ fn execute_named_gate(
             if x_basis {
                 sim.h(&[q]);
             }
-            sim.mz(&[q]);
+            if gate_type.is_recordless_z_measurement() {
+                sim.mz_unrecorded(&[q]);
+            } else {
+                sim.mz(&[q]);
+            }
             // Restore the X-basis eigenstate after the Z-basis projection.
             if x_basis {
                 sim.h(&[q]);
@@ -492,16 +496,22 @@ mod tests {
     use pecos_simulators::SymbolicSparseStab;
 
     #[test]
-    fn new_heralds_measure_plain_z() {
-        for gate_type in [GateType::MeasureZLost, GateType::MeasureZLeakedLost] {
+    fn heralds_collapse_without_history_indices() {
+        for gate_type in [
+            GateType::MeasureZLeaked,
+            GateType::MeasureZLost,
+            GateType::MeasureZLeakedLost,
+        ] {
             let mut circuit = DagCircuit::new();
-            circuit.x(&[0]);
+            circuit.h(&[0]);
             circuit.add_gate_auto_wire(Gate::simple(gate_type, vec![0.into()]));
+            circuit.h(&[0]);
+            circuit.mz(&[0]);
             let mut sim = SymbolicSparseStab::new(1);
             execute_circuit_symbolic(&mut sim, &circuit).unwrap();
             let history = sim.measurement_history();
-            assert_eq!(history.len(), 1);
-            assert!(history[0].is_deterministic && history[0].flip);
+            assert_eq!(history.len(), 1, "{gate_type}");
+            assert!(!history[0].is_deterministic, "{gate_type} must collapse");
         }
     }
 

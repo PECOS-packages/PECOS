@@ -19,12 +19,12 @@ use super::pauli_prop_checker::{
     CircuitIO, FaultClass, PropagationResult, anticommutes_with_logical, classify_fault,
     get_syndrome_flips, propagate_faults_validated,
 };
-use super::propagator::UnsupportedGateError;
+use super::propagator::{GateNoiseKind, UnsupportedGateError, gate_noise_kind};
 use super::{
     FaultCheckConfig, FaultCheckResult, FaultConfiguration, PauliFault, SpacetimeLocation,
 };
-use pecos_core::QubitId;
 use pecos_core::gate_type::GateType;
+use pecos_core::{CliffordLowering, QubitId, try_lower_rotation_to_clifford};
 use pecos_quantum::TickCircuit;
 use pecos_simulators::CliffordGateable;
 
@@ -66,10 +66,7 @@ pub fn extract_spacetime_locations(
     for (tick_idx, tick) in circuit.iter_ticks() {
         for (gate_index, gate) in tick.iter_gate_instances().enumerate() {
             let qubits: Vec<QubitId> = gate.qubits().to_vec();
-            let is_measurement = matches!(
-                gate.gate_type(),
-                GateType::MX | GateType::MZ | GateType::MeasureFree | GateType::MPZ
-            );
+            let is_measurement = gate_noise_kind(gate.gate_type()) == GateNoiseKind::Measurement;
 
             locations.push(SpacetimeLocation::new(
                 tick_idx,
@@ -215,15 +212,16 @@ fn apply_tick_gates<S: CliffordGateable>(sim: &mut S, tick: &pecos_quantum::Tick
                 sim.mx(&gate.qubits);
             }
             GateType::MZ | GateType::MeasureFree => mz_qubits.extend(gate.qubits.iter()),
+            kind if kind.is_recordless_z_measurement() => mz_qubits.extend(gate.qubits.iter()),
             GateType::MPZ => mpz_qubits.extend(gate.qubits.iter()),
             GateType::PX => {
                 sim.pz(&gate.qubits);
                 sim.h(&gate.qubits);
             }
-            GateType::PZ => pz_qubits.extend(gate.qubits.iter()),
+            GateType::PZ | GateType::QAlloc => pz_qubits.extend(gate.qubits.iter()),
             GateType::I => {}
             _ => {
-                // Fallback: apply individually for unsupported gate types
+                // Rotations and metadata use the same validated individual dispatch.
                 apply_gate(sim, gate.as_gate());
             }
         }
@@ -400,13 +398,19 @@ fn apply_gate<S: CliffordGateable>(sim: &mut S, gate: &pecos_core::Gate) {
                 GateType::SWAP => {
                     sim.swap(&pairs);
                 }
-                _ => unreachable!(),
+                _ => unreachable!(
+                    "two-qubit runner dispatch invariant violated: {:?}",
+                    gate.gate_type
+                ),
             }
         }
         GateType::MX => {
             sim.mx(&qubits);
         }
         GateType::MZ | GateType::MeasureFree => {
+            sim.mz(&qubits);
+        }
+        kind if kind.is_recordless_z_measurement() => {
             sim.mz(&qubits);
         }
         GateType::MPZ => {
@@ -416,20 +420,30 @@ fn apply_gate<S: CliffordGateable>(sim: &mut S, gate: &pecos_core::Gate) {
             sim.pz(&qubits);
             sim.h(&qubits);
         }
-        GateType::PZ => {
+        GateType::PZ | GateType::QAlloc => {
             sim.pz(&qubits);
         }
-        GateType::CS
-        | GateType::CSdg
-        | GateType::CCZ
-        | GateType::CCX
-        | GateType::CH
-        | GateType::T
-        | GateType::Tdg => panic!(
-            "Clifford circuit runner does not support {:?}",
-            gate.gate_type
-        ),
-        _ => {}
+        GateType::QFree
+        | GateType::Idle
+        | GateType::MeasCrosstalkGlobalPayload
+        | GateType::MeasCrosstalkLocalPayload
+        | GateType::TrackedPauliMeta => {}
+        _ => {
+            let Some(CliffordLowering::Named(clifford) | CliffordLowering::PerQubit(clifford)) =
+                try_lower_rotation_to_clifford(gate)
+            else {
+                panic!(
+                    "runner preflight invariant violated: validated gate {:?} with angles {:?} has no Clifford execution",
+                    gate.gate_type, gate.angles
+                );
+            };
+            // Single-qubit gates already act on each target independently, including
+            // the tensor-Pauli action of a two-qubit half-turn.
+            apply_gate(
+                sim,
+                &pecos_core::Gate::simple(clifford, gate.qubits.clone()),
+            );
+        }
     }
 }
 
@@ -450,7 +464,9 @@ fn apply_gate<S: CliffordGateable>(sim: &mut S, gate: &pecos_core::Gate) {
 ///
 /// # Errors
 ///
-/// Returns the first gate that cannot be Pauli-propagated, with its source location.
+/// Returns the first gate that cannot be faithfully executed and Pauli-propagated,
+/// with its source location, before changing the simulator. Rotations follow the
+/// shared [`try_lower_rotation_to_clifford`] policy.
 pub fn run_circuit_with_faults<S: CliffordGateable>(
     circuit: &TickCircuit,
     sim: &mut S,
@@ -583,6 +599,7 @@ enum CircuitDistanceStoppingRule {
 /// ```
 ///
 /// Constructed only from a circuit that passed the whole-circuit Pauli-propagation preflight.
+/// Execution supports the same named gates and shared Clifford rotation lowering.
 /// The immutable circuit borrow preserves this invariant for all analysis methods.
 pub struct FaultChecker<'a> {
     circuit: &'a TickCircuit,
@@ -1134,6 +1151,205 @@ mod tests {
     use super::*;
     use crate::fault_tolerance::PauliFaultIterator;
     use pecos_simulators::SparseStab;
+
+    fn gate_with_valid_payload(
+        gate_type: GateType,
+        angle: pecos_core::Angle64,
+    ) -> pecos_core::Gate {
+        if gate_type == GateType::Channel {
+            return pecos_core::Gate::channel(pecos_core::channel::from_gate(pecos_core::gate::X(
+                0,
+            )));
+        }
+        let mut angles = vec![pecos_core::Angle64::ZERO; gate_type.angle_arity()];
+        if let Some(first) = angles.first_mut() {
+            *first = angle;
+        }
+        if gate_type == GateType::U {
+            angles[0] = pecos_core::Angle64::ZERO;
+            angles[2] = angle;
+        }
+        pecos_core::Gate::new(
+            gate_type,
+            angles,
+            vec![0.0; gate_type.classical_arity() - gate_type.angle_arity()],
+            (0..gate_type.quantum_arity())
+                .map(QubitId)
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    #[test]
+    fn runner_preflight_matches_execution_for_every_gate_type() {
+        use pecos_core::Angle64;
+        let mut panicked = Vec::new();
+        for gate_type in (u8::MIN..=u8::MAX).filter_map(|wire| GateType::try_from(wire).ok()) {
+            for angle in [
+                Angle64::ZERO,
+                Angle64::QUARTER_TURN,
+                Angle64::HALF_TURN,
+                Angle64::QUARTER_TURN / 2,
+            ] {
+                let gate = gate_with_valid_payload(gate_type, angle);
+                gate.validate().unwrap();
+                for consolidated in [false, true] {
+                    let mut circuit = TickCircuit::new();
+                    let mut tick = circuit.tick();
+                    tick.try_add_gate(gate.clone()).unwrap();
+                    if consolidated {
+                        tick.x(&[3]);
+                        tick.z(&[4]);
+                    }
+                    let accepted =
+                        super::super::propagator::validate_tick_circuit(&circuit).is_ok();
+                    assert_eq!(
+                        FaultChecker::new(&circuit).is_ok(),
+                        accepted,
+                        "{gate_type:?}"
+                    );
+                    let executed = std::panic::catch_unwind(|| {
+                        let mut sim = SparseStab::new(5);
+                        let result =
+                            run_circuit_with_faults(&circuit, &mut sim, &FaultConfiguration::new());
+                        assert_eq!(result.is_ok(), accepted, "{gate_type:?}");
+                        if let Ok(checker) = FaultChecker::new(&circuit) {
+                            checker.check(|_| false, || SparseStab::new(5));
+                            checker.check_with_simulator(
+                                &[],
+                                &[],
+                                &[],
+                                |_, _| false,
+                                || SparseStab::new(5),
+                            );
+                        }
+                    });
+                    if executed.is_err() {
+                        panicked.push((gate_type, angle, consolidated));
+                    }
+                }
+            }
+        }
+        assert!(panicked.is_empty(), "accepted gates panicked: {panicked:?}");
+    }
+
+    #[test]
+    fn runner_qalloc_prepares_zero_in_both_dispatchers() {
+        for consolidated in [false, true] {
+            let mut circuit = TickCircuit::new();
+            let mut tick = circuit.tick();
+            tick.try_add_gate(pecos_core::Gate::simple(GateType::QAlloc, vec![QubitId(0)]))
+                .unwrap();
+            if consolidated {
+                tick.x(&[1]);
+                tick.z(&[2]);
+            }
+            let mut sim = SparseStab::new(3);
+            sim.x(&[QubitId(0)]);
+            run_circuit_with_faults(&circuit, &mut sim, &FaultConfiguration::new()).unwrap();
+            let result = &sim.mz(&[QubitId(0)])[0];
+            assert!(result.is_deterministic && !result.outcome);
+        }
+    }
+
+    #[test]
+    fn runner_clifford_rotations_execute_their_action() {
+        for gate_type in [
+            GateType::RX,
+            GateType::RY,
+            GateType::RXX,
+            GateType::RYY,
+            GateType::RXY1Q,
+            GateType::RXYXY2Q,
+            GateType::U,
+        ] {
+            for consolidated in [false, true] {
+                let mut circuit = TickCircuit::new();
+                if gate_type == GateType::U {
+                    circuit.tick().h(&[0]);
+                }
+                let mut tick = circuit.tick();
+                tick.try_add_gate(gate_with_valid_payload(
+                    gate_type,
+                    pecos_core::Angle64::HALF_TURN,
+                ))
+                .unwrap();
+                if consolidated {
+                    tick.x(&[3]);
+                    tick.z(&[4]);
+                }
+                if gate_type == GateType::U {
+                    circuit.tick().h(&[0]);
+                }
+                let mut sim = SparseStab::new(5);
+                run_circuit_with_faults(&circuit, &mut sim, &FaultConfiguration::new()).unwrap();
+                for qubit in 0..gate_type.quantum_arity() {
+                    let result = &sim.mz(&[QubitId(qubit)])[0];
+                    assert!(result.is_deterministic && result.outcome, "{gate_type:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn runner_rejects_unsupported_gates_before_execution_by_name() {
+        for gate_type in (u8::MIN..=u8::MAX).filter_map(|wire| GateType::try_from(wire).ok()) {
+            let gate = gate_with_valid_payload(gate_type, pecos_core::Angle64::QUARTER_TURN / 2);
+            let mut circuit = TickCircuit::new();
+            // A rejection must leave this earlier operation unexecuted.
+            circuit.tick().x(&[0]);
+            circuit.tick().try_add_gate(gate).unwrap();
+            if super::super::propagator::validate_tick_circuit(&circuit).is_ok() {
+                continue;
+            }
+            let mut sim = SparseStab::new(3);
+            let error = run_circuit_with_faults(&circuit, &mut sim, &FaultConfiguration::new())
+                .unwrap_err();
+            assert_eq!(error.gate_type, gate_type);
+            assert!(error.to_string().contains(&format!("{gate_type:?}")));
+            let checker_error = FaultChecker::new(&circuit).err().unwrap();
+            assert_eq!(checker_error, error);
+            let result = &sim.mz(&[QubitId(0)])[0];
+            assert!(result.is_deterministic && !result.outcome, "{gate_type:?}");
+        }
+    }
+
+    #[test]
+    fn herald_runner_collapses_in_both_dispatchers() {
+        for gate_type in [
+            GateType::MeasureZLeaked,
+            GateType::MeasureZLost,
+            GateType::MeasureZLeakedLost,
+        ] {
+            for consolidated in [false, true] {
+                let mut sim = SparseStab::new(3);
+                sim.h(&[QubitId(0)]);
+                let mut circuit = TickCircuit::new();
+                let mut tick = circuit.tick();
+                tick.try_add_gate(pecos_core::Gate::simple(gate_type, vec![QubitId(0)]))
+                    .unwrap();
+                if consolidated {
+                    tick.x(&[1]);
+                    tick.z(&[2]);
+                }
+                apply_tick_gates(&mut sim, circuit.get_tick(0).unwrap());
+                sim.h(&[QubitId(0)]);
+                assert!(
+                    !sim.mz(&[QubitId(0)])[0].is_deterministic,
+                    "{gate_type}, consolidated={consolidated}"
+                );
+                assert!(extract_spacetime_locations(&circuit, false)[0].before);
+            }
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "runner preflight invariant violated: validated gate Custom")]
+    fn runner_internal_dispatch_names_broken_preflight_invariant() {
+        apply_gate(
+            &mut SparseStab::new(1),
+            &pecos_core::Gate::simple(GateType::Custom, vec![QubitId(0)]),
+        );
+    }
 
     fn check_mx_replay(consolidated: bool) {
         for minus in [false, true] {

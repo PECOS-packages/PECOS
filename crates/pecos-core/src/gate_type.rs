@@ -102,14 +102,14 @@ pub enum GateType {
     MZ = 104,
     // MnZ = 105
     MeasureZLeaked = 105,
-    /// Measure Z with alphabet {0, 1, 3}, where 3 means lost.
-    MeasureZLost = 108,
-    /// Measure Z with alphabet {0, 1, 2, 3}, where 2 means leaked and 3 means lost.
-    MeasureZLeakedLost = 109,
     /// Measure and free the qubit (destructive measurement)
     MeasureFree = 106,
     /// Measure +Z, then prepare |0> (measure-and-prepare; the MP* family)
     MPZ = 107,
+    /// Measure Z with alphabet {0, 1, 3}, where 3 means lost.
+    MeasureZLost = 108,
+    /// Measure Z with alphabet {0, 1, 2, 3}, where 2 means leaked and 3 means lost.
+    MeasureZLeakedLost = 109,
     // TODO: MPauli instead of the other variants?
     /// Prepare the +1 eigenstate of X.
     PX = 130,
@@ -607,6 +607,15 @@ impl GateType {
         self.measured_pauli().is_some()
     }
 
+    /// Whether this gate collapses in Z without consuming a measurement record.
+    #[must_use]
+    pub const fn is_recordless_z_measurement(self) -> bool {
+        matches!(
+            self,
+            Self::MeasureZLeaked | Self::MeasureZLost | Self::MeasureZLeakedLost
+        )
+    }
+
     /// Returns the Pauli basis of a gate that produces a measurement record.
     /// Record-less gates, including `MeasureZLeaked`, `MeasureZLost`, and
     /// `MeasureZLeakedLost`, return `None`.
@@ -996,6 +1005,22 @@ impl std::str::FromStr for GateType {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recordless_z_measurements_have_exact_membership() {
+        for value in u8::MIN..=u8::MAX {
+            if let Ok(gate) = GateType::try_from(value) {
+                assert_eq!(
+                    gate.is_recordless_z_measurement(),
+                    [105, 108, 109].contains(&value)
+                );
+                if gate.is_recordless_z_measurement() {
+                    assert!(!gate.consumes_measurement_record());
+                    assert_eq!(gate.measured_pauli(), None);
+                }
+            }
+        }
+    }
 
     #[test]
     fn measurement_bases_match_record_gates() {

@@ -160,21 +160,12 @@ pub(crate) fn reference_distribution(gates: &[Gate]) -> Vec<f64> {
     let mut branches = vec![(DenseStateVec::new(2), 0usize, 1.0)];
     let mut records = 0;
     for gate in gates {
-        let measured = matches!(
-            gate.gate_type,
-            GateType::MX
-                | GateType::MZ
-                | GateType::MPZ
-                | GateType::MeasureFree
-                | GateType::MeasureZLeaked
-                | GateType::MeasureZLost
-                | GateType::MeasureZLeakedLost
-        );
+        let measured = gate.gate_type.consumes_measurement_record();
         let prepared = matches!(
             gate.gate_type,
             GateType::PZ | GateType::PX | GateType::QAlloc
         );
-        if !measured && !prepared {
+        if !measured && !gate.gate_type.is_recordless_z_measurement() && !prepared {
             for (sim, _, _) in &mut branches {
                 reference_unitary(sim, gate);
             }
@@ -331,8 +322,8 @@ fn all_z_heralds_project_in_the_dense_reference() {
             Gate::simple(flavor, vec![0.into()]),
             Gate::mz(&[0]),
         ]);
-        assert_eq!(distribution.len(), 4);
-        for (actual, expected) in distribution.iter().zip([0.5, 0.0, 0.0, 0.5]) {
+        assert_eq!(distribution.len(), 2);
+        for (actual, expected) in distribution.iter().zip([0.5, 0.5]) {
             assert!(
                 (actual - expected).abs() < 1e-12,
                 "{flavor}: {distribution:?}"

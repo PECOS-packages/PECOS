@@ -80,6 +80,7 @@ mod config;
 pub use self::config::GeneralNoiseConfig;
 mod default;
 mod readout;
+mod unique_json;
 pub use self::readout::ReadoutMatrix;
 
 pub use self::builder::{GeneralNoiseModelBuilder, PauliWithAngleScaling};

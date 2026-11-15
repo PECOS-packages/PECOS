@@ -10,7 +10,26 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   `{0, 1, 3}` and `{0, 1, 2, 3}`, and per-flavor general-noise readout matrices
   configurable from Rust, JSON, and Python. Qubit-loss state is not introduced.
 - **Changed:** Unsupported runtime-frame and scheduled gate errors now name the gate
-  after their existing error prefix.
+  after their existing error prefix. Scheduled Z-herald errors suggest
+  `MeasureZLeaked` (which cannot herald loss) or a non-scheduled engine.
+- **Fixed:** The QEC fault-injection runner now executes gates its preflight already
+  accepted but its simulator dispatch silently skipped: `QAlloc`, Z herald collapses,
+  and Clifford-angle rotations such as RX/RY/RZ/RXX/RYY/RZZ/U. This fixes incorrect
+  `FaultChecker` results on those circuits; unsupported gates were already rejected
+  by the preflight.
+- **Fixed:** Raw-measurement sampling no longer lets custom p1 Pauli weights scale
+  preparation or MZ measurement noise (or zero it with Z-only weights), and no longer
+  applies p1 noise at record-less Z heralds or transparent gates. Batched DAG nodes
+  apply p1 channels independently per qubit and p2 channels per pair; single-qubit
+  gates no longer use a two-qubit weight lookup just because a node contains two
+  qubits. Preparation and idle location batches are also split per
+  qubit, and idle residuals identify the correct instance's location.
+- **Fixed:** `LookupDecoder` selects custom Pauli weights by gate kind, preserving
+  preparation and measurement rates, and enumerates batched gate instances as
+  independent channels. Its shared rate computation no longer assigns p1 noise to
+  record-less Z heralds or transparent gates.
+- **Fixed:** `PerGateTypeNoise::to_neo_channel` returns an error naming an unmapped gate
+  instead of panicking. `GeneralNoiseConfig` JSON rejects duplicate object keys at any depth.
 
 - **Fixed:** A PECOS-managed LLVM whose shared libraries no longer load, such as
   a copy kept across an upgrade to Ubuntu 26.04 (its `libLLVM` needs

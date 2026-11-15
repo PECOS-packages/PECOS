@@ -168,8 +168,7 @@ impl TargetedLookupDecoder {
         let best_logical = logical_weights
             .iter()
             .max_by(|(_, a), (_, b)| a.total_cmp(b))
-            .map(|(logical, _)| logical.clone())
-            .unwrap_or_default();
+            .map_or_else(Vec::new, |(logical, _)| logical.clone());
 
         DecodeResult {
             syndrome: syndrome.to_vec(),

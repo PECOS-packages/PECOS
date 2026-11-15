@@ -428,9 +428,9 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
         // Convert x to bit vector y[j] = (x >> j) & 1
         // Compute mu = sum(y[j] * gamma[j])
         let mut mu = 0i32;
-        for j in 0..n {
+        for (j, &gamma) in self.gamma.iter().enumerate().take(n) {
             if (x >> j) & 1 == 1 {
-                mu += i32::from(self.gamma[j]);
+                mu += i32::from(gamma);
             }
         }
 
@@ -494,9 +494,9 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
         let mut mu = 0i32;
         u.clear();
 
-        for j in 0..n {
+        for (j, &gamma) in self.gamma.iter().enumerate().take(n) {
             if (x >> j) & 1 == 1 {
-                mu += i32::from(self.gamma[j]);
+                mu += i32::from(gamma);
             }
         }
 

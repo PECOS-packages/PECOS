@@ -1244,8 +1244,8 @@ impl ZluppyEngine {
 /// Zluppy Python module (internal).
 ///
 /// A Zig/SLR/NASA Power of 10 reflection of Guppy's approach to quantum programming.
-#[pymodule]
-fn _zluppy(m: &Bound<'_, PyModule>) -> PyResult<()> {
+#[pymodule(name = "_zluppy")]
+fn zluppy(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Add exception
     m.add("ZluppyError", m.py().get_type::<ZluppyError>())?;
 

@@ -703,7 +703,8 @@ impl PySparseStab {
     }
 
     #[staticmethod]
-    fn _from_pickle(
+    #[pyo3(name = "_from_pickle")]
+    fn from_pickle(
         num_qubits: usize,
         stabs_dict: &Bound<'_, PyDict>,
         destabs_dict: &Bound<'_, PyDict>,
@@ -752,7 +753,8 @@ impl PySparseStab {
     }
 
     /// Returns the raw gens data (`col_x`, `col_z`, `row_x`, `row_z`) for stabs or destabs.
-    fn _gens_data(&self, is_stab: bool) -> crate::simulator_utils::GensData {
+    #[pyo3(name = "_gens_data")]
+    fn gens_data(&self, is_stab: bool) -> crate::simulator_utils::GensData {
         self.inner.gens_data(is_stab)
     }
 

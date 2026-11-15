@@ -457,8 +457,7 @@ impl NoisyMeasurementHistory {
         let n = self.measurements.len();
         let mut flattened = Vec::with_capacity(n);
 
-        for meas_idx in 0..n {
-            let meas = &self.measurements[meas_idx];
+        for (meas_idx, meas) in self.measurements.iter().enumerate() {
             let mut random_deps = BitSet::new();
             let mut fault_deps = meas.fault_deps.clone();
             let mut flip = meas.flip;

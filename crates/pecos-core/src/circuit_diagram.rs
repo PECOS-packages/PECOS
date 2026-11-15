@@ -1071,7 +1071,7 @@ impl CircuitDiagram {
         }
 
         // Layer 1: Qubit labels and horizontal wires.
-        for row in 0..num_rows {
+        for (row, label) in self.labels.iter().enumerate().take(num_rows) {
             let y = header_offset + ROW_SPACING * (row as f64 + 0.5);
             writeln!(
                 out,
@@ -1079,7 +1079,6 @@ impl CircuitDiagram {
                  text-anchor=\"end\" dominant-baseline=\"middle\" fill=\"#333\">{label}</text>",
                 x = LABEL_MARGIN - 6.0,
                 ty = y,
-                label = self.labels[row],
             )
             .unwrap();
             writeln!(
@@ -1152,9 +1151,9 @@ impl CircuitDiagram {
 
         // Layer 3: Gate boxes, control dots, and crossing markers (on top of wires).
         for (col_idx, &cx) in col_cx.iter().enumerate().take(num_cols) {
-            for row in 0..num_rows {
+            for (row, &(ref cell, color)) in self.columns[col_idx].iter().enumerate().take(num_rows)
+            {
                 let cy = header_offset + ROW_SPACING * (row as f64 + 0.5);
-                let (ref cell, color) = self.columns[col_idx][row];
 
                 match cell {
                     DiagramCell::Wire | DiagramCell::LabeledConnector(_) => {}
@@ -1355,7 +1354,7 @@ impl CircuitDiagram {
         }
 
         // Wires and labels.
-        for row in 0..num_rows {
+        for (row, label) in self.labels.iter().enumerate().take(num_rows) {
             let y = -(row as f64) * ROW_STEP;
             let x_start = -0.5;
             let x_end = (num_cols as f64) * COL_STEP + 0.3;
@@ -1368,18 +1367,16 @@ impl CircuitDiagram {
                 out,
                 "  \\node[anchor=east, font=\\footnotesize\\ttfamily] at ({lx:.2},{y:.2}) {{{label}}};",
                 lx = x_start - 0.15,
-                label = self.labels[row],
             )
             .unwrap();
         }
 
         // Gates, controls, connectors.
-        for col_idx in 0..num_cols {
+        for (col_idx, column) in self.columns.iter().enumerate().take(num_cols) {
             let x = (col_idx as f64 + 0.5) * COL_STEP;
 
-            for row in 0..num_rows {
+            for (row, &(ref cell, color)) in column.iter().enumerate().take(num_rows) {
                 let y = -(row as f64) * ROW_STEP;
-                let (ref cell, color) = self.columns[col_idx][row];
                 // When style.color is false, use CellColor::None for all gates.
                 let effective = if style.color { color } else { CellColor::None };
                 let name = effective.tikz_name();
@@ -1505,13 +1502,9 @@ impl CircuitDiagram {
         // Input label nodes.
         writeln!(out, "  // Input labels").unwrap();
         writeln!(out, "  {{ rank=same;").unwrap();
-        for row in 0..num_rows {
-            writeln!(
-                out,
-                "    r{row}_in [label=\"{label}\", shape=plaintext];",
-                label = self.labels[row],
-            )
-            .unwrap();
+        for (row, label) in self.labels.iter().enumerate().take(num_rows) {
+            writeln!(out, "    r{row}_in [label=\"{label}\", shape=plaintext];")
+                .expect("writing a circuit label to a String cannot fail");
         }
         writeln!(out, "  }}").unwrap();
 
@@ -1528,11 +1521,10 @@ impl CircuitDiagram {
         writeln!(out, "  }}").unwrap();
 
         // Gate columns.
-        for col_idx in 0..num_cols {
+        for (col_idx, column) in self.columns.iter().enumerate().take(num_cols) {
             writeln!(out, "  // Column {col_idx}").unwrap();
             writeln!(out, "  {{ rank=same;").unwrap();
-            for row in 0..num_rows {
-                let (ref cell, color) = self.columns[col_idx][row];
+            for (row, &(ref cell, color)) in column.iter().enumerate().take(num_rows) {
                 let node_id = format!("r{row}c{col_idx}");
 
                 match cell {
@@ -1628,8 +1620,13 @@ impl CircuitDiagram {
             }
             // Connect top to bottom through all intermediate non-Wire rows.
             let mut prev_row = top;
-            for row in (top + 1)..=bottom {
-                if row < num_rows && !matches!(self.columns[col][row].0, DiagramCell::Wire) {
+            for (row, (cell, _)) in self.columns[col]
+                .iter()
+                .enumerate()
+                .take((bottom + 1).min(num_rows))
+                .skip(top + 1)
+            {
+                if !matches!(cell, DiagramCell::Wire) {
                     writeln!(
                         out,
                         "  r{prev_row}c{col} -> r{row}c{col} [style=dashed, dir=none, constraint=false];",

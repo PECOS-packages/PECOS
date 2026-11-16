@@ -514,6 +514,37 @@ impl FaultHistory {
             },
         }
     }
+
+    /// removes an error from a FaultHistory, preserving ordering by UID.
+    pub fn remove_error(&mut self, site_uid: usize) -> Option<SampledFault> {
+        let Self::Depolarizing(faults) = self;
+
+        // find the error to remove with binary search
+        let index = faults
+            .binary_search_by_key(&site_uid, |fault| fault.site_uid)
+            .ok()?;
+
+        Some(faults.remove(index).into())
+    }
+
+    /// Adds an error into a FaultHistory, maintaining the site UID ordering
+    /// Raises an error if the site targeted by the error is already occupied
+    pub fn add_error(&mut self, error: SampledFault) -> Result<(), &'static str> {
+        let Self::Depolarizing(faults) = self;
+        let SampledFault::Depolarizing(fault) = error;
+
+        if fault.outcome_label == "NoFault" {
+            return Err("NoFault should be represented by an absent entry");
+        }
+
+        match faults.binary_search_by_key(&fault.site_uid, |entry| entry.site_uid) {
+            Ok(_) => Err("Site already contains a fault"),
+            Err(index) => {
+                faults.insert(index, fault);
+                Ok(())
+            }
+        }
+    }
 }
 
 // Promotion of depolarizing instances of fault classes

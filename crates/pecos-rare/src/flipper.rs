@@ -11,7 +11,7 @@
 // the License.
 
 use pecos_engines::faults::{FaultCatalog, FaultHistory, FaultOutcome, FaultSite};
-use pecos_random::PecosRng;
+use pecos_random::{PecosRng, RngExt};
 
 /// Returns a random integer between 0 and the provided upper bound
 pub fn random_int(rng: &mut PecosRng, upper_bound: u64) -> u64 {
@@ -71,6 +71,20 @@ impl FaultFlipper {
             Self::WeightedSubregion(flipper) => &mut flipper.rng,
         };
         rng.as_mut().expect("Flipper must be seeded").next_f64()
+    }
+
+    /// Get a random integer via `random_range` from the seeded flipper's RNG.
+    pub fn random_range(&mut self, range: std::ops::Range<usize>) -> usize {
+        let rng = match self {
+            Self::BasicSingle(f) => &mut f.rng,
+            Self::WeightedSingle(f) => &mut f.rng,
+            Self::BasicSubregion(f) => &mut f.rng,
+            Self::WeightedSubregion(f) => &mut f.rng,
+        };
+
+        rng.as_mut()
+            .expect("Flipper must be seeded")
+            .random_range(range)
     }
 
     pub fn random_flip_and_ratio(&mut self, history: &FaultHistory) -> (FaultHistory, f64) {
